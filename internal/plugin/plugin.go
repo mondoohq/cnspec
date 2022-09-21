@@ -22,6 +22,15 @@ func addColorConfig(cmd *exec.Cmd) {
 	}
 }
 
+func cnqueryLocation() string {
+	if e := os.Getenv("CNQUERY_PLUGIN"); e != "" {
+		return e
+	}
+
+	// the default is to use the available cnquery command
+	return "cnquery"
+}
+
 func RunQuery(conf *proto.RunQueryConfig) error {
 	// disable the plugin's logs
 	pluginLogger := hclog.New(&hclog.LoggerOptions{
@@ -31,7 +40,7 @@ func RunQuery(conf *proto.RunQueryConfig) error {
 		Output: ioutil.Discard,
 	})
 
-	pluginCmd := exec.Command("sh", "-c", "cnquery run_as_plugin")
+	pluginCmd := exec.Command("sh", "-c", cnqueryLocation()+" run_as_plugin")
 
 	addColorConfig(pluginCmd)
 
