@@ -69,3 +69,9 @@ func initLogger(cmd *cobra.Command) {
 	}
 	logger.Set(level)
 }
+
+const cnspecLogo = (" .--. ,-.,-. .--. .---.  .--.  .--.™\n" +
+	"'  ..': ,. :`._-.': .; `' '_.''  ..'\n" +
+	"`.__.':_;:_;`.__.': ._.'`.__.'`.__.'\n" +
+	"   mondoo™        : :               \n" +
+	"                  :_;               ")
