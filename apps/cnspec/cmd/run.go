@@ -1,14 +1,13 @@
 package cmd
 
 import (
-	"os"
-
-	"github.com/rs/zerolog/log"
+	zlog "github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	cnquery_app "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/motor/providers"
+	"go.mondoo.com/cnspec/internal/plugin"
 )
 
 func init() {
@@ -65,12 +64,12 @@ var execCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Run: func(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) {
 		conf, err := cnquery_app.GetCobraRunConfig(cmd, args, provider, assetType)
 		if err != nil {
-			log.Fatal().Err(err).Msg("failed to prepare config")
+			zlog.Fatal().Err(err).Msg("failed to prepare config")
 		}
 
-		err = cnquery_app.RunQuery(conf, os.Stdout)
+		err = plugin.RunQuery(conf)
 		if err != nil {
-			log.Fatal().Err(err).Msg("failed to run query")
+			zlog.Fatal().Err(err).Msg("failed to run query")
 		}
 	},
 })

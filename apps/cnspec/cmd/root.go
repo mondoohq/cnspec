@@ -4,14 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/theme"
 	"go.mondoo.com/cnquery/logger"
@@ -73,23 +68,4 @@ func initLogger(cmd *cobra.Command) {
 		level = "debug"
 	}
 	logger.Set(level)
-}
-
-func askForPassword(prompt string, flagset *flag.FlagSet) {
-	// check if password is set
-	if !isatty.IsTerminal(os.Stdout.Fd()) {
-		log.Fatal().Msg("--ask-pass is only supported when used with a TTY")
-	}
-
-	// ask user for password
-	passwordModel := components.NewPasswordModel(prompt, func(userPassword string, aborted bool) {
-		flagset.Set("password", userPassword)
-		if aborted {
-			os.Exit(1)
-		}
-	})
-	p := tea.NewProgram(passwordModel)
-	if err := p.Start(); err != nil {
-		panic(err)
-	}
 }
