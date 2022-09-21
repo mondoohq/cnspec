@@ -58,7 +58,11 @@ prep/tools:
 
 #   🌙 cnspec   #
 
-cnspec/generate: clean/proto policy/generate
+cnspec/generate: clean/proto cli/generate policy/generate
+
+.PHONY: cli
+cli/generate:
+	go generate ./cli/reporter
 
 .PHONY: policy
 policy/generate:
