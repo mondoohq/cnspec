@@ -1,5 +1,3 @@
-NAMESPACE=mondoo
-
 ifndef LATEST_VERSION_TAG
 # echo "read LATEST_VERSION_TAG from git"
 LATEST_VERSION_TAG=$(shell git describe --abbrev=0 --tags)
