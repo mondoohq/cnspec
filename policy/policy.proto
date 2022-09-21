@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package cnspec.policy;
+option go_package = "go.mondoo.com/cnspec/policy";
+
+/*
+  PolicySpec specifies and overrides a policy and all its queries and referenced policies.
+  - Queries have UUIDs across all policies, so these overrides reach across policies.
+  - Policies are targeted via UUID as well and may override their scoring behavior.
+  - PolicySpecs can be time-limited
+  - PolicySpecs can be limited to a subset of assets
+*/
+message PolicySpec {
+  map<string,ScoringSpec> policies = 1;
+  map<string,ScoringSpec> scoring_queries = 2;
+  map<string,QueryAction> data_queries = 3;
+
+  // filter for the assets this applies to
+  Mquery asset_filter = 20;
+
+  // the timeline during which this scoring spec is active and reminders will be sent
+  int64 start_date = 21;
+  int64 end_date = 22;
+  int64 reminder_date = 23;
+
+  // metadata
+  string title = 24;
+  PolicySpecDocs docs = 25;
+
+  int64 created = 32;
+  int64 modified = 33;
+}
+
+/*
+  Policy definition, re-usable or assigned to the user's environment
+  - Contains all policies and overrides
+  - Can limit to what it supports
+*/
+message Policy {
+  string mrn = 1; // will be filled from UID on upload
+  string name = 2;
+  string version = 3;
+
+  // checksums are grouped into:
+  // local... meaning this policy, not policy dependencies
+  // graph... meaning this and all dependent policies
+  // content... meaning all the content in the policy, everything there is
+  // execution... meaning everything that changes the resolved policy
+  string local_content_checksum = 37;
+  string graph_content_checksum = 38;
+  string local_execution_checksum = 39;
+  string graph_execution_checksum = 40;
+
+  repeated PolicySpec specs = 6;
+  map<string,Mquery> asset_filters = 7; // key == checksum
+
+  string owner_mrn = 8;
+  bool is_public = 9;
+
+  ScoringSystem scoring_system = 10;
+
+  repeated Author authors = 30;
+  int64 created = 32;
+  int64 modified = 33;
+  map<string,string> tags = 34;
+  // mapping query ref => target; target may be empty if not overwriting
+  map<string,string> props = 35;
+  // user-defined uid, which is used to generate the MRN
+  string uid = 36;
+  PolicyDocs docs = 41;
+
+  QueryCounts query_counts = 42;
+}
+
+/*
+  ScoringSystem that determines how individual scores come together
+*/
+enum ScoringSystem {
+  AVERAGE = 0;
+  WEIGHTED = 1;
+  WORST = 2;
+}
+
+enum QueryAction {
+  UNSPECIFIED = 0;
+  MODIFY = 1;
+  DEACTIVATE = 2;
+  ACTIVATE = 3;
+}
+
+/*
+  ScoringSpec defines how a query or policy will be scored
+*/
+message ScoringSpec {
+  string id = 1; // id of the policy or query, can also be an mrn
+  // weight: 0 means the result has no weight and will be ignored
+  // if weight_is_percentage, this value must be in 0 - 100 range
+  uint32 weight = 2;
+  bool weight_is_percentage = 3;
+
+  // only ever relevant when multiple scores bubble up into this spec
+  // the default is average if not specified
+  ScoringSystem scoring_system = 4;
+
+  QueryAction action = 6;
+
+  SeverityValue severity = 7;
+}
+
+message Author {
+  string name = 1;
+  string email = 2;
+}
+
+message QueryCounts {
+  int64 scoring_count = 1;
+  int64 data_count = 2;
+  int64 total_count = 3;
+}
+
+message Policies {
+  repeated Policy items = 1;
+}
+
+message PolicyBundle {
+  string owner_mrn = 1;
+  repeated Policy policies = 2;
+  repeated Mquery props = 3;
+  repeated Mquery queries = 4;
+  PolicyDocs docs = 5;
+}
+
+message PolicySpecDocs {
+  string desc = 1;
+}
+
+message PolicyDocs {
+  string desc = 1;
+}
+
+/*
+  Mqueries are Mondoo queries.
+*/
+message Mquery {
+  string query = 1;
+  string code_id = 2;
+  string checksum = 3;
+  string mrn = 4;
+  // UID is only needed on Mquery upload, when the MRN is computed.
+  // It will not be persisted.
+  string uid = 5;
+  string type = 6;
+  SeverityValue severity = 19;
+  string title = 20;
+  MqueryDocs docs = 21;
+  repeated MqueryRef refs = 22;
+  map<string,string> tags = 34;
+}
+
+message SeverityValue {
+  int64 value = 1;
+}
+
+message MqueryDocs {
+  string desc = 1;
+  string audit = 2;
+  string remediation = 3;
+}
+
+message MqueryRef {
+  string title = 1;
+  string url = 2;
+}

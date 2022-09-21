@@ -62,6 +62,10 @@ prep/tools:
 
 cnspec/generate: clean/proto policy/generate
 
+.PHONY: policy
+policy/generate:
+	go generate ./policy
+
 #   🏗 Binary   #
 
 .PHONY: cnspec/install
