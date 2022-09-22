@@ -8,6 +8,7 @@ require (
 	github.com/hashicorp/go-hclog v1.2.0
 	github.com/hashicorp/go-plugin v1.4.3
 	github.com/muesli/termenv v0.12.0
+	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
 	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.13.0
@@ -15,6 +16,7 @@ require (
 	go.mondoo.com/cnquery v0.0.0-00010101000000-000000000000
 	go.mondoo.com/ranger-rpc v0.4.0
 	google.golang.org/protobuf v1.28.1
+	sigs.k8s.io/yaml v1.3.0
 )
 
 require (
@@ -323,7 +325,6 @@ require (
 	github.com/phayes/checkstyle v0.0.0-20170904204023-bfd46e6a821d // indirect
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pkg/browser v0.0.0-20210115035449-ce105d075bb4 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/sftp v1.13.5 // indirect
 	github.com/pkg/term v1.2.0-beta.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -437,5 +438,4 @@ require (
 	mvdan.cc/unparam v0.0.0-20220831102321-2fc90a84c7ec // indirect
 	sigs.k8s.io/json v0.0.0-20220713155537-f223a00ba0e2 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
-	sigs.k8s.io/yaml v1.3.0 // indirect
 )
