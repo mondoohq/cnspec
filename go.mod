@@ -5,6 +5,7 @@ go 1.19
 replace go.mondoo.com/cnquery => /pub/go/src/go.mondoo.com/cnquery
 
 require (
+	github.com/gogo/status v1.1.0
 	github.com/hashicorp/go-hclog v1.2.0
 	github.com/hashicorp/go-plugin v1.4.3
 	github.com/muesli/termenv v0.12.0
@@ -15,6 +16,7 @@ require (
 	github.com/stretchr/testify v1.8.0
 	go.mondoo.com/cnquery v0.0.0-00010101000000-000000000000
 	go.mondoo.com/ranger-rpc v0.4.0
+	google.golang.org/grpc v1.48.0
 	google.golang.org/protobuf v1.28.1
 	sigs.k8s.io/yaml v1.3.0
 )
@@ -183,6 +185,7 @@ require (
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gofrs/uuid v4.2.0+incompatible // indirect
+	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
@@ -405,7 +408,6 @@ require (
 	google.golang.org/api v0.94.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc // indirect
-	google.golang.org/grpc v1.48.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.5.1 // indirect
