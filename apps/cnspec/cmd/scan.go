@@ -19,6 +19,7 @@ import (
 	"go.mondoo.com/cnquery/motor/providers"
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scan"
 )
 
 func init() {
@@ -493,11 +494,18 @@ func (c *scanConfig) resolvePolicies() error {
 }
 
 func RunScan(config *scanConfig) {
+	scanner := scan.NewLocalService()
 
-	// Create local policy runner (NewLocalScanService)
-
-	// Run policies (RunIncognito)
+	report, err := scanner.RunIncognito(&scan.Job{
+		DoRecord:  config.DoRecord,
+		Inventory: config.Inventory,
+		Bundle:    config.Bundle,
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to run scan")
+	}
 
 	// Print report
-
+	panic("LET's PRINT")
+	_ = report
 }
