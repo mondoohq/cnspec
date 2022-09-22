@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -500,6 +501,7 @@ func RunScan(config *scanConfig) {
 		DoRecord:  config.DoRecord,
 		Inventory: config.Inventory,
 		Bundle:    config.Bundle,
+		Context:   cnquery.SetFeatures(context.Background(), config.Features),
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
