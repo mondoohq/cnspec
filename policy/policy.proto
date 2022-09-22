@@ -3,6 +3,8 @@ syntax = "proto3";
 package cnspec.policy;
 option go_package = "go.mondoo.com/cnspec/policy";
 
+import "cnquery/llx/llx.proto";
+
 /*
   PolicySpec specifies and overrides a policy and all its queries and referenced policies.
   - Queries have UUIDs across all policies, so these overrides reach across policies.
@@ -170,6 +172,95 @@ message MqueryDocs {
 message MqueryRef {
   string title = 1;
   string url = 2;
+}
+
+// **********  Resolution / Execution **************
+
+/*
+  Once a policy has been                     , it can easily be retrieved.
+  We will store the different ways in which policies are resolved in the DB
+  for fast retrieval.
+*/
+message ResolvedPolicy {
+  ExecutionJob execution_job = 2;
+  CollectorJob collector_job = 3;
+  repeated Mquery filters = 4;
+  string graph_execution_checksum = 7;
+  string filters_checksum = 20;
+  string reporting_job_uuid = 21;
+}
+
+/*
+  The list of queries that an asset needs to execute
+  May be identical amongst multiple individual policies
+  - Checksum helps deduplicate this job
+  - Queries have a map from query checksum to query query contents
+*/
+message ExecutionJob {
+  string checksum = 1;
+  // map of all queries that should be executed, checksum => query
+  map<string,ExecutionQuery> queries = 2;
+}
+
+/*
+  A query which is part of an ExecutionJob
+  Reduced to the bare minimum for the execution
+*/
+message ExecutionQuery {
+  string query = 1;
+  string checksum = 2;
+  // mapping from name => checksum, which is in the execution job
+  map<string,string> properties = 3;
+  // list of checksums that we collect as data points
+  repeated string datapoints = 4;
+  cnquery.llx.CodeBundle code = 5;
+}
+
+/*
+  The scoring job used by the collector, to know what happens with all
+  individual scores that the asset sends.
+  - Checksum helps deduplicate this job
+  - Every score points to a reporting job
+  - For optimization, assets may have multiple scoring jobs
+*/
+message CollectorJob {
+  string checksum = 1;
+  // links incoming score/query-checksum to reporting job
+  map<string,ReportingJob> reporting_jobs = 2;
+  // maps a query checksum (llx) to a list of query objects (uuid)
+  map<string,StringArray> reporting_queries = 3;
+  // maps a query datapoint checksum (llx) to its type and reporting jobs (uuids)
+  map<string,DataQueryInfo> datapoints = 4;
+}
+
+message StringArray {
+  repeated string items = 1;
+}
+
+message DataQueryInfo {
+  string type = 1;
+  repeated string notify = 2;
+}
+
+/*
+  Reporting jobs help build reports from all the scores they receive
+  1. When a query score arrives, it is first reported to the CollectorJob.
+  2. It picks the first reportingJob and fills the result in, no additional
+     specs need to be called. However, it notifies all other reporting jobs.
+  3. Once a notified reporting job runs, it looks at alal the specs and collects
+     their values and scores them. Repeat this step for all notified reports.
+  - uuid specifies the query or policy
+  - spec has all the other results that need to be pulled and their scorings
+*/
+message ReportingJob {
+  string checksum = 1;
+  string qr_id = 2;
+  string uuid = 3;
+  map<string,ScoringSpec> spec = 4;
+  repeated string notify = 5;
+  ScoringSystem scoring_system = 6;
+  map<string,bool> datapoints = 7;
+  bool is_data = 8;
 }
 
 // **********       Policy Hub        **************
