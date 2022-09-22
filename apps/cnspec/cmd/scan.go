@@ -268,7 +268,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// policies & incognito mode
 		cmd.Flags().Bool("incognito", false, "incognito mode. do not report scan results to the Mondoo platform.")
 		cmd.Flags().StringSlice("policy", nil, "list of policies to be executed (requires incognito mode), multiple policies can be passed in via --policy POLICY")
-		cmd.Flags().StringSlice("policy-bundle", nil, "path to local policy bundle file")
+		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "path to local policy bundle file")
 		// flag completion command
 		cmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
