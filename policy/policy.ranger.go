@@ -328,3 +328,412 @@ func (p *PolicyHubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Messag
 	}
 	return p.handler.List(ctx, &req)
 }
+
+// service interface definition
+
+type QueryRunner interface {
+	GetExecutionJob(context.Context, *Mrn) (*ExecutionJob, error)
+}
+
+// client implementation
+
+type QueryRunnerClient struct {
+	ranger.Client
+	httpclient ranger.HTTPClient
+	prefix     string
+}
+
+func NewQueryRunnerClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*QueryRunnerClient, error) {
+	base, err := url.Parse(ranger.SanitizeUrl(addr))
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := url.Parse("./QueryRunner")
+	if err != nil {
+		return nil, err
+	}
+
+	serviceClient := &QueryRunnerClient{
+		httpclient: client,
+		prefix:     base.ResolveReference(u).String(),
+	}
+	serviceClient.AddPlugins(plugins...)
+	return serviceClient, nil
+}
+func (c *QueryRunnerClient) GetExecutionJob(ctx context.Context, in *Mrn) (*ExecutionJob, error) {
+	out := new(ExecutionJob)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetExecutionJob"}, ""), in, out)
+	return out, err
+}
+
+// server implementation
+
+type QueryRunnerServerOption func(s *QueryRunnerServer)
+
+func WithUnknownFieldsForQueryRunnerServer() QueryRunnerServerOption {
+	return func(s *QueryRunnerServer) {
+		s.allowUnknownFields = true
+	}
+}
+
+func NewQueryRunnerServer(handler QueryRunner, opts ...QueryRunnerServerOption) http.Handler {
+	srv := &QueryRunnerServer{
+		handler: handler,
+	}
+
+	for i := range opts {
+		opts[i](srv)
+	}
+
+	service := ranger.Service{
+		Name: "QueryRunner",
+		Methods: map[string]ranger.Method{
+			"GetExecutionJob": srv.GetExecutionJob,
+		},
+	}
+	return ranger.NewRPCServer(&service)
+}
+
+type QueryRunnerServer struct {
+	handler            QueryRunner
+	allowUnknownFields bool
+}
+
+func (p *QueryRunnerServer) GetExecutionJob(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Mrn
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetExecutionJob(ctx, &req)
+}
+
+// service interface definition
+
+type PolicyResolver interface {
+	Assign(context.Context, *PolicyAssignment) (*Empty, error)
+	Unassign(context.Context, *PolicyAssignment) (*Empty, error)
+	Resolve(context.Context, *ResolveReq) (*ResolvedPolicy, error)
+	UpdateAssetJobs(context.Context, *UpdateAssetJobsReq) (*Empty, error)
+	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
+	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
+	GetReport(context.Context, *EntityScoreRequest) (*Report, error)
+	GetScore(context.Context, *EntityScoreRequest) (*Report, error)
+}
+
+// client implementation
+
+type PolicyResolverClient struct {
+	ranger.Client
+	httpclient ranger.HTTPClient
+	prefix     string
+}
+
+func NewPolicyResolverClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*PolicyResolverClient, error) {
+	base, err := url.Parse(ranger.SanitizeUrl(addr))
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := url.Parse("./PolicyResolver")
+	if err != nil {
+		return nil, err
+	}
+
+	serviceClient := &PolicyResolverClient{
+		httpclient: client,
+		prefix:     base.ResolveReference(u).String(),
+	}
+	serviceClient.AddPlugins(plugins...)
+	return serviceClient, nil
+}
+func (c *PolicyResolverClient) Assign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Assign"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) Unassign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Unassign"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) Resolve(ctx context.Context, in *ResolveReq) (*ResolvedPolicy, error) {
+	out := new(ResolvedPolicy)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Resolve"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) UpdateAssetJobs(ctx context.Context, in *UpdateAssetJobsReq) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/UpdateAssetJobs"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) ResolveAndUpdateJobs(ctx context.Context, in *UpdateAssetJobsReq) (*ResolvedPolicy, error) {
+	out := new(ResolvedPolicy)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ResolveAndUpdateJobs"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) StoreResults(ctx context.Context, in *StoreResultsReq) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreResults"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
+	out := new(Report)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
+	out := new(Report)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
+	return out, err
+}
+
+// server implementation
+
+type PolicyResolverServerOption func(s *PolicyResolverServer)
+
+func WithUnknownFieldsForPolicyResolverServer() PolicyResolverServerOption {
+	return func(s *PolicyResolverServer) {
+		s.allowUnknownFields = true
+	}
+}
+
+func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServerOption) http.Handler {
+	srv := &PolicyResolverServer{
+		handler: handler,
+	}
+
+	for i := range opts {
+		opts[i](srv)
+	}
+
+	service := ranger.Service{
+		Name: "PolicyResolver",
+		Methods: map[string]ranger.Method{
+			"Assign":               srv.Assign,
+			"Unassign":             srv.Unassign,
+			"Resolve":              srv.Resolve,
+			"UpdateAssetJobs":      srv.UpdateAssetJobs,
+			"ResolveAndUpdateJobs": srv.ResolveAndUpdateJobs,
+			"StoreResults":         srv.StoreResults,
+			"GetReport":            srv.GetReport,
+			"GetScore":             srv.GetScore,
+		},
+	}
+	return ranger.NewRPCServer(&service)
+}
+
+type PolicyResolverServer struct {
+	handler            PolicyResolver
+	allowUnknownFields bool
+}
+
+func (p *PolicyResolverServer) Assign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req PolicyAssignment
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.Assign(ctx, &req)
+}
+func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req PolicyAssignment
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.Unassign(ctx, &req)
+}
+func (p *PolicyResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req ResolveReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.Resolve(ctx, &req)
+}
+func (p *PolicyResolverServer) UpdateAssetJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req UpdateAssetJobsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.UpdateAssetJobs(ctx, &req)
+}
+func (p *PolicyResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req UpdateAssetJobsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.ResolveAndUpdateJobs(ctx, &req)
+}
+func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req StoreResultsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.StoreResults(ctx, &req)
+}
+func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req EntityScoreRequest
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetReport(ctx, &req)
+}
+func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req EntityScoreRequest
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetScore(ctx, &req)
+}
