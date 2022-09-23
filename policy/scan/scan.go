@@ -13,8 +13,8 @@ import (
 	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/motor/vault"
+	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/cnspec/policy/datalakes/inmemory"
 	"google.golang.org/grpc/codes"
 )
 
@@ -69,7 +69,7 @@ func (s *LocalService) RunIncognito(job *Job) ([]*policy.Report, error) {
 
 	ctx := discovery.InitCtx(job.Ctx)
 
-	reports, _, err := s.distributeJobToAssets(job, ctx)
+	reports, _, err := s.distributeJob(job, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (s *LocalService) RunIncognito(job *Job) ([]*policy.Report, error) {
 	return reports, nil
 }
 
-func (s *LocalService) distributeJobToAssets(job *Job, ctx context.Context) ([]*policy.Report, bool, error) {
+func (s *LocalService) distributeJob(job *Job, ctx context.Context) ([]*policy.Report, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	im, err := inventory.New(inventory.WithInventory(job.Inventory))
 	if err != nil {
@@ -109,7 +109,7 @@ func (s *LocalService) distributeJobToAssets(job *Job, ctx context.Context) ([]*
 		default:
 		}
 
-		s.RunAssetIncognito(&AssetJob{
+		s.RunAssetJob(&AssetJob{
 			DoRecord:      job.DoRecord,
 			Asset:         assetList[i],
 			Bundle:        job.Bundle,
@@ -122,7 +122,7 @@ func (s *LocalService) distributeJobToAssets(job *Job, ctx context.Context) ([]*
 	return reporter.Reports(), true, reporter.Error()
 }
 
-func (s *LocalService) RunAssetIncognito(job *AssetJob) {
+func (s *LocalService) RunAssetJob(job *AssetJob) {
 	log.Info().Msgf("connecting to asset %s", job.Asset.HumanName())
 
 	// run over all connections
@@ -159,21 +159,21 @@ func (s *LocalService) RunAssetIncognito(job *AssetJob) {
 				}
 			}
 
-			policyResults, err := runner.Run(job.Asset, m)
-			// TODO: consider running all and return the error per asset
+			policyResults, err := s.RunMotorizedAsset(job.Asset, m)
+
 			if err != nil {
 				job.Reporter.AddScanError(job.Asset, err)
 				return
 			}
 
-			// handle report, eg. for printing the report
-			if job.Reporter != nil {
-				job.Reporter.AddReport(job.Asset, policyResults)
-				return
-			}
+			job.Reporter.AddReport(job.Asset, policyResults)
 
 		}(connections[c])
 	}
+}
 
-	return
+func (s *LocalService) RunMotorizedAsset(asset *asset.Asset, m *motor.Motor) (*AssetReport, error) {
+
+	panic("implement the runner!")
+	return nil, nil
 }
