@@ -233,6 +233,7 @@ func (s *localAssetScanner) prepareAsset() error {
 }
 
 func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedPolicy, error) {
+	s.services.Datalakes
 	panic("implement runPolicy")
 	return nil, nil, nil
 }
