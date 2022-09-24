@@ -1,7 +1,6 @@
 package inmemory
 
 import (
-	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,14 +18,14 @@ type kvStore interface {
 // It allows you to interact with the underlying data in Mondoo.
 type Db struct {
 	cache               kvStore
-	services            *policy.LocalServices
-	uuid                string // used for all object identifiers to prevent clashes (eg in-memory pubsub)
+	services            *policy.LocalServices // bidirectional connection between db + services
+	uuid                string                // used for all object identifiers to prevent clashes (eg in-memory pubsub)
 	nowProvider         func() time.Time
 	resolvedPolicyCache *ResolvedPolicyCache
 }
 
 // NewServices creates a new set of policy services
-func NewServices(ctx context.Context, resolvedPolicyCache *ResolvedPolicyCache) (*Db, *policy.LocalServices, error) {
+func NewServices(resolvedPolicyCache *ResolvedPolicyCache) (*Db, *policy.LocalServices, error) {
 	var cache kvStore = newKissDb()
 
 	if resolvedPolicyCache == nil {
@@ -41,14 +40,14 @@ func NewServices(ctx context.Context, resolvedPolicyCache *ResolvedPolicyCache) 
 	}
 
 	services := policy.NewLocalServices(db, db.uuid)
-	db.services = services
+	db.services = services // close the connection between db and services
 
 	return db, services, nil
 }
 
 // WithDb creates a new set of policy services and closes everything out once the function is done
-func WithDb(ctx context.Context, resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalServices) error) error {
-	db, ls, err := NewServices(ctx, resolvedPolicyCache)
+func WithDb(resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalServices) error) error {
+	db, ls, err := NewServices(resolvedPolicyCache)
 	if err != nil {
 		return err
 	}
