@@ -2,10 +2,14 @@ package scan
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/gogo/status"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery"
+	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
@@ -13,6 +17,7 @@ import (
 	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/motor/vault"
+	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 	"google.golang.org/grpc/codes"
@@ -24,14 +29,14 @@ const ResolvedPolicyCacheSize = 52428800
 type Job struct {
 	DoRecord  bool
 	Inventory *v1.Inventory
-	Bundle    *policy.PolicyBundleMap
+	Bundle    *policy.PolicyBundle
 	Ctx       context.Context
 }
 
 type AssetJob struct {
 	DoRecord      bool
 	Asset         *asset.Asset
-	Bundle        *policy.PolicyBundleMap
+	Bundle        *policy.PolicyBundle
 	Ctx           context.Context
 	GetCredential func(cred *vault.Credential) (*vault.Credential, error)
 	Reporter      Reporter
@@ -186,6 +191,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		scanner := &localAssetScanner{
 			db:       db,
 			services: services,
+			// FIXME: progress
 		}
 		res, policyErr = scanner.run()
 		return policyErr
@@ -197,10 +203,20 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	return res, policyErr
 }
 
+type Progress interface {
+	OnProgress(current int, total int)
+	Close()
+}
+
 type localAssetScanner struct {
 	db       *inmemory.Db
 	services *policy.LocalServices
 	job      *AssetJob
+
+	Runtime  *resources.Runtime
+	Registry *resources.Registry
+	Schema   *resources.Schema
+	Progress Progress
 }
 
 func (l *localAssetScanner) run() (*AssetReport, error) {
@@ -228,17 +244,124 @@ func (l *localAssetScanner) run() (*AssetReport, error) {
 }
 
 func (s *localAssetScanner) prepareAsset() error {
+	hub := s.services.DataLake.(policy.PolicyHub)
+	_, err := hub.SetPolicyBundle(s.job.Ctx, s.job.Bundle)
+	if err != nil {
+		return err
+	}
+
+	policyMrns := make([]string, len(s.job.Bundle.Policies))
+	for i := range s.job.Bundle.Policies {
+		policyMrns[i] = s.job.Bundle.Policies[i].Mrn
+	}
+
+	resolver := s.services.DataLake.(policy.PolicyResolver)
+	resolver.Assign(s.job.Ctx, &policy.PolicyAssignment{
+		AssetMrn:   s.job.Asset.Mrn,
+		PolicyMrns: policyMrns,
+	})
+
 	panic("implement prepareAsset")
 	return nil
 }
 
 func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedPolicy, error) {
-	s.services.Datalakes
-	panic("implement runPolicy")
-	return nil, nil, nil
+	hub := s.services.DataLake.(policy.PolicyHub)
+	resolver := s.services.DataLake.(policy.PolicyResolver)
+
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
+	assetBundle, err := hub.GetPolicyBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Debug().Msg("client> got policy bundle")
+	logger.TraceJSON(assetBundle)
+	logger.DebugDumpJSON("assetBundle", assetBundle)
+
+	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got policy filters")
+	logger.TraceJSON(rawFilters)
+
+	filters, err := s.UpdateFilters(rawFilters, 5*time.Second)
+	if err != nil {
+		return s.job.Bundle, nil, err
+	}
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> shell update filters")
+	logger.DebugJSON(filters)
+
+	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
+		AssetMrn:     s.job.Asset.Mrn,
+		AssetFilters: filters,
+	})
+	if err != nil {
+		return s.job.Bundle, resolvedPolicy, err
+	}
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got resolved policy bundle for asset")
+	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
+
+	features := cnquery.GetFeatures(s.job.Ctx)
+	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.Progress)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return s.job.Bundle, nil, nil
 }
 
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
-	panic("implement getReport")
-	return nil, nil
+	resolver := s.services.DataLake.(policy.PolicyResolver)
+
+	// TODO: we do not needs this anymore since we recieve updates already
+	log.Info().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
+	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
+	// handle error
+	if err != nil {
+		s.Progress.Close()
+		return &policy.Report{
+			EntityMrn:  s.job.Asset.Mrn,
+			ScoringMrn: s.job.Asset.Mrn,
+		}, err
+	}
+
+	s.Progress.Close()
+
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
+	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreRequest{
+		// NOTE: we assign policies to the asset before we execute the tests, therefore this resolves all policies assigned to the asset
+		EntityMrn: s.job.Asset.Mrn,
+		ScoreMrn:  s.job.Asset.Mrn,
+	})
+	if err != nil {
+		return &policy.Report{
+			EntityMrn:  s.job.Asset.Mrn,
+			ScoringMrn: s.job.Asset.Mrn,
+		}, err
+	}
+
+	return report, nil
+}
+
+// FilterQueries returns all queries whose result is truthy
+func (s *localAssetScanner) FilterQueries(queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+	return executor.ExecuteFilterQueries(s.Schema, s.Runtime, queries, timeout)
+}
+
+// UpdateFilters takes a list of test filters and runs them against the backend
+// to return the matching ones
+func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time.Duration) ([]*policy.Mquery, error) {
+	queries, errs := s.FilterQueries(filters.Items, timeout)
+
+	var err error
+	if len(errs) != 0 {
+		w := strings.Builder{}
+		for i := range errs {
+			w.WriteString(errs[i].Error() + "\n")
+		}
+		err = errors.New("received multiple errors: " + w.String())
+	}
+
+	return queries, err
 }
