@@ -11,6 +11,12 @@ type Progress interface {
 	Close()
 }
 
+type Noop struct{}
+
+func (n Noop) Open()               {}
+func (n Noop) OnProgress(int, int) {}
+func (n Noop) Close()              {}
+
 type ProgressData struct {
 	SortedKeys []string
 	Names      map[string]string
