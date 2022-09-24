@@ -44,17 +44,17 @@ type AssetReport struct {
 	Report         *policy.Report
 }
 
-type LocalService struct {
+type LocalScanner struct {
 	resolvedPolicyCache *inmemory.ResolvedPolicyCache
 }
 
-func NewLocalService() *LocalService {
-	return &LocalService{
+func NewLocalScanner() *LocalScanner {
+	return &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
 	}
 }
 
-func (s *LocalService) RunIncognito(job *Job) ([]*policy.Report, error) {
+func (s *LocalScanner) RunIncognito(job *Job) ([]*policy.Report, error) {
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -77,7 +77,7 @@ func (s *LocalService) RunIncognito(job *Job) ([]*policy.Report, error) {
 	return reports, nil
 }
 
-func (s *LocalService) distributeJob(job *Job, ctx context.Context) ([]*policy.Report, bool, error) {
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) ([]*policy.Report, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	im, err := inventory.New(inventory.WithInventory(job.Inventory))
 	if err != nil {
@@ -122,7 +122,7 @@ func (s *LocalService) distributeJob(job *Job, ctx context.Context) ([]*policy.R
 	return reporter.Reports(), true, reporter.Error()
 }
 
-func (s *LocalService) RunAssetJob(job *AssetJob) {
+func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	log.Info().Msgf("connecting to asset %s", job.Asset.HumanName())
 
 	// run over all connections
@@ -159,7 +159,7 @@ func (s *LocalService) RunAssetJob(job *AssetJob) {
 				}
 			}
 
-			policyResults, err := s.RunMotorizedAsset(job.Asset, m)
+			policyResults, err := s.RunMotorizedAsset(job.Ctx, job.Asset, m)
 
 			if err != nil {
 				job.Reporter.AddScanError(job.Asset, err)
@@ -172,8 +172,18 @@ func (s *LocalService) RunAssetJob(job *AssetJob) {
 	}
 }
 
-func (s *LocalService) RunMotorizedAsset(asset *asset.Asset, m *motor.Motor) (*AssetReport, error) {
+func (s *LocalScanner) RunMotorizedAsset(ctx context.Context, asset *asset.Asset, m *motor.Motor) (*AssetReport, error) {
+	var res *AssetReport
+	var policyErr error
 
-	panic("implement the runner!")
-	return nil, nil
+	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
+		panic("implement the runner!")
+		_ = ctx // bind bac
+		return nil
+	})
+	if runtimeErr != nil {
+		return res, runtimeErr
+	}
+
+	return res, policyErr
 }
