@@ -246,7 +246,7 @@ func (l *localAssetScanner) run() (*AssetReport, error) {
 }
 
 func (s *localAssetScanner) prepareAsset() error {
-	hub := s.services.DataLake.(policy.PolicyHub)
+	var hub policy.PolicyHub = s.services
 	_, err := hub.SetPolicyBundle(s.job.Ctx, s.job.Bundle)
 	if err != nil {
 		return err

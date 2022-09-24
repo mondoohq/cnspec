@@ -116,3 +116,62 @@ func (p *PolicyBundleMap) ToList() *PolicyBundle {
 
 	return &res
 }
+
+// PoliciesSortedByDependency sorts policies by their dependencies
+// note: the MRN field must be set and dependencies in specs must be specified by MRN
+func (p *PolicyBundleMap) PoliciesSortedByDependency() ([]*Policy, error) {
+	indexer := map[string]struct{}{}
+	var res []*Policy
+
+	for i := range p.Policies {
+		policy := p.Policies[i]
+
+		if _, ok := indexer[policy.Mrn]; ok {
+			continue
+		}
+
+		depRes, err := sortPolicies(policy, p, indexer)
+		if err != nil {
+			return nil, err
+		}
+
+		res = append(res, depRes...)
+	}
+
+	return res, nil
+}
+
+func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{}) ([]*Policy, error) {
+	var res []*Policy
+	indexer[p.Mrn] = struct{}{}
+
+	for i := range p.Specs {
+		spec := p.Specs[i]
+		for mrn := range spec.Policies {
+			// we only do very cursory sanity checking
+			if mrn == "" {
+				return nil, errors.New("failed to sort policies: dependency MRN is empty")
+			}
+
+			if _, ok := indexer[mrn]; ok {
+				continue
+			}
+
+			dep, ok := bundle.Policies[mrn]
+			if !ok {
+				// ignore, since we are only looking to sort the policies of the map
+				continue
+			}
+
+			depRes, err := sortPolicies(dep, bundle, indexer)
+			if err != nil {
+				return nil, err
+			}
+
+			res = append(res, depRes...)
+		}
+	}
+
+	res = append(res, p)
+	return res, nil
+}

@@ -2,6 +2,8 @@ package policy
 
 import "context"
 
+var globalEmpty = &Empty{}
+
 // Library is a subset of the DataLake focused on methods around policy and query existance
 type Library interface {
 	// QueryExists checks if the given MRN exists
