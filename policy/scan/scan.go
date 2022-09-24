@@ -18,8 +18,10 @@ import (
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/motor/vault"
 	"go.mondoo.com/cnquery/resources"
+	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/executor"
 	"google.golang.org/grpc/codes"
 )
 
@@ -191,7 +193,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		scanner := &localAssetScanner{
 			db:       db,
 			services: services,
-			// FIXME: progress
+			Progress: progress.New(job.Asset.Mrn, job.Asset.Name),
 		}
 		res, policyErr = scanner.run()
 		return policyErr
@@ -203,11 +205,6 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	return res, policyErr
 }
 
-type Progress interface {
-	OnProgress(current int, total int)
-	Close()
-}
-
 type localAssetScanner struct {
 	db       *inmemory.Db
 	services *policy.LocalServices
@@ -216,10 +213,12 @@ type localAssetScanner struct {
 	Runtime  *resources.Runtime
 	Registry *resources.Registry
 	Schema   *resources.Schema
-	Progress Progress
+	Progress progress.Progress
 }
 
 func (l *localAssetScanner) run() (*AssetReport, error) {
+	l.Progress.Open()
+
 	if err := l.prepareAsset(); err != nil {
 		return nil, err
 	}
