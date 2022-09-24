@@ -500,7 +500,7 @@ func RunScan(config *scanConfig) {
 	report, err := scanner.RunIncognito(&scan.Job{
 		DoRecord:  config.DoRecord,
 		Inventory: config.Inventory,
-		Bundle:    config.Bundle,
+		Bundle:    config.Bundle.ToList(),
 		Ctx:       cnquery.SetFeatures(context.Background(), config.Features),
 	})
 	if err != nil {
