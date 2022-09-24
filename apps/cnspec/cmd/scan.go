@@ -495,7 +495,7 @@ func (c *scanConfig) resolvePolicies() error {
 }
 
 func RunScan(config *scanConfig) {
-	scanner := scan.NewLocalService()
+	scanner := scan.NewLocalScanner()
 
 	report, err := scanner.RunIncognito(&scan.Job{
 		DoRecord:  config.DoRecord,

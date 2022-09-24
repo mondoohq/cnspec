@@ -35,6 +35,7 @@ type AssetJob struct {
 	Ctx           context.Context
 	GetCredential func(cred *vault.Credential) (*vault.Credential, error)
 	Reporter      Reporter
+	connection    *motor.Motor
 }
 
 type AssetReport struct {
@@ -159,7 +160,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				}
 			}
 
-			policyResults, err := s.RunMotorizedAsset(job.Ctx, job.Asset, m)
+			job.connection = m
+			policyResults, err := s.runMotorizedAsset(job)
 
 			if err != nil {
 				job.Reporter.AddScanError(job.Asset, err)
@@ -172,18 +174,70 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	}
 }
 
-func (s *LocalScanner) RunMotorizedAsset(ctx context.Context, asset *asset.Asset, m *motor.Motor) (*AssetReport, error) {
+func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var res *AssetReport
 	var policyErr error
 
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
-		panic("implement the runner!")
-		_ = ctx // bind bac
-		return nil
+		if services.Upstream != nil {
+			panic("cannot work with upstream yet")
+		}
+
+		scanner := &localAssetScanner{
+			db:       db,
+			services: services,
+		}
+		res, policyErr = scanner.run()
+		return policyErr
 	})
 	if runtimeErr != nil {
 		return res, runtimeErr
 	}
 
 	return res, policyErr
+}
+
+type localAssetScanner struct {
+	db       *inmemory.Db
+	services *policy.LocalServices
+	job      *AssetJob
+}
+
+func (l *localAssetScanner) run() (*AssetReport, error) {
+	if err := l.prepareAsset(); err != nil {
+		return nil, err
+	}
+
+	bundle, resolvedPolicy, err := l.runPolicy()
+	if err != nil {
+		return nil, err
+	}
+
+	report, err := l.getReport()
+	if err != nil {
+		return nil, err
+	}
+
+	log.Debug().Str("asset", l.job.Asset.Mrn).Msg("scan complete")
+	return &AssetReport{
+		Mrn:            l.job.Asset.Mrn,
+		ResolvedPolicy: resolvedPolicy,
+		Bundle:         bundle,
+		Report:         report,
+	}, nil
+}
+
+func (s *localAssetScanner) prepareAsset() error {
+	panic("implement prepareAsset")
+	return nil
+}
+
+func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedPolicy, error) {
+	panic("implement runPolicy")
+	return nil, nil, nil
+}
+
+func (s *localAssetScanner) getReport() (*policy.Report, error) {
+	panic("implement getReport")
+	return nil, nil
 }
