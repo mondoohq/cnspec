@@ -1283,8 +1283,8 @@ type progressMock struct {
 	f func(current int, total int)
 }
 
-func (p *progressMock) Open()  {}
-func (p *progressMock) Close() {}
+func (p *progressMock) Open() error { return nil }
+func (p *progressMock) Close()      {}
 func (p *progressMock) OnProgress(current int, total int) {
 	p.f(current, total)
 }

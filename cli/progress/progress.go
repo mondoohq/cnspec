@@ -1,53 +1,50 @@
 package progress
 
 import (
+	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/pkg/errors"
 )
 
 type Progress interface {
-	Open()
+	Open() error
 	OnProgress(current int, total int)
 	Close()
 }
 
 type Noop struct{}
 
-func (n Noop) Open()               {}
+func (n Noop) Open() error         { return nil }
 func (n Noop) OnProgress(int, int) {}
 func (n Noop) Close()              {}
 
-type ProgressData struct {
-	SortedKeys []string
-	Names      map[string]string
-	Progress   sync.Map
-	complete   int32
-}
-
-func (p *ProgressData) IsComplete() bool {
-	return atomic.LoadInt32(&p.complete) > 0
-}
-
-func (p *ProgressData) SetComplete() {
-	atomic.StoreInt32(&p.complete, 1)
-}
-
 type progressbar struct {
 	id           string
-	completion   uint32
 	maxNameWidth int
-	Data         *ProgressData
+	padding      int
+	Data         progressData
+	lock         sync.Mutex
+	bar          *renderer
+}
+
+type progressData struct {
+	Names      []string
+	Completion []float32
+	complete   bool
 }
 
 func New(id string, name string) *progressbar {
-	return NewMultiBar(id, &ProgressData{
-		SortedKeys: []string{name},
-		Names:      map[string]string{id: name},
-		Progress:   sync.Map{},
+	return NewMultiBar(id, progressData{
+		Names:      []string{name},
+		Completion: []float32{0},
+		complete:   false,
 	})
 }
 
-func NewMultiBar(id string, data *ProgressData) *progressbar {
+func NewMultiBar(id string, data progressData) *progressbar {
 	maxNameWidth := 0
 	for _, v := range data.Names {
 		l := len(v)
@@ -58,20 +55,96 @@ func NewMultiBar(id string, data *ProgressData) *progressbar {
 
 	return &progressbar{
 		id:           id,
-		completion:   0,
 		maxNameWidth: maxNameWidth,
 		Data:         data,
 	}
 }
 
-func (p *progressbar) Open() {
-	panic("progressbar.Open not yet implemented")
+func (p *progressbar) Open() error {
+	var err error
+	p.bar, err = newRenderer()
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize progressbar renderer")
+	}
+
+	if err := tea.NewProgram(p).Start(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (p *progressbar) OnProgress(current int, total int) {
-	panic("progressbar.OnProgress not yet implemented")
+	p.lock.Lock()
+	p.Data.Completion[0] = float32(current) / float32(total)
+	p.lock.Unlock()
 }
 
 func (p *progressbar) Close() {
-	panic("progressbar.Close not yet implemented")
+	p.Data.complete = true
+}
+
+const (
+	progressDefaultFps   = 60
+	progressDefaultWidth = 80
+)
+
+type tickMsg time.Time
+
+// Init is a required interface method for the underlying renderer
+func (p *progressbar) Init() tea.Cmd {
+	return tickCmd()
+}
+
+// Update is a required interface method for the underlying renderer
+func (p *progressbar) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if p.Data.complete {
+		return p, tea.Quit
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return p, tea.Quit
+		default:
+			return p, nil
+		}
+
+	case tea.WindowSizeMsg:
+		p.bar.Width = msg.Width - p.padding*2 - 4 - p.maxNameWidth
+		if p.bar.Width > progressDefaultWidth {
+			p.bar.Width = progressDefaultWidth
+		}
+		return p, nil
+
+	case tickMsg:
+		return p, tickCmd()
+
+	default:
+		return p, nil
+	}
+}
+
+// View is a required interface method for the underlying renderer
+func (p *progressbar) View() string {
+	pad := strings.Repeat(" ", p.padding)
+
+	out := ""
+	p.lock.Lock()
+	for i := range p.Data.Names {
+		name := p.Data.Names[i]
+		value := p.Data.Completion[i]
+		out += "\n" + pad + p.bar.View(value) + " " + name
+	}
+	p.lock.Unlock()
+
+	out += "\n\n"
+	return out
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second/progressDefaultFps, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
