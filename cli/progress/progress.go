@@ -67,9 +67,11 @@ func (p *progressbar) Open() error {
 		return errors.Wrap(err, "failed to initialize progressbar renderer")
 	}
 
-	if err := tea.NewProgram(p).Start(); err != nil {
-		return err
-	}
+	go func() {
+		if err := tea.NewProgram(p).Start(); err != nil {
+			panic(err)
+		}
+	}()
 
 	return nil
 }
