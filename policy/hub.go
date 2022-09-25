@@ -171,6 +171,18 @@ func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *P
 	return nil
 }
 
+func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *Mquery, isScored bool) error {
+	if query == nil {
+		return errors.New("cannot set query '" + mrn + "' as it is not defined")
+	}
+
+	if query.Title == "" {
+		query.Title = query.Query
+	}
+
+	return s.DataLake.SetQuery(ctx, mrn, query, isScored)
+}
+
 // GetPolicy without cascading dependencies
 func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
 	logCtx := logger.FromContext(ctx)
