@@ -395,3 +395,8 @@ func checksumAddSpec(checksum checksums.Fast, spec *ScoringSpec) checksums.Fast 
 	checksum = checksum.AddUint(weightIsPrecentage | uint64(spec.Weight))
 	return checksum.Add(spec.Id)
 }
+
+func (p *Policy) InvalidateGraphChecksums() {
+	p.GraphContentChecksum = ""
+	p.GraphExecutionChecksum = ""
+}
