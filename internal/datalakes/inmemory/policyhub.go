@@ -210,6 +210,45 @@ func (db *Db) invalidatePolicyAndBundleAncestors(ctx context.Context, wrap *wrap
 	return nil
 }
 
+// ListPolicies all policies for a given owner
+// Note: Owner MRN is required
+func (db *Db) ListPolicies(ctx context.Context, ownerMrn string, name string) ([]*policy.Policy, error) {
+	mrns, err := db.listPolicies()
+	if err != nil {
+		return nil, err
+	}
+
+	res := []*policy.Policy{}
+	for k := range mrns {
+		policyObj, err := db.GetRawPolicy(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+
+		if policyObj.OwnerMrn != ownerMrn {
+			continue
+		}
+
+		res = append(res, policyObj)
+	}
+
+	return res, nil
+}
+
+func (db *Db) listPolicies() (map[string]struct{}, error) {
+	x, ok := db.cache.Get(dbIDListPolicies)
+	if ok {
+		return x.(map[string]struct{}), nil
+	}
+
+	nu := map[string]struct{}{}
+	ok = db.cache.Set(dbIDListPolicies, nu, 0)
+	if !ok {
+		return nil, errors.New("failed to initialize policies list cache")
+	}
+	return nu, nil
+}
+
 // DeletePolicy removes a given policy
 // Note: the MRN has to be valid
 func (db *Db) DeletePolicy(ctx context.Context, mrn string) error {
@@ -264,20 +303,6 @@ func (db *Db) DeletePolicy(ctx context.Context, mrn string) error {
 	db.cache.Del(dbIDPolicy + mrn)
 
 	return nil
-}
-
-func (db *Db) listPolicies() (map[string]struct{}, error) {
-	x, ok := db.cache.Get(dbIDListPolicies)
-	if ok {
-		return x.(map[string]struct{}), nil
-	}
-
-	nu := map[string]struct{}{}
-	ok = db.cache.Set(dbIDListPolicies, nu, 0)
-	if !ok {
-		return nil, errors.New("failed to initialize policies list cache")
-	}
-	return nu, nil
 }
 
 // GetValidatedBundle retrieves and if necessary updates the policy bundle

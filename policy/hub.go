@@ -240,6 +240,29 @@ func (s *LocalServices) GetPolicyFilters(ctx context.Context, mrn *Mrn) (*Mqueri
 	return &Mqueries{Items: filters}, nil
 }
 
+// List all policies for a given owner
+func (s *LocalServices) List(ctx context.Context, filter *PolicySearchFilter) (*Policies, error) {
+	if filter == nil {
+		return nil, status.Error(codes.InvalidArgument, "need to provide a filter object for list")
+	}
+
+	if len(filter.OwnerMrn) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "a MRN for the policy owner is required")
+	}
+
+	res, err := s.DataLake.ListPolicies(ctx, filter.OwnerMrn, filter.Name)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		res = []*Policy{}
+	}
+
+	return &Policies{
+		Items: res,
+	}, nil
+}
+
 // DeletePolicy removes a policy via its given MRN
 func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
 	if in == nil || len(in.Mrn) == 0 {
