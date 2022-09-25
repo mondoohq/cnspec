@@ -31,6 +31,18 @@ type wrapBundle struct {
 	invalidated          bool
 }
 
+// QueryExists checks if the given MRN exists
+func (db *Db) QueryExists(ctx context.Context, mrn string) (bool, error) {
+	_, ok := db.cache.Get(dbIDQuery + mrn)
+	return ok, nil
+}
+
+// PolicyExists checks if the given MRN exists
+func (db *Db) PolicyExists(ctx context.Context, mrn string) (bool, error) {
+	_, ok := db.cache.Get(dbIDPolicy + mrn)
+	return ok, nil
+}
+
 // GetQuery retrieves a given query
 func (db *Db) GetQuery(ctx context.Context, mrn string) (*policy.Mquery, error) {
 	q, ok := db.cache.Get(dbIDQuery + mrn)
