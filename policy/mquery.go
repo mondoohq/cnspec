@@ -4,10 +4,54 @@ import (
 	"sort"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/mqlc"
+	"go.mondoo.com/cnquery/resources/packs/os/info"
 	"go.mondoo.com/cnquery/types"
 )
+
+// Compile a given query and return the bundle. Both v1 and v2 versions are compiled.
+// Both versions will be given the same code id.
+func (m *Mquery) Compile(props map[string]*llx.Primitive, mustCompileV1 bool) (*llx.CodeBundle, error) {
+	if m.Query == "" {
+		return nil, errors.New("query is not implemented '" + m.Mrn + "'")
+	}
+
+	schema := info.Registry.Schema()
+
+	v2Code, err := mqlc.Compile(m.Query, schema,
+		cnquery.Features{byte(cnquery.PiperCode)}, props)
+	if err != nil {
+		return nil, err
+	}
+
+	v1Code, err := mqlc.Compile(m.Query, schema,
+		cnquery.Features{}, props)
+	if err != nil {
+		log.Debug().Err(err).Str("query", m.Query).Msg("query only compiles with piper code")
+		if mustCompileV1 {
+			return nil, err
+		}
+	} else {
+		v2Code.DeprecatedV5Code = v1Code.GetDeprecatedV5Code()
+	}
+
+	if v2Code.DeprecatedV5Code != nil {
+		v2Code.CodeV2.Id = v2Code.DeprecatedV5Code.Id
+		if v2Code.GetLabels().GetLabels() == nil {
+			v2Code.Labels = v1Code.Labels
+		} else {
+			for k, v := range v1Code.Labels.GetLabels() {
+				v2Code.Labels.Labels[k] = v
+			}
+		}
+		v2Code.DeprecatedV5Assertions = v1Code.GetDeprecatedV5Assertions()
+	}
+	return v2Code, nil
+}
 
 // RefreshAsAssetFilter filters treats this query as an asset filter and sets its Mrn, Title, and Checksum
 func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
