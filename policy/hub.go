@@ -226,6 +226,102 @@ func (s *LocalServices) GetPolicyBundle(ctx context.Context, in *Mrn) (*PolicyBu
 	return s.cacheUpstreamPolicy(ctx, in.Mrn)
 }
 
+// DeletePolicy removes a policy via its given MRN
+func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
+	if in == nil || len(in.Mrn) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "policy MRN is required")
+	}
+
+	return globalEmpty, s.DataLake.DeletePolicy(ctx, in.Mrn)
+}
+
+// HELPER METHODS
+// =================
+
+// ComputeBundle creates a policy bundle (with queries and dependencies) for a given policy
+func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (*PolicyBundle, error) {
+	bundleMap := PolicyBundleMap{
+		OwnerMrn: mpolicyObj.OwnerMrn,
+		Policies: map[string]*Policy{},
+		Queries:  map[string]*Mquery{},
+		Props:    map[string]*Mquery{},
+	}
+
+	// we need to re-compute the asset filters
+	mpolicyObj.AssetFilters = map[string]*Mquery{}
+	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
+
+	for mrn, v := range mpolicyObj.Props {
+		if v != "" {
+			return nil, errors.New("cannot support properties which overwrite other properties")
+		}
+
+		query, err := s.DataLake.GetQuery(ctx, mrn)
+		if err != nil {
+			return nil, err
+		}
+		bundleMap.Props[mrn] = query
+	}
+
+	for i := range mpolicyObj.Specs {
+		spec := mpolicyObj.Specs[i]
+
+		if spec.AssetFilter != nil {
+			filter := spec.AssetFilter
+			mpolicyObj.AssetFilters[filter.CodeId] = filter
+		}
+
+		for mrn := range spec.DataQueries {
+			query, err := s.DataLake.GetQuery(ctx, mrn)
+			if err != nil {
+				return nil, err
+			}
+			bundleMap.Queries[mrn] = query
+		}
+
+		for mrn := range spec.ScoringQueries {
+			query, err := s.DataLake.GetQuery(ctx, mrn)
+			if err != nil {
+				return nil, err
+			}
+			bundleMap.Queries[mrn] = query
+		}
+
+		for mrn := range spec.Policies {
+			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, mrn)
+			if err != nil {
+				return nil, err
+			}
+
+			for i := range nuBundle.Policies {
+				policy := nuBundle.Policies[i]
+				bundleMap.Policies[policy.Mrn] = policy
+			}
+			for i := range nuBundle.Queries {
+				query := nuBundle.Queries[i]
+				bundleMap.Queries[query.Mrn] = query
+			}
+			for i := range nuBundle.Props {
+				query := nuBundle.Props[i]
+				bundleMap.Props[query.Mrn] = query
+			}
+
+			nuPolicy := bundleMap.Policies[mrn]
+			if nuPolicy == nil {
+				return nil, errors.New("pulled policy bundle for " + mrn + " but couldn't find the policy in the bundle")
+			}
+			for k, v := range nuPolicy.AssetFilters {
+				mpolicyObj.AssetFilters[k] = v
+			}
+		}
+	}
+
+	// phew, done collecting. let's save and return
+
+	list := bundleMap.ToList().Clean()
+	return list, nil
+}
+
 // cacheUpstreamPolicy by storing a copy of the upstream policy bundle in this db
 // Note: upstream marketplace has to be defined
 func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*PolicyBundle, error) {
@@ -254,14 +350,6 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*P
 
 	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetched policy bundle from upstream")
 	return bundle, nil
-}
-
-func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
-	if in == nil || len(in.Mrn) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "policy MRN is required")
-	}
-
-	return globalEmpty, s.DataLake.DeletePolicy(ctx, in.Mrn)
 }
 
 // fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized
