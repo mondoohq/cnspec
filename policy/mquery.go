@@ -68,6 +68,11 @@ func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
 	return bundle, nil
 }
 
+// RefreshChecksumAndType by compiling the query and updating the Checksum field
+func (m *Mquery) RefreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+	return m.refreshChecksumAndType(props, false)
+}
+
 func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive, mustCompileV1 bool) (*llx.CodeBundle, error) {
 	bundle, err := m.Compile(props, mustCompileV1)
 	if err != nil {
