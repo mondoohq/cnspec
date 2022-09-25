@@ -2,6 +2,7 @@ package policy
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -146,4 +147,33 @@ func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive, mustCom
 	m.Checksum = c.String()
 
 	return bundle, nil
+}
+
+// Sanitize ensure the content is in good shape and removes leading and trailing whitespace
+func (m *Mquery) Sanitize() {
+	if m == nil {
+		return
+	}
+
+	if m.Docs != nil {
+		m.Docs.Desc = strings.TrimSpace(m.Docs.Desc)
+		m.Docs.Audit = strings.TrimSpace(m.Docs.Audit)
+		m.Docs.Remediation = strings.TrimSpace(m.Docs.Remediation)
+	}
+
+	for i := range m.Refs {
+		r := m.Refs[i]
+		r.Title = strings.TrimSpace(r.Title)
+		r.Url = strings.TrimSpace(r.Url)
+	}
+
+	if m.Tags != nil {
+		sanitizedTags := map[string]string{}
+		for k, v := range m.Tags {
+			sk := strings.TrimSpace(k)
+			sv := strings.TrimSpace(v)
+			sanitizedTags[sk] = sv
+		}
+		m.Tags = sanitizedTags
+	}
 }
