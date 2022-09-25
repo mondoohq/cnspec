@@ -400,3 +400,16 @@ func (p *Policy) InvalidateGraphChecksums() {
 	p.GraphContentChecksum = ""
 	p.GraphExecutionChecksum = ""
 }
+
+// DependentPolicyMrns lists all policies found across all specs
+func (p *Policy) DependentPolicyMrns() map[string]struct{} {
+	mrns := map[string]struct{}{}
+	for i := range p.Specs {
+		spec := p.Specs[i]
+		for k := range spec.Policies {
+			mrns[k] = struct{}{}
+		}
+	}
+
+	return mrns
+}
