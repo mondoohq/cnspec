@@ -12,6 +12,27 @@ import (
 
 var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
 
+// SetPolicyBundle stores a bundle of policies and queries in this marketplace
+func (s *LocalServices) SetPolicyBundle(ctx context.Context, bundle *PolicyBundle) (*Empty, error) {
+	if len(bundle.OwnerMrn) == 0 {
+		return globalEmpty, status.Error(codes.InvalidArgument, "owner MRN is required")
+	}
+
+	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
+	FixZeroValuesInPolicyBundle(bundle)
+
+	bundleMap, err := bundle.Compile(ctx, s.DataLake)
+	if err != nil {
+		return globalEmpty, err
+	}
+
+	if err := s.setPolicyBundleFromMap(ctx, bundleMap); err != nil {
+		return nil, err
+	}
+
+	return globalEmpty, nil
+}
+
 // PreparePolicy takes a policy and an optional bundle and gets it
 // ready to be saved in the DB, including asset filters.
 // Note1: The bundle must have been pre-compiled and validated!
