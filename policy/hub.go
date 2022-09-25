@@ -12,6 +12,112 @@ import (
 
 var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
 
+// PreparePolicy takes a policy and an optional bundle and gets it
+// ready to be saved in the DB, including asset filters.
+// Note1: The bundle must have been pre-compiled and validated!
+// Note2: The bundle may be nil, in which case we will try to find what is needed for the policy
+// Note3: We create the ent.PolicyBundle in this function, not in the `SetPolicyBundle`
+//
+//	Reason: SetPolicyBundle may be setting 1 outer and 3 embedded policies.
+//	But we need to create ent.PolicyBundles for all 4 of those.
+func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*Mquery, error) {
+	logCtx := logger.FromContext(ctx)
+	var err error
+
+	if policyObj == nil || len(policyObj.Mrn) == 0 {
+		return nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	}
+
+	if len(policyObj.OwnerMrn) == 0 {
+		return nil, nil, status.Error(codes.InvalidArgument, "owner mrn is required")
+	}
+
+	policyObj.RefreshLocalAssetFilters()
+
+	// store all queries
+	// NOTE: if we modify the spec only, we may not have the queries available e.g. used by ApplyScoringMutation
+	// FIXME: we need to verify that the policy has access to all referenced queries
+	if bundle != nil {
+		dataQueries := map[string]*Mquery{}
+		scoredQueries := map[string]*Mquery{}
+		for i := range policyObj.Specs {
+			spec := policyObj.Specs[i]
+			for k := range spec.DataQueries {
+				q, ok := bundle.Queries[k]
+				if !ok {
+					return nil, nil, status.Error(codes.InvalidArgument, "policy "+policyObj.Mrn+" is referencing unknown query "+k)
+				}
+				dataQueries[k] = q
+			}
+			for k := range spec.ScoringQueries {
+				q, ok := bundle.Queries[k]
+				if !ok {
+					return nil, nil, status.Error(codes.InvalidArgument, "policy "+policyObj.Mrn+" is referencing unknown query "+k)
+				}
+				scoredQueries[k] = q
+			}
+		}
+
+		propsQueries := map[string]*Mquery{}
+		for k := range policyObj.Props {
+			q, ok := bundle.Props[k]
+			if !ok {
+				return nil, nil, status.Error(codes.InvalidArgument, "policy "+policyObj.Mrn+" is referencing unknown property "+k)
+			}
+			propsQueries[k] = q
+		}
+
+		// TODO: this may need to happen in a bulk call
+		for k, v := range dataQueries {
+			if err := s.setQuery(ctx, k, v, false); err != nil {
+				return nil, nil, err
+			}
+		}
+		for k, v := range scoredQueries {
+			if err := s.setQuery(ctx, k, v, true); err != nil {
+				return nil, nil, err
+			}
+		}
+		for k, v := range propsQueries {
+			if err := s.setQuery(ctx, k, v, true); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
+	// e.g. ApplyScoringMutation changes the spec. Right now we assume the caller invalidates the checksum
+	//
+	// the only reason we make this conditional is because in a bundle we may have
+	// already done the work for a policy that is a dependency of another
+	// in that case we don't want to recalculate the graph and use it instead
+	// Note 1: It relies on the fact that the compile step clears out the checksums
+	// to make sure users don't override them
+	// Note 2: We don't need to cmpute the checksum since the GraphChecksum depends
+	// on it and will force it in case it is missing (no graph checksum => no checksum)
+
+	// NOTE: its important to update the checksum AFTER the queries have been changed,
+	// otherwise we generate the old GraphChecksum
+	if policyObj.GraphExecutionChecksum == "" || policyObj.GraphContentChecksum == "" {
+		logCtx.Trace().Str("policy", policyObj.Mrn).Msg("marketplace> update graphchecksum")
+		policyObj.UpdateChecksums(ctx,
+			s.DataLake.GetValidatedPolicy,
+			s.DataLake.GetQuery,
+			bundle)
+	}
+
+	filters, err := policyObj.ComputeAssetFilters(
+		ctx,
+		s.DataLake.GetRawPolicy,
+		false,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return policyObj, filters, nil
+}
+
 func (s *LocalServices) setPolicyFromBundle(ctx context.Context, policyObj *Policy, bundleMap *PolicyBundleMap) error {
 	logCtx := logger.FromContext(ctx)
 	policyObj, filters, err := s.PreparePolicy(ctx, policyObj, bundleMap)
