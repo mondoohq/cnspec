@@ -42,3 +42,19 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 
 	return found, nil
 }
+
+// RefreshLocalAssetFilters looks through the local policy asset filters and rolls them up
+func (p *Policy) RefreshLocalAssetFilters() {
+	p.AssetFilters = map[string]*Mquery{}
+
+	for i := range p.Specs {
+		spec := p.Specs[i]
+		if spec.AssetFilter == nil {
+			continue
+		}
+
+		filter := spec.AssetFilter
+		filter.RefreshAsAssetFilter(p.Mrn)
+		p.AssetFilters[filter.CodeId] = filter
+	}
+}
