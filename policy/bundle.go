@@ -187,3 +187,20 @@ func (p *PolicyBundle) ToMap() *PolicyBundleMap {
 
 	return res
 }
+
+// Clean the policy bundle to turn a few nil fields into empty fields for consistency
+func (p *PolicyBundle) Clean() *PolicyBundle {
+	for i := range p.Policies {
+		policy := p.Policies[i]
+		if policy.AssetFilters == nil {
+			policy.AssetFilters = map[string]*Mquery{}
+		}
+	}
+
+	// consistency between db backends
+	if p.Props != nil && len(p.Props) == 0 {
+		p.Props = nil
+	}
+
+	return p
+}
