@@ -226,6 +226,20 @@ func (s *LocalServices) GetPolicyBundle(ctx context.Context, in *Mrn) (*PolicyBu
 	return s.cacheUpstreamPolicy(ctx, in.Mrn)
 }
 
+// GetPolicyFilters retrieves the asset filter queries for a given policy
+func (s *LocalServices) GetPolicyFilters(ctx context.Context, mrn *Mrn) (*Mqueries, error) {
+	if mrn == nil || len(mrn.Mrn) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	}
+
+	filters, err := s.DataLake.GetPolicyFilters(ctx, mrn.Mrn)
+	if err != nil {
+		return nil, errors.New("failed to get policy filters: " + err.Error())
+	}
+
+	return &Mqueries{Items: filters}, nil
+}
+
 // DeletePolicy removes a policy via its given MRN
 func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
 	if in == nil || len(in.Mrn) == 0 {
