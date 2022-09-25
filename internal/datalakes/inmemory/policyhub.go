@@ -12,11 +12,31 @@ import (
 // this section lists internal datastrcutures that map additional metadata
 // with their proto counterparts
 
+type wrapQuery struct {
+	*policy.Mquery
+	isScored bool
+}
+
 type wrapPolicy struct {
 	*policy.Policy
 	invalidated bool
 	parents     map[string]struct{}
 	children    map[string]struct{}
+}
+
+type wrapBundle struct {
+	*policy.PolicyBundle
+	graphContentChecksum string
+	invalidated          bool
+}
+
+// GetQuery retrieves a given query
+func (db *Db) GetQuery(ctx context.Context, mrn string) (*policy.Mquery, error) {
+	q, ok := db.cache.Get(dbIDQuery + mrn)
+	if !ok {
+		return nil, errors.New("query '" + mrn + "' not found")
+	}
+	return (q.(wrapQuery)).Mquery, nil
 }
 
 // GetRawPolicy retrieves the policy without fixing any invalidations (fast)
@@ -113,4 +133,73 @@ func (db *Db) listPolicies() (map[string]struct{}, error) {
 		return nil, errors.New("failed to initialize policies list cache")
 	}
 	return nu, nil
+}
+
+// GetValidatedBundle retrieves and if necessary updates the policy bundle
+// Note: the checksum and graphchecksum of the policy must be computed to the right number
+func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.PolicyBundle, error) {
+	policyv, err := db.GetValidatedPolicy(ctx, mrn)
+	if err != nil {
+		return nil, err
+	}
+
+	y, ok := db.cache.Get(dbIDBundle + mrn)
+	var wbundle wrapBundle
+	if ok {
+		wbundle = y.(wrapBundle)
+
+		if !wbundle.invalidated && wbundle.graphContentChecksum == policyv.GraphContentChecksum {
+			return wbundle.PolicyBundle, nil
+		}
+	}
+
+	// these fields may be outdated in the data bundle:
+	wbundle.graphContentChecksum = policyv.GraphContentChecksum
+
+	bundle, err := db.services.ComputeBundle(ctx, policyv)
+	if err != nil {
+		return nil, errors.New("failed to compute policy bundle: " + err.Error())
+	}
+
+	wbundle.PolicyBundle = bundle
+	wbundle.invalidated = false
+	wbundle.graphContentChecksum = policyv.GraphContentChecksum
+
+	if ok = db.cache.Set(dbIDBundle+mrn, wbundle, 3); !ok {
+		return nil, errors.New("failed to save policy bundle '" + policyv.Mrn + "' to cache")
+	}
+
+	return bundle, nil
+}
+
+// GetValidatedPolicy retrieves and if necessary updates the policy
+func (db *Db) GetValidatedPolicy(ctx context.Context, mrn string) (*policy.Policy, error) {
+	q, ok := db.cache.Get(dbIDPolicy + mrn)
+	if !ok {
+		return nil, errors.New("policy '" + mrn + "' not found")
+	}
+
+	p := q.(wrapPolicy)
+	if p.invalidated {
+		err := db.fixInvalidatedPolicy(ctx, &p)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return p.Policy, nil
+}
+
+func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error {
+	wrap.Policy.InvalidateGraphChecksums()
+	wrap.Policy.UpdateChecksums(ctx,
+		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		nil)
+
+	ok := db.cache.Set(dbIDPolicy+wrap.Policy.Mrn, *wrap, 2)
+	if !ok {
+		return errors.New("failed to save policy '" + wrap.Policy.Mrn + "' to cache")
+	}
+	return nil
 }
