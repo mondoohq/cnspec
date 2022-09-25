@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/mrn"
 	"sigs.k8s.io/yaml"
 )
 
@@ -203,4 +206,145 @@ func (p *PolicyBundle) Clean() *PolicyBundle {
 	}
 
 	return p
+}
+
+// Compile PolicyBundle into a PolicyBundleMap
+// Does 4 things:
+// 1. turns policy bundle into a map for easier access
+// 2. compile all queries. store code in the bundle map
+// 3. validation of all contents
+// 4. generate MRNs for all policies, queries, and properties and updates referencing local fields
+func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap, error) {
+	ownerMrn := p.OwnerMrn
+	if ownerMrn == "" {
+		return nil, errors.New("failed to compile bundle, the owner MRN is empty")
+	}
+
+	var err error
+	var warnings []error
+
+	uid2mrn := map[string]string{}
+	bundles := map[string]*llx.CodeBundle{}
+
+	// Index properties
+	propQueries := map[string]*Mquery{}
+	props := map[string]*llx.Primitive{}
+	for i := range p.Props {
+		query := p.Props[i]
+
+		err = query.RefreshMrn(ownerMrn)
+		if err != nil {
+			return nil, errors.New("failed to refresh property: " + err.Error())
+		}
+
+		// recalculate the checksums
+		bundle, err := query.RefreshChecksumAndType(props)
+		if err != nil {
+			return nil, errors.New("failed to validate property '" + query.Mrn + "': " + err.Error())
+		}
+
+		name, err := mrn.GetResource(query.Mrn, "query")
+		if err != nil {
+			return nil, errors.New("could not read property name from query mrn: " + query.Mrn)
+		}
+		propQueries[name] = query
+		propQueries[query.Mrn] = query
+		props[name] = &llx.Primitive{Type: query.Type} // placeholder
+		bundles[query.Mrn] = bundle
+	}
+
+	// Index policies + update MRNs and checksums, link properties via MRNs
+	for i := range p.Policies {
+		policy := p.Policies[i]
+
+		// make sure we get a copy of the UID before it is removed (via refresh MRN)
+		policyUID := policy.Uid
+
+		// !this is very important to prevent user overrides! vv
+		policy.InvalidateAllChecksums()
+
+		err := policy.RefreshMrn(ownerMrn)
+		if err != nil {
+			return nil, errors.New("failed to refresh policy " + policy.Mrn + ": " + err.Error())
+		}
+
+		if policyUID != "" {
+			uid2mrn[policyUID] = policy.Mrn
+		}
+
+		// Properties
+		for name, target := range policy.Props {
+			if target != "" {
+				return nil, errors.New("overwriting properties not yet supported - sorryyyy")
+			}
+
+			q, ok := propQueries[name]
+			if !ok {
+				return nil, errors.New("cannot find property '" + name + "' in policy '" + policy.Name + "'")
+			}
+
+			// turn UID/name references into MRN references
+			if name != q.Mrn {
+				delete(policy.Props, name)
+				policy.Props[q.Mrn] = target
+			}
+		}
+	}
+
+	// Index queries + update MRNs and checksums
+	for i := range p.Queries {
+		query := p.Queries[i]
+
+		// remove leading and trailing whitespace of docs, refs and tags
+		query.Sanitize()
+
+		// ensure the correct mrn is set
+		uid := query.Uid
+		if err = query.RefreshMrn(ownerMrn); err != nil {
+			return nil, err
+		}
+		if uid != "" {
+			uid2mrn[uid] = query.Mrn
+		}
+
+		// recalculate the checksums
+		bundle, err := query.RefreshChecksumAndType(props)
+		if err != nil {
+			log.Error().Err(err).Msg("could not compile the query")
+			warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
+		}
+
+		bundles[query.Mrn] = bundle
+	}
+
+	// cannot be done before all policies and queries have their MRNs set
+	bundleMap := p.ToMap()
+	bundleMap.Library = library
+	bundleMap.Code = bundles
+
+	// Validate integrity of references + translate UIDs to MRNs
+	for i := range p.Policies {
+		policy := p.Policies[i]
+
+		err := translateSpecUIDs(ownerMrn, policy, uid2mrn)
+		if err != nil {
+			return nil, errors.New("failed to validate policy: " + err.Error())
+		}
+
+		err = bundleMap.ValidatePolicy(ctx, policy)
+		if err != nil {
+			return nil, errors.New("failed to validate policy: " + err.Error())
+		}
+	}
+
+	if len(warnings) != 0 {
+		var msg strings.Builder
+		for i := range warnings {
+			msg.WriteString(warnings[i].Error())
+			msg.WriteString("\n")
+		}
+		return bundleMap, errors.New(msg.String())
+	}
+
+	return bundleMap, nil
 }
