@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gogo/status"
@@ -15,7 +16,12 @@ import (
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/logger"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
+)
+
+const (
+	POLICY_SERVICE_NAME = "policy.api.mondoo.com"
 )
 
 // Assign a policy to an asset
@@ -413,6 +419,40 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	return &resolvedPolicy, nil
+}
+
+func newPolicyAssetMatchError(assetFilters []*Mquery, p *Policy) error {
+	if len(assetFilters) == 0 {
+		// send a proto error with details, so that the agent can render it properly
+		msg := "asset does not match any of the activated policies"
+		st := status.New(codes.InvalidArgument, msg)
+
+		std, err := st.WithDetails(&errdetails.ErrorInfo{
+			Domain: POLICY_SERVICE_NAME,
+			Reason: "no-matching-policy", // TODO: make those error codes global for policy service
+			Metadata: map[string]string{
+				"policy": p.Mrn,
+			},
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("could not send status with additional information")
+			return st.Err()
+		}
+		return std.Err()
+	}
+
+	policyFilter := []string{}
+	for k := range p.AssetFilters {
+		policyFilter = append(policyFilter, strings.TrimSpace(k))
+	}
+
+	filters := make([]string, len(assetFilters))
+	for i := range assetFilters {
+		filters[i] = strings.TrimSpace(assetFilters[i].Query)
+	}
+
+	msg := "asset does not support any policy\nfilter supported by policies:\n" + strings.Join(policyFilter, ",\n") + "\n\nasset supports the following filters:\n" + strings.Join(filters, ",\n")
+	return status.Error(codes.InvalidArgument, msg)
 }
 
 func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob, useV2Code bool) {
