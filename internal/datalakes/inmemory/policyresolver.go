@@ -3,8 +3,10 @@ package inmemory
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/gogo/status"
+	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
@@ -464,6 +466,85 @@ func (db *Db) initEmptyScore(ctx context.Context, assetMrn string, qrid string) 
 	ok := db.cache.Set(id, policy.Score{}, 1)
 	if !ok {
 		return errors.New("failed to initialize score for asset '" + assetMrn + "' with qrID '" + qrid + "'")
+	}
+	return nil
+}
+
+// GetCollectorJob returns the collector job for a given asset
+func (db *Db) GetCollectorJob(ctx context.Context, assetMrn string) (*policy.CollectorJob, error) {
+	x, ok := db.cache.Get(dbIDAsset + assetMrn)
+	if !ok {
+		return nil, errors.New("cannot find asset '" + assetMrn + "'")
+	}
+
+	assetw := x.(wrapAsset)
+
+	if assetw.ResolvedPolicy == nil {
+		return nil, errors.New("cannot find resolved policy for asset '" + assetMrn + "'")
+	}
+	if assetw.ResolvedPolicy.CollectorJob == nil {
+		return nil, errors.New("cannot find collectorJob for asset '" + assetMrn + "'")
+	}
+
+	return assetw.ResolvedPolicy.CollectorJob, nil
+}
+
+var errTypesDontMatch = errors.New("types don't match")
+
+// UpdateData sets the list of data value for a given asset and returns a list of updated IDs
+func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*llx.Result) (map[string]types.Type, error) {
+	collectorJob, err := db.GetCollectorJob(ctx, assetMrn)
+	if err != nil {
+		return nil, errors.New("cannot find collectorJob to store data: " + err.Error())
+	}
+
+	res := make(map[string]types.Type, len(data))
+	var errList error
+	for dpChecksum, val := range data {
+		info, ok := collectorJob.Datapoints[dpChecksum]
+		if !ok {
+			return nil, errors.New("cannot find this datapoint to store values: " + dpChecksum)
+		}
+
+		if val.Data != nil && !val.Data.IsNil() && val.Data.Type != "" &&
+			val.Data.Type != info.Type && types.Type(info.Type) != types.Unset {
+			log.Warn().
+				Str("checksum", dpChecksum).
+				Str("asset", assetMrn).
+				Interface("data", val.Data).
+				Str("expected", types.Type(info.Type).Label()).
+				Str("received", types.Type(val.Data.Type).Label()).
+				Msg("collector.db> failed to store data, types don't match")
+
+			errList = multierror.Append(errList, fmt.Errorf("failed to store data for %q, %w: expected %s, got %s",
+				dpChecksum, errTypesDontMatch, types.Type(info.Type).Label(), types.Type(val.Data.Type).Label()))
+
+			continue
+		}
+
+		err := db.setDatum(ctx, assetMrn, dpChecksum, val)
+		if err != nil {
+			errList = multierror.Append(errList, err)
+			continue
+		}
+
+		// TODO: we don't know which data was updated and which wasn't yet, so
+		// we currently always notify...
+		res[dpChecksum] = types.Type(info.Type)
+	}
+
+	if errList != nil {
+		return nil, errList
+	}
+
+	return res, nil
+}
+
+func (db *Db) setDatum(ctx context.Context, assetMrn string, checksum string, value *llx.Result) error {
+	id := dbIDData + assetMrn + "\x00" + checksum
+	ok := db.cache.Set(id, value, 1)
+	if !ok {
+		return errors.New("failed to save asset data for asset '" + assetMrn + "' and checksum '" + checksum + "'")
 	}
 	return nil
 }
