@@ -524,3 +524,261 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 		collectorJob.Checksum = scoringChecksumStr
 	}
 }
+
+func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, ownerJob *ReportingJob, parentCache *policyResolverCache) error {
+	ctx, span := tracer.Start(ctx, "resolver/policyToJobs")
+	defer span.End()
+
+	policyObj, ok := parentCache.global.bundleMap.Policies[policyMrn]
+	if !ok || policyObj == nil {
+		return errors.New("cannot find policy '" + policyMrn + "' while resolving")
+	}
+
+	if len(policyObj.Specs) == 0 {
+		return nil
+	}
+
+	cache := parentCache.clone()
+	cache.parentPolicies[policyMrn] = struct{}{}
+
+	// properties to execution queries cache
+	for k, v := range policyObj.Props {
+		if v != "" {
+			return errors.New("Cannot support property overwrites in resolver yet")
+		}
+
+		// we set it to nil here, as we don't know the mquery yet, it will be added in a later step
+		cache.global.executionQueries[k] = nil
+		cache.global.propQueries[k] = struct{}{}
+	}
+
+	// get a list of matching specs
+	matchingSpecs := []*PolicySpec{}
+	for i := range policyObj.Specs {
+		spec := policyObj.Specs[i]
+
+		if spec.AssetFilter == nil {
+			matchingSpecs = append(matchingSpecs, spec)
+			continue
+		}
+
+		checksum := spec.AssetFilter.CodeId
+		if _, ok := cache.global.assetFilters[checksum]; ok {
+			matchingSpecs = append(matchingSpecs, spec)
+		}
+	}
+
+	// aggregate all removed policies and queries
+	for i := range matchingSpecs {
+		spec := matchingSpecs[i]
+		for mrn, scoring := range spec.Policies {
+			if scoring != nil && scoring.Action == QueryAction_DEACTIVATE {
+				cache.removedPolicies[mrn] = struct{}{}
+			}
+		}
+		for mrn, scoring := range spec.ScoringQueries {
+			if scoring != nil && scoring.Action == QueryAction_DEACTIVATE {
+				cache.removedQueries[mrn] = struct{}{}
+			}
+		}
+		for mrn, action := range spec.DataQueries {
+			if action == QueryAction_DEACTIVATE {
+				cache.removedQueries[mrn] = struct{}{}
+			}
+		}
+	}
+
+	// resolve the rest
+	var err error
+	for i := range matchingSpecs {
+		spec := matchingSpecs[i]
+		if err = s.policyspecToJobs(ctx, policyMrn, spec, ownerJob, cache); err != nil {
+			log.Error().Err(err).Msg("resolver> policyToJobs error")
+			return err
+		}
+	}
+
+	// finalize
+	parentCache.addChildren(cache)
+
+	return nil
+}
+
+func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, spec *PolicySpec, ownerJob *ReportingJob, cache *policyResolverCache) error {
+	ctx, span := tracer.Start(ctx, "resolver/policyspecToJobs")
+	defer span.End()
+
+	// include referenced policies
+	for mrn, scoring := range spec.Policies {
+
+		// ADD
+		if scoring == nil || scoring.Action == QueryAction_ACTIVATE {
+			if _, ok := cache.parentPolicies[mrn]; ok {
+				return errors.New("trying to resolve policy spec twice, it is cyclical for MRN: " + mrn)
+			}
+
+			if _, ok := cache.removedPolicies[mrn]; ok {
+				continue
+			}
+
+			// before adding any reporting job, make sure this policy actually works for
+			// this set of asset filters
+			policyObj, ok := cache.global.bundleMap.Policies[mrn]
+			if !ok || policyObj == nil {
+				return errors.New("cannot find policy '" + policyMrn + "' while resolving")
+			}
+
+			var found bool
+			for checksum := range policyObj.AssetFilters {
+				if _, ok := cache.global.assetFilters[checksum]; ok {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+
+			// the job itself is global to the resolution
+			policyJob := cache.global.reportingJobsByQrID[mrn]
+			if policyJob == nil {
+				policyJob = &ReportingJob{
+					QrId:          mrn,
+					Uuid:          cache.global.relativeChecksum(mrn),
+					Spec:          map[string]*ScoringSpec{},
+					Datapoints:    map[string]bool{},
+					ScoringSystem: policyObj.ScoringSystem,
+				}
+				cache.global.reportingJobsByQrID[mrn] = policyJob
+				cache.global.reportingJobsByUUID[policyJob.Uuid] = policyJob
+			}
+
+			// local aspects for the resolved policy
+			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
+			ownerJob.Spec[policyJob.Uuid] = scoring
+			cache.childPolicies[mrn] = struct{}{}
+
+			if err := s.policyToJobs(ctx, mrn, policyJob, cache); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		// MODIFY
+		if scoring.Action == QueryAction_MODIFY {
+			_, ok := cache.childPolicies[mrn]
+			if !ok {
+				cache.global.errors = append(cache.global.errors, &policyResolutionError{
+					ID:       mrn,
+					IsPolicy: true,
+					Error:    "cannot modify policy, it doesn't exist",
+				})
+				continue
+			}
+
+			policyJob := cache.global.reportingJobsByQrID[mrn]
+			for _, id := range policyJob.Notify {
+				parentJob := cache.global.reportingJobsByUUID[id]
+				if parentJob != nil {
+					parentJob.Spec[policyJob.Uuid] = scoring
+				}
+			}
+		}
+	}
+
+	// handle scoring queries
+	for mrn, scoring := range spec.ScoringQueries {
+
+		// ADD
+		if scoring == nil || scoring.Action == QueryAction_ACTIVATE {
+			if _, ok := cache.removedQueries[mrn]; ok {
+				continue
+			}
+
+			// the job itself is global to the resolution
+			queryJob := cache.global.reportingJobsByQrID[mrn]
+			if queryJob == nil {
+				queryJob = &ReportingJob{
+					Uuid:       cache.global.relativeChecksum(mrn),
+					QrId:       mrn,
+					Spec:       map[string]*ScoringSpec{},
+					Datapoints: map[string]bool{},
+				}
+				cache.global.reportingJobsByQrID[mrn] = queryJob
+				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
+			}
+
+			// local aspects for the resolved policy
+			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
+
+			ownerJob.Spec[queryJob.Uuid] = scoring
+			cache.childQueries[mrn] = struct{}{}
+
+			// we set it to nil here, as we don't know the mquery yet, it will be added in a later step
+			cache.global.executionQueries[mrn] = nil
+
+			continue
+		}
+
+		// MODIFY
+		if scoring.Action == QueryAction_MODIFY {
+			_, ok := cache.childQueries[mrn]
+			if !ok {
+				cache.global.errors = append(cache.global.errors, &policyResolutionError{
+					ID:       mrn,
+					IsPolicy: true,
+					Error:    "cannot modify query, it doesn't exist",
+				})
+				continue
+			}
+
+			queryJob := cache.global.reportingJobsByQrID[mrn]
+			for _, id := range queryJob.Notify {
+				parentJob := cache.global.reportingJobsByUUID[id]
+				if parentJob != nil {
+					parentJob.Spec[queryJob.Uuid] = scoring
+				}
+			}
+		}
+	}
+
+	// handle data queries
+	for mrn, action := range spec.DataQueries {
+		// ADD
+		if action == QueryAction_ACTIVATE {
+			if _, ok := cache.removedQueries[mrn]; ok {
+				continue
+			}
+
+			// the job itself is global to the resolution
+			// note: the ReportingJob is only a placeholder and is replaced by individual query LLX checksum ReportingJobs
+			queryJob := cache.global.reportingJobsByQrID[mrn]
+			if queryJob == nil {
+				queryJob = &ReportingJob{
+					Uuid:       cache.global.relativeChecksum(mrn),
+					QrId:       mrn,
+					Spec:       map[string]*ScoringSpec{},
+					Datapoints: map[string]bool{},
+					IsData:     true,
+				}
+				cache.global.reportingJobsByQrID[mrn] = queryJob
+				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
+			}
+
+			// local aspects for the resolved policy
+			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
+
+			ownerJob.Datapoints[queryJob.Uuid] = true
+			cache.childQueries[mrn] = struct{}{}
+
+			// we set it to nil here, as we don't know the mquery yet, it will be added in a later step
+			cache.global.executionQueries[mrn] = nil
+			cache.global.dataQueries[mrn] = struct{}{}
+
+			continue
+		}
+	}
+
+	return nil
+}
