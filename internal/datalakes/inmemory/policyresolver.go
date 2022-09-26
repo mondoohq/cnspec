@@ -548,3 +548,75 @@ func (db *Db) setDatum(ctx context.Context, assetMrn string, checksum string, va
 	}
 	return nil
 }
+
+// UpdateScores sets the given scores and returns true if any were updated
+func (db *Db) UpdateScores(ctx context.Context, assetMrn string, scores []*policy.Score) (map[string]struct{}, error) {
+	updated := map[string]struct{}{}
+	now := db.nowProvider().Unix()
+
+	for i := range scores {
+		score := scores[i]
+		ok, err := db.updateScore(ctx, assetMrn, score, now)
+		if err != nil {
+			return nil, err
+		}
+
+		if ok {
+			updated[score.QrId] = struct{}{}
+		}
+	}
+
+	return updated, nil
+}
+
+// set one score and return true if it was updated
+func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Score, now int64) (bool, error) {
+	org, err := db.GetScore(ctx, assetMrn, score.QrId)
+	if err == nil &&
+		org.Value == score.Value &&
+		org.Type == score.Type &&
+		org.DataCompletion == score.DataCompletion &&
+		org.DataTotal == score.DataTotal &&
+		org.ScoreCompletion == score.ScoreCompletion &&
+		org.Weight == score.Weight {
+		return false, nil
+	}
+
+	// if this is the first time saving the score
+	if err != nil || (org.ScoreCompletion == 0 && score.Type == policy.ScoreType_Result) {
+		score.ValueModifiedTime = now
+		if score.Value == 100 || score.ScoreCompletion < 100 {
+			score.FailureTime = 0
+		} else {
+			score.FailureTime = now
+		}
+	} else if (org.Value != score.Value || org.ScoreCompletion == 0) && score.Type == policy.ScoreType_Result {
+		score.ValueModifiedTime = now
+		// we are failing from 100 => something else
+		if org.Value == 100 {
+			score.FailureTime = now
+		} else {
+			score.FailureTime = org.FailureTime
+		}
+	} else {
+		score.ValueModifiedTime = org.ValueModifiedTime
+		score.FailureTime = org.FailureTime
+	}
+
+	ok := db.cache.Set(dbIDScore+assetMrn+"\x00"+score.QrId, *score, 1)
+	if !ok {
+		return false, errors.New("failed to set score for asset '" + assetMrn + "' with ID '" + score.QrId + "'")
+	}
+
+	log.Debug().
+		Str("asset", assetMrn).
+		Str("query", score.QrId).
+		Str("type", score.TypeLabel()).
+		Int("value", int(score.Value)).
+		Int("score-completion", int(score.ScoreCompletion)).
+		Int("data-completion", int(score.DataCompletion)).
+		Int("data-total", int(score.DataTotal)).
+		Str("error_msg", score.Message).
+		Msg("collector.ristretto> update score")
+	return true, nil
+}
