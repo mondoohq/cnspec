@@ -392,7 +392,8 @@ Please run one of the subcommands to specify the target system. For example:
 			log.Fatal().Err(err).Msg("failed to resolve policies")
 		}
 
-		RunScan(conf)
+		reports := RunScan(conf)
+		printReports(reports, conf, cmd)
 	},
 })
 
@@ -492,10 +493,10 @@ func (c *scanConfig) loadPolicies() error {
 	return errors.New("Cannot yet resolve policies other than incognito")
 }
 
-func RunScan(config *scanConfig) {
+func RunScan(config *scanConfig) []*policy.Report {
 	scanner := scan.NewLocalScanner()
 
-	report, err := scanner.RunIncognito(&scan.Job{
+	reports, err := scanner.RunIncognito(&scan.Job{
 		DoRecord:      config.DoRecord,
 		Inventory:     config.Inventory,
 		Bundle:        config.Bundle,
@@ -506,7 +507,21 @@ func RunScan(config *scanConfig) {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
 
-	// Print report
-	panic("LET's PRINT")
-	_ = report
+	return reports
+}
+
+func printReports(reports []*policy.Report, conf *scanConfig, cmd *cobra.Command) {
+
+	// print the output using the specified output format
+	r, err := reporter.New(conf.Output)
+	if err != nil {
+		log.Fatal().Msg(err.Error())
+	}
+
+	r.UsePager, _ = cmd.Flags().GetBool("pager")
+	r.Pager, _ = cmd.Flags().GetString("pager")
+
+	if err = r.Print(result.GetFull(), os.Stdout); err != nil {
+		log.Fatal().Err(err).Msg("failed to print")
+	}
 }
