@@ -262,7 +262,7 @@ func (s *localAssetScanner) prepareAsset() error {
 		policyMrns[i] = s.job.Bundle.Policies[i].Mrn
 	}
 
-	resolver := s.services.DataLake.(policy.PolicyResolver)
+	var resolver policy.PolicyResolver = s.services
 	resolver.Assign(s.job.Ctx, &policy.PolicyAssignment{
 		AssetMrn:   s.job.Asset.Mrn,
 		PolicyMrns: policyMrns,
@@ -273,8 +273,8 @@ func (s *localAssetScanner) prepareAsset() error {
 }
 
 func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedPolicy, error) {
-	hub := s.services.DataLake.(policy.PolicyHub)
-	resolver := s.services.DataLake.(policy.PolicyResolver)
+	var hub policy.PolicyHub = s.services
+	var resolver policy.PolicyResolver = s.services
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
 	assetBundle, err := hub.GetPolicyBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
