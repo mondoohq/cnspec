@@ -3,12 +3,14 @@ package policy
 import (
 	"context"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/gogo/status"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery"
+	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/logger"
 	"google.golang.org/grpc/codes"
 )
@@ -345,4 +347,74 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	return &resolvedPolicy, nil
+}
+
+func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob, useV2Code bool) {
+	// execution job
+	{
+		queryKeys := make([]string, len(executionJob.Queries))
+		i := 0
+		for k := range executionJob.Queries {
+			queryKeys[i] = k
+			i++
+		}
+		sort.Strings(queryKeys)
+
+		checksum := checksums.New
+		if useV2Code {
+			checksum = checksum.Add("v2")
+		}
+		for i := range queryKeys {
+			key := queryKeys[i]
+			checksum = checksum.Add(executionJob.Queries[key].Checksum)
+		}
+		executionJob.Checksum = checksum.String()
+	}
+
+	// collector job
+	{
+		checksum := checksums.New
+		{
+			reportingJobKeys := make([]string, len(collectorJob.ReportingJobs))
+			i := 0
+			for k, rj := range collectorJob.ReportingJobs {
+				rj.RefreshChecksum(useV2Code)
+				reportingJobKeys[i] = k
+				i++
+			}
+			sort.Strings(reportingJobKeys)
+
+			for i := range reportingJobKeys {
+				key := reportingJobKeys[i]
+				checksum = checksum.Add(key)
+				checksum = checksum.Add(collectorJob.ReportingJobs[key].Checksum)
+			}
+		}
+		{
+			datapointsKeys := make([]string, len(collectorJob.Datapoints))
+
+			i := 0
+			for k := range collectorJob.Datapoints {
+				datapointsKeys[i] = k
+				i++
+			}
+			sort.Strings(datapointsKeys)
+
+			for i := range datapointsKeys {
+				key := datapointsKeys[i]
+				info := collectorJob.Datapoints[key]
+				checksum = checksum.Add(key)
+				checksum = checksum.Add(info.Type)
+
+				notify := make([]string, len(info.Notify))
+				copy(notify, info.Notify)
+				sort.Strings(notify)
+				for j := range notify {
+					checksum = checksum.Add(notify[j])
+				}
+			}
+		}
+		scoringChecksumStr := checksum.String()
+		collectorJob.Checksum = scoringChecksumStr
+	}
 }
