@@ -21,7 +21,6 @@ import (
 type PolicyHub interface {
 	SetPolicyBundle(context.Context, *PolicyBundle) (*Empty, error)
 	DeletePolicy(context.Context, *Mrn) (*Empty, error)
-	ValidatePolicy(context.Context, *Policy) (*Empty, error)
 	ValidatePolicyBundle(context.Context, *PolicyBundle) (*Empty, error)
 	GetPolicy(context.Context, *Mrn) (*Policy, error)
 	GetPolicyBundle(context.Context, *Mrn) (*PolicyBundle, error)
@@ -63,11 +62,6 @@ func (c *PolicyHubClient) SetPolicyBundle(ctx context.Context, in *PolicyBundle)
 func (c *PolicyHubClient) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeletePolicy"}, ""), in, out)
-	return out, err
-}
-func (c *PolicyHubClient) ValidatePolicy(ctx context.Context, in *Policy) (*Empty, error) {
-	out := new(Empty)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ValidatePolicy"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyHubClient) ValidatePolicyBundle(ctx context.Context, in *PolicyBundle) (*Empty, error) {
@@ -120,7 +114,6 @@ func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.H
 		Methods: map[string]ranger.Method{
 			"SetPolicyBundle":      srv.SetPolicyBundle,
 			"DeletePolicy":         srv.DeletePolicy,
-			"ValidatePolicy":       srv.ValidatePolicy,
 			"ValidatePolicyBundle": srv.ValidatePolicyBundle,
 			"GetPolicy":            srv.GetPolicy,
 			"GetPolicyBundle":      srv.GetPolicyBundle,
@@ -183,30 +176,6 @@ func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (p
 		return nil, err
 	}
 	return p.handler.DeletePolicy(ctx, &req)
-}
-func (p *PolicyHubServer) ValidatePolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req Policy
-	var err error
-
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil, errors.New("could not access header")
-	}
-
-	switch md.First("Content-Type") {
-	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
-		err = pb.Unmarshal(*reqBytes, &req)
-	default:
-		// handle case of empty object
-		if len(*reqBytes) > 0 {
-			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-	return p.handler.ValidatePolicy(ctx, &req)
 }
 func (p *PolicyHubServer) ValidatePolicyBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PolicyBundle
