@@ -18,6 +18,7 @@ import (
 const (
 	MRN_RESOURCE_QUERY  = "queries"
 	MRN_RESOURCE_POLICY = "policies"
+	MRN_RESOURCE_ASSET  = "assets"
 )
 
 // BundleFromPaths loads a single policy bundle file or a bundle that

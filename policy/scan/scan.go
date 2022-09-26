@@ -3,13 +3,13 @@ package scan
 import (
 	"context"
 	"math/rand"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gogo/status"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
@@ -121,7 +121,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 		asset := assetList[i]
 
 		// asset MRN cannot be empty
-		randID := policy.POLICY_SERVICE_NAME + "/assets/" + strconv.Itoa(rand.Int())
+		randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
 		x, err := mrn.NewMRN(randID)
 		if err != nil {
 			return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
@@ -139,7 +139,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 
 		s.RunAssetJob(&AssetJob{
 			DoRecord:      job.DoRecord,
-			Asset:         assetList[i],
+			Asset:         asset,
 			Bundle:        job.Bundle,
 			PolicyFilters: job.PolicyFilters,
 			Ctx:           ctx,
