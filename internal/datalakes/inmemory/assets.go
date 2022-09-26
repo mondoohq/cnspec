@@ -14,6 +14,12 @@ type wrapAsset struct {
 	ResolvedPolicy        *policy.ResolvedPolicy
 }
 
+// EnsureAsset makes sure an asset exists
+func (db *Db) EnsureAsset(ctx context.Context, mrn string) error {
+	_, _, err := db.ensureAsset(ctx, mrn)
+	return err
+}
+
 func (db *Db) ensureAsset(ctx context.Context, mrn string) (wrapAsset, wrapPolicy, error) {
 	assetw, created, err := db.ensureAssetObject(ctx, mrn)
 	if err != nil {

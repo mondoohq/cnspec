@@ -1134,3 +1134,33 @@ func (s *LocalServices) mquery2executionQuery(query *Mquery, useV2Code bool, pro
 		return &res, dataChecksum, nil
 	}
 }
+
+func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, resolvedPolicy *ResolvedPolicy) error {
+	features := cnquery.GetFeatures(ctx)
+	useV2Code := features.IsActive(cnquery.PiperCode)
+	var err error
+
+	if err = s.DataLake.EnsureAsset(ctx, assetMrn); err != nil {
+		return errors.New("distributor> failed to cache upstream jobs: " + err.Error())
+	}
+
+	if useV2Code {
+		err = s.DataLake.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code, true)
+	} else {
+		err = s.DataLake.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved, true)
+	}
+	if err != nil {
+		return errors.New("distributor> failed to cache resolved upstream policy: " + err.Error())
+	}
+
+	if useV2Code {
+		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
+	} else {
+		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved)
+	}
+	if err != nil {
+		return errors.New("distributor> failed to cache resolved upstream policy into asset: " + err.Error())
+	}
+
+	return nil
+}
