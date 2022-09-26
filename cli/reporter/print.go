@@ -1,6 +1,11 @@
 package reporter
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/muesli/termenv"
+	"go.mondoo.com/cnspec/policy"
+)
 
 //go:generate protoc --proto_path=../../:. --go_out=. --go_opt=paths=source_relative  reporter.proto
 
@@ -40,4 +45,20 @@ func AllFormats() string {
 		}
 	}
 	return strings.Join(res, ", ")
+}
+
+func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {
+	switch rating {
+	case policy.ScoreRating_aPlus, policy.ScoreRating_a, policy.ScoreRating_aMinus:
+		return termenv.String(s).Foreground(r.Colors.Good).String()
+	case policy.ScoreRating_bPlus, policy.ScoreRating_b, policy.ScoreRating_bMinus:
+		return termenv.String(s).Foreground(r.Colors.Low).String()
+	case policy.ScoreRating_cPlus, policy.ScoreRating_c, policy.ScoreRating_cMinus:
+		return termenv.String(s).Foreground(r.Colors.Medium).String()
+	case policy.ScoreRating_dPlus, policy.ScoreRating_d, policy.ScoreRating_dMinus:
+		return termenv.String(s).Foreground(r.Colors.High).String()
+	case policy.ScoreRating_failed:
+		return termenv.String(s).Foreground(r.Colors.Critical).String()
+	}
+	return s
 }
