@@ -29,16 +29,18 @@ import (
 const ResolvedPolicyCacheSize = 52428800
 
 type Job struct {
-	DoRecord  bool
-	Inventory *v1.Inventory
-	Bundle    *policy.PolicyBundle
-	Ctx       context.Context
+	DoRecord      bool
+	Inventory     *v1.Inventory
+	Bundle        *policy.PolicyBundle
+	PolicyFilters []string
+	Ctx           context.Context
 }
 
 type AssetJob struct {
 	DoRecord      bool
 	Asset         *asset.Asset
 	Bundle        *policy.PolicyBundle
+	PolicyFilters []string
 	Ctx           context.Context
 	GetCredential func(cred *vault.Credential) (*vault.Credential, error)
 	Reporter      Reporter
@@ -121,6 +123,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) ([]*policy.R
 			DoRecord:      job.DoRecord,
 			Asset:         assetList[i],
 			Bundle:        job.Bundle,
+			PolicyFilters: job.PolicyFilters,
 			Ctx:           ctx,
 			GetCredential: im.GetCredential,
 			Reporter:      reporter,
@@ -248,6 +251,7 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 
 func (s *localAssetScanner) prepareAsset() error {
 	var hub policy.PolicyHub = s.services
+	// FIXME: we do not currently respect policy filters!
 	_, err := hub.SetPolicyBundle(s.job.Ctx, s.job.Bundle)
 	if err != nil {
 		return err

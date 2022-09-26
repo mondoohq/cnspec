@@ -387,7 +387,7 @@ Please run one of the subcommands to specify the target system. For example:
 			log.Fatal().Err(err).Msg("failed to prepare config")
 		}
 
-		err = conf.resolvePolicies()
+		err = conf.loadPolicies()
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to resolve policies")
 		}
@@ -413,7 +413,7 @@ type scanConfig struct {
 	Output      string
 	PolicyPaths []string
 	PolicyNames []string
-	Bundle      *policy.PolicyBundleMap
+	Bundle      *policy.PolicyBundle
 
 	Incognito bool
 	DoRecord  bool
@@ -474,7 +474,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	return &conf, nil
 }
 
-func (c *scanConfig) resolvePolicies() error {
+func (c *scanConfig) loadPolicies() error {
 	if c.Incognito {
 		if len(c.PolicyPaths) == 0 {
 			return errors.New("incognito mode requires policy bundles to be run, but none were specified")
@@ -485,9 +485,7 @@ func (c *scanConfig) resolvePolicies() error {
 			return err
 		}
 
-		c.Bundle = bundle.ToMap()
-		c.Bundle.SelectPolicies(c.PolicyNames)
-
+		c.Bundle = bundle
 		return nil
 	}
 
@@ -498,10 +496,11 @@ func RunScan(config *scanConfig) {
 	scanner := scan.NewLocalScanner()
 
 	report, err := scanner.RunIncognito(&scan.Job{
-		DoRecord:  config.DoRecord,
-		Inventory: config.Inventory,
-		Bundle:    config.Bundle.ToList(),
-		Ctx:       cnquery.SetFeatures(context.Background(), config.Features),
+		DoRecord:      config.DoRecord,
+		Inventory:     config.Inventory,
+		Bundle:        config.Bundle,
+		Ctx:           cnquery.SetFeatures(context.Background(), config.Features),
+		PolicyFilters: config.PolicyNames,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
