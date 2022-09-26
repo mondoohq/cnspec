@@ -6,6 +6,7 @@ replace go.mondoo.com/cnquery => /pub/go/src/go.mondoo.com/cnquery
 
 require (
 	github.com/charmbracelet/bubbletea v0.22.1
+	github.com/cockroachdb/errors v1.9.0
 	github.com/gogo/status v1.1.0
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/go-hclog v1.2.0
@@ -16,7 +17,9 @@ require (
 	github.com/mattn/go-isatty v0.0.16
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/muesli/ansi v0.0.0-20211018074035-2e021307bc4b
+	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.12.0
+	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
 	github.com/segmentio/fasthash v1.0.3
@@ -148,7 +151,6 @@ require (
 	github.com/charmbracelet/lipgloss v0.5.0 // indirect
 	github.com/chavacava/garif v0.0.0-20220630083739-93517212f375 // indirect
 	github.com/cjlapao/common-go v0.0.25 // indirect
-	github.com/cockroachdb/errors v1.9.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20211118104740-dabe8e521a4f // indirect
 	github.com/cockroachdb/redact v1.1.3 // indirect
 	github.com/containerd/console v1.0.3 // indirect
@@ -271,6 +273,7 @@ require (
 	github.com/kisielk/errcheck v1.6.2 // indirect
 	github.com/kisielk/gotool v1.0.0 // indirect
 	github.com/klauspost/compress v1.15.8 // indirect
+	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f // indirect
 	github.com/knqyf263/go-rpmdb v0.0.0-20220719122909-d637bcc36860 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/kr/pretty v0.3.0 // indirect
@@ -315,14 +318,12 @@ require (
 	github.com/moricho/tparallel v0.2.1 // indirect
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
 	github.com/nishanths/exhaustive v0.8.1 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/oklog/run v1.0.0 // indirect
-	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.3-0.20220114050600-8b9d41f48198 // indirect
 	github.com/packethost/packngo v0.25.0 // indirect
