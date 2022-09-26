@@ -10,6 +10,7 @@ import (
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
+	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources/packs/os/info"
 	"go.mondoo.com/cnquery/types"
 )
@@ -181,4 +182,43 @@ func (m *Mquery) Sanitize() {
 		}
 		m.Tags = sanitizedTags
 	}
+}
+
+// RefreshMRN computes a MRN from the UID or validates the existing MRN.
+// Both of these need to fit the ownerMRN. It also removes the UID.
+func (m *Mquery) RefreshMRN(ownerMRN string) error {
+	nu, err := RefreshMRN(ownerMRN, m.Mrn, "query", m.Uid)
+	if err != nil {
+		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", m.Uid).Msg("failed to refresh mrn")
+		return errors.Wrap(err, "failed to refresh mrn for query "+m.Title)
+	}
+
+	m.Mrn = nu
+	m.Uid = ""
+	return nil
+}
+
+func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string) (string, error) {
+	// NOTE: asset policy bundles may not have an owner set, therefore we skip if the query already has an mrn
+	if existingMRN != "" {
+		if !mrn.IsValid(existingMRN) {
+			return "", errors.New("invalid MRN: " + existingMRN)
+		}
+		return existingMRN, nil
+	}
+
+	if ownerMRN == "" {
+		return "", errors.New("cannot refresh MRN if the owner MRN is empty")
+	}
+
+	if uid == "" {
+		return "", errors.New("cannot refresh MRN with an empty UID")
+	}
+
+	mrn, err := mrn.NewChildMRN(ownerMRN, resource, uid)
+	if err != nil {
+		return "", err
+	}
+
+	return mrn.String(), nil
 }
