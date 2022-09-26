@@ -21,6 +21,7 @@ import (
 	"go.mondoo.com/cnquery/motor/vault"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
+	"go.mondoo.com/cnquery/resources/packs/all"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
@@ -210,10 +211,17 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			panic("cannot work with upstream yet")
 		}
 
+		registry := all.Registry
+		schema := registry.Schema()
+		runtime := resources.NewRuntime(registry, job.connection)
+
 		scanner := &localAssetScanner{
 			db:       db,
 			services: services,
 			job:      job,
+			Registry: registry,
+			Schema:   schema,
+			Runtime:  runtime,
 			Progress: progress.New(job.Asset.Mrn, job.Asset.Name),
 		}
 		res, policyErr = scanner.run()
@@ -231,9 +239,9 @@ type localAssetScanner struct {
 	services *policy.LocalServices
 	job      *AssetJob
 
-	Runtime  *resources.Runtime
 	Registry *resources.Registry
 	Schema   *resources.Schema
+	Runtime  *resources.Runtime
 	Progress progress.Progress
 }
 
