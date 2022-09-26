@@ -83,6 +83,50 @@ func (s *LocalServices) Resolve(ctx context.Context, req *ResolveReq) (*Resolved
 	return s.resolve(ctx, req.PolicyMrn, req.AssetFilters)
 }
 
+// ResolveAndUpdateJobs will resolve an asset's policy and update its jobs
+func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAssetJobsReq) (*ResolvedPolicy, error) {
+	if s.Upstream == nil || s.Incognito {
+		res, err := s.resolve(ctx, req.AssetMrn, req.AssetFilters)
+		if err != nil {
+			return nil, err
+		}
+
+		if res.CollectorJob != nil {
+			err := res.CollectorJob.Validate()
+			if err != nil {
+				logger.FromContext(ctx).Error().
+					Err(err).
+					Msg("resolved policy is invalid")
+			}
+		}
+
+		features := cnquery.GetFeatures(ctx)
+		useV2Code := features.IsActive(cnquery.PiperCode)
+		if useV2Code {
+			err = s.DataLake.SetAssetResolvedPolicy(ctx, req.AssetMrn, res, V2Code)
+		} else {
+			err = s.DataLake.SetAssetResolvedPolicy(ctx, req.AssetMrn, res, MassResolved)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		return res, nil
+	}
+
+	res, err := s.Upstream.PolicyResolver.ResolveAndUpdateJobs(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.cacheUpstreamJobs(ctx, req.AssetMrn, res)
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
 // GetReport retreives a report for a given asset and policy
 func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreRequest) (*Report, error) {
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
