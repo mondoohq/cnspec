@@ -179,14 +179,21 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 	return res, nil
 }
 
-// ValidatePolicy against the given bundle
-func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
-	policyID, err := mrn.GetResource(policy.Mrn, "policy")
+func isPolicyMrn(policyMRN string) error {
+	policyID, err := mrn.GetResource(policyMRN, MRN_RESOURCE_POLICY)
 	if err != nil {
 		return errors.New("failed to parse policy MRN")
 	}
 	if policyID == "" {
 		return errors.New("policy MRN is invalid, no policy ID")
+	}
+	return nil
+}
+
+// ValidatePolicy against the given bundle
+func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
+	if err := isPolicyMrn(policy.Mrn); err != nil {
+		return err
 	}
 
 	for i := range policy.Specs {

@@ -15,6 +15,11 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const (
+	MRN_RESOURCE_QUERY  = "queries"
+	MRN_RESOURCE_POLICY = "policies"
+)
+
 // BundleFromPaths loads a single policy bundle file or a bundle that
 // was split into multiple files into a single PolicyBundle struct
 func BundleFromPaths(paths ...string) (*PolicyBundle, error) {
@@ -243,7 +248,7 @@ func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBun
 			return nil, errors.New("failed to validate property '" + query.Mrn + "': " + err.Error())
 		}
 
-		name, err := mrn.GetResource(query.Mrn, "query")
+		name, err := mrn.GetResource(query.Mrn, MRN_QUERIES)
 		if err != nil {
 			return nil, errors.New("could not read property name from query mrn: " + query.Mrn)
 		}
