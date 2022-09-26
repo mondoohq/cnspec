@@ -2,10 +2,19 @@ package reporter
 
 import (
 	"errors"
+	"io"
 	"strings"
 
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/executor"
+)
+
+var (
+	vulnReportDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("platform.vulnerabilityReport"))
+	kernelListDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("kernel.installed"))
+	advisoryPolicyMrn           = "//policy.api.mondoo.app/policies/platform-vulnerability"
 )
 
 type Reporter struct {
@@ -31,4 +40,57 @@ func New(typ string) (*Reporter, error) {
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 	}, nil
+}
+
+func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
+	var res []byte
+	var err error
+
+	switch r.Format {
+	case Compact:
+		rr := &defaultReporter{
+			Reporter:  r,
+			isCompact: true,
+			out:       out,
+			data:      data,
+		}
+		return rr.print()
+	case Summary:
+		rr := &defaultReporter{
+			Reporter:  r,
+			isCompact: true,
+			isSummary: true,
+			out:       out,
+			data:      data,
+		}
+		return rr.print()
+	case Full:
+		rr := &defaultReporter{
+			Reporter:  r,
+			isCompact: false,
+			out:       out,
+			data:      data,
+		}
+		return rr.print()
+	// case Report:
+	// 	r.printReport(data, out)
+	// 	return nil
+	// case YAML:
+	// 	res, err = data.ToYAML()
+	// case JSON:
+	// 	res, err = data.ToJSON()
+	// case JUnit:
+	// 	res, err = data.ToJunit()
+	// case CSV:
+	// 	res, err = data.ToCsv()
+	default:
+		return errors.New("unknown reporter type, don't recognize this Format")
+	}
+
+	if err != nil {
+		return err
+	}
+	out.Write(res)
+
+	return nil
 }
