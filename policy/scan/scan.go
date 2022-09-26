@@ -193,6 +193,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		scanner := &localAssetScanner{
 			db:       db,
 			services: services,
+			job:      job,
 			Progress: progress.New(job.Asset.Mrn, job.Asset.Name),
 		}
 		res, policyErr = scanner.run()
