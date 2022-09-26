@@ -216,29 +216,29 @@ type localAssetScanner struct {
 	Progress progress.Progress
 }
 
-func (l *localAssetScanner) run() (*AssetReport, error) {
-	l.Progress.Open()
+func (s *localAssetScanner) run() (*AssetReport, error) {
+	s.Progress.Open()
 
 	// fallback to always close the progressbar if we error before getting the report
-	defer l.Progress.Close()
+	defer s.Progress.Close()
 
-	if err := l.prepareAsset(); err != nil {
+	if err := s.prepareAsset(); err != nil {
 		return nil, err
 	}
 
-	bundle, resolvedPolicy, err := l.runPolicy()
+	bundle, resolvedPolicy, err := s.runPolicy()
 	if err != nil {
 		return nil, err
 	}
 
-	report, err := l.getReport()
+	report, err := s.getReport()
 	if err != nil {
 		return nil, err
 	}
 
-	log.Debug().Str("asset", l.job.Asset.Mrn).Msg("scan complete")
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	return &AssetReport{
-		Mrn:            l.job.Asset.Mrn,
+		Mrn:            s.job.Asset.Mrn,
 		ResolvedPolicy: resolvedPolicy,
 		Bundle:         bundle,
 		Report:         report,
@@ -313,33 +313,33 @@ func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedP
 	return s.job.Bundle, nil, nil
 }
 
-func (l *localAssetScanner) getReport() (*policy.Report, error) {
-	resolver := l.services.DataLake.(policy.PolicyResolver)
+func (s *localAssetScanner) getReport() (*policy.Report, error) {
+	resolver := s.services.DataLake.(policy.PolicyResolver)
 
 	// TODO: we do not needs this anymore since we recieve updates already
-	log.Info().Str("asset", l.job.Asset.Mrn).Msg("client> send all results")
-	_, err := policy.WaitUntilDone(resolver, l.job.Asset.Mrn, l.job.Asset.Mrn, 1*time.Second)
+	log.Info().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
+	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
 	// handle error
 	if err != nil {
-		l.Progress.Close()
+		s.Progress.Close()
 		return &policy.Report{
-			EntityMrn:  l.job.Asset.Mrn,
-			ScoringMrn: l.job.Asset.Mrn,
+			EntityMrn:  s.job.Asset.Mrn,
+			ScoringMrn: s.job.Asset.Mrn,
 		}, err
 	}
 
-	l.Progress.Close()
+	s.Progress.Close()
 
-	log.Debug().Str("asset", l.job.Asset.Mrn).Msg("generate report")
-	report, err := resolver.GetReport(l.job.Ctx, &policy.EntityScoreRequest{
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
+	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreRequest{
 		// NOTE: we assign policies to the asset before we execute the tests, therefore this resolves all policies assigned to the asset
-		EntityMrn: l.job.Asset.Mrn,
-		ScoreMrn:  l.job.Asset.Mrn,
+		EntityMrn: s.job.Asset.Mrn,
+		ScoreMrn:  s.job.Asset.Mrn,
 	})
 	if err != nil {
 		return &policy.Report{
-			EntityMrn:  l.job.Asset.Mrn,
-			ScoringMrn: l.job.Asset.Mrn,
+			EntityMrn:  s.job.Asset.Mrn,
+			ScoringMrn: s.job.Asset.Mrn,
 		}, err
 	}
 
@@ -347,14 +347,14 @@ func (l *localAssetScanner) getReport() (*policy.Report, error) {
 }
 
 // FilterQueries returns all queries whose result is truthy
-func (l *localAssetScanner) FilterQueries(queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
-	return executor.ExecuteFilterQueries(l.Schema, l.Runtime, queries, timeout)
+func (s *localAssetScanner) FilterQueries(queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+	return executor.ExecuteFilterQueries(s.Schema, s.Runtime, queries, timeout)
 }
 
 // UpdateFilters takes a list of test filters and runs them against the backend
 // to return the matching ones
-func (l *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time.Duration) ([]*policy.Mquery, error) {
-	queries, errs := l.FilterQueries(filters.Items, timeout)
+func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time.Duration) ([]*policy.Mquery, error) {
+	queries, errs := s.FilterQueries(filters.Items, timeout)
 
 	var err error
 	if len(errs) != 0 {
