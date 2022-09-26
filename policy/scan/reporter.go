@@ -12,33 +12,55 @@ type Reporter interface {
 }
 
 type AggregateReporter struct {
-	assetReports map[string]*policy.Report
-	assetErrors  map[string]error
+	assets           map[string]*policy.Asset
+	assetReports     map[string]*policy.Report
+	assetErrors      map[string]error
+	bundle           *policy.PolicyBundle
+	resolvedPolicies map[string]*policy.ResolvedPolicy
 }
 
-func NewAggregateReporter() *AggregateReporter {
+func NewAggregateReporter(bundle *policy.PolicyBundle, assetList []*asset.Asset) *AggregateReporter {
+	assets := make(map[string]*policy.Asset, len(assetList))
+	for i := range assetList {
+		cur := assetList[i]
+		assets[cur.Mrn] = &policy.Asset{
+			Mrn:  cur.Mrn,
+			Name: cur.Name,
+		}
+	}
+
 	return &AggregateReporter{
-		assetReports: map[string]*policy.Report{},
-		assetErrors:  map[string]error{},
+		assets:           assets,
+		assetReports:     map[string]*policy.Report{},
+		assetErrors:      map[string]error{},
+		bundle:           bundle,
+		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 	}
 }
 
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
 	r.assetReports[asset.Mrn] = results.Report
+	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
+	r.bundle = results.Bundle
 }
 
 func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
 	r.assetErrors[asset.Mrn] = err
 }
 
-func (r *AggregateReporter) Reports() []*policy.Report {
-	res := make([]*policy.Report, len(r.assetReports))
-	var i int
-	for _, report := range r.assetReports {
-		res[i] = report
-		i++
+func (r *AggregateReporter) Reports() *policy.ReportCollection {
+	errors := make(map[string]string, len(r.assetErrors))
+	for k, v := range r.assetErrors {
+		errors[k] = v.Error()
 	}
-	return res
+
+	return &policy.ReportCollection{
+		Assets:           r.assets,
+		Reports:          r.assetReports,
+		Errors:           errors,
+		Bundle:           r.bundle,
+		ResolvedPolicies: r.resolvedPolicies,
+	}
 }
 
 func (r *AggregateReporter) Error() error {

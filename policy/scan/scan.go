@@ -72,7 +72,7 @@ func NewLocalScanner() *LocalScanner {
 	}
 }
 
-func (s *LocalScanner) RunIncognito(job *Job) ([]*policy.Report, error) {
+func (s *LocalScanner) RunIncognito(job *Job) (*policy.ReportCollection, error) {
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -95,7 +95,7 @@ func (s *LocalScanner) RunIncognito(job *Job) ([]*policy.Report, error) {
 	return reports, nil
 }
 
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) ([]*policy.Report, bool, error) {
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.ReportCollection, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	im, err := inventory.New(inventory.WithInventory(job.Inventory))
 	if err != nil {
@@ -115,7 +115,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) ([]*policy.R
 		return nil, false, errors.New("could not find an asset that we can connect to")
 	}
 
-	reporter := NewAggregateReporter()
+	reporter := NewAggregateReporter(job.Bundle, assetList)
 
 	for i := range assetList {
 		asset := assetList[i]
