@@ -17,6 +17,7 @@ import (
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
+	"go.mondoo.com/cnquery/mrn"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 )
@@ -825,15 +826,15 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 	// the uuids of data queries and reporting jobs
 	// note: the queries are NOT defined yet, we only have MRNs at this stage
 	for i := 0; i < len(executionMrns); i++ {
-		mrn := executionMrns[i]
+		curMRN := executionMrns[i]
 
 		var mquery *Mquery
 		var err error
 
-		if m, ok := cache.bundleMap.Queries[mrn]; ok {
+		if m, ok := cache.bundleMap.Queries[curMRN]; ok {
 			mquery = m
 		} else {
-			mquery, err = s.DataLake.ResolveQuery(ctx, mrn, cache.queries)
+			mquery, err = s.DataLake.ResolveQuery(ctx, curMRN, cache.queries)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -849,12 +850,12 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 				Msg("resolver> found duplicate query")
 		}
 
-		_, isDataQuery := cache.dataQueries[mrn]
-		_, isPropQuery := cache.propQueries[mrn]
+		_, isDataQuery := cache.dataQueries[curMRN]
+		_, isPropQuery := cache.propQueries[curMRN]
 
 		executionQuery, dataChecksum, err := s.mquery2executionQuery(mquery, useV2Code, props, propsToChecksums, collectorJob, !(isDataQuery || isPropQuery))
 		if err != nil {
-			return nil, nil, errors.New("resolver> failed to compile query for ID " + mrn + ": " + err.Error())
+			return nil, nil, errors.New("resolver> failed to compile query for ID " + curMRN + ": " + err.Error())
 		}
 
 		if executionQuery == nil {
@@ -862,8 +863,8 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 			// v2 compiler but not the v1 compiler. In such case, we
 			// will expunge the query and reporting chain from the
 			// resolved policy
-			if rj, ok := cache.reportingJobsByQrID[mrn]; ok {
-				delete(cache.reportingJobsByQrID, mrn)
+			if rj, ok := cache.reportingJobsByQrID[curMRN]; ok {
+				delete(cache.reportingJobsByQrID, curMRN)
 				delete(cache.reportingJobsByUUID, rj.Uuid)
 				delete(collectorJob.ReportingJobs, rj.Uuid)
 				for _, parentID := range rj.Notify {
@@ -876,15 +877,15 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 			continue
 		}
 
-		cache.executionQueries[mrn] = executionQuery
+		cache.executionQueries[curMRN] = executionQuery
 		executionJob.Queries[codeID] = executionQuery
 
 		// (1) Property Queries handling
 		// properties will be executed but not reported (for now)
 		if isPropQuery {
-			propName, err := Mrn2PropertyName(mrn)
+			propName, err := mrn.GetResource(curMRN, MRN_RESOURCE_QUERY)
 			if err != nil {
-				return nil, nil, errors.New("could not read property name from query mrn: " + mrn)
+				return nil, nil, errors.New("could not read property name from query mrn: " + curMRN)
 			}
 			props[propName] = &llx.Primitive{Type: mquery.Type} // placeholder
 
@@ -897,14 +898,14 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 		}
 
 		// (2+3) Scoring+Data Queries handling
-		rj, ok := cache.reportingJobsByQrID[mrn]
+		rj, ok := cache.reportingJobsByQrID[curMRN]
 		if !ok {
 			logCtx.Debug().
 				Interface("reportingJobs", cache.reportingJobsByQrID).
-				Str("query", mrn).
+				Str("query", curMRN).
 				Str("policy", policyMrn).
 				Msg("resolver> phase 2: cannot find reporting job")
-			return nil, nil, errors.New("cannot find reporting job for query " + mrn + " in policy " + policyMrn)
+			return nil, nil, errors.New("cannot find reporting job for query " + curMRN + " in policy " + policyMrn)
 		}
 
 		// (2) Scoring Queries handling
@@ -976,4 +977,116 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 	}
 
 	return executionJob, collectorJob, nil
+}
+
+func (s *LocalServices) mquery2executionQuery(query *Mquery, useV2Code bool, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool) (*ExecutionQuery, string, error) {
+	bundle, err := query.Compile(props, false)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if useV2Code {
+		code := bundle.CodeV2
+
+		dataChecksum := ""
+		codeEntrypoints := code.Entrypoints()
+		if len(codeEntrypoints) == 1 {
+			ref := codeEntrypoints[0]
+			dataChecksum = code.Checksums[ref]
+		}
+
+		codeDatapoints := code.Datapoints()
+
+		refs := make([]uint64, len(codeDatapoints))
+		copy(refs, codeDatapoints)
+
+		// We collect the entrypoints as they contain information we
+		// need to correctly build the assessments
+		refs = append(refs, codeEntrypoints...)
+
+		datapoints := make([]string, len(refs))
+		for i := range refs {
+			ref := refs[i]
+			checksum := code.Checksums[ref]
+			datapoints[i] = checksum
+
+			// TODO: correct transplation from upper and lower parts of ref
+
+			typ := code.Chunk(ref).DereferencedTypeV2(code)
+			collectorJob.Datapoints[checksum] = &DataQueryInfo{
+				Type: string(typ),
+			}
+		}
+
+		// translate properties: we get bundle props < name => Type >
+		// we need to get execution query props: < name => checksum >
+		eqProps := map[string]string{}
+		for name := range bundle.Props {
+			checksum := propsToChecksums[name]
+			if checksum == "" {
+				return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.Query + "'")
+			}
+			eqProps[name] = checksum
+		}
+
+		res := ExecutionQuery{
+			Query:      query.Query,
+			Checksum:   query.Checksum,
+			Properties: eqProps,
+			Datapoints: datapoints,
+			Code:       bundle,
+		}
+
+		return &res, dataChecksum, nil
+	} else {
+		dataChecksum := ""
+		code := bundle.DeprecatedV5Code
+		if code == nil {
+			return nil, "", nil
+		}
+		if len(code.Entrypoints) == 1 {
+			ref := code.Entrypoints[0]
+			dataChecksum = code.Checksums[ref]
+		}
+
+		refs := make([]int32, len(code.Datapoints))
+		copy(refs, code.Datapoints)
+
+		// We collect the entrypoints as they contain information we
+		// need to correctly build the assessments
+		refs = append(refs, code.Entrypoints...)
+
+		datapoints := make([]string, len(refs))
+		for i := range refs {
+			ref := refs[i]
+			checksum := code.Checksums[ref]
+			datapoints[i] = checksum
+
+			typ := code.Code[ref-1].DereferencedTypeV1(code)
+			collectorJob.Datapoints[checksum] = &DataQueryInfo{
+				Type: string(typ),
+			}
+		}
+
+		// translate properties: we get bundle props < name => Type >
+		// we need to get execution query props: < name => checksum >
+		eqProps := map[string]string{}
+		for name := range bundle.Props {
+			checksum := propsToChecksums[name]
+			if checksum == "" {
+				return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.Query + "'")
+			}
+			eqProps[name] = checksum
+		}
+
+		res := ExecutionQuery{
+			Query:      query.Query,
+			Checksum:   query.Checksum,
+			Properties: eqProps,
+			Datapoints: datapoints,
+			Code:       bundle,
+		}
+
+		return &res, dataChecksum, nil
+	}
 }
