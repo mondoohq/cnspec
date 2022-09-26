@@ -127,6 +127,30 @@ func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAss
 	return res, nil
 }
 
+// StoreResults saves the given scores and date for an asset
+func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) (*Empty, error) {
+	logger.AddTag(ctx, "asset", req.AssetMrn)
+
+	_, err := s.DataLake.UpdateScores(ctx, req.AssetMrn, req.Scores)
+	if err != nil {
+		return globalEmpty, err
+	}
+
+	_, err = s.DataLake.UpdateData(ctx, req.AssetMrn, req.Data)
+	if err != nil {
+		return globalEmpty, err
+	}
+
+	if s.Upstream != nil && !s.Incognito {
+		_, err := s.Upstream.PolicyResolver.StoreResults(ctx, req)
+		if err != nil {
+			return globalEmpty, err
+		}
+	}
+
+	return globalEmpty, nil
+}
+
 // GetReport retreives a report for a given asset and policy
 func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreRequest) (*Report, error) {
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
