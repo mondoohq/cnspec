@@ -331,3 +331,56 @@ func (db *Db) GetData(ctx context.Context, assetMrn string, fields map[string]ty
 
 	return res, nil
 }
+
+// CachedResolvedPolicy returns the resolved policy if it exists
+func (db *Db) CachedResolvedPolicy(ctx context.Context, policyMrn string, assetFilterChecksum string, version policy.ResolvedPolicyVersion) (*policy.ResolvedPolicy, error) {
+	policyObj, err := db.GetValidatedPolicy(ctx, policyMrn)
+	if err != nil {
+		return nil, errors.New("cannot find policy for resolver: '" + policyMrn + "'")
+	}
+
+	res, ok := db.resolvedPolicyCache.Get(dbIDResolvedPolicy + policyObj.GraphExecutionChecksum + "\x00" + assetFilterChecksum)
+	if !ok {
+		return nil, nil
+	}
+
+	return res, nil
+}
+
+// ResolveQuery looks up a given query and caches it for later access (optional)
+func (db *Db) ResolveQuery(ctx context.Context, mrn string, cache map[string]interface{}) (*policy.Mquery, error) {
+	x, ok := db.cache.Get(dbIDQuery + mrn)
+	if !ok {
+		return nil, errors.New("failed to get query '" + mrn + "'")
+	}
+
+	res := x.(wrapQuery)
+	return res.Mquery, nil
+}
+
+// SetResolvedPolicy to the data store; cached indicates if it was cached from
+// upstream, thus preventing any attempts of resolving it in the client
+func (db *Db) SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy *policy.ResolvedPolicy, version policy.ResolvedPolicyVersion, cached bool) error {
+	ok := db.resolvedPolicyCache.Set(dbIDResolvedPolicy+resolvedPolicy.GraphExecutionChecksum+"\x00"+resolvedPolicy.FiltersChecksum, resolvedPolicy)
+	if !ok {
+		return errors.New("failed to save resolved policy '" + mrn + "'")
+	}
+
+	if cached {
+		x, ok := db.cache.Get(dbIDPolicy + mrn)
+		if !ok {
+			return errors.New("failed to save resolved policy as cached entry in this client, cannot find its parent policy locally: '" + mrn + "'")
+		}
+
+		policyw := x.(wrapPolicy)
+		policyw.Policy.GraphExecutionChecksum = resolvedPolicy.GraphExecutionChecksum
+		policyw.invalidated = false
+
+		ok = db.cache.Set(dbIDPolicy+mrn, policyw, 1)
+		if !ok {
+			return errors.New("failed to save resolved policy as cached entryin this client, failed to update parent policy locally: '" + mrn + "'")
+		}
+	}
+
+	return nil
+}
