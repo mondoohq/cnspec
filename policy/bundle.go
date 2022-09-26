@@ -248,7 +248,7 @@ func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBun
 			return nil, errors.New("failed to validate property '" + query.Mrn + "': " + err.Error())
 		}
 
-		name, err := mrn.GetResource(query.Mrn, MRN_QUERIES)
+		name, err := mrn.GetResource(query.Mrn, MRN_RESOURCE_QUERY)
 		if err != nil {
 			return nil, errors.New("could not read property name from query mrn: " + query.Mrn)
 		}
@@ -352,4 +352,57 @@ func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBun
 	}
 
 	return bundleMap, nil
+}
+
+// for a given policy, translate all local UIDs in all specs into global IDs/MRNs
+func translateSpecUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]string) error {
+	for i := range policyObj.Specs {
+		spec := policyObj.Specs[i]
+
+		if len(spec.DataQueries) > 0 {
+			datamap := map[string]QueryAction{}
+			for k, v := range spec.DataQueries {
+				nuID, ok := uid2mrn[k]
+				if !ok {
+					datamap[k] = v
+				} else {
+					datamap[nuID] = v
+				}
+			}
+			spec.DataQueries = datamap
+		}
+
+		if len(spec.ScoringQueries) > 0 {
+			scorings := map[string]*ScoringSpec{}
+			for k, v := range spec.ScoringQueries {
+				nuID, ok := uid2mrn[k]
+				if !ok {
+					scorings[k] = v
+				} else {
+					scorings[nuID] = v
+				}
+			}
+			spec.ScoringQueries = scorings
+		}
+
+		if len(spec.Policies) > 0 {
+			policies := map[string]*ScoringSpec{}
+			for k, v := range spec.Policies {
+				nuID, ok := uid2mrn[k]
+				if ok {
+					policies[nuID] = v
+					continue
+				}
+
+				if err := isPolicyMrn(k); err == nil {
+					policies[k] = v
+				}
+
+				return errors.New("found a policy reference which is neither an MRN nor in this bundle: " + k)
+			}
+			spec.Policies = policies
+		}
+	}
+
+	return nil
 }
