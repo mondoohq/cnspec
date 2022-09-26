@@ -56,6 +56,25 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 	return globalEmpty, err
 }
 
+// GetReport retreives a report for a given asset and policy
+func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreRequest) (*Report, error) {
+	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
+}
+
+// GetScore retrieves one score for an asset
+func (s *LocalServices) GetScore(ctx context.Context, req *EntityScoreRequest) (*Report, error) {
+	score, err := s.DataLake.GetScore(ctx, req.EntityMrn, req.ScoreMrn)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Report{
+		EntityMrn:  req.EntityMrn,
+		ScoringMrn: req.ScoreMrn,
+		Score:      &score,
+	}, nil
+}
+
 // HELPER METHODS
 // =================
 
