@@ -402,6 +402,11 @@ func (p *Policy) InvalidateGraphChecksums() {
 	p.GraphExecutionChecksum = ""
 }
 
+func (p *Policy) InvalidateExecutionChecksums() {
+	p.LocalExecutionChecksum = ""
+	p.GraphExecutionChecksum = ""
+}
+
 func (p *Policy) InvalidateAllChecksums() {
 	p.LocalContentChecksum = ""
 	p.LocalExecutionChecksum = ""

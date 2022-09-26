@@ -110,6 +110,20 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 	return policyw.Policy, nil
 }
 
+func (db *Db) ensurePolicy(ctx context.Context, mrn string, createIfMissing bool) (wrapPolicy, error) {
+	x, ok := db.cache.Get(dbIDPolicy + mrn)
+	if ok {
+		return x.(wrapPolicy), nil
+	}
+
+	if !createIfMissing {
+		return wrapPolicy{}, errors.New("failed to modify policy '" + mrn + "', could not find it")
+	}
+
+	_, policyw, err := db.ensureAsset(ctx, mrn)
+	return policyw, err
+}
+
 func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) error {
 	policyObj := policyw.Policy
 	filters, err := policyObj.ComputeAssetFilters(ctx,

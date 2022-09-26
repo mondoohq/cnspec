@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gogo/status"
+	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc/codes"
 )
 
@@ -53,4 +54,37 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 		PolicyDeltas: deltas,
 	}, true)
 	return globalEmpty, err
+}
+
+// HELPER METHODS
+// =================
+
+// CreatePolicyObject creates a policy object without saving it and returns it
+func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *Policy {
+	policyScoringSpec := map[string]*ScoringSpec{}
+
+	// TODO: this should be handled better and I'm not sure yet how...
+	// we need to ensure a good owner MRN exists for all objects, including orgs and spaces
+	// this is the case when we are in incognito mode
+	if ownerMrn == "" {
+		log.Debug().Str("policyMrn", policyMrn).Msg("ownerMrn is missing")
+		ownerMrn = "//policy.api.mondoo.app"
+	}
+
+	policyObj := Policy{
+		Mrn:  policyMrn,
+		Name: policyMrn, // just as a placeholder, replace with something better
+		// should we set a semver version here as well?, right now, the policy validation makes an
+		// exception for space and asset policies
+		Version: "n/a",
+		Specs: []*PolicySpec{{
+			Policies:       policyScoringSpec,
+			ScoringQueries: map[string]*ScoringSpec{},
+			DataQueries:    map[string]QueryAction{},
+		}},
+		OwnerMrn: ownerMrn,
+		IsPublic: false,
+	}
+
+	return &policyObj
 }
