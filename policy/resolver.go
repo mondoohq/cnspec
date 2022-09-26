@@ -15,6 +15,7 @@ import (
 	"github.com/segmentio/fasthash/fnv1a"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
@@ -781,4 +782,198 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, 
 	}
 
 	return nil
+}
+
+func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, policyMrn string, cache *resolverCache) (*ExecutionJob, *CollectorJob, error) {
+	ctx, span := tracer.Start(ctx, "resolver/jobsToQueries")
+	defer span.End()
+
+	logCtx := logger.FromContext(ctx)
+	collectorJob := &CollectorJob{
+		ReportingJobs:    map[string]*ReportingJob{},
+		ReportingQueries: map[string]*StringArray{},
+		Datapoints:       map[string]*DataQueryInfo{},
+	}
+	executionJob := &ExecutionJob{
+		Queries: map[string]*ExecutionQuery{},
+	}
+	props := map[string]*llx.Primitive{}
+	propsToChecksums := map[string]string{}
+
+	// sort execution queries by property dependencies
+	// FIXME: sort by internal dependencies of props as well
+	executionMrns := make([]string, len(cache.executionQueries))
+	var i int
+	var j int = len(cache.executionQueries) - 1
+	for mrn := range cache.executionQueries {
+		if _, ok := cache.propQueries[mrn]; ok {
+			executionMrns[i] = mrn
+			i++
+		} else {
+			executionMrns[j] = mrn
+			j--
+		}
+	}
+
+	// fill in all reporting jobs. we will remove the data query jobs and replace
+	// them with direct collections into their parent job later
+	for _, rj := range cache.reportingJobsByQrID {
+		collectorJob.ReportingJobs[rj.Uuid] = rj
+	}
+
+	// second, we want to inject all the real query checksums and connect them to
+	// the uuids of data queries and reporting jobs
+	// note: the queries are NOT defined yet, we only have MRNs at this stage
+	for i := 0; i < len(executionMrns); i++ {
+		mrn := executionMrns[i]
+
+		var mquery *Mquery
+		var err error
+
+		if m, ok := cache.bundleMap.Queries[mrn]; ok {
+			mquery = m
+		} else {
+			mquery, err = s.DataLake.ResolveQuery(ctx, mrn, cache.queries)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		codeID := mquery.CodeId
+
+		if existing, ok := executionJob.Queries[codeID]; ok {
+			logCtx.Debug().
+				Str("codeID", mquery.CodeId).
+				Str("existing", existing.Query).
+				Str("new", mquery.Query).
+				Msg("resolver> found duplicate query")
+		}
+
+		_, isDataQuery := cache.dataQueries[mrn]
+		_, isPropQuery := cache.propQueries[mrn]
+
+		executionQuery, dataChecksum, err := s.mquery2executionQuery(mquery, useV2Code, props, propsToChecksums, collectorJob, !(isDataQuery || isPropQuery))
+		if err != nil {
+			return nil, nil, errors.New("resolver> failed to compile query for ID " + mrn + ": " + err.Error())
+		}
+
+		if executionQuery == nil {
+			// This case happens when we were able to compile with the
+			// v2 compiler but not the v1 compiler. In such case, we
+			// will expunge the query and reporting chain from the
+			// resolved policy
+			if rj, ok := cache.reportingJobsByQrID[mrn]; ok {
+				delete(cache.reportingJobsByQrID, mrn)
+				delete(cache.reportingJobsByUUID, rj.Uuid)
+				delete(collectorJob.ReportingJobs, rj.Uuid)
+				for _, parentID := range rj.Notify {
+					if parentJob, ok := collectorJob.ReportingJobs[parentID]; ok {
+						delete(parentJob.Spec, rj.Uuid)
+					}
+				}
+			}
+
+			continue
+		}
+
+		cache.executionQueries[mrn] = executionQuery
+		executionJob.Queries[codeID] = executionQuery
+
+		// (1) Property Queries handling
+		// properties will be executed but not reported (for now)
+		if isPropQuery {
+			propName, err := Mrn2PropertyName(mrn)
+			if err != nil {
+				return nil, nil, errors.New("could not read property name from query mrn: " + mrn)
+			}
+			props[propName] = &llx.Primitive{Type: mquery.Type} // placeholder
+
+			if dataChecksum == "" {
+				return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + mquery.Query + "'")
+			}
+			propsToChecksums[propName] = dataChecksum
+
+			continue
+		}
+
+		// (2+3) Scoring+Data Queries handling
+		rj, ok := cache.reportingJobsByQrID[mrn]
+		if !ok {
+			logCtx.Debug().
+				Interface("reportingJobs", cache.reportingJobsByQrID).
+				Str("query", mrn).
+				Str("policy", policyMrn).
+				Msg("resolver> phase 2: cannot find reporting job")
+			return nil, nil, errors.New("cannot find reporting job for query " + mrn + " in policy " + policyMrn)
+		}
+
+		// (2) Scoring Queries handling
+		if !isDataQuery {
+			rj.QrId = mquery.CodeId
+
+			if mquery.Severity != nil {
+				for _, parentID := range rj.Notify {
+					parentJob, ok := collectorJob.ReportingJobs[parentID]
+					if !ok {
+						return nil, nil, errors.New("failed to connect datapoint to reporting job")
+					}
+					spec := parentJob.Spec[rj.Uuid]
+					if spec == nil {
+						spec = &ScoringSpec{}
+						parentJob.Spec[rj.Uuid] = spec
+					}
+					if spec.Severity == nil {
+						spec.Severity = &SeverityValue{Value: mquery.Severity.Value}
+					}
+				}
+			}
+
+			arr, ok := collectorJob.ReportingQueries[codeID]
+			if !ok {
+				arr = &StringArray{}
+				collectorJob.ReportingQueries[codeID] = arr
+			}
+			arr.Items = append(arr.Items, rj.Uuid)
+
+			// process all the datapoints of this job
+			for dp := range executionQuery.Datapoints {
+				datapointID := executionQuery.Datapoints[dp]
+				datapointInfo, ok := collectorJob.Datapoints[datapointID]
+				if !ok {
+					return nil, nil, errors.New("failed to identiy datapoint in collectorjob")
+				}
+
+				datapointInfo.Notify = append(datapointInfo.Notify, rj.Uuid)
+				rj.Datapoints[datapointID] = true
+			}
+
+			continue
+		}
+
+		// (3) Data Queries handling
+		for _, parentID := range rj.Notify {
+			parentJob, ok := collectorJob.ReportingJobs[parentID]
+			if !ok {
+				return nil, nil, errors.New("failed to connect datapoint to reporting job")
+			}
+
+			for dp := range executionQuery.Datapoints {
+				datapointID := executionQuery.Datapoints[dp]
+				datapointInfo, ok := collectorJob.Datapoints[datapointID]
+				if !ok {
+					return nil, nil, errors.New("failed to identiy datapoint in collectorjob")
+				}
+
+				datapointInfo.Notify = append(datapointInfo.Notify, parentJob.Uuid)
+				parentJob.Datapoints[datapointID] = true
+			}
+
+			// we don't need this any longer, since every datapoint now reports into
+			// the parent job (i.e. reports into the policy instead of the data query)
+			delete(collectorJob.ReportingJobs, rj.Uuid)
+			delete(parentJob.Datapoints, rj.Uuid)
+		}
+	}
+
+	return executionJob, collectorJob, nil
 }
