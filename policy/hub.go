@@ -12,6 +12,12 @@ import (
 
 var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
 
+// ValidatePolicyBundle and check queries, relationships, MRNs, and versions
+func (s *LocalServices) ValidatePolicyBundle(ctx context.Context, bundle *PolicyBundle) (*Empty, error) {
+	_, err := bundle.Compile(ctx, s.DataLake)
+	return globalEmpty, err
+}
+
 // SetPolicyBundle stores a bundle of policies and queries in this marketplace
 func (s *LocalServices) SetPolicyBundle(ctx context.Context, bundle *PolicyBundle) (*Empty, error) {
 	if len(bundle.OwnerMrn) == 0 {
