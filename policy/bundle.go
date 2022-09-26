@@ -232,7 +232,7 @@ func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBun
 	for i := range p.Props {
 		query := p.Props[i]
 
-		err = query.RefreshMrn(ownerMrn)
+		err = query.RefreshMRN(ownerMrn)
 		if err != nil {
 			return nil, errors.New("failed to refresh property: " + err.Error())
 		}
@@ -263,7 +263,7 @@ func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBun
 		// !this is very important to prevent user overrides! vv
 		policy.InvalidateAllChecksums()
 
-		err := policy.RefreshMrn(ownerMrn)
+		err := policy.RefreshMRN(ownerMrn)
 		if err != nil {
 			return nil, errors.New("failed to refresh policy " + policy.Mrn + ": " + err.Error())
 		}
@@ -300,7 +300,7 @@ func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBun
 
 		// ensure the correct mrn is set
 		uid := query.Uid
-		if err = query.RefreshMrn(ownerMrn); err != nil {
+		if err = query.RefreshMRN(ownerMrn); err != nil {
 			return nil, err
 		}
 		if uid != "" {
