@@ -62,7 +62,7 @@ func NewMultiBar(id string, data progressData) *progressbar {
 		id:           id,
 		maxNameWidth: maxNameWidth,
 		Data:         data,
-		isTTY:        isatty.IsTerminal(os.Stdout.Fd()),
+		isTTY:        isatty.IsTerminal(os.Stdout.Fd()) && false, // FIXME: re-enable the detection
 	}
 }
 

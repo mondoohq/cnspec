@@ -2,6 +2,8 @@ package scan
 
 import (
 	"context"
+	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/motor/vault"
+	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
@@ -27,6 +30,10 @@ import (
 
 // 50MB default size
 const ResolvedPolicyCacheSize = 52428800
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 type Job struct {
 	DoRecord      bool
@@ -110,6 +117,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) ([]*policy.R
 	reporter := NewAggregateReporter()
 
 	for i := range assetList {
+		asset := assetList[i]
+
+		// asset MRN cannot be empty
+		randID := policy.POLICY_SERVICE_NAME + "/assets/" + strconv.Itoa(rand.Int())
+		x, err := mrn.NewMRN(randID)
+		if err != nil {
+			return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
+		}
+		asset.Mrn = x.String()
+
 		// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
 		// we need to solve this at a different level.
 		select {
