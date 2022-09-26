@@ -123,6 +123,52 @@ func (QueryAction) EnumDescriptor() ([]byte, []int) {
 	return file_policy_proto_rawDescGZIP(), []int{1}
 }
 
+type PolicyDelta_PolicyAssignmentActionType int32
+
+const (
+	PolicyDelta_ADD    PolicyDelta_PolicyAssignmentActionType = 0
+	PolicyDelta_DELETE PolicyDelta_PolicyAssignmentActionType = 1
+)
+
+// Enum value maps for PolicyDelta_PolicyAssignmentActionType.
+var (
+	PolicyDelta_PolicyAssignmentActionType_name = map[int32]string{
+		0: "ADD",
+		1: "DELETE",
+	}
+	PolicyDelta_PolicyAssignmentActionType_value = map[string]int32{
+		"ADD":    0,
+		"DELETE": 1,
+	}
+)
+
+func (x PolicyDelta_PolicyAssignmentActionType) Enum() *PolicyDelta_PolicyAssignmentActionType {
+	p := new(PolicyDelta_PolicyAssignmentActionType)
+	*p = x
+	return p
+}
+
+func (x PolicyDelta_PolicyAssignmentActionType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PolicyDelta_PolicyAssignmentActionType) Descriptor() protoreflect.EnumDescriptor {
+	return file_policy_proto_enumTypes[2].Descriptor()
+}
+
+func (PolicyDelta_PolicyAssignmentActionType) Type() protoreflect.EnumType {
+	return &file_policy_proto_enumTypes[2]
+}
+
+func (x PolicyDelta_PolicyAssignmentActionType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PolicyDelta_PolicyAssignmentActionType.Descriptor instead.
+func (PolicyDelta_PolicyAssignmentActionType) EnumDescriptor() ([]byte, []int) {
+	return file_policy_proto_rawDescGZIP(), []int{34, 0}
+}
+
 // PolicySpec specifies and overrides a policy and all its queries and referenced policies.
 // - Queries have UUIDs across all policies, so these overrides reach across policies.
 // - Policies are targeted via UUID as well and may override their scoring behavior.
@@ -2726,6 +2772,116 @@ func (x *PolicyAssignment) GetPolicyMrns() []string {
 	return nil
 }
 
+type PolicyMutationDelta struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	PolicyMrn    string                  `protobuf:"bytes,1,opt,name=policy_mrn,json=policyMrn,proto3" json:"policy_mrn,omitempty"`
+	PolicyDeltas map[string]*PolicyDelta `protobuf:"bytes,2,rep,name=policy_deltas,json=policyDeltas,proto3" json:"policy_deltas,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+}
+
+func (x *PolicyMutationDelta) Reset() {
+	*x = PolicyMutationDelta{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_policy_proto_msgTypes[33]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *PolicyMutationDelta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyMutationDelta) ProtoMessage() {}
+
+func (x *PolicyMutationDelta) ProtoReflect() protoreflect.Message {
+	mi := &file_policy_proto_msgTypes[33]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyMutationDelta.ProtoReflect.Descriptor instead.
+func (*PolicyMutationDelta) Descriptor() ([]byte, []int) {
+	return file_policy_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *PolicyMutationDelta) GetPolicyMrn() string {
+	if x != nil {
+		return x.PolicyMrn
+	}
+	return ""
+}
+
+func (x *PolicyMutationDelta) GetPolicyDeltas() map[string]*PolicyDelta {
+	if x != nil {
+		return x.PolicyDeltas
+	}
+	return nil
+}
+
+type PolicyDelta struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	PolicyMrn string                                 `protobuf:"bytes,1,opt,name=policy_mrn,json=policyMrn,proto3" json:"policy_mrn,omitempty"`
+	Action    PolicyDelta_PolicyAssignmentActionType `protobuf:"varint,2,opt,name=action,proto3,enum=cnspec.policy.PolicyDelta_PolicyAssignmentActionType" json:"action,omitempty"`
+}
+
+func (x *PolicyDelta) Reset() {
+	*x = PolicyDelta{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_policy_proto_msgTypes[34]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *PolicyDelta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyDelta) ProtoMessage() {}
+
+func (x *PolicyDelta) ProtoReflect() protoreflect.Message {
+	mi := &file_policy_proto_msgTypes[34]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyDelta.ProtoReflect.Descriptor instead.
+func (*PolicyDelta) Descriptor() ([]byte, []int) {
+	return file_policy_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *PolicyDelta) GetPolicyMrn() string {
+	if x != nil {
+		return x.PolicyMrn
+	}
+	return ""
+}
+
+func (x *PolicyDelta) GetAction() PolicyDelta_PolicyAssignmentActionType {
+	if x != nil {
+		return x.Action
+	}
+	return PolicyDelta_ADD
+}
+
 type ResolveReq struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -2738,7 +2894,7 @@ type ResolveReq struct {
 func (x *ResolveReq) Reset() {
 	*x = ResolveReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_policy_proto_msgTypes[33]
+		mi := &file_policy_proto_msgTypes[35]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2751,7 +2907,7 @@ func (x *ResolveReq) String() string {
 func (*ResolveReq) ProtoMessage() {}
 
 func (x *ResolveReq) ProtoReflect() protoreflect.Message {
-	mi := &file_policy_proto_msgTypes[33]
+	mi := &file_policy_proto_msgTypes[35]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2764,7 +2920,7 @@ func (x *ResolveReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveReq.ProtoReflect.Descriptor instead.
 func (*ResolveReq) Descriptor() ([]byte, []int) {
-	return file_policy_proto_rawDescGZIP(), []int{33}
+	return file_policy_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ResolveReq) GetPolicyMrn() string {
@@ -2793,7 +2949,7 @@ type UpdateAssetJobsReq struct {
 func (x *UpdateAssetJobsReq) Reset() {
 	*x = UpdateAssetJobsReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_policy_proto_msgTypes[34]
+		mi := &file_policy_proto_msgTypes[36]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2806,7 +2962,7 @@ func (x *UpdateAssetJobsReq) String() string {
 func (*UpdateAssetJobsReq) ProtoMessage() {}
 
 func (x *UpdateAssetJobsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_policy_proto_msgTypes[34]
+	mi := &file_policy_proto_msgTypes[36]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2819,7 +2975,7 @@ func (x *UpdateAssetJobsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateAssetJobsReq.ProtoReflect.Descriptor instead.
 func (*UpdateAssetJobsReq) Descriptor() ([]byte, []int) {
-	return file_policy_proto_rawDescGZIP(), []int{34}
+	return file_policy_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *UpdateAssetJobsReq) GetAssetMrn() string {
@@ -2854,7 +3010,7 @@ type StoreResultsReq struct {
 func (x *StoreResultsReq) Reset() {
 	*x = StoreResultsReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_policy_proto_msgTypes[35]
+		mi := &file_policy_proto_msgTypes[37]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2867,7 +3023,7 @@ func (x *StoreResultsReq) String() string {
 func (*StoreResultsReq) ProtoMessage() {}
 
 func (x *StoreResultsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_policy_proto_msgTypes[35]
+	mi := &file_policy_proto_msgTypes[37]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2880,7 +3036,7 @@ func (x *StoreResultsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreResultsReq.ProtoReflect.Descriptor instead.
 func (*StoreResultsReq) Descriptor() ([]byte, []int) {
-	return file_policy_proto_rawDescGZIP(), []int{35}
+	return file_policy_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *StoreResultsReq) GetAssetMrn() string {
@@ -2937,7 +3093,7 @@ type EntityScoreRequest struct {
 func (x *EntityScoreRequest) Reset() {
 	*x = EntityScoreRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_policy_proto_msgTypes[36]
+		mi := &file_policy_proto_msgTypes[38]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2950,7 +3106,7 @@ func (x *EntityScoreRequest) String() string {
 func (*EntityScoreRequest) ProtoMessage() {}
 
 func (x *EntityScoreRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_policy_proto_msgTypes[36]
+	mi := &file_policy_proto_msgTypes[38]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2963,7 +3119,7 @@ func (x *EntityScoreRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EntityScoreRequest.ProtoReflect.Descriptor instead.
 func (*EntityScoreRequest) Descriptor() ([]byte, []int) {
-	return file_policy_proto_rawDescGZIP(), []int{36}
+	return file_policy_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *EntityScoreRequest) GetEntityMrn() string {
@@ -3505,7 +3661,33 @@ var file_policy_proto_rawDesc = []byte{
 	0x12, 0x1b, 0x0a, 0x09, 0x61, 0x73, 0x73, 0x65, 0x74, 0x5f, 0x6d, 0x72, 0x6e, 0x18, 0x01, 0x20,
 	0x01, 0x28, 0x09, 0x52, 0x08, 0x61, 0x73, 0x73, 0x65, 0x74, 0x4d, 0x72, 0x6e, 0x12, 0x1f, 0x0a,
 	0x0b, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x6d, 0x72, 0x6e, 0x73, 0x18, 0x02, 0x20, 0x03,
-	0x28, 0x09, 0x52, 0x0a, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4d, 0x72, 0x6e, 0x73, 0x22, 0x67,
+	0x28, 0x09, 0x52, 0x0a, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4d, 0x72, 0x6e, 0x73, 0x22, 0xec,
+	0x01, 0x0a, 0x13, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4d, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x5f, 0x6d, 0x72, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x70, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x4d, 0x72, 0x6e, 0x12, 0x59, 0x0a, 0x0d, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f,
+	0x64, 0x65, 0x6c, 0x74, 0x61, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x34, 0x2e, 0x63,
+	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x50, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x4d, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x6c, 0x74, 0x61,
+	0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x73, 0x45, 0x6e, 0x74,
+	0x72, 0x79, 0x52, 0x0c, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x73,
+	0x1a, 0x5b, 0x0a, 0x11, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x73,
+	0x45, 0x6e, 0x74, 0x72, 0x79, 0x12, 0x10, 0x0a, 0x03, 0x6b, 0x65, 0x79, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x03, 0x6b, 0x65, 0x79, 0x12, 0x30, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e,
+	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x44, 0x65, 0x6c,
+	0x74, 0x61, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x3a, 0x02, 0x38, 0x01, 0x22, 0xae, 0x01,
+	0x0a, 0x0b, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x12, 0x1d, 0x0a,
+	0x0a, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x6d, 0x72, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x09, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4d, 0x72, 0x6e, 0x12, 0x4d, 0x0a, 0x06,
+	0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x35, 0x2e, 0x63,
+	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x50, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41,
+	0x73, 0x73, 0x69, 0x67, 0x6e, 0x6d, 0x65, 0x6e, 0x74, 0x41, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x54,
+	0x79, 0x70, 0x65, 0x52, 0x06, 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x31, 0x0a, 0x1a, 0x50,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x6d, 0x65, 0x6e, 0x74, 0x41,
+	0x63, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x79, 0x70, 0x65, 0x12, 0x07, 0x0a, 0x03, 0x41, 0x44, 0x44,
+	0x10, 0x00, 0x12, 0x0a, 0x0a, 0x06, 0x44, 0x45, 0x4c, 0x45, 0x54, 0x45, 0x10, 0x01, 0x22, 0x67,
 	0x0a, 0x0a, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x52, 0x65, 0x71, 0x12, 0x1d, 0x0a, 0x0a,
 	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x6d, 0x72, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
 	0x52, 0x09, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4d, 0x72, 0x6e, 0x12, 0x3a, 0x0a, 0x0d, 0x61,
@@ -3647,186 +3829,193 @@ func file_policy_proto_rawDescGZIP() []byte {
 	return file_policy_proto_rawDescData
 }
 
-var file_policy_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_policy_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
+var file_policy_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_policy_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_policy_proto_goTypes = []interface{}{
-	(ScoringSystem)(0),         // 0: cnspec.policy.ScoringSystem
-	(QueryAction)(0),           // 1: cnspec.policy.QueryAction
-	(*PolicySpec)(nil),         // 2: cnspec.policy.PolicySpec
-	(*Policy)(nil),             // 3: cnspec.policy.Policy
-	(*ScoringSpec)(nil),        // 4: cnspec.policy.ScoringSpec
-	(*Author)(nil),             // 5: cnspec.policy.Author
-	(*QueryCounts)(nil),        // 6: cnspec.policy.QueryCounts
-	(*Policies)(nil),           // 7: cnspec.policy.Policies
-	(*PolicyBundle)(nil),       // 8: cnspec.policy.PolicyBundle
-	(*PolicySpecDocs)(nil),     // 9: cnspec.policy.PolicySpecDocs
-	(*PolicyDocs)(nil),         // 10: cnspec.policy.PolicyDocs
-	(*Mquery)(nil),             // 11: cnspec.policy.Mquery
-	(*SeverityValue)(nil),      // 12: cnspec.policy.SeverityValue
-	(*MqueryDocs)(nil),         // 13: cnspec.policy.MqueryDocs
-	(*MqueryRef)(nil),          // 14: cnspec.policy.MqueryRef
-	(*ResolvedPolicy)(nil),     // 15: cnspec.policy.ResolvedPolicy
-	(*ExecutionJob)(nil),       // 16: cnspec.policy.ExecutionJob
-	(*ExecutionQuery)(nil),     // 17: cnspec.policy.ExecutionQuery
-	(*CollectorJob)(nil),       // 18: cnspec.policy.CollectorJob
-	(*StringArray)(nil),        // 19: cnspec.policy.StringArray
-	(*DataQueryInfo)(nil),      // 20: cnspec.policy.DataQueryInfo
-	(*ReportingJob)(nil),       // 21: cnspec.policy.ReportingJob
-	(*Report)(nil),             // 22: cnspec.policy.Report
-	(*Reports)(nil),            // 23: cnspec.policy.Reports
-	(*ReportCollection)(nil),   // 24: cnspec.policy.ReportCollection
-	(*Cvss)(nil),               // 25: cnspec.policy.Cvss
-	(*CvssStats)(nil),          // 26: cnspec.policy.CvssStats
-	(*Score)(nil),              // 27: cnspec.policy.Score
-	(*Stats)(nil),              // 28: cnspec.policy.Stats
-	(*ScoreDistribution)(nil),  // 29: cnspec.policy.ScoreDistribution
-	(*Empty)(nil),              // 30: cnspec.policy.Empty
-	(*Mrn)(nil),                // 31: cnspec.policy.Mrn
-	(*Mqueries)(nil),           // 32: cnspec.policy.Mqueries
-	(*PolicySearchFilter)(nil), // 33: cnspec.policy.PolicySearchFilter
-	(*PolicyAssignment)(nil),   // 34: cnspec.policy.PolicyAssignment
-	(*ResolveReq)(nil),         // 35: cnspec.policy.ResolveReq
-	(*UpdateAssetJobsReq)(nil), // 36: cnspec.policy.UpdateAssetJobsReq
-	(*StoreResultsReq)(nil),    // 37: cnspec.policy.StoreResultsReq
-	(*EntityScoreRequest)(nil), // 38: cnspec.policy.EntityScoreRequest
-	nil,                        // 39: cnspec.policy.PolicySpec.PoliciesEntry
-	nil,                        // 40: cnspec.policy.PolicySpec.ScoringQueriesEntry
-	nil,                        // 41: cnspec.policy.PolicySpec.DataQueriesEntry
-	nil,                        // 42: cnspec.policy.Policy.AssetFiltersEntry
-	nil,                        // 43: cnspec.policy.Policy.TagsEntry
-	nil,                        // 44: cnspec.policy.Policy.PropsEntry
-	nil,                        // 45: cnspec.policy.Mquery.TagsEntry
-	nil,                        // 46: cnspec.policy.ExecutionJob.QueriesEntry
-	nil,                        // 47: cnspec.policy.ExecutionQuery.PropertiesEntry
-	nil,                        // 48: cnspec.policy.CollectorJob.ReportingJobsEntry
-	nil,                        // 49: cnspec.policy.CollectorJob.ReportingQueriesEntry
-	nil,                        // 50: cnspec.policy.CollectorJob.DatapointsEntry
-	nil,                        // 51: cnspec.policy.ReportingJob.SpecEntry
-	nil,                        // 52: cnspec.policy.ReportingJob.DatapointsEntry
-	nil,                        // 53: cnspec.policy.Report.ScoresEntry
-	nil,                        // 54: cnspec.policy.Report.DataEntry
-	nil,                        // 55: cnspec.policy.Report.CvssScoresEntry
-	nil,                        // 56: cnspec.policy.ReportCollection.AssetsEntry
-	nil,                        // 57: cnspec.policy.ReportCollection.ReportsEntry
-	nil,                        // 58: cnspec.policy.ReportCollection.ErrorsEntry
-	nil,                        // 59: cnspec.policy.ReportCollection.ResolvedPoliciesEntry
-	nil,                        // 60: cnspec.policy.StoreResultsReq.DataEntry
-	(*llx.CodeBundle)(nil),     // 61: cnquery.llx.CodeBundle
-	(*llx.Result)(nil),         // 62: cnquery.llx.Result
+	(ScoringSystem)(0), // 0: cnspec.policy.ScoringSystem
+	(QueryAction)(0),   // 1: cnspec.policy.QueryAction
+	(PolicyDelta_PolicyAssignmentActionType)(0), // 2: cnspec.policy.PolicyDelta.PolicyAssignmentActionType
+	(*PolicySpec)(nil),                          // 3: cnspec.policy.PolicySpec
+	(*Policy)(nil),                              // 4: cnspec.policy.Policy
+	(*ScoringSpec)(nil),                         // 5: cnspec.policy.ScoringSpec
+	(*Author)(nil),                              // 6: cnspec.policy.Author
+	(*QueryCounts)(nil),                         // 7: cnspec.policy.QueryCounts
+	(*Policies)(nil),                            // 8: cnspec.policy.Policies
+	(*PolicyBundle)(nil),                        // 9: cnspec.policy.PolicyBundle
+	(*PolicySpecDocs)(nil),                      // 10: cnspec.policy.PolicySpecDocs
+	(*PolicyDocs)(nil),                          // 11: cnspec.policy.PolicyDocs
+	(*Mquery)(nil),                              // 12: cnspec.policy.Mquery
+	(*SeverityValue)(nil),                       // 13: cnspec.policy.SeverityValue
+	(*MqueryDocs)(nil),                          // 14: cnspec.policy.MqueryDocs
+	(*MqueryRef)(nil),                           // 15: cnspec.policy.MqueryRef
+	(*ResolvedPolicy)(nil),                      // 16: cnspec.policy.ResolvedPolicy
+	(*ExecutionJob)(nil),                        // 17: cnspec.policy.ExecutionJob
+	(*ExecutionQuery)(nil),                      // 18: cnspec.policy.ExecutionQuery
+	(*CollectorJob)(nil),                        // 19: cnspec.policy.CollectorJob
+	(*StringArray)(nil),                         // 20: cnspec.policy.StringArray
+	(*DataQueryInfo)(nil),                       // 21: cnspec.policy.DataQueryInfo
+	(*ReportingJob)(nil),                        // 22: cnspec.policy.ReportingJob
+	(*Report)(nil),                              // 23: cnspec.policy.Report
+	(*Reports)(nil),                             // 24: cnspec.policy.Reports
+	(*ReportCollection)(nil),                    // 25: cnspec.policy.ReportCollection
+	(*Cvss)(nil),                                // 26: cnspec.policy.Cvss
+	(*CvssStats)(nil),                           // 27: cnspec.policy.CvssStats
+	(*Score)(nil),                               // 28: cnspec.policy.Score
+	(*Stats)(nil),                               // 29: cnspec.policy.Stats
+	(*ScoreDistribution)(nil),                   // 30: cnspec.policy.ScoreDistribution
+	(*Empty)(nil),                               // 31: cnspec.policy.Empty
+	(*Mrn)(nil),                                 // 32: cnspec.policy.Mrn
+	(*Mqueries)(nil),                            // 33: cnspec.policy.Mqueries
+	(*PolicySearchFilter)(nil),                  // 34: cnspec.policy.PolicySearchFilter
+	(*PolicyAssignment)(nil),                    // 35: cnspec.policy.PolicyAssignment
+	(*PolicyMutationDelta)(nil),                 // 36: cnspec.policy.PolicyMutationDelta
+	(*PolicyDelta)(nil),                         // 37: cnspec.policy.PolicyDelta
+	(*ResolveReq)(nil),                          // 38: cnspec.policy.ResolveReq
+	(*UpdateAssetJobsReq)(nil),                  // 39: cnspec.policy.UpdateAssetJobsReq
+	(*StoreResultsReq)(nil),                     // 40: cnspec.policy.StoreResultsReq
+	(*EntityScoreRequest)(nil),                  // 41: cnspec.policy.EntityScoreRequest
+	nil,                                         // 42: cnspec.policy.PolicySpec.PoliciesEntry
+	nil,                                         // 43: cnspec.policy.PolicySpec.ScoringQueriesEntry
+	nil,                                         // 44: cnspec.policy.PolicySpec.DataQueriesEntry
+	nil,                                         // 45: cnspec.policy.Policy.AssetFiltersEntry
+	nil,                                         // 46: cnspec.policy.Policy.TagsEntry
+	nil,                                         // 47: cnspec.policy.Policy.PropsEntry
+	nil,                                         // 48: cnspec.policy.Mquery.TagsEntry
+	nil,                                         // 49: cnspec.policy.ExecutionJob.QueriesEntry
+	nil,                                         // 50: cnspec.policy.ExecutionQuery.PropertiesEntry
+	nil,                                         // 51: cnspec.policy.CollectorJob.ReportingJobsEntry
+	nil,                                         // 52: cnspec.policy.CollectorJob.ReportingQueriesEntry
+	nil,                                         // 53: cnspec.policy.CollectorJob.DatapointsEntry
+	nil,                                         // 54: cnspec.policy.ReportingJob.SpecEntry
+	nil,                                         // 55: cnspec.policy.ReportingJob.DatapointsEntry
+	nil,                                         // 56: cnspec.policy.Report.ScoresEntry
+	nil,                                         // 57: cnspec.policy.Report.DataEntry
+	nil,                                         // 58: cnspec.policy.Report.CvssScoresEntry
+	nil,                                         // 59: cnspec.policy.ReportCollection.AssetsEntry
+	nil,                                         // 60: cnspec.policy.ReportCollection.ReportsEntry
+	nil,                                         // 61: cnspec.policy.ReportCollection.ErrorsEntry
+	nil,                                         // 62: cnspec.policy.ReportCollection.ResolvedPoliciesEntry
+	nil,                                         // 63: cnspec.policy.PolicyMutationDelta.PolicyDeltasEntry
+	nil,                                         // 64: cnspec.policy.StoreResultsReq.DataEntry
+	(*llx.CodeBundle)(nil),                      // 65: cnquery.llx.CodeBundle
+	(*llx.Result)(nil),                          // 66: cnquery.llx.Result
 }
 var file_policy_proto_depIdxs = []int32{
-	39, // 0: cnspec.policy.PolicySpec.policies:type_name -> cnspec.policy.PolicySpec.PoliciesEntry
-	40, // 1: cnspec.policy.PolicySpec.scoring_queries:type_name -> cnspec.policy.PolicySpec.ScoringQueriesEntry
-	41, // 2: cnspec.policy.PolicySpec.data_queries:type_name -> cnspec.policy.PolicySpec.DataQueriesEntry
-	11, // 3: cnspec.policy.PolicySpec.asset_filter:type_name -> cnspec.policy.Mquery
-	9,  // 4: cnspec.policy.PolicySpec.docs:type_name -> cnspec.policy.PolicySpecDocs
-	2,  // 5: cnspec.policy.Policy.specs:type_name -> cnspec.policy.PolicySpec
-	42, // 6: cnspec.policy.Policy.asset_filters:type_name -> cnspec.policy.Policy.AssetFiltersEntry
+	42, // 0: cnspec.policy.PolicySpec.policies:type_name -> cnspec.policy.PolicySpec.PoliciesEntry
+	43, // 1: cnspec.policy.PolicySpec.scoring_queries:type_name -> cnspec.policy.PolicySpec.ScoringQueriesEntry
+	44, // 2: cnspec.policy.PolicySpec.data_queries:type_name -> cnspec.policy.PolicySpec.DataQueriesEntry
+	12, // 3: cnspec.policy.PolicySpec.asset_filter:type_name -> cnspec.policy.Mquery
+	10, // 4: cnspec.policy.PolicySpec.docs:type_name -> cnspec.policy.PolicySpecDocs
+	3,  // 5: cnspec.policy.Policy.specs:type_name -> cnspec.policy.PolicySpec
+	45, // 6: cnspec.policy.Policy.asset_filters:type_name -> cnspec.policy.Policy.AssetFiltersEntry
 	0,  // 7: cnspec.policy.Policy.scoring_system:type_name -> cnspec.policy.ScoringSystem
-	5,  // 8: cnspec.policy.Policy.authors:type_name -> cnspec.policy.Author
-	43, // 9: cnspec.policy.Policy.tags:type_name -> cnspec.policy.Policy.TagsEntry
-	44, // 10: cnspec.policy.Policy.props:type_name -> cnspec.policy.Policy.PropsEntry
-	10, // 11: cnspec.policy.Policy.docs:type_name -> cnspec.policy.PolicyDocs
-	6,  // 12: cnspec.policy.Policy.query_counts:type_name -> cnspec.policy.QueryCounts
+	6,  // 8: cnspec.policy.Policy.authors:type_name -> cnspec.policy.Author
+	46, // 9: cnspec.policy.Policy.tags:type_name -> cnspec.policy.Policy.TagsEntry
+	47, // 10: cnspec.policy.Policy.props:type_name -> cnspec.policy.Policy.PropsEntry
+	11, // 11: cnspec.policy.Policy.docs:type_name -> cnspec.policy.PolicyDocs
+	7,  // 12: cnspec.policy.Policy.query_counts:type_name -> cnspec.policy.QueryCounts
 	0,  // 13: cnspec.policy.ScoringSpec.scoring_system:type_name -> cnspec.policy.ScoringSystem
 	1,  // 14: cnspec.policy.ScoringSpec.action:type_name -> cnspec.policy.QueryAction
-	12, // 15: cnspec.policy.ScoringSpec.severity:type_name -> cnspec.policy.SeverityValue
-	3,  // 16: cnspec.policy.Policies.items:type_name -> cnspec.policy.Policy
-	3,  // 17: cnspec.policy.PolicyBundle.policies:type_name -> cnspec.policy.Policy
-	11, // 18: cnspec.policy.PolicyBundle.props:type_name -> cnspec.policy.Mquery
-	11, // 19: cnspec.policy.PolicyBundle.queries:type_name -> cnspec.policy.Mquery
-	10, // 20: cnspec.policy.PolicyBundle.docs:type_name -> cnspec.policy.PolicyDocs
-	12, // 21: cnspec.policy.Mquery.severity:type_name -> cnspec.policy.SeverityValue
-	13, // 22: cnspec.policy.Mquery.docs:type_name -> cnspec.policy.MqueryDocs
-	14, // 23: cnspec.policy.Mquery.refs:type_name -> cnspec.policy.MqueryRef
-	45, // 24: cnspec.policy.Mquery.tags:type_name -> cnspec.policy.Mquery.TagsEntry
-	16, // 25: cnspec.policy.ResolvedPolicy.execution_job:type_name -> cnspec.policy.ExecutionJob
-	18, // 26: cnspec.policy.ResolvedPolicy.collector_job:type_name -> cnspec.policy.CollectorJob
-	11, // 27: cnspec.policy.ResolvedPolicy.filters:type_name -> cnspec.policy.Mquery
-	46, // 28: cnspec.policy.ExecutionJob.queries:type_name -> cnspec.policy.ExecutionJob.QueriesEntry
-	47, // 29: cnspec.policy.ExecutionQuery.properties:type_name -> cnspec.policy.ExecutionQuery.PropertiesEntry
-	61, // 30: cnspec.policy.ExecutionQuery.code:type_name -> cnquery.llx.CodeBundle
-	48, // 31: cnspec.policy.CollectorJob.reporting_jobs:type_name -> cnspec.policy.CollectorJob.ReportingJobsEntry
-	49, // 32: cnspec.policy.CollectorJob.reporting_queries:type_name -> cnspec.policy.CollectorJob.ReportingQueriesEntry
-	50, // 33: cnspec.policy.CollectorJob.datapoints:type_name -> cnspec.policy.CollectorJob.DatapointsEntry
-	51, // 34: cnspec.policy.ReportingJob.spec:type_name -> cnspec.policy.ReportingJob.SpecEntry
+	13, // 15: cnspec.policy.ScoringSpec.severity:type_name -> cnspec.policy.SeverityValue
+	4,  // 16: cnspec.policy.Policies.items:type_name -> cnspec.policy.Policy
+	4,  // 17: cnspec.policy.PolicyBundle.policies:type_name -> cnspec.policy.Policy
+	12, // 18: cnspec.policy.PolicyBundle.props:type_name -> cnspec.policy.Mquery
+	12, // 19: cnspec.policy.PolicyBundle.queries:type_name -> cnspec.policy.Mquery
+	11, // 20: cnspec.policy.PolicyBundle.docs:type_name -> cnspec.policy.PolicyDocs
+	13, // 21: cnspec.policy.Mquery.severity:type_name -> cnspec.policy.SeverityValue
+	14, // 22: cnspec.policy.Mquery.docs:type_name -> cnspec.policy.MqueryDocs
+	15, // 23: cnspec.policy.Mquery.refs:type_name -> cnspec.policy.MqueryRef
+	48, // 24: cnspec.policy.Mquery.tags:type_name -> cnspec.policy.Mquery.TagsEntry
+	17, // 25: cnspec.policy.ResolvedPolicy.execution_job:type_name -> cnspec.policy.ExecutionJob
+	19, // 26: cnspec.policy.ResolvedPolicy.collector_job:type_name -> cnspec.policy.CollectorJob
+	12, // 27: cnspec.policy.ResolvedPolicy.filters:type_name -> cnspec.policy.Mquery
+	49, // 28: cnspec.policy.ExecutionJob.queries:type_name -> cnspec.policy.ExecutionJob.QueriesEntry
+	50, // 29: cnspec.policy.ExecutionQuery.properties:type_name -> cnspec.policy.ExecutionQuery.PropertiesEntry
+	65, // 30: cnspec.policy.ExecutionQuery.code:type_name -> cnquery.llx.CodeBundle
+	51, // 31: cnspec.policy.CollectorJob.reporting_jobs:type_name -> cnspec.policy.CollectorJob.ReportingJobsEntry
+	52, // 32: cnspec.policy.CollectorJob.reporting_queries:type_name -> cnspec.policy.CollectorJob.ReportingQueriesEntry
+	53, // 33: cnspec.policy.CollectorJob.datapoints:type_name -> cnspec.policy.CollectorJob.DatapointsEntry
+	54, // 34: cnspec.policy.ReportingJob.spec:type_name -> cnspec.policy.ReportingJob.SpecEntry
 	0,  // 35: cnspec.policy.ReportingJob.scoring_system:type_name -> cnspec.policy.ScoringSystem
-	52, // 36: cnspec.policy.ReportingJob.datapoints:type_name -> cnspec.policy.ReportingJob.DatapointsEntry
-	27, // 37: cnspec.policy.Report.score:type_name -> cnspec.policy.Score
-	53, // 38: cnspec.policy.Report.scores:type_name -> cnspec.policy.Report.ScoresEntry
-	54, // 39: cnspec.policy.Report.data:type_name -> cnspec.policy.Report.DataEntry
-	28, // 40: cnspec.policy.Report.stats:type_name -> cnspec.policy.Stats
-	28, // 41: cnspec.policy.Report.ignored_stats:type_name -> cnspec.policy.Stats
-	25, // 42: cnspec.policy.Report.cvss_score:type_name -> cnspec.policy.Cvss
-	55, // 43: cnspec.policy.Report.cvss_scores:type_name -> cnspec.policy.Report.CvssScoresEntry
-	26, // 44: cnspec.policy.Report.cvss_stats:type_name -> cnspec.policy.CvssStats
-	22, // 45: cnspec.policy.Reports.reports:type_name -> cnspec.policy.Report
-	56, // 46: cnspec.policy.ReportCollection.assets:type_name -> cnspec.policy.ReportCollection.AssetsEntry
-	8,  // 47: cnspec.policy.ReportCollection.bundle:type_name -> cnspec.policy.PolicyBundle
-	57, // 48: cnspec.policy.ReportCollection.reports:type_name -> cnspec.policy.ReportCollection.ReportsEntry
-	58, // 49: cnspec.policy.ReportCollection.errors:type_name -> cnspec.policy.ReportCollection.ErrorsEntry
-	59, // 50: cnspec.policy.ReportCollection.resolved_policies:type_name -> cnspec.policy.ReportCollection.ResolvedPoliciesEntry
-	29, // 51: cnspec.policy.Stats.failed:type_name -> cnspec.policy.ScoreDistribution
-	29, // 52: cnspec.policy.Stats.passed:type_name -> cnspec.policy.ScoreDistribution
-	29, // 53: cnspec.policy.Stats.errors:type_name -> cnspec.policy.ScoreDistribution
-	11, // 54: cnspec.policy.Mqueries.items:type_name -> cnspec.policy.Mquery
-	11, // 55: cnspec.policy.ResolveReq.asset_filters:type_name -> cnspec.policy.Mquery
-	11, // 56: cnspec.policy.UpdateAssetJobsReq.asset_filters:type_name -> cnspec.policy.Mquery
-	27, // 57: cnspec.policy.StoreResultsReq.scores:type_name -> cnspec.policy.Score
-	60, // 58: cnspec.policy.StoreResultsReq.data:type_name -> cnspec.policy.StoreResultsReq.DataEntry
-	25, // 59: cnspec.policy.StoreResultsReq.cvssScores:type_name -> cnspec.policy.Cvss
-	4,  // 60: cnspec.policy.PolicySpec.PoliciesEntry.value:type_name -> cnspec.policy.ScoringSpec
-	4,  // 61: cnspec.policy.PolicySpec.ScoringQueriesEntry.value:type_name -> cnspec.policy.ScoringSpec
-	1,  // 62: cnspec.policy.PolicySpec.DataQueriesEntry.value:type_name -> cnspec.policy.QueryAction
-	11, // 63: cnspec.policy.Policy.AssetFiltersEntry.value:type_name -> cnspec.policy.Mquery
-	17, // 64: cnspec.policy.ExecutionJob.QueriesEntry.value:type_name -> cnspec.policy.ExecutionQuery
-	21, // 65: cnspec.policy.CollectorJob.ReportingJobsEntry.value:type_name -> cnspec.policy.ReportingJob
-	19, // 66: cnspec.policy.CollectorJob.ReportingQueriesEntry.value:type_name -> cnspec.policy.StringArray
-	20, // 67: cnspec.policy.CollectorJob.DatapointsEntry.value:type_name -> cnspec.policy.DataQueryInfo
-	4,  // 68: cnspec.policy.ReportingJob.SpecEntry.value:type_name -> cnspec.policy.ScoringSpec
-	27, // 69: cnspec.policy.Report.ScoresEntry.value:type_name -> cnspec.policy.Score
-	62, // 70: cnspec.policy.Report.DataEntry.value:type_name -> cnquery.llx.Result
-	25, // 71: cnspec.policy.Report.CvssScoresEntry.value:type_name -> cnspec.policy.Cvss
-	22, // 72: cnspec.policy.ReportCollection.ReportsEntry.value:type_name -> cnspec.policy.Report
-	15, // 73: cnspec.policy.ReportCollection.ResolvedPoliciesEntry.value:type_name -> cnspec.policy.ResolvedPolicy
-	62, // 74: cnspec.policy.StoreResultsReq.DataEntry.value:type_name -> cnquery.llx.Result
-	8,  // 75: cnspec.policy.PolicyHub.SetPolicyBundle:input_type -> cnspec.policy.PolicyBundle
-	31, // 76: cnspec.policy.PolicyHub.DeletePolicy:input_type -> cnspec.policy.Mrn
-	8,  // 77: cnspec.policy.PolicyHub.ValidatePolicyBundle:input_type -> cnspec.policy.PolicyBundle
-	31, // 78: cnspec.policy.PolicyHub.GetPolicy:input_type -> cnspec.policy.Mrn
-	31, // 79: cnspec.policy.PolicyHub.GetPolicyBundle:input_type -> cnspec.policy.Mrn
-	31, // 80: cnspec.policy.PolicyHub.GetPolicyFilters:input_type -> cnspec.policy.Mrn
-	33, // 81: cnspec.policy.PolicyHub.List:input_type -> cnspec.policy.PolicySearchFilter
-	31, // 82: cnspec.policy.QueryRunner.GetExecutionJob:input_type -> cnspec.policy.Mrn
-	34, // 83: cnspec.policy.PolicyResolver.Assign:input_type -> cnspec.policy.PolicyAssignment
-	34, // 84: cnspec.policy.PolicyResolver.Unassign:input_type -> cnspec.policy.PolicyAssignment
-	35, // 85: cnspec.policy.PolicyResolver.Resolve:input_type -> cnspec.policy.ResolveReq
-	36, // 86: cnspec.policy.PolicyResolver.UpdateAssetJobs:input_type -> cnspec.policy.UpdateAssetJobsReq
-	36, // 87: cnspec.policy.PolicyResolver.ResolveAndUpdateJobs:input_type -> cnspec.policy.UpdateAssetJobsReq
-	37, // 88: cnspec.policy.PolicyResolver.StoreResults:input_type -> cnspec.policy.StoreResultsReq
-	38, // 89: cnspec.policy.PolicyResolver.GetReport:input_type -> cnspec.policy.EntityScoreRequest
-	38, // 90: cnspec.policy.PolicyResolver.GetScore:input_type -> cnspec.policy.EntityScoreRequest
-	30, // 91: cnspec.policy.PolicyHub.SetPolicyBundle:output_type -> cnspec.policy.Empty
-	30, // 92: cnspec.policy.PolicyHub.DeletePolicy:output_type -> cnspec.policy.Empty
-	30, // 93: cnspec.policy.PolicyHub.ValidatePolicyBundle:output_type -> cnspec.policy.Empty
-	3,  // 94: cnspec.policy.PolicyHub.GetPolicy:output_type -> cnspec.policy.Policy
-	8,  // 95: cnspec.policy.PolicyHub.GetPolicyBundle:output_type -> cnspec.policy.PolicyBundle
-	32, // 96: cnspec.policy.PolicyHub.GetPolicyFilters:output_type -> cnspec.policy.Mqueries
-	7,  // 97: cnspec.policy.PolicyHub.List:output_type -> cnspec.policy.Policies
-	16, // 98: cnspec.policy.QueryRunner.GetExecutionJob:output_type -> cnspec.policy.ExecutionJob
-	30, // 99: cnspec.policy.PolicyResolver.Assign:output_type -> cnspec.policy.Empty
-	30, // 100: cnspec.policy.PolicyResolver.Unassign:output_type -> cnspec.policy.Empty
-	15, // 101: cnspec.policy.PolicyResolver.Resolve:output_type -> cnspec.policy.ResolvedPolicy
-	30, // 102: cnspec.policy.PolicyResolver.UpdateAssetJobs:output_type -> cnspec.policy.Empty
-	15, // 103: cnspec.policy.PolicyResolver.ResolveAndUpdateJobs:output_type -> cnspec.policy.ResolvedPolicy
-	30, // 104: cnspec.policy.PolicyResolver.StoreResults:output_type -> cnspec.policy.Empty
-	22, // 105: cnspec.policy.PolicyResolver.GetReport:output_type -> cnspec.policy.Report
-	22, // 106: cnspec.policy.PolicyResolver.GetScore:output_type -> cnspec.policy.Report
-	91, // [91:107] is the sub-list for method output_type
-	75, // [75:91] is the sub-list for method input_type
-	75, // [75:75] is the sub-list for extension type_name
-	75, // [75:75] is the sub-list for extension extendee
-	0,  // [0:75] is the sub-list for field type_name
+	55, // 36: cnspec.policy.ReportingJob.datapoints:type_name -> cnspec.policy.ReportingJob.DatapointsEntry
+	28, // 37: cnspec.policy.Report.score:type_name -> cnspec.policy.Score
+	56, // 38: cnspec.policy.Report.scores:type_name -> cnspec.policy.Report.ScoresEntry
+	57, // 39: cnspec.policy.Report.data:type_name -> cnspec.policy.Report.DataEntry
+	29, // 40: cnspec.policy.Report.stats:type_name -> cnspec.policy.Stats
+	29, // 41: cnspec.policy.Report.ignored_stats:type_name -> cnspec.policy.Stats
+	26, // 42: cnspec.policy.Report.cvss_score:type_name -> cnspec.policy.Cvss
+	58, // 43: cnspec.policy.Report.cvss_scores:type_name -> cnspec.policy.Report.CvssScoresEntry
+	27, // 44: cnspec.policy.Report.cvss_stats:type_name -> cnspec.policy.CvssStats
+	23, // 45: cnspec.policy.Reports.reports:type_name -> cnspec.policy.Report
+	59, // 46: cnspec.policy.ReportCollection.assets:type_name -> cnspec.policy.ReportCollection.AssetsEntry
+	9,  // 47: cnspec.policy.ReportCollection.bundle:type_name -> cnspec.policy.PolicyBundle
+	60, // 48: cnspec.policy.ReportCollection.reports:type_name -> cnspec.policy.ReportCollection.ReportsEntry
+	61, // 49: cnspec.policy.ReportCollection.errors:type_name -> cnspec.policy.ReportCollection.ErrorsEntry
+	62, // 50: cnspec.policy.ReportCollection.resolved_policies:type_name -> cnspec.policy.ReportCollection.ResolvedPoliciesEntry
+	30, // 51: cnspec.policy.Stats.failed:type_name -> cnspec.policy.ScoreDistribution
+	30, // 52: cnspec.policy.Stats.passed:type_name -> cnspec.policy.ScoreDistribution
+	30, // 53: cnspec.policy.Stats.errors:type_name -> cnspec.policy.ScoreDistribution
+	12, // 54: cnspec.policy.Mqueries.items:type_name -> cnspec.policy.Mquery
+	63, // 55: cnspec.policy.PolicyMutationDelta.policy_deltas:type_name -> cnspec.policy.PolicyMutationDelta.PolicyDeltasEntry
+	2,  // 56: cnspec.policy.PolicyDelta.action:type_name -> cnspec.policy.PolicyDelta.PolicyAssignmentActionType
+	12, // 57: cnspec.policy.ResolveReq.asset_filters:type_name -> cnspec.policy.Mquery
+	12, // 58: cnspec.policy.UpdateAssetJobsReq.asset_filters:type_name -> cnspec.policy.Mquery
+	28, // 59: cnspec.policy.StoreResultsReq.scores:type_name -> cnspec.policy.Score
+	64, // 60: cnspec.policy.StoreResultsReq.data:type_name -> cnspec.policy.StoreResultsReq.DataEntry
+	26, // 61: cnspec.policy.StoreResultsReq.cvssScores:type_name -> cnspec.policy.Cvss
+	5,  // 62: cnspec.policy.PolicySpec.PoliciesEntry.value:type_name -> cnspec.policy.ScoringSpec
+	5,  // 63: cnspec.policy.PolicySpec.ScoringQueriesEntry.value:type_name -> cnspec.policy.ScoringSpec
+	1,  // 64: cnspec.policy.PolicySpec.DataQueriesEntry.value:type_name -> cnspec.policy.QueryAction
+	12, // 65: cnspec.policy.Policy.AssetFiltersEntry.value:type_name -> cnspec.policy.Mquery
+	18, // 66: cnspec.policy.ExecutionJob.QueriesEntry.value:type_name -> cnspec.policy.ExecutionQuery
+	22, // 67: cnspec.policy.CollectorJob.ReportingJobsEntry.value:type_name -> cnspec.policy.ReportingJob
+	20, // 68: cnspec.policy.CollectorJob.ReportingQueriesEntry.value:type_name -> cnspec.policy.StringArray
+	21, // 69: cnspec.policy.CollectorJob.DatapointsEntry.value:type_name -> cnspec.policy.DataQueryInfo
+	5,  // 70: cnspec.policy.ReportingJob.SpecEntry.value:type_name -> cnspec.policy.ScoringSpec
+	28, // 71: cnspec.policy.Report.ScoresEntry.value:type_name -> cnspec.policy.Score
+	66, // 72: cnspec.policy.Report.DataEntry.value:type_name -> cnquery.llx.Result
+	26, // 73: cnspec.policy.Report.CvssScoresEntry.value:type_name -> cnspec.policy.Cvss
+	23, // 74: cnspec.policy.ReportCollection.ReportsEntry.value:type_name -> cnspec.policy.Report
+	16, // 75: cnspec.policy.ReportCollection.ResolvedPoliciesEntry.value:type_name -> cnspec.policy.ResolvedPolicy
+	37, // 76: cnspec.policy.PolicyMutationDelta.PolicyDeltasEntry.value:type_name -> cnspec.policy.PolicyDelta
+	66, // 77: cnspec.policy.StoreResultsReq.DataEntry.value:type_name -> cnquery.llx.Result
+	9,  // 78: cnspec.policy.PolicyHub.SetPolicyBundle:input_type -> cnspec.policy.PolicyBundle
+	32, // 79: cnspec.policy.PolicyHub.DeletePolicy:input_type -> cnspec.policy.Mrn
+	9,  // 80: cnspec.policy.PolicyHub.ValidatePolicyBundle:input_type -> cnspec.policy.PolicyBundle
+	32, // 81: cnspec.policy.PolicyHub.GetPolicy:input_type -> cnspec.policy.Mrn
+	32, // 82: cnspec.policy.PolicyHub.GetPolicyBundle:input_type -> cnspec.policy.Mrn
+	32, // 83: cnspec.policy.PolicyHub.GetPolicyFilters:input_type -> cnspec.policy.Mrn
+	34, // 84: cnspec.policy.PolicyHub.List:input_type -> cnspec.policy.PolicySearchFilter
+	32, // 85: cnspec.policy.QueryRunner.GetExecutionJob:input_type -> cnspec.policy.Mrn
+	35, // 86: cnspec.policy.PolicyResolver.Assign:input_type -> cnspec.policy.PolicyAssignment
+	35, // 87: cnspec.policy.PolicyResolver.Unassign:input_type -> cnspec.policy.PolicyAssignment
+	38, // 88: cnspec.policy.PolicyResolver.Resolve:input_type -> cnspec.policy.ResolveReq
+	39, // 89: cnspec.policy.PolicyResolver.UpdateAssetJobs:input_type -> cnspec.policy.UpdateAssetJobsReq
+	39, // 90: cnspec.policy.PolicyResolver.ResolveAndUpdateJobs:input_type -> cnspec.policy.UpdateAssetJobsReq
+	40, // 91: cnspec.policy.PolicyResolver.StoreResults:input_type -> cnspec.policy.StoreResultsReq
+	41, // 92: cnspec.policy.PolicyResolver.GetReport:input_type -> cnspec.policy.EntityScoreRequest
+	41, // 93: cnspec.policy.PolicyResolver.GetScore:input_type -> cnspec.policy.EntityScoreRequest
+	31, // 94: cnspec.policy.PolicyHub.SetPolicyBundle:output_type -> cnspec.policy.Empty
+	31, // 95: cnspec.policy.PolicyHub.DeletePolicy:output_type -> cnspec.policy.Empty
+	31, // 96: cnspec.policy.PolicyHub.ValidatePolicyBundle:output_type -> cnspec.policy.Empty
+	4,  // 97: cnspec.policy.PolicyHub.GetPolicy:output_type -> cnspec.policy.Policy
+	9,  // 98: cnspec.policy.PolicyHub.GetPolicyBundle:output_type -> cnspec.policy.PolicyBundle
+	33, // 99: cnspec.policy.PolicyHub.GetPolicyFilters:output_type -> cnspec.policy.Mqueries
+	8,  // 100: cnspec.policy.PolicyHub.List:output_type -> cnspec.policy.Policies
+	17, // 101: cnspec.policy.QueryRunner.GetExecutionJob:output_type -> cnspec.policy.ExecutionJob
+	31, // 102: cnspec.policy.PolicyResolver.Assign:output_type -> cnspec.policy.Empty
+	31, // 103: cnspec.policy.PolicyResolver.Unassign:output_type -> cnspec.policy.Empty
+	16, // 104: cnspec.policy.PolicyResolver.Resolve:output_type -> cnspec.policy.ResolvedPolicy
+	31, // 105: cnspec.policy.PolicyResolver.UpdateAssetJobs:output_type -> cnspec.policy.Empty
+	16, // 106: cnspec.policy.PolicyResolver.ResolveAndUpdateJobs:output_type -> cnspec.policy.ResolvedPolicy
+	31, // 107: cnspec.policy.PolicyResolver.StoreResults:output_type -> cnspec.policy.Empty
+	23, // 108: cnspec.policy.PolicyResolver.GetReport:output_type -> cnspec.policy.Report
+	23, // 109: cnspec.policy.PolicyResolver.GetScore:output_type -> cnspec.policy.Report
+	94, // [94:110] is the sub-list for method output_type
+	78, // [78:94] is the sub-list for method input_type
+	78, // [78:78] is the sub-list for extension type_name
+	78, // [78:78] is the sub-list for extension extendee
+	0,  // [0:78] is the sub-list for field type_name
 }
 
 func init() { file_policy_proto_init() }
@@ -4232,7 +4421,7 @@ func file_policy_proto_init() {
 			}
 		}
 		file_policy_proto_msgTypes[33].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResolveReq); i {
+			switch v := v.(*PolicyMutationDelta); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -4244,7 +4433,7 @@ func file_policy_proto_init() {
 			}
 		}
 		file_policy_proto_msgTypes[34].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*UpdateAssetJobsReq); i {
+			switch v := v.(*PolicyDelta); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -4256,7 +4445,7 @@ func file_policy_proto_init() {
 			}
 		}
 		file_policy_proto_msgTypes[35].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StoreResultsReq); i {
+			switch v := v.(*ResolveReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -4268,6 +4457,30 @@ func file_policy_proto_init() {
 			}
 		}
 		file_policy_proto_msgTypes[36].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*UpdateAssetJobsReq); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_policy_proto_msgTypes[37].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*StoreResultsReq); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_policy_proto_msgTypes[38].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*EntityScoreRequest); i {
 			case 0:
 				return &v.state
@@ -4285,8 +4498,8 @@ func file_policy_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_policy_proto_rawDesc,
-			NumEnums:      2,
-			NumMessages:   59,
+			NumEnums:      3,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   3,
 		},
