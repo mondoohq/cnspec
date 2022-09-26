@@ -2,6 +2,8 @@ package policy
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"math/rand"
 	"sort"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/gogo/status"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/fasthash/fnv1a"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/logger"
@@ -158,6 +161,69 @@ type resolverCache struct {
 	errors              []*policyResolutionError
 	useV2Code           bool
 	bundleMap           *PolicyBundleMap
+}
+
+type policyResolverCache struct {
+	removedPolicies map[string]struct{} // tracks policies that will not be added
+	removedQueries  map[string]struct{} // tracks queries that will not be added
+	parentPolicies  map[string]struct{} // tracks policies in the ancestry, to prevent loops
+	childPolicies   map[string]struct{} // tracks policies that were added below (at any level)
+	childQueries    map[string]struct{} // tracks queries that were added below (at any level)
+	global          *resolverCache
+}
+
+func checksum2string(checksum uint64) string {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, checksum)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func checksumStrings(strings ...string) string {
+	checksum := fnv1a.Init64
+	for i := range strings {
+		checksum = fnv1a.AddString64(checksum, strings[i])
+	}
+	return checksum2string(checksum)
+}
+
+func (r *resolverCache) relativeChecksum(s string) string {
+	if r.useV2Code {
+		return checksumStrings(r.graphExecutionChecksum, r.assetFiltersChecksum, "v2", s)
+	} else {
+		return checksumStrings(r.graphExecutionChecksum, r.assetFiltersChecksum, s)
+	}
+}
+
+func (p *policyResolverCache) clone() *policyResolverCache {
+	res := &policyResolverCache{
+		removedPolicies: map[string]struct{}{},
+		removedQueries:  map[string]struct{}{},
+		parentPolicies:  map[string]struct{}{},
+		childPolicies:   map[string]struct{}{},
+		childQueries:    map[string]struct{}{},
+		global:          p.global,
+	}
+
+	for k, v := range p.removedPolicies {
+		res.removedPolicies[k] = v
+	}
+	for k, v := range p.removedQueries {
+		res.removedQueries[k] = v
+	}
+	for k, v := range p.parentPolicies {
+		res.parentPolicies[k] = v
+	}
+
+	return res
+}
+
+func (p *policyResolverCache) addChildren(other *policyResolverCache) {
+	for k, v := range other.childPolicies {
+		p.childPolicies[k] = v
+	}
+	for k, v := range other.childQueries {
+		p.childQueries[k] = v
+	}
 }
 
 func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
