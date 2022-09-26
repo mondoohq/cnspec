@@ -6,6 +6,8 @@ import (
 
 	"github.com/gogo/status"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
 	"google.golang.org/grpc/codes"
 )
@@ -207,4 +209,125 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 	}
 
 	return nil
+}
+
+// GetReport retrieves all scores and data for a given asset
+func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*policy.Report, error) {
+	emptyReport := &policy.Report{
+		EntityMrn:  assetMrn,
+		ScoringMrn: qrID,
+	}
+
+	score, err := db.GetScore(ctx, assetMrn, qrID)
+	if err != nil {
+		return emptyReport, nil
+	}
+
+	x, ok := db.cache.Get(dbIDAsset + assetMrn)
+	if !ok {
+		return nil, errors.New("cannot find asset '" + assetMrn + "'")
+	}
+
+	assetw := x.(wrapAsset)
+	resolvedPolicy := assetw.ResolvedPolicy
+	resolvedPolicyVersion := assetw.resolvedPolicyVersion
+
+	includedScores := map[string]struct{}{}
+	for _, job := range resolvedPolicy.CollectorJob.ReportingJobs {
+		qrid := job.QrId
+		if qrid == "root" {
+			qrid = assetMrn
+		}
+
+		includedScores[qrid] = struct{}{}
+	}
+	scoreQrIDs := make([]string, len(includedScores))
+	i := 0
+	for k := range includedScores {
+		scoreQrIDs[i] = k
+		i++
+	}
+
+	scores, err := db.GetScores(ctx, assetMrn, scoreQrIDs)
+	if err != nil {
+		log.Error().
+			Err(err).
+			Str("entity", assetMrn).
+			Msg("reportsstore> could not fetch scores for asset")
+		return nil, err
+	}
+
+	datapoints := resolvedPolicy.CollectorJob.Datapoints
+	fields := make(map[string]types.Type, len(datapoints))
+	for field, info := range datapoints {
+		fields[field] = types.Type(info.Type)
+	}
+
+	data, err := db.GetData(ctx, assetMrn, fields)
+	if err != nil {
+		log.Error().
+			Err(err).
+			Str("entity", assetMrn).
+			Msg("reportsstore> could not fetch data for asset")
+		return nil, err
+	}
+
+	res := policy.Report{
+		EntityMrn:             assetMrn,
+		ScoringMrn:            qrID,
+		Score:                 &score,
+		Scores:                scores,
+		Data:                  data,
+		ResolvedPolicyVersion: resolvedPolicyVersion,
+	}
+
+	return &res, nil
+}
+
+// GetScore retrieves one score for an asset
+func (db *Db) GetScore(ctx context.Context, assetMrn, scoreID string) (policy.Score, error) {
+	x, ok := db.cache.Get(dbIDScore + assetMrn + "\x00" + scoreID)
+	if !ok {
+		return policy.Score{}, errors.New("cannot find score")
+	}
+	return x.(policy.Score), nil
+}
+
+// GetScores retrieves a map of score for an asset
+func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (map[string]*policy.Score, error) {
+	res := make(map[string]*policy.Score, len(qrIDs))
+
+	for i := range qrIDs {
+		qrID := qrIDs[i]
+
+		x, ok := db.cache.Get(dbIDScore + assetMrn + "\x00" + qrID)
+		if !ok {
+			return nil, errors.New("score for asset '" + assetMrn + "' with ID '" + qrID + "' not found")
+		}
+
+		score := x.(policy.Score)
+		res[qrID] = &score
+	}
+
+	return res, nil
+}
+
+// GetData retrieves a map of requested data fields for an asset
+func (db *Db) GetData(ctx context.Context, assetMrn string, fields map[string]types.Type) (map[string]*llx.Result, error) {
+	res := make(map[string]*llx.Result, len(fields))
+
+	for checksum := range fields {
+		x, ok := db.cache.Get(dbIDData + assetMrn + "\x00" + checksum)
+		if !ok {
+			return nil, errors.New("failed to get data for asset '" + assetMrn + "' and checksum '" + checksum + "'")
+		}
+
+		if x == nil {
+			res[checksum] = nil
+		} else {
+			res[checksum] = x.(*llx.Result)
+		}
+	}
+
+	return res, nil
 }
