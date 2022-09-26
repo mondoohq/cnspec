@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
+	"google.golang.org/protobuf/proto"
 )
 
 //go:generate protoc --proto_path=../:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. policy.proto
@@ -116,6 +117,24 @@ func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string, getP
 	}
 
 	return nil
+}
+
+// MatchingAssetFilters will take the list of filters and only return the ones
+// that are supported by the policy. if no matching field is found it will
+// return an empty list
+func MatchingAssetFilters(policyMrn string, assetFilters []*Mquery, p *Policy) ([]*Mquery, error) {
+	res := []*Mquery{}
+	for i := range assetFilters {
+		cur := assetFilters[i]
+
+		if _, ok := p.AssetFilters[cur.CodeId]; ok {
+			curCopy := proto.Clone(cur).(*Mquery)
+			curCopy.Mrn = policyMrn + "/assetfilter/" + cur.CodeId
+			curCopy.Title = curCopy.Query
+			res = append(res, curCopy)
+		}
+	}
+	return res, nil
 }
 
 func (p *Policy) UpdateChecksums(ctx context.Context,
