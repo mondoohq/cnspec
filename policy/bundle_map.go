@@ -1,11 +1,14 @@
 package policy
 
 import (
+	"context"
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/mrn"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
@@ -174,4 +177,114 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 
 	res = append(res, p)
 	return res, nil
+}
+
+// ValidatePolicy against the given bundle
+func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
+	policyID, err := mrn.GetResource(policy.Mrn, "policy")
+	if err != nil {
+		return errors.New("failed to parse policy MRN")
+	}
+	if policyID == "" {
+		return errors.New("policy MRN is invalid, no policy ID")
+	}
+
+	for i := range policy.Specs {
+		if err := p.validateSpec(ctx, policy.Specs[i]); err != nil {
+			return err
+		}
+	}
+
+	// semver checks are a bit optional
+	if policy.Version != "" {
+		_, err := version.NewSemver(policy.Version)
+		if err != nil {
+			return errors.New("policy '" + policy.Mrn + "' version '" + policy.Version + "' is not a valid semver version")
+		}
+	}
+
+	return nil
+}
+
+func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec) error {
+	if spec == nil {
+		return errors.New("spec cannot be nil")
+	}
+
+	var err error
+
+	if spec.AssetFilter != nil {
+		// since asset filters are run beforehand and don't make it into the report
+		// we don't store their code bundles separately
+		if _, err := spec.AssetFilter.RefreshAsAssetFilter(""); err != nil {
+			return err
+		}
+	}
+
+	for mrn, spec := range spec.ScoringQueries {
+		if err = p.queryExists(ctx, mrn); err != nil {
+			return err
+		}
+
+		if spec != nil && spec.Action == QueryAction_UNSPECIFIED {
+			return errors.New("received a query spec without an action: " + mrn)
+		}
+	}
+
+	for mrn, action := range spec.DataQueries {
+		if err = p.queryExists(ctx, mrn); err != nil {
+			return err
+		}
+
+		if action == QueryAction_UNSPECIFIED {
+			// in this case users don't have to specify an action and we will
+			// interpret it as their intention to add the query
+			spec.DataQueries[mrn] = QueryAction_ACTIVATE
+		}
+	}
+
+	for mrn := range spec.Policies {
+		if _, ok := p.Policies[mrn]; ok {
+			continue
+		}
+
+		if p.Library != nil {
+			x, err := p.Library.PolicyExists(ctx, mrn)
+			if err != nil {
+				return err
+			}
+			if !x {
+				return errors.New("cannot find policy '" + mrn + "'")
+			}
+
+			p.Policies[mrn] = nil
+			continue
+		}
+
+		return errors.New("cannot find policy '" + mrn + "'")
+	}
+
+	return nil
+}
+
+func (p *PolicyBundleMap) queryExists(ctx context.Context, mrn string) error {
+	if _, ok := p.Queries[mrn]; ok {
+		return nil
+	}
+
+	if p.Library != nil {
+		x, err := p.Library.QueryExists(ctx, mrn)
+		if err != nil {
+			return err
+		}
+
+		if !x {
+			return errors.New("cannot find query '" + mrn + "'")
+		}
+
+		p.Queries[mrn] = nil
+		return nil
+	}
+
+	return errors.New("cannot find query '" + mrn + "'")
 }
