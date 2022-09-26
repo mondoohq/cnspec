@@ -384,3 +384,86 @@ func (db *Db) SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy 
 
 	return nil
 }
+
+// SetAssetResolvedPolicy sets and initialized all fields for an asset's resolved policy
+func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resolvedPolicy *policy.ResolvedPolicy, version policy.ResolvedPolicyVersion) error {
+	x, ok := db.cache.Get(dbIDAsset + assetMrn)
+	if !ok {
+		return errors.New("cannot find asset '" + assetMrn + "'")
+	}
+
+	assetw := x.(wrapAsset)
+
+	if assetw.ResolvedPolicy != nil && assetw.ResolvedPolicy.GraphExecutionChecksum == resolvedPolicy.GraphExecutionChecksum && assetw.resolvedPolicyVersion == string(version) {
+		log.Debug().
+			Str("asset", assetMrn).
+			Msg("distributor> asset resolved policy is already cached (and unchanged)")
+		return nil
+	}
+
+	assetw.ResolvedPolicy = resolvedPolicy
+	assetw.resolvedPolicyVersion = string(version)
+
+	var err error
+	collectorJob := resolvedPolicy.CollectorJob
+	for checksum, info := range collectorJob.Datapoints {
+		err = db.initDataValue(ctx, assetMrn, checksum, types.Type(info.Type))
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("asset", assetMrn).
+				Str("query checksum", checksum).
+				Msg("distributor> failed to set asset resolved policy, failed to initialize data value")
+			return errors.New("failed to create asset scoring job (failed to init data)")
+		}
+	}
+
+	reportingJobs := collectorJob.ReportingJobs
+	for _, job := range reportingJobs {
+		qrid := job.QrId
+		if qrid == "root" {
+			qrid = assetMrn
+		}
+
+		err = db.initEmptyScore(ctx, assetMrn, qrid)
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("asset", assetMrn).
+				Str("score qrID", qrid).
+				Msg("distributor> failed to set asset resolved policy, failed to initialize score")
+			return errors.New("failed to create asset scoring job (failed to init score)")
+		}
+	}
+
+	ok = db.cache.Set(dbIDAsset+assetMrn, assetw, 1)
+	if !ok {
+		return errors.New("failed to save resolved policy for asset '" + assetMrn + "'")
+	}
+
+	return nil
+}
+
+func (db *Db) initDataValue(ctx context.Context, assetMrn string, checksum string, typ types.Type) error {
+	id := dbIDData + assetMrn + "\x00" + checksum
+	_, ok := db.cache.Get(id)
+	if ok {
+		return nil
+	}
+
+	ok = db.cache.Set(id, nil, 1)
+	if !ok {
+		return errors.New("failed to initialize data value for asset '" + assetMrn + "' with checksum '" + checksum + "'")
+	}
+	return nil
+}
+
+func (db *Db) initEmptyScore(ctx context.Context, assetMrn string, qrid string) error {
+	id := dbIDScore + assetMrn + "\x00" + qrid
+
+	ok := db.cache.Set(id, policy.Score{}, 1)
+	if !ok {
+		return errors.New("failed to initialize score for asset '" + assetMrn + "' with qrID '" + qrid + "'")
+	}
+	return nil
+}
