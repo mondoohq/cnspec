@@ -74,6 +74,33 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 	return globalEmpty, err
 }
 
+// Unassign a policy to an asset
+func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignment) (*Empty, error) {
+	if len(assignment.PolicyMrns) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "a policy mrn is required")
+	}
+
+	// all remote, call upstream
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.PolicyResolver.Unassign(ctx, assignment)
+	}
+
+	deltas := map[string]*PolicyDelta{}
+	for i := range assignment.PolicyMrns {
+		policyMrn := assignment.PolicyMrns[i]
+		deltas[policyMrn] = &PolicyDelta{
+			PolicyMrn: policyMrn,
+			Action:    PolicyDelta_DELETE,
+		}
+	}
+
+	_, err := s.DataLake.MutatePolicy(ctx, &PolicyMutationDelta{
+		PolicyMrn:    assignment.AssetMrn,
+		PolicyDeltas: deltas,
+	}, true)
+	return globalEmpty, err
+}
+
 // Resolve a given policy for a set of asset filters
 func (s *LocalServices) Resolve(ctx context.Context, req *ResolveReq) (*ResolvedPolicy, error) {
 	if s.Upstream != nil && !s.Incognito {
