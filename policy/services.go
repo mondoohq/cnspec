@@ -2,6 +2,14 @@ package policy
 
 import "context"
 
+type ResolvedPolicyVersion string
+
+const (
+	PreMassResolved ResolvedPolicyVersion = "v0"
+	MassResolved    ResolvedPolicyVersion = "v1"
+	V2Code          ResolvedPolicyVersion = "v2"
+)
+
 var globalEmpty = &Empty{}
 
 // Library is a subset of the DataLake focused on methods around policy and query existance
