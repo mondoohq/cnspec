@@ -343,7 +343,7 @@ func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedP
 }
 
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
-	resolver := s.services.DataLake.(policy.PolicyResolver)
+	var resolver policy.PolicyResolver = s.services
 
 	// TODO: we do not needs this anymore since we recieve updates already
 	log.Info().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
