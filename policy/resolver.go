@@ -154,6 +154,27 @@ func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAss
 	return res, nil
 }
 
+// UpdateAssetJobs by recalculating them
+func (s *LocalServices) UpdateAssetJobs(ctx context.Context, req *UpdateAssetJobsReq) (*Empty, error) {
+	if s.Upstream == nil || s.Incognito {
+		return globalEmpty, s.updateAssetJobs(ctx, req.AssetMrn, req.AssetFilters)
+	}
+
+	if _, err := s.Upstream.PolicyResolver.UpdateAssetJobs(ctx, req); err != nil {
+		return nil, err
+	}
+
+	resolvedPolicy, err := s.Upstream.PolicyResolver.Resolve(ctx, &ResolveReq{
+		PolicyMrn:    req.AssetMrn,
+		AssetFilters: req.AssetFilters,
+	})
+	if err != nil {
+		return nil, errors.New("resolver> failed to resolve upstream jobs for caching: " + err.Error())
+	}
+
+	return globalEmpty, s.cacheUpstreamJobs(ctx, req.AssetMrn, resolvedPolicy)
+}
+
 // StoreResults saves the given scores and date for an asset
 func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) (*Empty, error) {
 	logger.AddTag(ctx, "asset", req.AssetMrn)
@@ -1214,4 +1235,21 @@ func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, 
 	}
 
 	return nil
+}
+
+func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, assetFilters []*Mquery) error {
+	resolvedPolicy, err := s.resolve(ctx, assetMrn, assetFilters)
+	if err != nil {
+		return err
+	}
+
+	features := cnquery.GetFeatures(ctx)
+	useV2Code := features.IsActive(cnquery.PiperCode)
+
+	if useV2Code {
+		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
+	} else {
+		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved)
+	}
+	return err
 }
