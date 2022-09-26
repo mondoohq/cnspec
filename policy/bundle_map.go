@@ -182,10 +182,10 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 func isPolicyMrn(policyMRN string) error {
 	policyID, err := mrn.GetResource(policyMRN, MRN_RESOURCE_POLICY)
 	if err != nil {
-		return errors.New("failed to parse policy MRN")
+		return errors.New("failed to parse policy MRN " + policyMRN)
 	}
 	if policyID == "" {
-		return errors.New("policy MRN is invalid, no policy ID")
+		return errors.New("policy MRN is invalid, no policy ID in " + policyMRN)
 	}
 	return nil
 }
