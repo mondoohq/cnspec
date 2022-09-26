@@ -8,7 +8,6 @@ import (
 	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/mrn"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
@@ -179,20 +178,9 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 	return res, nil
 }
 
-func isPolicyMrn(policyMRN string) error {
-	policyID, err := mrn.GetResource(policyMRN, MRN_RESOURCE_POLICY)
-	if err != nil {
-		return errors.New("failed to parse policy MRN " + policyMRN)
-	}
-	if policyID == "" {
-		return errors.New("policy MRN is invalid, no policy ID in " + policyMRN)
-	}
-	return nil
-}
-
 // ValidatePolicy against the given bundle
 func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
-	if err := isPolicyMrn(policy.Mrn); err != nil {
+	if err := IsPolicyMrn(policy.Mrn); err != nil {
 		return err
 	}
 

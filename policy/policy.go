@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/mrn"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -457,5 +458,16 @@ func (p *Policy) RefreshMRN(ownerMRN string) error {
 
 	p.Mrn = nu
 	p.Uid = ""
+	return nil
+}
+
+func IsPolicyMrn(candidate string) error {
+	policyID, err := mrn.GetResource(candidate, MRN_RESOURCE_POLICY)
+	if err != nil {
+		return errors.New("failed to parse policy MRN " + candidate)
+	}
+	if policyID == "" {
+		return errors.New("policy MRN is invalid, no policy ID in " + candidate)
+	}
 	return nil
 }

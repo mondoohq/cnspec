@@ -394,7 +394,7 @@ func translateSpecUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]st
 					continue
 				}
 
-				if err := isPolicyMrn(k); err == nil {
+				if err := IsPolicyMrn(k); err == nil {
 					policies[k] = v
 				}
 
