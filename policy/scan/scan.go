@@ -263,13 +263,12 @@ func (s *localAssetScanner) prepareAsset() error {
 	}
 
 	var resolver policy.PolicyResolver = s.services
-	resolver.Assign(s.job.Ctx, &policy.PolicyAssignment{
+	_, err = resolver.Assign(s.job.Ctx, &policy.PolicyAssignment{
 		AssetMrn:   s.job.Asset.Mrn,
 		PolicyMrns: policyMrns,
 	})
 
-	panic("implement prepareAsset")
-	return nil
+	return err
 }
 
 func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedPolicy, error) {
