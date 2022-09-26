@@ -1,12 +1,16 @@
 package progress
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/logger"
 )
 
 type Progress interface {
@@ -28,6 +32,7 @@ type progressbar struct {
 	Data         progressData
 	lock         sync.Mutex
 	bar          *renderer
+	isTTY        bool
 }
 
 type progressData struct {
@@ -57,6 +62,7 @@ func NewMultiBar(id string, data progressData) *progressbar {
 		id:           id,
 		maxNameWidth: maxNameWidth,
 		Data:         data,
+		isTTY:        isatty.IsTerminal(os.Stdout.Fd()),
 	}
 }
 
@@ -67,11 +73,26 @@ func (p *progressbar) Open() error {
 		return errors.Wrap(err, "failed to initialize progressbar renderer")
 	}
 
-	go func() {
-		if err := tea.NewProgram(p).Start(); err != nil {
-			panic(err)
-		}
-	}()
+	if p.isTTY {
+		go func() {
+			(logger.LogOutputWriter.(*logger.BufferedWriter)).Pause()
+			defer (logger.LogOutputWriter.(*logger.BufferedWriter)).Resume()
+
+			if err := tea.NewProgram(p).Start(); err != nil {
+				panic(err)
+			}
+		}()
+	} else {
+		go func() {
+			for {
+				time.Sleep(time.Second / progressPipedFps)
+				if p.Data.complete {
+					break
+				}
+				fmt.Println(p.View())
+			}
+		}()
+	}
 
 	return nil
 }
@@ -89,6 +110,7 @@ func (p *progressbar) Close() {
 const (
 	progressDefaultFps   = 60
 	progressDefaultWidth = 80
+	progressPipedFps     = 1
 )
 
 type tickMsg time.Time
