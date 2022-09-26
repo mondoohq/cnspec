@@ -34,52 +34,52 @@ var policyScanCmd = builder.NewProviderCommand(builder.CommandOpts{
 This command triggers a new policy scan for an asset. By default, the local
 system is scanned with its pre-configured policies:
 
-    $ mondoo scan local
+    $ cnspec scan local
 
 Users can also manually select a local policy to execute and run it without
 storing results in the server:
 
-    $ mondoo scan local --policy-bundle policyfile.yaml --incognito
+    $ cnspec scan local --policy-bundle policyfile.yaml --incognito
 
 In addition, mondoo can scan assets remotely via ssh. By default, the operating system
 ssh agent and ssh config configuration is used to retrieve the credentials:
 
-    $ mondoo scan ssh ec2-user@52.51.185.215
-    $ mondoo scan ssh ec2-user@52.51.185.215:2222
+    $ cnspec scan ssh ec2-user@52.51.185.215
+    $ cnspec scan ssh ec2-user@52.51.185.215:2222
 
 Mondoo supports scanning AWS, Azure, and GCP accounts and instances.
 Find out more in each sub-commands help menu. Here are a few examples:
 
-    $ mondoo scan aws --region us-east-1
-    $ mondoo scan azure --subscription ID --group NAME
-    $ mondoo scan gcp --project ID
+    $ cnspec scan aws --region us-east-1
+    $ cnspec scan azure --subscription ID --group NAME
+    $ cnspec scan gcp --project ID
 
 You can also access docker containers and images. This supports both local containers
 and images as well as images in docker registries:
 
-    $ mondoo scan docker container b62b276baab6
-    $ mondoo scan docker image ubuntu:latest
+    $ cnspec scan docker container b62b276baab6
+    $ cnspec scan docker image ubuntu:latest
 
 Additionally, you can quickly scan a container registry:
 
-    $ mondoo scan cr harbor.yourdomain.com
-    $ mondoo scan cr 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
+    $ cnspec scan container registry harbor.yourdomain.com
+    $ cnspec scan container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 
 Mondoo also support GCP's container registry, GCR:
 
-    $ mondoo scan gcp gcr PROJECT_ID
+    $ cnspec scan gcp gcr PROJECT_ID
 
 Vagrant is supported as well:
    
-    $ mondoo scan vagrant HOST
+    $ cnspec scan vagrant HOST
 
 You can also leverage an inventory file:
 
-    $ mondoo scan --inventory-file inventory.yml
+    $ cnspec scan --inventory-file inventory.yml
 
 You can also leverage your existing ansible inventory:
 
-    $ ansible-inventory -i hosts.ini --list | mondoo scan --inventory-ansible
+    $ ansible-inventory -i hosts.ini --list | cnspec scan --inventory-ansible
 
 Further documentation is available at https://mondoo.com/docs/
 	`,
@@ -93,8 +93,8 @@ Further documentation is available at https://mondoo.com/docs/
 				Long: `Scan a mock target, i.e. a simulated asset, whose data was recorded beforehand.
 Provide the recording with mock data as an argument:
 
-    mondoo scan container ubuntu:latest --record
-    mondoo scan mock recording-20220519173543.toml
+    cnspec scan container ubuntu:latest --record
+    cnspec scan mock recording-20220519173543.toml
 `,
 			},
 			"vagrant": {
@@ -115,14 +115,14 @@ Provide the recording with mock data as an argument:
 we will try to auto-detect the container or image from the provided ID, even
 if it's not the full ID:
 
-    mondoo scan container b62b276baab6
-    mondoo scan container b62
-    mondoo scan container ubuntu:latest
+    cnspec scan container b62b276baab6
+    cnspec scan container b62
+    cnspec scan container ubuntu:latest
 
 You can also explicitly request the scan of an image or a container registry:
 
-    mondoo scan container image ubuntu:20.04
-    mondoo scan container registry harbor.yourdomain.com/project/repository
+    cnspec scan container image ubuntu:20.04
+    cnspec scan container registry harbor.yourdomain.com/project/repository
 `,
 			},
 			"container-image": {
@@ -132,9 +132,9 @@ You can also explicitly request the scan of an image or a container registry:
 				Short: "Scan a container registry",
 				Long: `Scan a container registry. Supports more parameters for different registries:
 
-    mondoo scan cr harbor.yourdomain.com/project/repository
-    mondoo scan cr yourname.azurecr.io
-    mondoo scan cr 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
+    cnspec scan container registry harbor.yourdomain.com/project/repository
+    cnspec scan container registry yourname.azurecr.io
+    cnspec scan container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 `,
 			},
 			"docker": {
@@ -142,10 +142,10 @@ You can also explicitly request the scan of an image or a container registry:
 				Long: `Scan a Docker container or image by automatically detecting the provided ID.
 You can also specify a subcommand to narrow the scan to containers or images.
 
-    mondoo scan docker b62b276baab6
+    cnspec scan docker b62b276baab6
 
-    mondoo scan docker container b62b
-    mondoo scan docker image ubuntu:latest
+    cnspec scan docker container b62b
+    cnspec scan docker image ubuntu:latest
 `,
 			},
 			"docker-container": {
@@ -228,12 +228,12 @@ configure your Azure credentials and have SSH access to your instances.`,
 				Long: `
 This command triggers a new policy scan for Microsoft 365:
 
-    $ mondoo scan ms365 --tenant-id {tennant id} --client-id {client id} --client-secret {client secret}
+    $ cnspec scan ms365 --tenant-id {tennant id} --client-id {client id} --client-secret {client secret}
 
 This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
-    $ mondoo scan ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
-    $ mondoo scan ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
+    $ cnspec scan ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
+    $ cnspec scan ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
 `,
 			},
 			"host": {
