@@ -109,3 +109,88 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 
 	return policyw.Policy, nil
 }
+
+func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) error {
+	policyObj := policyw.Policy
+	filters, err := policyObj.ComputeAssetFilters(ctx,
+		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetRawPolicy(ctx, mrn) },
+		false,
+	)
+	if err != nil {
+		return errors.New("failed to compute asset filters: " + err.Error())
+	}
+
+	policyObj.AssetFilters = map[string]*policy.Mquery{}
+	for i := range filters {
+		filter := filters[i]
+		policyObj.AssetFilters[filter.CodeId] = filter
+	}
+
+	depMrns := policyObj.DependentPolicyMrns()
+	for mrn := range depMrns {
+		dep, err := db.GetRawPolicy(ctx, mrn)
+		if err != nil {
+			return errors.New("failed to get dependent policy '" + mrn + "': " + err.Error())
+		}
+
+		for k, v := range dep.AssetFilters {
+			policyObj.AssetFilters[k] = v
+		}
+	}
+
+	ok := db.cache.Set(dbIDPolicy+policyObj.Mrn, *policyw, 2)
+	if !ok {
+		return errors.New("failed to update policy asset filters for '" + policyObj.Mrn + "'")
+	}
+
+	return nil
+}
+
+func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrapPolicy) error {
+	needsUpdate := map[string]wrapPolicy{}
+
+	for k := range startPolicy.parents {
+		x, ok := db.cache.Get(dbIDPolicy + k)
+		if !ok {
+			return errors.New("failed to get parent policy '" + k + "'")
+		}
+		needsUpdate[k] = x.(wrapPolicy)
+	}
+
+	for len(needsUpdate) > 0 {
+		for k, policyw := range needsUpdate {
+			err := db.refreshAssetFilters(ctx, &policyw)
+			if err != nil {
+				return err
+			}
+
+			policyw.Policy.InvalidateGraphChecksums()
+			err = policyw.Policy.UpdateChecksums(ctx,
+				func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
+				func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
+				nil,
+			)
+			if err != nil {
+				return err
+			}
+
+			db.cache.Set(dbIDPolicy+policyw.Policy.Mrn, policyw, 2)
+			err = db.checkAndInvalidatePolicyBundle(ctx, &policyw)
+			if err != nil {
+				return err
+			}
+
+			for k := range policyw.parents {
+				x, ok := db.cache.Get(dbIDPolicy + k)
+				if !ok {
+					return errors.New("failed to get parent policy '" + k + "'")
+				}
+				needsUpdate[k] = x.(wrapPolicy)
+			}
+
+			delete(needsUpdate, k)
+		}
+	}
+
+	return nil
+}
