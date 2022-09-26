@@ -3,12 +3,15 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime"
 
+	"github.com/muesli/termenv"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/theme"
+	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/logger"
 )
 
@@ -16,11 +19,41 @@ const (
 	rootCmdDesc = "cnspec is a cloud-native testing tool for your entire fleet\n"
 )
 
+const cnspecLogo = (" .--. ,-.,-. .--. .---.  .--.  .--.™\n" +
+	"'  ..': ,. :`._-.': .; `' '_.''  ..'\n" +
+	"`.__.':_;:_;`.__.': ._.'`.__.'`.__.'\n" +
+	"   mondoo™        : :               \n" +
+	"                  :_;               ")
+
+func init() {
+	theme.DefaultTheme.Landing = landing()
+	theme.DefaultTheme.Welcome = welcome()
+}
+
+func landing() string {
+	// windows
+	if runtime.GOOS == "windows" {
+		return termenv.String("cnquery™\n" + cnspecLogo + "\n").Foreground(colors.DefaultColorTheme.Primary).String()
+	}
+	// unix
+	return termenv.String(cnspecLogo).Foreground(colors.DefaultColorTheme.Primary).String()
+}
+
+func welcome() string {
+	// windows
+	if runtime.GOOS == "windows" {
+		return "cnquery™\n" + cnspecLogo + " interactive shell\n"
+	}
+	// unix
+	return cnspecLogo + " interactive shell\n"
+}
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "cnspec",
 	Short: "cnspec CLI",
-	Long:  theme.DefaultTheme.Landing + "\n\n" + rootCmdDesc,
+	// NOTE: if we use theme.DefaultTheme.Landing go compiler uses the value before init updated it
+	Long: landing() + "\n\n" + rootCmdDesc,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		initLogger(cmd)
 	},
@@ -69,9 +102,3 @@ func initLogger(cmd *cobra.Command) {
 	}
 	logger.Set(level)
 }
-
-const cnspecLogo = (" .--. ,-.,-. .--. .---.  .--.  .--.™\n" +
-	"'  ..': ,. :`._-.': .; `' '_.''  ..'\n" +
-	"`.__.':_;:_;`.__.': ._.'`.__.'`.__.'\n" +
-	"   mondoo™        : :               \n" +
-	"                  :_;               ")

@@ -80,14 +80,14 @@ Provide the recording with mock data as an argument:
 we will try to auto-detect the container or image from the provided ID, even
 if it's not the full ID:
 
-    mondoo shell container b62b276baab6
-    mondoo shell container b62
-    mondoo shell container ubuntu:latest
+    cnspec shell container b62b276baab6
+    cnspec shell container b62
+    cnspec shell container ubuntu:latest
 
 You can also explicitly connect to an image or a container registry:
 
-    mondoo shell container image ubuntu:20.04
-    mondoo shell container registry harbor.yourdomain.com/project/repository
+    cnspec shell container image ubuntu:20.04
+    cnspec shell container registry harbor.yourdomain.com/project/repository
 `,
 			},
 			"container-image": {
@@ -97,9 +97,9 @@ You can also explicitly connect to an image or a container registry:
 				Short: "Connect to a container registry",
 				Long: `Connect to a container registry. Supports more parameters for different registries:
 
-    mondoo shell cr harbor.yourdomain.com/project/repository
-    mondoo shell cr yourname.azurecr.io
-    mondoo shell cr 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
+    cnspec shell container registry harbor.yourdomain.com/project/repository
+    cnspec shell container registry yourname.azurecr.io
+    cnspec shell container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 `,
 			},
 			"docker": {
@@ -107,10 +107,10 @@ You can also explicitly connect to an image or a container registry:
 				Long: `Connect to a Docker container or image by automatically detecting the provided ID.
 You can also specify a subcommand to narrow the scan to containers or images.
 
-    mondoo shell docker b62b276baab6
+    cnspec shell docker b62b276baab6
 
-    mondoo shell docker container b62b
-    mondoo shell docker image ubuntu:latest
+    cnspec shell docker container b62b
+    cnspec shell docker image ubuntu:latest
 `,
 			},
 			"docker-container": {
@@ -193,12 +193,12 @@ configure your Azure credentials and have SSH access to your instances.`,
 				Long: `
 This command opens a shell to a Microsoft 365 tenant:
 
-    $ mondoo shell ms365 --tenant-id {tennant id} --client-id {client id} --client-secret {client secret}
+    $ cnspec shell ms365 --tenant-id {tennant id} --client-id {client id} --client-secret {client secret}
 
 This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
-    $ mondoo shell ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
-    $ mondoo shell ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
+    $ cnspec shell ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
+    $ cnspec shell ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
 `,
 			},
 			"host": {
