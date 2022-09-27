@@ -496,13 +496,16 @@ func (c *scanConfig) loadPolicies() error {
 func RunScan(config *scanConfig) *policy.ReportCollection {
 	scanner := scan.NewLocalScanner()
 
-	reports, err := scanner.RunIncognito(&scan.Job{
-		DoRecord:      config.DoRecord,
-		Inventory:     config.Inventory,
-		Bundle:        config.Bundle,
-		Ctx:           cnquery.SetFeatures(context.Background(), config.Features),
-		PolicyFilters: config.PolicyNames,
-	})
+	ctx := cnquery.SetFeatures(context.Background(), config.Features)
+
+	reports, err := scanner.RunIncognito(
+		ctx,
+		&scan.Job{
+			DoRecord:      config.DoRecord,
+			Inventory:     config.Inventory,
+			Bundle:        config.Bundle,
+			PolicyFilters: config.PolicyNames,
+		})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
