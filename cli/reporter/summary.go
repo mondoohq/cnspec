@@ -9,6 +9,7 @@ import (
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -27,7 +28,15 @@ func policyScores(report *policy.Report, bundle *policy.PolicyBundleMap) []polic
 			continue
 		}
 
-		// TODO: filter out invalid policies
+		// We only keep queries and policies in printing. Normal queries will tpically
+		// not be a MRN. Everything except for policies and queries can be skipped
+		if m, err := mrn.NewMRN(id); err == nil {
+			rid, _ := m.ResourceID(policy.MRN_RESOURCE_POLICY)
+			qid, _ := m.ResourceID(policy.MRN_RESOURCE_QUERY)
+			if rid == "" && qid == "" {
+				continue
+			}
+		}
 
 		x := policyScore{
 			score: score,
