@@ -28,12 +28,13 @@ const cnspecLogo = (" .--. ,-.,-. .--. .---.  .--.  .--.™\n" +
 func init() {
 	theme.DefaultTheme.Landing = landing()
 	theme.DefaultTheme.Welcome = welcome()
+	theme.DefaultTheme.Prefix = "cnspec> "
 }
 
 func landing() string {
 	// windows
 	if runtime.GOOS == "windows" {
-		return termenv.String("cnquery™\n" + cnspecLogo + "\n").Foreground(colors.DefaultColorTheme.Primary).String()
+		return termenv.String(cnspecLogo + "\n").Foreground(colors.DefaultColorTheme.Primary).String()
 	}
 	// unix
 	return termenv.String(cnspecLogo).Foreground(colors.DefaultColorTheme.Primary).String()
@@ -42,7 +43,7 @@ func landing() string {
 func welcome() string {
 	// windows
 	if runtime.GOOS == "windows" {
-		return "cnquery™\n" + cnspecLogo + " interactive shell\n"
+		return cnspecLogo + " interactive shell\n"
 	}
 	// unix
 	return cnspecLogo + " interactive shell\n"
