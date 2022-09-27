@@ -106,6 +106,29 @@ func (r ScoreRating) CategoryLabel() string {
 	return enumName(ScoreRating_CategoryLabel, int32(r))
 }
 
+var ScoreRating_FailureLabel = map[int32]string{
+	0:  "unrated",  // Unscored/Unrated
+	1:  "low",      // A+
+	2:  "low",      // A
+	3:  "low",      // A-
+	4:  "low",      // B+
+	5:  "low",      // B
+	6:  "low",      // B-
+	7:  "medium",   // C+
+	8:  "medium",   // C
+	9:  "medium",   // C-
+	10: "high",     // D+
+	11: "high",     // D
+	12: "high",     // D-
+	13: "critical", // F
+	14: "error",    // X
+	15: "skip",     // S
+}
+
+func (r ScoreRating) FailureLabel() string {
+	return enumName(ScoreRating_FailureLabel, int32(r))
+}
+
 func enumName(m map[int32]string, v int32) string {
 	s, ok := m[v]
 	if ok {
