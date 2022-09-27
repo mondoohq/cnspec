@@ -197,6 +197,53 @@ func (p *PolicyBundle) ToMap() *PolicyBundleMap {
 	return res
 }
 
+// FilterPolicies only keeps the given policy UIDs or MRNs and removes every other one.
+// If a given policy has an MRN set (but no UID) it will try to get the UID from the MRN
+// and also filter by that criteria.
+// If the list of IDs is empty this function doesn't do anything.
+// This function does not remove orphaned queries from the bundle.
+func (p *PolicyBundle) FilterPolicies(IDs []string) {
+	if len(IDs) == 0 {
+		return
+	}
+
+	valid := make(map[string]struct{}, len(IDs))
+	for i := range IDs {
+		valid[IDs[i]] = struct{}{}
+	}
+
+	var cur *Policy
+	var res []*Policy
+	for i := range p.Policies {
+		cur = p.Policies[i]
+
+		if cur.Mrn != "" {
+			if _, ok := valid[cur.Mrn]; ok {
+				res = append(res, cur)
+				continue
+			}
+
+			uid, _ := mrn.GetResource(cur.Mrn, MRN_RESOURCE_POLICY)
+			if _, ok := valid[uid]; ok {
+				res = append(res, cur)
+			}
+
+			// if we have a MRN we do not check the UID
+			continue
+		}
+
+		if _, ok := valid[cur.Uid]; ok {
+			res = append(res, cur)
+		}
+	}
+
+	p.Policies = res
+}
+
+func (p *PolicyBundle) RemoveOrphaned() {
+	panic("Not yet implemented, please open an issue at https://github.com/mondoohq/cnspec")
+}
+
 // Clean the policy bundle to turn a few nil fields into empty fields for consistency
 func (p *PolicyBundle) Clean() *PolicyBundle {
 	for i := range p.Policies {

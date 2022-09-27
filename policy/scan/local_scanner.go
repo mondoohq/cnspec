@@ -112,6 +112,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 
 	reporter := NewAggregateReporter(job.Bundle, assetList)
 
+	job.Bundle.FilterPolicies(job.PolicyFilters)
+
 	for i := range assetList {
 		asset := assetList[i]
 

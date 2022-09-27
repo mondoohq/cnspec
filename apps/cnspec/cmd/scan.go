@@ -426,7 +426,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		IsIncognito: viper.GetBool("incognito"),
 		DoRecord:    viper.GetBool("record"),
 		PolicyPaths: viper.GetStringSlice("policy-bundle"),
-		PolicyNames: viper.GetStringSlice("policy"),
+		PolicyNames: viper.GetStringSlice("policies"),
 	}
 	config.DisplayUsedConfig()
 
