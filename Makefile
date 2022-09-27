@@ -75,6 +75,13 @@ policy/generate:
 cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
+cnspec/dist/goreleaser/stable:
+	goreleaser release --rm-dist --skip-publish --skip-validate	-f .goreleaser.yml --timeout 120m
+
+cnspec/dist/goreleaser/edge:
+	goreleaser release --rm-dist --skip-publish --skip-validate	-f .goreleaser.yml --timeout 120m --snapshot
+
+
 #   ⛹🏽‍ Testing   #
 
 test/lint: test/lint/golangci-lint/run
