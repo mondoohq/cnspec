@@ -125,7 +125,7 @@ func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAss
 			if err != nil {
 				logger.FromContext(ctx).Error().
 					Err(err).
-					Msg("resolved policy is invalid")
+					Msg("resolver> resolved policy is invalid")
 			}
 		}
 
@@ -231,7 +231,7 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 	// we need to ensure a good owner MRN exists for all objects, including orgs and spaces
 	// this is the case when we are in incognito mode
 	if ownerMrn == "" {
-		log.Debug().Str("policyMrn", policyMrn).Msg("ownerMrn is missing")
+		log.Debug().Str("policyMrn", policyMrn).Msg("resolver> ownerMrn is missing")
 		ownerMrn = "//policy.api.mondoo.app"
 	}
 
@@ -368,7 +368,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 			if i+1 < maxResolveRetry {
 				jitter := time.Duration(rand.Int63n(int64(maxResolveRetryBackoffjitter)))
 				sleepTime := maxResolveRetryBackoff + jitter
-				logCtx.Error().Int("try", i+1).Dur("sleepTime", sleepTime).Msg("Retrying policy resolution")
+				logCtx.Error().Int("try", i+1).Dur("sleepTime", sleepTime).Msg("retrying policy resolution")
 				time.Sleep(sleepTime)
 			}
 		} else {
@@ -1220,7 +1220,7 @@ func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, 
 	var err error
 
 	if err = s.DataLake.EnsureAsset(ctx, assetMrn); err != nil {
-		return errors.New("distributor> failed to cache upstream jobs: " + err.Error())
+		return errors.New("resolver> failed to cache upstream jobs: " + err.Error())
 	}
 
 	if useV2Code {
@@ -1229,7 +1229,7 @@ func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, 
 		err = s.DataLake.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved, true)
 	}
 	if err != nil {
-		return errors.New("distributor> failed to cache resolved upstream policy: " + err.Error())
+		return errors.New("resolver> failed to cache resolved upstream policy: " + err.Error())
 	}
 
 	if useV2Code {
@@ -1238,7 +1238,7 @@ func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, 
 		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved)
 	}
 	if err != nil {
-		return errors.New("distributor> failed to cache resolved upstream policy into asset: " + err.Error())
+		return errors.New("resolver> failed to cache resolved upstream policy into asset: " + err.Error())
 	}
 
 	return nil

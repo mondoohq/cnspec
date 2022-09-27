@@ -25,7 +25,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 	}
 
 	if len(policyw.Policy.Specs) == 0 {
-		log.Error().Str("policy", targetMRN).Msg("distributor> failed to modify policy, it has no specs")
+		log.Error().Str("policy", targetMRN).Msg("resolver.db> failed to modify policy, it has no specs")
 		return nil, errors.New("cannot modify policy, it has no specs (invalid state)")
 	}
 
@@ -255,7 +255,7 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 		log.Error().
 			Err(err).
 			Str("entity", assetMrn).
-			Msg("reportsstore> could not fetch scores for asset")
+			Msg("resolver.db> could not fetch scores for asset")
 		return nil, err
 	}
 
@@ -270,7 +270,7 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 		log.Error().
 			Err(err).
 			Str("entity", assetMrn).
-			Msg("reportsstore> could not fetch data for asset")
+			Msg("resolver.db> could not fetch data for asset")
 		return nil, err
 	}
 
@@ -399,7 +399,7 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 	if assetw.ResolvedPolicy != nil && assetw.ResolvedPolicy.GraphExecutionChecksum == resolvedPolicy.GraphExecutionChecksum && assetw.resolvedPolicyVersion == string(version) {
 		log.Debug().
 			Str("asset", assetMrn).
-			Msg("distributor> asset resolved policy is already cached (and unchanged)")
+			Msg("resolverj.db> asset resolved policy is already cached (and unchanged)")
 		return nil
 	}
 
@@ -415,7 +415,7 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 				Err(err).
 				Str("asset", assetMrn).
 				Str("query checksum", checksum).
-				Msg("distributor> failed to set asset resolved policy, failed to initialize data value")
+				Msg("resolver.db> failed to set asset resolved policy, failed to initialize data value")
 			return errors.New("failed to create asset scoring job (failed to init data)")
 		}
 	}
@@ -433,7 +433,7 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 				Err(err).
 				Str("asset", assetMrn).
 				Str("score qrID", qrid).
-				Msg("distributor> failed to set asset resolved policy, failed to initialize score")
+				Msg("resolver.db> failed to set asset resolved policy, failed to initialize score")
 			return errors.New("failed to create asset scoring job (failed to init score)")
 		}
 	}
@@ -514,7 +514,7 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 				Interface("data", val.Data).
 				Str("expected", types.Type(info.Type).Label()).
 				Str("received", types.Type(val.Data.Type).Label()).
-				Msg("collector.db> failed to store data, types don't match")
+				Msg("resolver.db> failed to store data, types don't match")
 
 			errList = multierror.Append(errList, fmt.Errorf("failed to store data for %q, %w: expected %s, got %s",
 				dpChecksum, errTypesDontMatch, types.Type(info.Type).Label(), types.Type(val.Data.Type).Label()))
@@ -617,6 +617,6 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 		Int("data-completion", int(score.DataCompletion)).
 		Int("data-total", int(score.DataTotal)).
 		Str("error_msg", score.Message).
-		Msg("collector.ristretto> update score")
+		Msg("resolver.db> update score")
 	return true, nil
 }

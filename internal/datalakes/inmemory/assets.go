@@ -34,7 +34,7 @@ func (db *Db) ensureAsset(ctx context.Context, mrn string) (wrapAsset, wrapPolic
 		}
 		policyw = x.(wrapPolicy)
 
-		log.Warn().Str("asset", mrn).Msg("asset did not have a policy set, this should not happen, fixing")
+		log.Warn().Str("asset", mrn).Msg("assets> asset did not have a policy set, this should not happen, fixing")
 	}
 
 	policyw, err = db.ensureAssetPolicy(ctx, mrn)
@@ -61,7 +61,7 @@ func (db *Db) ensureAssetPolicy(ctx context.Context, mrn string) (wrapPolicy, er
 }
 
 func (db *Db) ensureAssetObject(ctx context.Context, mrn string) (wrapAsset, bool, error) {
-	log.Debug().Str("mrn", mrn).Msg("distributor> ensure asset")
+	log.Debug().Str("mrn", mrn).Msg("assets> ensure asset")
 
 	x, ok := db.cache.Get(dbIDAsset + mrn)
 	if ok {

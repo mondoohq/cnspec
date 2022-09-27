@@ -7,7 +7,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 )
 
-// kvStore is an abstraction on top of ristretto
+// kvStore is an general-purpose abstraction for key-value stores
 type kvStore interface {
 	Get(key interface{}) (interface{}, bool)
 	Set(key interface{}, value interface{}, cost int64) bool
