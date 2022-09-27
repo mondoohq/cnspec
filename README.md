@@ -21,8 +21,8 @@ Building:
 # install all dependent tools
 make prep 
 
-# generate files and go install cnspec
-make cnspec/generate
+# go install cnspec
+export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
 make cnspec/install
 ```
 
