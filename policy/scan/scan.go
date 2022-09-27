@@ -115,18 +115,23 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 		return nil, false, errors.New("could not find an asset that we can connect to")
 	}
 
+	// ensure we have non-empty asset MRNs
+	for i := range assetList {
+		cur := assetList[i]
+		if cur.Mrn == "" && cur.Id == "" {
+			randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+			x, err := mrn.NewMRN(randID)
+			if err != nil {
+				return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
+			}
+			cur.Mrn = x.String()
+		}
+	}
+
 	reporter := NewAggregateReporter(job.Bundle, assetList)
 
 	for i := range assetList {
 		asset := assetList[i]
-
-		// asset MRN cannot be empty
-		randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
-		x, err := mrn.NewMRN(randID)
-		if err != nil {
-			return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
-		}
-		asset.Mrn = x.String()
 
 		// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
 		// we need to solve this at a different level.
@@ -339,7 +344,7 @@ func (s *localAssetScanner) runPolicy() (*policy.PolicyBundle, *policy.ResolvedP
 		return nil, nil, err
 	}
 
-	return s.job.Bundle, nil, nil
+	return s.job.Bundle, resolvedPolicy, nil
 }
 
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
@@ -348,16 +353,14 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	// TODO: we do not needs this anymore since we recieve updates already
 	log.Info().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
 	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
+	s.Progress.Close()
 	// handle error
 	if err != nil {
-		s.Progress.Close()
 		return &policy.Report{
 			EntityMrn:  s.job.Asset.Mrn,
 			ScoringMrn: s.job.Asset.Mrn,
 		}, err
 	}
-
-	s.Progress.Close()
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
 	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreRequest{

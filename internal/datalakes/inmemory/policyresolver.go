@@ -17,15 +17,15 @@ import (
 // MutatePolicy modifies a policy. If it does not find the policy, and if the
 // caller chooses to, it will treat the MRN as an asset and create it + its policy
 func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationDelta, createIfMissing bool) (*policy.Policy, error) {
-	mrn := mutation.PolicyMrn
+	targetMRN := mutation.PolicyMrn
 
-	policyw, err := db.ensurePolicy(ctx, mrn, createIfMissing)
+	policyw, err := db.ensurePolicy(ctx, targetMRN, createIfMissing)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(policyw.Policy.Specs) == 0 {
-		log.Error().Str("policy", mrn).Msg("distributor> failed to modify policy, it has no specs")
+		log.Error().Str("policy", targetMRN).Msg("distributor> failed to modify policy, it has no specs")
 		return nil, errors.New("cannot modify policy, it has no specs (invalid state)")
 	}
 
@@ -49,7 +49,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 
 			spec.Policies[policyMrn] = nil
 			policyw.children[policyMrn] = struct{}{}
-			childw.parents[mrn] = struct{}{}
+			childw.parents[targetMRN] = struct{}{}
 			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
 				return nil, errors.New("failed to update child-parent relationship for policy '" + policyMrn + "'")
 			}
@@ -65,7 +65,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 
 			delete(spec.Policies, policyMrn)
 			delete(policyw.children, policyMrn)
-			delete(childw.parents, mrn)
+			delete(childw.parents, targetMRN)
 			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
 				return nil, errors.New("failed to update child-parent relationship for policy '" + policyMrn + "'")
 			}
@@ -96,7 +96,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 		return nil, err
 	}
 
-	ok := db.cache.Set(dbIDPolicy+mrn, policyw, 2)
+	ok := db.cache.Set(dbIDPolicy+targetMRN, policyw, 2)
 	if !ok {
 		return nil, errors.New("")
 	}

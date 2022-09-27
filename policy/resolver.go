@@ -67,6 +67,8 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 		}
 	}
 
+	s.DataLake.EnsureAsset(ctx, assignment.AssetMrn)
+
 	_, err := s.DataLake.MutatePolicy(ctx, &PolicyMutationDelta{
 		PolicyMrn:    assignment.AssetMrn,
 		PolicyDeltas: deltas,
@@ -233,9 +235,14 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 		ownerMrn = "//policy.api.mondoo.app"
 	}
 
+	name, _ := mrn.GetResource(policyMrn, MRN_RESOURCE_ASSET)
+	if name == "" {
+		name = policyMrn
+	}
+
 	policyObj := Policy{
 		Mrn:  policyMrn,
-		Name: policyMrn, // just as a placeholder, replace with something better
+		Name: name, // just as a placeholder, replace with something better
 		// should we set a semver version here as well?, right now, the policy validation makes an
 		// exception for space and asset policies
 		Version: "n/a",
