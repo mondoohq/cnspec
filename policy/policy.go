@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 
@@ -9,10 +10,64 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/types"
 	"google.golang.org/protobuf/proto"
 )
 
 //go:generate protoc --proto_path=../:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. policy.proto
+
+func (sv *SeverityValue) UnmarshalJSON(data []byte) error {
+	var sev int64
+
+	if err := json.Unmarshal(data, &sev); err == nil {
+		sv.Value = sev
+	} else {
+		v := &struct {
+			Value int64 `json:"value"`
+		}{}
+		if err := json.Unmarshal(data, &v); err != nil {
+			return err
+		}
+		sv.Value = v.Value
+	}
+
+	if sv.Value < 0 || sv.Value > 100 {
+		return errors.New("severity must be between 0 and 100")
+	}
+
+	return nil
+}
+
+type dataQueryInfo struct {
+	Type   types.Type `json:"type,omitempty"`
+	Notify []string   `json:"notify,omitempty"`
+}
+
+// MarshalJSON generates escapes the \u0000 string for postgres
+// Otherwise we are not able to store the compile code as json blob in pg since
+// llx and type use \x00 or \u0000. This is not allowed in Postgres json blobs
+// see https://www.postgresql.org/docs/9.4/release-9-4-1.html
+// TODO: this is a workaround and we should not store this as json in pg in the first place
+func (dqi *DataQueryInfo) MarshalJSON() ([]byte, error) {
+	jsonQueryInfo := dataQueryInfo{
+		Type:   types.Type(dqi.Type),
+		Notify: dqi.Notify,
+	}
+
+	return json.Marshal(jsonQueryInfo)
+}
+
+// UnmarshalJSON reverts MarshalJSON data arrays to its base type.
+func (dqi *DataQueryInfo) UnmarshalJSON(data []byte) error {
+	res := dataQueryInfo{}
+	err := json.Unmarshal(data, &res)
+	if err != nil {
+		return err
+	}
+	dqi.Notify = res.Notify
+	dqi.Type = string(res.Type)
+	return nil
+}
 
 // WaitUntilDone for a score and an entity
 func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, timeout time.Duration) (bool, error) {
