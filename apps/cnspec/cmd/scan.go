@@ -414,7 +414,7 @@ type scanConfig struct {
 	Output      string
 	PolicyPaths []string
 	PolicyNames []string
-	Bundle      *policy.PolicyBundle
+	Bundle      *policy.Bundle
 
 	IsIncognito bool
 	DoRecord    bool

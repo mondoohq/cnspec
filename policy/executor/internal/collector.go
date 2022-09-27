@@ -135,11 +135,11 @@ func (c *BufferedCollector) SinkScore(scores []*policy.Score) {
 
 type PolicyServiceCollector struct {
 	assetMrn  string
-	resolver  policy.PolicyResolver
+	resolver  policy.Resolver
 	useV2Code bool
 }
 
-func NewPolicyServiceCollector(assetMrn string, resolver policy.PolicyResolver, useV2Code bool) *PolicyServiceCollector {
+func NewPolicyServiceCollector(assetMrn string, resolver policy.Resolver, useV2Code bool) *PolicyServiceCollector {
 	return &PolicyServiceCollector{
 		assetMrn:  assetMrn,
 		resolver:  resolver,

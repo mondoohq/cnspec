@@ -18,73 +18,73 @@ import (
 
 // service interface definition
 
-type PolicyHub interface {
-	SetPolicyBundle(context.Context, *PolicyBundle) (*Empty, error)
+type Hub interface {
+	SetBundle(context.Context, *Bundle) (*Empty, error)
 	DeletePolicy(context.Context, *Mrn) (*Empty, error)
-	ValidatePolicyBundle(context.Context, *PolicyBundle) (*Empty, error)
+	ValidateBundle(context.Context, *Bundle) (*Empty, error)
 	GetPolicy(context.Context, *Mrn) (*Policy, error)
-	GetPolicyBundle(context.Context, *Mrn) (*PolicyBundle, error)
+	GetBundle(context.Context, *Mrn) (*Bundle, error)
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
 	List(context.Context, *PolicySearchFilter) (*Policies, error)
 }
 
 // client implementation
 
-type PolicyHubClient struct {
+type HubClient struct {
 	ranger.Client
 	httpclient ranger.HTTPClient
 	prefix     string
 }
 
-func NewPolicyHubClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*PolicyHubClient, error) {
+func NewHubClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*HubClient, error) {
 	base, err := url.Parse(ranger.SanitizeUrl(addr))
 	if err != nil {
 		return nil, err
 	}
 
-	u, err := url.Parse("./PolicyHub")
+	u, err := url.Parse("./Hub")
 	if err != nil {
 		return nil, err
 	}
 
-	serviceClient := &PolicyHubClient{
+	serviceClient := &HubClient{
 		httpclient: client,
 		prefix:     base.ResolveReference(u).String(),
 	}
 	serviceClient.AddPlugins(plugins...)
 	return serviceClient, nil
 }
-func (c *PolicyHubClient) SetPolicyBundle(ctx context.Context, in *PolicyBundle) (*Empty, error) {
+func (c *HubClient) SetBundle(ctx context.Context, in *Bundle) (*Empty, error) {
 	out := new(Empty)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetPolicyBundle"}, ""), in, out)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetBundle"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
+func (c *HubClient) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeletePolicy"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) ValidatePolicyBundle(ctx context.Context, in *PolicyBundle) (*Empty, error) {
+func (c *HubClient) ValidateBundle(ctx context.Context, in *Bundle) (*Empty, error) {
 	out := new(Empty)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ValidatePolicyBundle"}, ""), in, out)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ValidateBundle"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
+func (c *HubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
 	out := new(Policy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicy"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) GetPolicyBundle(ctx context.Context, in *Mrn) (*PolicyBundle, error) {
-	out := new(PolicyBundle)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicyBundle"}, ""), in, out)
+func (c *HubClient) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
+	out := new(Bundle)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundle"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) GetPolicyFilters(ctx context.Context, in *Mrn) (*Mqueries, error) {
+func (c *HubClient) GetPolicyFilters(ctx context.Context, in *Mrn) (*Mqueries, error) {
 	out := new(Mqueries)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicyFilters"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) List(ctx context.Context, in *PolicySearchFilter) (*Policies, error) {
+func (c *HubClient) List(ctx context.Context, in *PolicySearchFilter) (*Policies, error) {
 	out := new(Policies)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/List"}, ""), in, out)
 	return out, err
@@ -92,16 +92,16 @@ func (c *PolicyHubClient) List(ctx context.Context, in *PolicySearchFilter) (*Po
 
 // server implementation
 
-type PolicyHubServerOption func(s *PolicyHubServer)
+type HubServerOption func(s *HubServer)
 
-func WithUnknownFieldsForPolicyHubServer() PolicyHubServerOption {
-	return func(s *PolicyHubServer) {
+func WithUnknownFieldsForHubServer() HubServerOption {
+	return func(s *HubServer) {
 		s.allowUnknownFields = true
 	}
 }
 
-func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.Handler {
-	srv := &PolicyHubServer{
+func NewHubServer(handler Hub, opts ...HubServerOption) http.Handler {
+	srv := &HubServer{
 		handler: handler,
 	}
 
@@ -110,27 +110,27 @@ func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.H
 	}
 
 	service := ranger.Service{
-		Name: "PolicyHub",
+		Name: "Hub",
 		Methods: map[string]ranger.Method{
-			"SetPolicyBundle":      srv.SetPolicyBundle,
-			"DeletePolicy":         srv.DeletePolicy,
-			"ValidatePolicyBundle": srv.ValidatePolicyBundle,
-			"GetPolicy":            srv.GetPolicy,
-			"GetPolicyBundle":      srv.GetPolicyBundle,
-			"GetPolicyFilters":     srv.GetPolicyFilters,
-			"List":                 srv.List,
+			"SetBundle":        srv.SetBundle,
+			"DeletePolicy":     srv.DeletePolicy,
+			"ValidateBundle":   srv.ValidateBundle,
+			"GetPolicy":        srv.GetPolicy,
+			"GetBundle":        srv.GetBundle,
+			"GetPolicyFilters": srv.GetPolicyFilters,
+			"List":             srv.List,
 		},
 	}
 	return ranger.NewRPCServer(&service)
 }
 
-type PolicyHubServer struct {
-	handler            PolicyHub
+type HubServer struct {
+	handler            Hub
 	allowUnknownFields bool
 }
 
-func (p *PolicyHubServer) SetPolicyBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req PolicyBundle
+func (p *HubServer) SetBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Bundle
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -151,9 +151,9 @@ func (p *PolicyHubServer) SetPolicyBundle(ctx context.Context, reqBytes *[]byte)
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.SetPolicyBundle(ctx, &req)
+	return p.handler.SetBundle(ctx, &req)
 }
-func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *HubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
 
@@ -177,8 +177,8 @@ func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (p
 	}
 	return p.handler.DeletePolicy(ctx, &req)
 }
-func (p *PolicyHubServer) ValidatePolicyBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req PolicyBundle
+func (p *HubServer) ValidateBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Bundle
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -199,9 +199,9 @@ func (p *PolicyHubServer) ValidatePolicyBundle(ctx context.Context, reqBytes *[]
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.ValidatePolicyBundle(ctx, &req)
+	return p.handler.ValidateBundle(ctx, &req)
 }
-func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *HubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
 
@@ -225,7 +225,7 @@ func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.GetPolicy(ctx, &req)
 }
-func (p *PolicyHubServer) GetPolicyBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *HubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
 
@@ -247,9 +247,9 @@ func (p *PolicyHubServer) GetPolicyBundle(ctx context.Context, reqBytes *[]byte)
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.GetPolicyBundle(ctx, &req)
+	return p.handler.GetBundle(ctx, &req)
 }
-func (p *PolicyHubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *HubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
 
@@ -273,7 +273,7 @@ func (p *PolicyHubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte
 	}
 	return p.handler.GetPolicyFilters(ctx, &req)
 }
-func (p *PolicyHubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *HubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PolicySearchFilter
 	var err error
 
@@ -396,7 +396,7 @@ func (p *QueryRunnerServer) GetExecutionJob(ctx context.Context, reqBytes *[]byt
 
 // service interface definition
 
-type PolicyResolver interface {
+type Resolver interface {
 	Assign(context.Context, *PolicyAssignment) (*Empty, error)
 	Unassign(context.Context, *PolicyAssignment) (*Empty, error)
 	Resolve(context.Context, *ResolveReq) (*ResolvedPolicy, error)
@@ -409,66 +409,66 @@ type PolicyResolver interface {
 
 // client implementation
 
-type PolicyResolverClient struct {
+type ResolverClient struct {
 	ranger.Client
 	httpclient ranger.HTTPClient
 	prefix     string
 }
 
-func NewPolicyResolverClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*PolicyResolverClient, error) {
+func NewResolverClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*ResolverClient, error) {
 	base, err := url.Parse(ranger.SanitizeUrl(addr))
 	if err != nil {
 		return nil, err
 	}
 
-	u, err := url.Parse("./PolicyResolver")
+	u, err := url.Parse("./Resolver")
 	if err != nil {
 		return nil, err
 	}
 
-	serviceClient := &PolicyResolverClient{
+	serviceClient := &ResolverClient{
 		httpclient: client,
 		prefix:     base.ResolveReference(u).String(),
 	}
 	serviceClient.AddPlugins(plugins...)
 	return serviceClient, nil
 }
-func (c *PolicyResolverClient) Assign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
+func (c *ResolverClient) Assign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Assign"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) Unassign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
+func (c *ResolverClient) Unassign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Unassign"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) Resolve(ctx context.Context, in *ResolveReq) (*ResolvedPolicy, error) {
+func (c *ResolverClient) Resolve(ctx context.Context, in *ResolveReq) (*ResolvedPolicy, error) {
 	out := new(ResolvedPolicy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Resolve"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) UpdateAssetJobs(ctx context.Context, in *UpdateAssetJobsReq) (*Empty, error) {
+func (c *ResolverClient) UpdateAssetJobs(ctx context.Context, in *UpdateAssetJobsReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/UpdateAssetJobs"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) ResolveAndUpdateJobs(ctx context.Context, in *UpdateAssetJobsReq) (*ResolvedPolicy, error) {
+func (c *ResolverClient) ResolveAndUpdateJobs(ctx context.Context, in *UpdateAssetJobsReq) (*ResolvedPolicy, error) {
 	out := new(ResolvedPolicy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ResolveAndUpdateJobs"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) StoreResults(ctx context.Context, in *StoreResultsReq) (*Empty, error) {
+func (c *ResolverClient) StoreResults(ctx context.Context, in *StoreResultsReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreResults"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
+func (c *ResolverClient) GetReport(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
+func (c *ResolverClient) GetScore(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
 	return out, err
@@ -476,16 +476,16 @@ func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreRequ
 
 // server implementation
 
-type PolicyResolverServerOption func(s *PolicyResolverServer)
+type ResolverServerOption func(s *ResolverServer)
 
-func WithUnknownFieldsForPolicyResolverServer() PolicyResolverServerOption {
-	return func(s *PolicyResolverServer) {
+func WithUnknownFieldsForResolverServer() ResolverServerOption {
+	return func(s *ResolverServer) {
 		s.allowUnknownFields = true
 	}
 }
 
-func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServerOption) http.Handler {
-	srv := &PolicyResolverServer{
+func NewResolverServer(handler Resolver, opts ...ResolverServerOption) http.Handler {
+	srv := &ResolverServer{
 		handler: handler,
 	}
 
@@ -494,7 +494,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 	}
 
 	service := ranger.Service{
-		Name: "PolicyResolver",
+		Name: "Resolver",
 		Methods: map[string]ranger.Method{
 			"Assign":               srv.Assign,
 			"Unassign":             srv.Unassign,
@@ -509,12 +509,12 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 	return ranger.NewRPCServer(&service)
 }
 
-type PolicyResolverServer struct {
-	handler            PolicyResolver
+type ResolverServer struct {
+	handler            Resolver
 	allowUnknownFields bool
 }
 
-func (p *PolicyResolverServer) Assign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) Assign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PolicyAssignment
 	var err error
 
@@ -538,7 +538,7 @@ func (p *PolicyResolverServer) Assign(ctx context.Context, reqBytes *[]byte) (pb
 	}
 	return p.handler.Assign(ctx, &req)
 }
-func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PolicyAssignment
 	var err error
 
@@ -562,7 +562,7 @@ func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (
 	}
 	return p.handler.Unassign(ctx, &req)
 }
-func (p *PolicyResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req ResolveReq
 	var err error
 
@@ -586,7 +586,7 @@ func (p *PolicyResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (p
 	}
 	return p.handler.Resolve(ctx, &req)
 }
-func (p *PolicyResolverServer) UpdateAssetJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) UpdateAssetJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req UpdateAssetJobsReq
 	var err error
 
@@ -610,7 +610,7 @@ func (p *PolicyResolverServer) UpdateAssetJobs(ctx context.Context, reqBytes *[]
 	}
 	return p.handler.UpdateAssetJobs(ctx, &req)
 }
-func (p *PolicyResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req UpdateAssetJobsReq
 	var err error
 
@@ -634,7 +634,7 @@ func (p *PolicyResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqByte
 	}
 	return p.handler.ResolveAndUpdateJobs(ctx, &req)
 }
-func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) StoreResults(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req StoreResultsReq
 	var err error
 
@@ -658,7 +658,7 @@ func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byt
 	}
 	return p.handler.StoreResults(ctx, &req)
 }
-func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreRequest
 	var err error
 
@@ -682,7 +682,7 @@ func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) 
 	}
 	return p.handler.GetReport(ctx, &req)
 }
-func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *ResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreRequest
 	var err error
 

@@ -23,7 +23,7 @@ const (
 
 // BundleFromPaths loads a single policy bundle file or a bundle that
 // was split into multiple files into a single PolicyBundle struct
-func BundleFromPaths(paths ...string) (*PolicyBundle, error) {
+func BundleFromPaths(paths ...string) (*Bundle, error) {
 	// load all the source files
 	resolvedFilenames, err := walkPolicyBundleFiles(paths)
 	if err != nil {
@@ -80,9 +80,9 @@ func walkPolicyBundleFiles(filenames []string) ([]string, error) {
 
 // aggregateFilesToBundle iterates over all provided files and loads its content.
 // It assumes that all provided files are checked upfront and are not a directory
-func aggregateFilesToBundle(paths []string) (*PolicyBundle, error) {
+func aggregateFilesToBundle(paths []string) (*Bundle, error) {
 	// iterate over all files, load them and merge them
-	mergedBundle := &PolicyBundle{}
+	mergedBundle := &Bundle{}
 
 	for i := range paths {
 		path := paths[i]
@@ -98,7 +98,7 @@ func aggregateFilesToBundle(paths []string) (*PolicyBundle, error) {
 }
 
 // bundleFromSingleFile loads a policy bundle from a single file
-func bundleFromSingleFile(path string) (*PolicyBundle, error) {
+func bundleFromSingleFile(path string) (*Bundle, error) {
 	bundleData, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -109,8 +109,8 @@ func bundleFromSingleFile(path string) (*PolicyBundle, error) {
 
 // aggregateBundles combines two PolicyBundle and merges the data additive into one
 // single PolicyBundle structure
-func aggregateBundles(a *PolicyBundle, b *PolicyBundle) *PolicyBundle {
-	res := &PolicyBundle{}
+func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
+	res := &Bundle{}
 
 	res.OwnerMrn = a.OwnerMrn
 	if b.OwnerMrn != "" {
@@ -153,18 +153,18 @@ func aggregateBundles(a *PolicyBundle, b *PolicyBundle) *PolicyBundle {
 }
 
 // BundleFromYAML create a policy bundle from yaml contents
-func BundleFromYAML(data []byte) (*PolicyBundle, error) {
-	var res PolicyBundle
+func BundleFromYAML(data []byte) (*Bundle, error) {
+	var res Bundle
 	err := yaml.Unmarshal(data, &res)
 	return &res, err
 }
 
 // ToYAML returns the policy bundle as yaml
-func (p *PolicyBundle) ToYAML() ([]byte, error) {
+func (p *Bundle) ToYAML() ([]byte, error) {
 	return yaml.Marshal(p)
 }
 
-func (p *PolicyBundle) SourceHash() (string, error) {
+func (p *Bundle) SourceHash() (string, error) {
 	raw, err := p.ToYAML()
 	if err != nil {
 		return "", err
@@ -176,7 +176,7 @@ func (p *PolicyBundle) SourceHash() (string, error) {
 
 // ToMap turns the PolicyBundle into a PolicyBundleMap
 // dataLake (optional) may be used to provide queries/policies not found in the bundle
-func (p *PolicyBundle) ToMap() *PolicyBundleMap {
+func (p *Bundle) ToMap() *PolicyBundleMap {
 	res := NewPolicyBundleMap(p.OwnerMrn)
 
 	for i := range p.Policies {
@@ -202,7 +202,7 @@ func (p *PolicyBundle) ToMap() *PolicyBundleMap {
 // and also filter by that criteria.
 // If the list of IDs is empty this function doesn't do anything.
 // This function does not remove orphaned queries from the bundle.
-func (p *PolicyBundle) FilterPolicies(IDs []string) {
+func (p *Bundle) FilterPolicies(IDs []string) {
 	if len(IDs) == 0 {
 		return
 	}
@@ -240,12 +240,12 @@ func (p *PolicyBundle) FilterPolicies(IDs []string) {
 	p.Policies = res
 }
 
-func (p *PolicyBundle) RemoveOrphaned() {
+func (p *Bundle) RemoveOrphaned() {
 	panic("Not yet implemented, please open an issue at https://github.com/mondoohq/cnspec")
 }
 
 // Clean the policy bundle to turn a few nil fields into empty fields for consistency
-func (p *PolicyBundle) Clean() *PolicyBundle {
+func (p *Bundle) Clean() *Bundle {
 	for i := range p.Policies {
 		policy := p.Policies[i]
 		if policy.AssetFilters == nil {
@@ -267,7 +267,7 @@ func (p *PolicyBundle) Clean() *PolicyBundle {
 // 2. compile all queries. store code in the bundle map
 // 3. validation of all contents
 // 4. generate MRNs for all policies, queries, and properties and updates referencing local fields
-func (p *PolicyBundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap, error) {
+func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap, error) {
 	ownerMrn := p.OwnerMrn
 	if ownerMrn == "" {
 		return nil, errors.New("failed to compile bundle, the owner MRN is empty")

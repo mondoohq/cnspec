@@ -67,8 +67,8 @@ func (b *PolicyBundleMap) SelectPolicies(names []string) error {
 }
 
 // ToList converts the map to a regular bundle
-func (p *PolicyBundleMap) ToList() *PolicyBundle {
-	res := PolicyBundle{
+func (p *PolicyBundleMap) ToList() *Bundle {
+	res := Bundle{
 		OwnerMrn: p.OwnerMrn,
 	}
 	var i int

@@ -15,11 +15,11 @@ type AggregateReporter struct {
 	assets           map[string]*policy.Asset
 	assetReports     map[string]*policy.Report
 	assetErrors      map[string]error
-	bundle           *policy.PolicyBundle
+	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
 }
 
-func NewAggregateReporter(bundle *policy.PolicyBundle, assetList []*asset.Asset) *AggregateReporter {
+func NewAggregateReporter(bundle *policy.Bundle, assetList []*asset.Asset) *AggregateReporter {
 	assets := make(map[string]*policy.Asset, len(assetList))
 	for i := range assetList {
 		cur := assetList[i]

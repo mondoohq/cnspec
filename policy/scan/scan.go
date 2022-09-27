@@ -26,7 +26,7 @@ func init() {
 type AssetJob struct {
 	DoRecord      bool
 	Asset         *asset.Asset
-	Bundle        *policy.PolicyBundle
+	Bundle        *policy.Bundle
 	PolicyFilters []string
 	Ctx           context.Context
 	GetCredential func(cred *vault.Credential) (*vault.Credential, error)
@@ -37,6 +37,6 @@ type AssetJob struct {
 type AssetReport struct {
 	Mrn            string
 	ResolvedPolicy *policy.ResolvedPolicy
-	Bundle         *policy.PolicyBundle
+	Bundle         *policy.Bundle
 	Report         *policy.Report
 }

@@ -16,7 +16,7 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
+func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.Resolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressFn progress.Progress,
 ) error {
 	useV2Code := features.IsActive(cnquery.PiperCode)

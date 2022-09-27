@@ -26,7 +26,7 @@ type wrapPolicy struct {
 }
 
 type wrapBundle struct {
-	*policy.PolicyBundle
+	*policy.Bundle
 	graphContentChecksum string
 	invalidated          bool
 }
@@ -319,7 +319,7 @@ func (db *Db) DeletePolicy(ctx context.Context, mrn string) error {
 
 // GetValidatedBundle retrieves and if necessary updates the policy bundle
 // Note: the checksum and graphchecksum of the policy must be computed to the right number
-func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.PolicyBundle, error) {
+func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.Bundle, error) {
 	policyv, err := db.GetValidatedPolicy(ctx, mrn)
 	if err != nil {
 		return nil, err
@@ -331,7 +331,7 @@ func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.Polic
 		wbundle = y.(wrapBundle)
 
 		if !wbundle.invalidated && wbundle.graphContentChecksum == policyv.GraphContentChecksum {
-			return wbundle.PolicyBundle, nil
+			return wbundle.Bundle, nil
 		}
 	}
 
@@ -343,7 +343,7 @@ func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.Polic
 		return nil, errors.New("failed to compute policy bundle: " + err.Error())
 	}
 
-	wbundle.PolicyBundle = bundle
+	wbundle.Bundle = bundle
 	wbundle.invalidated = false
 	wbundle.graphContentChecksum = policyv.GraphContentChecksum
 

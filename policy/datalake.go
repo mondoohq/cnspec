@@ -33,7 +33,7 @@ type DataLake interface {
 	DeletePolicy(ctx context.Context, mrn string) error
 	// GetValidatedBundle retrieves and if necessary updates the policy bundle
 	// Note: the checksum and graphchecksum of the policy must be computed to the right number
-	GetValidatedBundle(ctx context.Context, mrn string) (*PolicyBundle, error)
+	GetValidatedBundle(ctx context.Context, mrn string) (*Bundle, error)
 
 	// GetRawPolicy retrieves the policy without fixing any invalidations (fast)
 	GetRawPolicy(ctx context.Context, mrn string) (*Policy, error)

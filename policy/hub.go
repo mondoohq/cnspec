@@ -12,14 +12,14 @@ import (
 
 var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
 
-// ValidatePolicyBundle and check queries, relationships, MRNs, and versions
-func (s *LocalServices) ValidatePolicyBundle(ctx context.Context, bundle *PolicyBundle) (*Empty, error) {
+// ValidateBundle and check queries, relationships, MRNs, and versions
+func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
 	_, err := bundle.Compile(ctx, s.DataLake)
 	return globalEmpty, err
 }
 
-// SetPolicyBundle stores a bundle of policies and queries in this marketplace
-func (s *LocalServices) SetPolicyBundle(ctx context.Context, bundle *PolicyBundle) (*Empty, error) {
+// SetBundle stores a bundle of policies and queries in this marketplace
+func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
 	if len(bundle.OwnerMrn) == 0 {
 		return globalEmpty, status.Error(codes.InvalidArgument, "owner MRN is required")
 	}
@@ -235,8 +235,8 @@ func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error)
 	return s.DataLake.GetValidatedPolicy(ctx, in.Mrn)
 }
 
-// GetPolicyBundle retrieves the given policy and all its dependencies (policies/queries)
-func (s *LocalServices) GetPolicyBundle(ctx context.Context, in *Mrn) (*PolicyBundle, error) {
+// GetBundle retrieves the given policy and all its dependencies (policies/queries)
+func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
 	if in == nil || len(in.Mrn) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
@@ -303,7 +303,7 @@ func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, erro
 // =================
 
 // ComputeBundle creates a policy bundle (with queries and dependencies) for a given policy
-func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (*PolicyBundle, error) {
+func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (*Bundle, error) {
 	bundleMap := PolicyBundleMap{
 		OwnerMrn: mpolicyObj.OwnerMrn,
 		Policies: map[string]*Policy{},
@@ -388,14 +388,14 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 // cacheUpstreamPolicy by storing a copy of the upstream policy bundle in this db
 // Note: upstream marketplace has to be defined
-func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*PolicyBundle, error) {
+func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*Bundle, error) {
 	logCtx := logger.FromContext(ctx)
 	if s.Upstream == nil {
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + " since upstream is not defined")
 	}
 
 	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetch policy bundle from upstream")
-	bundle, err := s.Upstream.GetPolicyBundle(ctx, &Mrn{Mrn: mrn})
+	bundle, err := s.Upstream.GetBundle(ctx, &Mrn{Mrn: mrn})
 	if err != nil {
 		logCtx.Error().Err(err).Str("policy", mrn).Msg("marketplace> failed to retrieve policy bundle from upstream")
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + ": " + err.Error())
@@ -421,7 +421,7 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*P
 // This is a quick fix for https://gitlab.com/mondoolabs/mondoo/-/issues/455
 // so that we can get a fix out while figuring out wtf is up with our null pointer serialization
 // open issue for deserialization: https://gitlab.com/mondoolabs/mondoo/-/issues/508
-func FixZeroValuesInPolicyBundle(bundle *PolicyBundle) {
+func FixZeroValuesInPolicyBundle(bundle *Bundle) {
 	for _, policy := range bundle.Policies {
 		for _, spec := range policy.Specs {
 			if spec.Policies != nil {

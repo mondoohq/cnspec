@@ -40,7 +40,7 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 
 	// all remote, call upstream
 	if s.Upstream != nil && !s.Incognito {
-		return s.Upstream.PolicyResolver.Assign(ctx, assignment)
+		return s.Upstream.Resolver.Assign(ctx, assignment)
 	}
 
 	// policies may be stored in upstream, cache them first
@@ -84,7 +84,7 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 
 	// all remote, call upstream
 	if s.Upstream != nil && !s.Incognito {
-		return s.Upstream.PolicyResolver.Unassign(ctx, assignment)
+		return s.Upstream.Resolver.Unassign(ctx, assignment)
 	}
 
 	deltas := map[string]*PolicyDelta{}
@@ -143,7 +143,7 @@ func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAss
 		return res, nil
 	}
 
-	res, err := s.Upstream.PolicyResolver.ResolveAndUpdateJobs(ctx, req)
+	res, err := s.Upstream.Resolver.ResolveAndUpdateJobs(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -162,11 +162,11 @@ func (s *LocalServices) UpdateAssetJobs(ctx context.Context, req *UpdateAssetJob
 		return globalEmpty, s.updateAssetJobs(ctx, req.AssetMrn, req.AssetFilters)
 	}
 
-	if _, err := s.Upstream.PolicyResolver.UpdateAssetJobs(ctx, req); err != nil {
+	if _, err := s.Upstream.Resolver.UpdateAssetJobs(ctx, req); err != nil {
 		return nil, err
 	}
 
-	resolvedPolicy, err := s.Upstream.PolicyResolver.Resolve(ctx, &ResolveReq{
+	resolvedPolicy, err := s.Upstream.Resolver.Resolve(ctx, &ResolveReq{
 		PolicyMrn:    req.AssetMrn,
 		AssetFilters: req.AssetFilters,
 	})
@@ -192,7 +192,7 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 	}
 
 	if s.Upstream != nil && !s.Incognito {
-		_, err := s.Upstream.PolicyResolver.StoreResults(ctx, req)
+		_, err := s.Upstream.Resolver.StoreResults(ctx, req)
 		if err != nil {
 			return globalEmpty, err
 		}
