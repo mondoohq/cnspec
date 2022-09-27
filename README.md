@@ -132,6 +132,25 @@ Explore our:
 Our goal is to secure all layers of your infrastructure. Join our [community](https://github.com/orgs/mondoohq/discussions) today and let’s grow it together!
 
 
+## Troubleshooting
+
+### Private repository access
+
+If you see this error:
+
+```
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+```
+
+It is caused by the repository currently being private. You'll have to configure your gitconfig to use SSH to download the repo:
+
+```
+[url "ssh://git@github.com/"]
+	insteadOf = https://github.com/
+```
+
+
 ## Development
 
 We love emojis in our commits. These are their meanings:
