@@ -67,6 +67,7 @@ cli/generate:
 .PHONY: policy
 policy/generate:
 	go generate ./policy
+	go generate ./policy/scan
 
 #   🏗 Binary   #
 

@@ -13,6 +13,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-plugin v1.4.3
 	github.com/hashicorp/go-version v1.6.0
+	github.com/joncrlsn/dque v0.0.0-20211108142734-c2ef48c5192a
 	github.com/lucasb-eyer/go-colorful v1.2.0
 	github.com/mattn/go-isatty v0.0.16
 	github.com/mitchellh/mapstructure v1.5.0
@@ -23,6 +24,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
 	github.com/segmentio/fasthash v1.0.3
+	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.13.0
 	github.com/stretchr/testify v1.8.0
@@ -355,7 +357,6 @@ require (
 	github.com/sashamelentyev/interfacebloat v1.1.0 // indirect
 	github.com/sashamelentyev/usestdlibvars v1.15.1 // indirect
 	github.com/securego/gosec/v2 v2.13.1 // indirect
-	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/sethvargo/go-password v0.2.0 // indirect
 	github.com/shazow/go-diff v0.0.0-20160112020656-b6b7b6733b8c // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
