@@ -416,14 +416,14 @@ type scanConfig struct {
 	PolicyNames []string
 	Bundle      *policy.PolicyBundle
 
-	Incognito bool
-	DoRecord  bool
+	IsIncognito bool
+	DoRecord    bool
 }
 
 func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) (*scanConfig, error) {
 	conf := scanConfig{
 		Features:    cnquery.DefaultFeatures,
-		Incognito:   viper.GetBool("incognito"),
+		IsIncognito: viper.GetBool("incognito"),
 		DoRecord:    viper.GetBool("record"),
 		PolicyPaths: viper.GetStringSlice("policy-bundle"),
 		PolicyNames: viper.GetStringSlice("policy"),
@@ -458,9 +458,9 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	// TODO: DETECT CI/CD
 	// TODO: SERVICE CREDENTIALS
 
-	if len(conf.PolicyPaths) > 0 && !conf.Incognito {
+	if len(conf.PolicyPaths) > 0 && !conf.IsIncognito {
 		log.Warn().Msg("Scanning with local policy bundles will switch into --incognito mode by default. Your results will not be sent upstream.")
-		conf.Incognito = true
+		conf.IsIncognito = true
 	}
 
 	// print headline when its not printed to yaml
@@ -476,7 +476,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 }
 
 func (c *scanConfig) loadPolicies() error {
-	if c.Incognito {
+	if c.IsIncognito {
 		if len(c.PolicyPaths) == 0 {
 			return errors.New("incognito mode requires policy bundles to be run, but none were specified")
 		}
@@ -519,6 +519,7 @@ func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.
 
 	r.UsePager, _ = cmd.Flags().GetBool("pager")
 	r.Pager, _ = cmd.Flags().GetString("pager")
+	r.IsIncognito = conf.IsIncognito
 
 	if err = r.Print(report, os.Stdout); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
