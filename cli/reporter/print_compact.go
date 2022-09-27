@@ -213,20 +213,30 @@ func (r *defaultReporter) printAssetQueries(queries map[string]*policy.Mquery, a
 	}
 }
 
-func printSeverity(score *policy.Score, query *policy.Mquery) string {
-	if query.Severity == nil {
-		return ""
-	}
-	if score.Value == 100 || score.Type != policy.ScoreType_Result {
-		return ""
-	}
-
+// only works with type == policy.ScoreType_Result
+func (r *defaultReporter) printScore(title string, score *policy.Score, query *policy.Mquery) string {
 	// FIXME: this is only a workaround for a deeper bug with the score value
-	score.Value = 100 - uint32(query.Severity.Value)
+	if query.Severity != nil {
+		score.Value = 100 - uint32(query.Severity.Value)
+	}
 	rating := score.Rating()
 	color := cnspecComponents.DefaultRatingColors.Color(rating)
-	s := fmt.Sprintf(" %s %d", rating.Letter(), score.Value)
-	return " " + termenv.String(s).Foreground(color).String()
+
+	var passfail string
+	if score.Value == 100 {
+		passfail = termenv.String("✓ Pass:  ").Foreground(r.Colors.Success).String()
+	} else {
+		passfail = termenv.String("✕ Fail:  ").Foreground(color).String()
+	}
+
+	var suffix string
+	if query.Severity != nil && score.Value != 100 {
+		suffix = termenv.String(
+			fmt.Sprintf(" %s %d", rating.Letter(), score.Value),
+		).Foreground(color).String()
+	}
+
+	return passfail + title + suffix + "\n"
 }
 
 func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery, asset *policy.Asset, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
@@ -255,14 +265,7 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 		r.out.Write([]byte{'\n'})
 
 	case policy.ScoreType_Result:
-		if score.Value == 100 {
-			r.out.Write([]byte(termenv.String("✓ Pass:  ").Foreground(r.Colors.Success).String()))
-		} else {
-			r.out.Write([]byte(termenv.String("✕ Fail:  ").Foreground(r.Colors.Critical).String()))
-		}
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(printSeverity(score, query)))
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(r.printScore(title, score, query)))
 
 		// additional information about the failed query
 		if !r.isCompact && score.Value != 100 {
