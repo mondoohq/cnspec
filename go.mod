@@ -2,8 +2,6 @@ module go.mondoo.com/cnspec
 
 go 1.19
 
-replace go.mondoo.com/cnquery => /pub/go/src/go.mondoo.com/cnquery
-
 require (
 	github.com/charmbracelet/bubbletea v0.22.1
 	github.com/cockroachdb/errors v1.9.0
@@ -28,7 +26,7 @@ require (
 	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.13.0
 	github.com/stretchr/testify v1.8.0
-	go.mondoo.com/cnquery v0.0.0-00010101000000-000000000000
+	go.mondoo.com/cnquery v0.0.0-20220927090227-efbeedf0e244
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.10.0
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc
