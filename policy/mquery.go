@@ -187,7 +187,7 @@ func (m *Mquery) Sanitize() {
 // RefreshMRN computes a MRN from the UID or validates the existing MRN.
 // Both of these need to fit the ownerMRN. It also removes the UID.
 func (m *Mquery) RefreshMRN(ownerMRN string) error {
-	nu, err := RefreshMRN(ownerMRN, m.Mrn, "query", m.Uid)
+	nu, err := RefreshMRN(ownerMRN, m.Mrn, MRN_RESOURCE_QUERY, m.Uid)
 	if err != nil {
 		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", m.Uid).Msg("failed to refresh mrn")
 		return errors.Wrap(err, "failed to refresh mrn for query "+m.Title)

@@ -298,7 +298,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 
 		name, err := mrn.GetResource(query.Mrn, MRN_RESOURCE_QUERY)
 		if err != nil {
-			return nil, errors.New("could not read property name from query mrn: " + query.Mrn)
+			return nil, errors.New("failed to compile, could not read property name from query mrn: " + query.Mrn)
 		}
 		propQueries[name] = query
 		propQueries[query.Mrn] = query
