@@ -89,8 +89,10 @@ func (p *progressbar) Open() error {
 				if p.Data.complete {
 					break
 				}
-				fmt.Println(p.View())
+				fmt.Print(p.View() + "\r\033[2A")
 			}
+
+			fmt.Print(p.View())
 		}()
 	}
 
@@ -163,7 +165,7 @@ func (p *progressbar) View() string {
 	}
 	p.lock.Unlock()
 
-	out += "\n\n"
+	out += "\n"
 	return out
 }
 
