@@ -215,7 +215,7 @@ configure your Azure credentials and have SSH access to your instances.`,
 				Short: "Scan a VMware vSphere VM",
 			},
 			"github": {
-				Short: "Scan a GitHub organization or repository",
+				Short: "Scan a GitHub organization, single org repository, or repository in a user account",
 			},
 			"github-org": {
 				Short: "Scan a GitHub organization",
