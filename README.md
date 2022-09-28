@@ -13,24 +13,33 @@ cnspec scan local
 
 ## Installation
 
-Please ensure you have the latest [Go 1.19.0+](https://golang.org/dl/) and latest [Protocol Buffers](https://github.com/protocolbuffers/protobuf/releases).  
+Before starting, make sure you install:
+- [Go 1.19.0+](https://golang.org/dl/)
+- [Protocol Buffers v21+](https://github.com/protocolbuffers/protobuf/releases)
+- [cnquery](https://github.com/mondoohq/cnquery)
 
-Building:
+To install cnspec via Go, run:
 
 ```bash
-# install all dependent tools
-make prep 
-
-# go install cnspec
 export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
 make cnspec/install
 ```
 
-Some files in this repo are auto-generated. Whenever a proto or resource pack is changed, these will need to be rebuilt. Please re-run:
+### Development
+
+Whenever you change protos or other auto-generated files, you will need to regenerate files for the compiler. To do this, make sure you have the necessary tools installed (e.g. protobuf):
+
+```bash
+make prep
+```
+
+Then, whenever you make changes, just run:
 
 ```bash
 make cnspec/generate
 ```
+
+This will generate and update all required files for the build. At this point you can `make cnspec/install` again as outlined above.
 
 ## Scan a system
 
