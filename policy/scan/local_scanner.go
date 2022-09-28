@@ -295,7 +295,7 @@ func (s *localAssetScanner) prepareAsset() error {
 	return err
 }
 
-var assetDetectBundle = executor.MustCompile("asset { kind platform runtime version }")
+var assetDetectBundle = executor.MustCompile("asset { kind platform runtime version family }")
 
 func (s *localAssetScanner) ensureBundle() error {
 	if s.job.Bundle != nil {
@@ -309,11 +309,16 @@ func (s *localAssetScanner) ensureBundle() error {
 	}
 
 	// FIXME: remove hardcoded lookup and use embedded datastructures instead
-	data := res["uXkR1hZaaiKQLNb/yTls37e0BcxaJvBgRlZNg+W5daH8RPXDZcwhkYjd/pHl5T096goMCdKUkHzI+Vospnge0w=="].Data.Value.(map[string]interface{})
+	data := res["IA0bVPKFxIh8Z735sqDh7bo/FNIYUQ/B4wLijN+YhiBZePu1x2sZCMcHoETmWM9jocdWbwGykKvNom/7QSm8ew=="].Data.Value.(map[string]interface{})
 	kind := data["1oxYPIhW1eZ+14s234VsQ0Q7p9JSmUaT/RTWBtDRG1ZwKr8YjMcXz76x10J9iu13AcMmGZd43M1NNqPXZtTuKQ=="].(*llx.RawData).Value.(string)
 	platform := data["W+8HW/v60Fx0nqrVz+yTIQjImy4ki4AiqxcedooTPP3jkbCESy77ptEhq9PlrKjgLafHFn8w4vrimU4bwCi6aQ=="].(*llx.RawData).Value.(string)
 	runtime := data["a3RMPjrhk+jqkeXIISqDSi7EEP8QybcXCeefqNJYVUNcaDGcVDdONFvcTM2Wts8qTRXL3akVxpskitXWuI/gdA=="].(*llx.RawData).Value.(string)
 	version := data["5d4FZxbPkZu02MQaHp3C356NJ9TeVsJBw8Enu+TDyBGdWlZM/AE+J5UT/TQ72AmDViKZe97Hxz1Jt3MjcEH/9Q=="].(*llx.RawData).Value.(string)
+	fraw := data["l/aGjrixdNHvCxu5ib4NwkYb0Qrh3sKzcrGTkm7VxNWfWaaVbOxOEoGEMnjGJTo31jhYNeRm39/zpepZaSbUIw=="].(*llx.RawData).Value.([]interface{})
+	family := make([]string, len(fraw))
+	for i := range fraw {
+		family[i] = fraw[i].(string)
+	}
 
 	var hub policy.Hub = s.services
 	urls, err := hub.DefaultPolicies(s.job.Ctx, &policy.DefaultPoliciesReq{
@@ -321,6 +326,7 @@ func (s *localAssetScanner) ensureBundle() error {
 		Platform: platform,
 		Runtime:  runtime,
 		Version:  version,
+		Family:   family,
 	})
 	if err != nil {
 		return err

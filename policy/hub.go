@@ -302,17 +302,24 @@ func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, erro
 const defaultPolicyPrefix = "https://raw.githubusercontent.com/mondoohq/cnspec-policies/main/"
 
 var defaultPolicies = map[string][]string{
-	"aws":    {"core/mondoo-aws-baseline.mql.yaml"},
+	"aws": {"core/mondoo-aws-baseline.mql.yaml"},
+	"host": {
+		"mondoo-dns-baseline.mql.yaml",
+		"mondoo-tls-baseline.mql.yaml",
+	},
 	"github": {"core/mondoo-github-security.mql.yaml"},
 	"gitlab": {"core/mondoo-gitlab-security.mql.yaml"},
 	"kubernetes": {
 		"core/mondoo-kubernetes-best-practices.mql.yaml",
 		"core/mondoo-kubernetes-security.mql.yaml",
 	},
+	"linux": {"mondoo-linux-security-baseline.mql.yaml"},
+	"macos": {"mondoo-macos-security-baseline.mql.yaml"},
 	"terraform": {
 		"core/mondoo-terraform-aws-security.mql.yaml",
 		"core/mondoo-terraform-gcp-security.mql.yaml",
 	},
+	"windows": {"mondoo-windows-security-baseline.mql.yaml"},
 }
 
 // DefaultPolicies retrieves a list of default policies for a given asset
@@ -321,7 +328,21 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 		return nil, status.Error(codes.InvalidArgument, "no filters provided")
 	}
 
-	if paths, ok := defaultPolicies[req.Platform]; ok {
+	paths, ok := defaultPolicies[req.Platform]
+	if !ok {
+		for i := range req.Family {
+			if paths, ok = defaultPolicies[req.Family[i]]; ok {
+				break
+			}
+		}
+	}
+	if !ok {
+		if req.Kind == "network" {
+			paths, ok = defaultPolicies["host"]
+		}
+	}
+
+	if len(paths) != 0 {
 		urls := make([]string, len(paths))
 		for i := range paths {
 			urls[i] = defaultPolicyPrefix + paths[i]
