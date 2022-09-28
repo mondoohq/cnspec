@@ -1,0 +1,166 @@
+owner_mrn: //policy.api.mondoo.app
+policies:
+  - uid: mondoo-certificates-baseline
+    name: Certificates Security Baseline by Mondoo
+    version: 1.0.0
+    is_public: true
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Certificates Security Baseline by Mondoo provides controls for ensuring the security and configuration of TLS/SSL certificates.
+
+        If you have questions, comments, or have identified ways to improve this policy, please write us at hello@mondoo.io, or reach out in [GitHub Discussions](https://github.com/orgs/mondoohq/discussions).
+    tags:
+      tls:
+      ssl:
+    specs:
+      - policies:
+        scoring_queries:
+          cert-1: null
+          cert-2: null
+          cert-3: null
+          cert-4: null
+          # cert-5: null # requires trustedBy to be implemented
+          cert-6: null
+          cert-7: null
+        asset_filter:
+          query: platform.family.contains('network')
+  - uid: mondoo-tls-baseline
+    name: Mondoo TLS/SSL Baseline
+    version: "1.0.0"
+    is_public: true
+    authors:
+      - name: Mondoo Inc
+        email: hello@mondoo.com
+    tags:
+      tls:
+      ssl:
+    specs:
+      - policies:
+        scoring_queries:
+          tls-1: null
+          tls-2: null
+          tls-3: null
+          tls-4: null
+          tls-5: null
+          tls-6: null
+          tls-7: null
+          tls-8: null
+          tls-9: null
+          tls-10: null
+          tls-11: null
+        asset_filter:
+          query: platform.family.contains('network')
+props:
+  # none yet...
+
+queries:
+  - uid: cert-1
+    title: The certificate's domain name must match
+    query: |
+      tls.certificates.first.subject.commonName == platform.fqdn
+  - uid: cert-2
+    title: The certificate is valid
+    query: |
+      tls.certificates.first {
+        notBefore < time.now
+        notAfter - notBefore < 398*time.day
+      }
+  - uid: cert-3
+    title: None of the certificates have expired
+    query: |
+      tls.certificates.all( expiresIn > 0*time.day )
+  - uid: cert-4
+    title: Do not use a self-signed certificate
+    query: |
+      tls.certificates.last.isCA
+  # - uid: cert-5
+  #   title: Only use certificate with trusted CA
+  #   query: |
+  #     # Download via https://curl.se/docs/caextract.html
+  #     tls.certificates.last.trustedBy != []
+  - uid: cert-6
+    title: Do not use revoked certificates
+    query: |
+      # @msg Found ${length} certificates in this chain that have been revoked:
+      # ${{ 
+      #   subject.commonName
+      #   issuer.commonName
+      #   ocspServer
+      # }}
+      tls.certificates.none( isRevoked )
+  - uid: cert-7
+    title: Do not use weak certificate signatures
+    query: |
+      # @msg Found ${length} certificates in this chain that use weak signatures:
+      # ${{ 
+      #   subject.commonName
+      #   issuer.commonName
+      #   signingAlgorithm
+      # }}
+      tls.certificates.none(
+        signingAlgorithm == /md2|md5|sha1/i
+      )
+  - uid: tls-1
+    title: Avoid weak SSL and TLS versions
+    # TODO: switch the query to variable scores
+    query: |
+      tls.versions.containsOnly(["tls1.2", "tls1.3"])
+  - uid: tls-2
+    title: Avoid RC4 ciphers
+    query: |
+      tls.ciphers.none( /rc4/i )
+  - uid: tls-3
+    title: Avoid NULL cipher suites
+    query: |
+      tls.ciphers.none( /null/i )
+  - uid: tls-4
+    title: Avoid export ciphers suites
+    query: |
+      tls.ciphers.none( /export/i )
+  - uid: tls-5
+    title: Avoid anonymous Diffie-Hellman suites
+    query: |
+      tls.ciphers.none( /dh_anon/i )
+  - uid: tls-6
+    title: Avoid weak block ciphers
+    query:
+      tls.ciphers.none( /des|rc2|idea/i )
+  - uid: tls-7
+    title: Avoid weak block cipher modes
+    query: 
+      tls.ciphers.none( /cbc/i )
+  - uid: tls-8
+    title: Avoid cipher suites with RSA key exchange
+    query:
+      tls.ciphers.none( /^tls_rsa/i )
+  - uid: tls-9
+    title: Avoid old cipher suites
+    query:
+      tls.ciphers.none( /^old/i )
+  - uid: tls-10
+    title: Preferred ciphers must include AEAD ciphers
+    query:
+      tls.ciphers.any( /chacha20_poly1305|gcm|ccm/i )
+  - uid: tls-11
+    title: Preferred ciphers must include perfect forward secrecy (PFS)
+    query:
+      tls.ciphers.any( /ecdhe_(rsa|ecdsa)|dhe_(rsa|dss)|cecpq/i )
+  - uid: tls-12
+    title: Mitigate BEAST attacks on the server-side
+    refs:
+      - title: VMware mitigation of CVE-2011-3389 (BEAST) for web server administrators
+        url: https://kb.vmware.com/s/article/2008784
+    query: |
+      switch {
+      case tls.versions.containsOnly(["tls1.2", "tls1.3"]):
+        score(100);
+      case tls.ciphers.all( /rc4/i ):
+        score(100);
+      case tls.ciphers.none( /null|dh_anon|export|des|rc2|idea/ ):
+        score(80);
+      default:
+        score(0);
+      }
