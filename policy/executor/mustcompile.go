@@ -8,7 +8,7 @@ import (
 )
 
 func MustCompile(code string) *llx.CodeBundle {
-	codeBundle, err := mqlc.Compile(code, info.Registry.Schema(), cnquery.Features{}, nil)
+	codeBundle, err := mqlc.Compile(code, info.Registry.Schema(), cnquery.DefaultFeatures, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -16,13 +16,12 @@ func MustCompile(code string) *llx.CodeBundle {
 }
 
 func MustGetOneDatapoint(codeBundle *llx.CodeBundle) string {
-	if len(codeBundle.DeprecatedV5Code.Entrypoints) != 1 {
+	if len(codeBundle.CodeV2.Entrypoints()) != 1 {
 		panic("code bundle has more than 1 entrypoint")
 	}
 
-	entrypoint := codeBundle.DeprecatedV5Code.Entrypoints[0]
-
-	checksum, ok := codeBundle.DeprecatedV5Code.Checksums[entrypoint]
+	entrypoint := codeBundle.CodeV2.Entrypoints()[0]
+	checksum, ok := codeBundle.CodeV2.Checksums[entrypoint]
 	if !ok {
 		panic("could not find the data point for the entrypoint")
 	}
