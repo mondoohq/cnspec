@@ -30,21 +30,19 @@ policies:
     scoring_queries:
       mondoo-aws-iam-root-access-key-check:
       mondoo-aws-root-account-mfa-enabled:
-      mondoo-aws-root-account-regular-use:
       mondoo-aws-iam-password-policy:
       mondoo-aws-mfa-enabled-for-iam-console-access:
-      mondoo-aws-credentials-unused-45-days-greater-are-disabled:
       mondoo-aws-access-keys-rotated:
       mondoo-aws-iam-group-has-users-check:
       mondoo-aws-iam-users-only-one-access-key:
       mondoo-aws-iam-user-no-inline-policies-check:
-      mondoo-aws-iam-policy-no-statements-with-admin-access:
-      mondoo-aws-iam-no-stored-expired-certificates:
-      mondoo-aws-s3-bucket-versioning-mfa-delete-enabled:
-      mondoo-aws-s3-buckets-block-public-access:
-      mondoo-aws-no-network-acl-ingress-admin-ports:
-      mondoo-aws-no-sec-groups-ingress-admin-ports:
       mondoo-aws-vpc-default-security-group-closed:
+      mondoo-aws-s3-buckets-account-level-block-public-access: null
+      mondoo-aws-s3-bucket-level-public-access-prohibited: null
+      mondoo-aws-ec2-ebs-encryption-by-default: null
+      mondoo-aws-ec2-instance-no-public-ip: null
+      mondoo-aws-ec2-imdsv2-check: null
+      mondoo-aws-vpc-flow-logs-enabled: null
 props:
   - uid: maxAccessKeyAge
     title: Define the max amount of days an IAM key is allowed to exist before rotation
@@ -125,10 +123,10 @@ queries:
     desc: |
       AWS strongly recommends you do not use the root user for your everyday tasks, even the administrative ones. Instead, adhere to the best practice of using the root user only to create your first IAM user. Then securely lock away the root user credentials and use them to perform only a few account and service management tasks. Anyone with root user credentials for your AWS account has unrestricted access to all the resources in your account, including billing information.
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
       3. Run the following query 
       
          ```mql
@@ -152,30 +150,28 @@ queries:
    - title: AWS Documentation - AWS account root user
      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html
   query: |
-    # @msg Found ${length} access keys assigned to the root user.
-    # 
-    # ${{accessKey1Active accessKey2Active accessKey1LastUsedDate accessKey2LastUsedDate}} 
     aws.iam.credentialReport.where( properties["user"] == "<root_account>") {
       accessKey1Active == false 
       accessKey2Active == false 
     }
 - uid: mondoo-aws-root-account-mfa-enabled
   title: Ensure MFA is enabled for the "root user" account
+  severity: 95
   docs: 
     desc: |
       AWS highly recommends that you follow the security best practice to enable multi-factor authentication (MFA) for your root account. Because your root user can perform sensitive operations in your account, adding an additional layer of authentication helps you to better secure your account. Multiple types of MFA are available.
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
-      3. Run the following query 
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query:
       
          ```mql
          aws.iam.credentialReport.where( properties["user"] == "<root_account>") { mfaActive passwordLastChanged passwordLastUsed }
          ```
 
-        Example output
+        Example output:
 
         ```mql
         aws.iam.credentialReport.where: [
@@ -185,20 +181,65 @@ queries:
         ]
         ```
     remediation: |
-      To enable MFA for the root user, see [Enable a virtual MFA device for your AWS account root user (console)](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html#id_root-user_manage_mfa) in the AWS documentation.
+      Note: this control uses the AWS Credential Report, which has a grace period of 4 hours before changes to credentials take effect.
+
+      __Terraform__
+
+      The following snippet demonstrates how to create a virtual device for the root user and return the QRCode.
+      After creating the virtual MFA device, the root user can follow the procedure described under the AWS Console section.
+
+      ```hcl
+      resource "aws_iam_virtual_mfa_device" "root_mfa" {
+        virtual_mfa_device_name = "root"
+      }
+      output "root_qr_code" {
+        value = tomap({
+          (aws_iam_virtual_mfa_device.root_mfa.virtual_mfa_device_name) = aws_iam_virtual_mfa_device.root_mfa.qr_code_png
+        })
+      }
+      ```
+      __AWS Console__
+
+      MFA devices in AWS can be either hardware based or virtual. To enable an MFA device for the root user, choose one of the following:
+
+      1. [Enable a virtual MFA device for your AWS account root user (console)](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-root)
+      2. [Enable a hardware MFA device for the AWS account root user (console)](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_physical.html#enable-hw-mfa-for-root)
+
+      __AWS CLI__
+
+      Similarly to non-root users, you can use the AWS CLI to: 
+      
+      Create a virtual MFA device:
+
+      ```bash
+      aws iam create-virtual-mfa-device \
+        --virtual-mfa-device-name "root" \
+        --outfile ./QRCode.png \
+        --bootstrap-method QRCodePNG
+      ```
+
+      Activate MFA device
+
+      ```bash
+      aws iam enable-mfa-device \
+        --user-name "root" \
+        --serial-number "arn:aws:iam::123456976749:mfa/root" \
+        --authentication-code1 123456 \
+        --authentication-code2 654321
+      ```
   refs:
     - title: Enable a virtual MFA device for your AWS account root user (console)
       url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html#id_root-user_manage_mfa
   query: |
-    # @msg Root user does not have virtual MFA enabled.
-    # 
-    # ${{ mfaActive passwordLastChanged passwordLastUsed }}      
-    aws.iam.credentialReport.where( properties["user"] == "<root_account>") { mfaActive == true }
+    aws.iam.credentialReport.where(
+      properties["user"] == "<root_account>"
+    ) { mfaActive == true }
 - uid: mondoo-aws-iam-password-policy
   title: Checks whether the account password policy for IAM users meets the specified requirements
+  severity: 30
   docs: 
     desc: |
-      AWS allows for custom password policies on your AWS account to specify complexity requirements and mandatory rotation periods for your IAM users' passwords. IAM user passwords must meet the default AWS password policy if you don't set a custom password policy. AWS security best practices recommend the following password complexity requirements:
+      AWS allows for custom password policies on your AWS account to specify complexity requirements and mandatory rotation periods for your IAM users' passwords. If you don't set a custom password policy, IAM user passwords must meet the default AWS password policy. AWS security best practices recommends the following password complexity requirements:
       
       - Require at least one uppercase character in password.
       - Require at least one lowercase character in passwords.
@@ -207,20 +248,19 @@ queries:
       - Require a minimum password length of at least 14 characters.
       - Require at least 24 passwords before allowing reuse. 
       - Require at least 90 before password expiration 
-
-      This control checks all of the specified password policy requirements.  
+      This controls checks all of the specified password policy requirements.  
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
-      3. Run the following query 
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query:
       
          ```mql
          aws.iam.accountPasswordPolicy
          ```
 
-        Example output
+        Example output:
 
         ```mql
         aws.iam.accountPasswordPolicy: {
@@ -237,13 +277,57 @@ queries:
         }
         ```
     remediation: |
-      To change the password complexity requirements, see [Setting an account password policy for IAM users](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html) in the AWS documentation.
+
+      __Terraform__
+
+      ```hcl
+      resource "aws_iam_account_password_policy" "strict" {
+        allow_users_to_change_password = true
+        require_uppercase_characters   = true
+        require_lowercase_characters   = true
+        require_symbols                = true
+        require_numbers                = true
+        minimum_password_length        = 14
+        password_reuse_prevention      = 24
+        max_password_age               = 90
+      }
+      ```
+      
+      __AWS Console__
+
+      To create a custom password policy: 
+
+      1. Sign in to the AWS Management Console and open the IAM console at https://console.aws.amazon.com/iam/.
+      2. In the navigation pane, choose Account settings.
+      3. In the Password policy section, choose Change password policy.
+      4. Select the options that you want to apply to your password policy and choose Save changes.
+
+      To change a custom password policy: 
+
+      1. Sign in to the AWS Management Console and open the IAM console at https://console.aws.amazon.com/iam/.
+      2. In the navigation pane, choose Account settings.
+      3. In the Password policy section, choose Change.
+      4. Select the options that you want to apply to your password policy and choose Save changes.
+
+      __AWS CLI__
+
+      ```bash
+      aws iam update-account-passowrd-policy \
+      --allow-users-to-change-password \
+      --require-uppercase-characters \
+      --require-lowercase-characters \
+      --require-symbols \
+      --require-numbers \
+      --minimum-password-length 14 \
+      --password-reuse-prevention 24 \
+      --max-password-age 90
+      ```
   refs:
     - title: Managing user passwords in AWS
-      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords.html   
+      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords.html
+    - title: Setting an account password policy for IAM users
+      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html   
   query: |
-    # @msg IAM password complexity configuration does not meet requirements.
-    # 
     aws.iam.accountPasswordPolicy['RequireUppercaseCharacters'] == props.iamPasswordPolicyRequireUppercaseCharacters
     aws.iam.accountPasswordPolicy['RequireLowercaseCharacters'] == props.iamPasswordPolicyRequireLowercaseCharacters
     aws.iam.accountPasswordPolicy['RequireSymbols'] == props.iamPasswordPolicyRequireSymbols
@@ -253,20 +337,21 @@ queries:
     aws.iam.accountPasswordPolicy['MaxPasswordAge'] <= props.iamPasswordPolicyMaxPasswordAge
 - uid: mondoo-aws-access-keys-rotated
   title: Checks whether the active access keys are rotated within the number of days specified in maxAccessKeyAge (default 90)
+  severity: 30
   docs:
     desc: |
       It is highly recommended that you regularly rotate (change) IAM user access keys to reduce the risk of unwanted access to your account.
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
       3. Run the following query 
       
          ```mql
          aws.iam.credentialReport.where( accessKey1Active == true || accessKey2Active == true ) { properties['user'] accessKey1Active accessKey2Active accessKey1LastRotated accessKey2LastRotated }
          ```
-
+        
         Example output
 
         ```mql
@@ -307,83 +392,285 @@ queries:
    - title: AWS Documentation - Managing access keys for IAM users
      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
   query: |
-    # @msg Found ${length} access keys that have not been rotated in the last ${props.maxAccessKeyAge}:
-    # 
-    # ${{ properties['user'] accessKey1Active accessKey1LastRotated accessKey1LastUsedDate }}
     aws.iam.credentialReport.where( accessKey1Active == true ) { time.now - accessKey1LastRotated < 90 * time.day }
-
-    # @msg Found ${length} access keys that have not been rotated in the last ${props.maxAccessKeyAge}:
-    # 
-    # ${{ properties['user'] accessKey2Active accessKey2LastRotated accessKey2LastUsedDate }}
+    
     aws.iam.credentialReport.where( accessKey2Active == true ) { time.now - accessKey2LastRotated < 90 * time.day }
-- uid: mondoo-aws-root-account-regular-use
-  title: Eliminate use of the root user for administrative and daily tasks
-  query: |
-    aws.iam.credentialReport.where( properties["user"] == "<root_account>")  {
-      accessKey1Active == false 
-      accessKey2Active == false 
-      properties['password_last_used'] == "no_information" || 
-        time.now - parse.date(properties['password_last_used'], 'RFC3339') > 14 * time.day || 
-          time.now - parse.date(properties['user_creation_time'], 'RFC3339') < 14 * time.day
-    } 
 - uid: mondoo-aws-mfa-enabled-for-iam-console-access
-  title: Ensure multi-factor authentication (MFA) is enabled for all IAM users that have a console password
+  title: Checks whether the AWS IAM users have multi-factor authentication (MFA) enabled
+  severity: 95
   docs: 
     desc: |
-      AWS highly recommends to follow the security best practice to enable multi-factor authentication (MFA) for all accounts with console access. MFA adds an additional layer of authentication helps you to better secure your accounts. Multiple types of MFA are available.
+      Multi-factor authentication (MFA) is a best practice that adds an extra layer of protection on top of user names and passwords. With MFA, when a user signs in to the AWS Management Console, they are required to provide a time-sensitive authentication code, provided by a registered virtual or physical device.
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
-      3. Run the following query 
+      2. Run the command `cnspec shell aws`.
+      3. Run the following query: 
       
-         ```mql
-         aws.iam.credentialReport.where(passwordEnabled == true) { arn mfaActive }
-         ```
-
-        Example output
+        ```mql
+        aws.iam.credentialReport.where(
+          mfaActive != true
+        ) {arn properties["user"]}
+        ```
+        Example output:
 
         ```mql
         aws.iam.credentialReport.where: [
           0: {
-            mfaActive: false
-            arn: "arn:aws:iam::123456789098:user/robert"
-          }
-          1: {
-            mfaActive: false
-            arn: "arn:aws:iam::123456789098:user/jimmy"
-          }
-          2: {
-            mfaActive: true
-            arn: "arn:aws:iam::123456789098:user/johnpaul"
-          }
-          3: {
-            mfaActive: false
-            arn: "arn:aws:iam::123456789098:user/bonzo"
+            properties[user]: "test-iam-user"
+            arn: "arn:aws:iam::053121068929:user/users/test-iam-user"
           }
         ]
         ```
     remediation: |
-      To enable MFA for any user accounts with AWS console access, see [Enabling MFA devices for users in AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html#id_root-user_manage_delete-key) in the AWS documentation.
+      Note: this control uses the AWS Credential Report, which has a grace period of 4 hours before changes to credentials take effect.
+
+      __Terraform__
+
+      When it comes to Terraform, there are a few options to remediate the absence of MFA devices. You probably already have a sensible structure for organizing your users into groups and restrictive policies.
+      
+      The following example shows how to:
+      1. Create users.
+      2. Create users login profiles with a PGP Public key.
+      3. Create group and group policy that allows self management of IAM profile.
+      4. Attach users to group.
+      5. Create Virtual MFA devices for users.
+      6. Provide each user with the output QR Code and password.
+
+      ```hcl
+      variable "users" {
+        type = set(string)
+        default = [
+          "mondoo-test@mondoo.com",
+          "mondoo-test2@mondoo.com"
+        ]
+      }
+
+      resource "aws_iam_user" "mondoo_test_users" {
+        for_each = toset(var.users)
+        name     = each.key
+      }
+
+      resource "aws_iam_user_login_profile" "mondoo_test_users_profile" {
+        for_each                = var.users
+        user                    = each.key
+        # Key pair created using GnuPG, this is the public key
+        pgp_key = file("path/to/gpg_pub_key_base64.pem")
+        password_reset_required = true
+        lifecycle {
+          ignore_changes = [
+            password_length,
+            password_reset_required,
+            pgp_key,
+          ]
+        }
+      }
+
+      resource "aws_iam_virtual_mfa_device" "mondoo_test_mfa" {
+        for_each                = toset(var.users)
+        virtual_mfa_device_name = each.key
+      }
+
+      resource "aws_iam_group" "enforce_mfa_group" {
+        name = "EnforceMFAGroup"
+      }
+
+      resource "aws_iam_group_membership" "enforce_mfa_group_membership" {
+        name  = "EnforceMFAGroupMembership"
+        group = aws_iam_group.enforce_mfa_group.name
+        users = [for k in aws_iam_user.mondoo_test_users : k.name]
+      }
+
+      resource "aws_iam_group_policy" "enforce_mfa_policy" {
+        name   = "EnforceMFAGroupPolicy"
+        group  = aws_iam_group.enforce_mfa_group.id
+        policy = <<POLICY
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+              "Sid": "AllowViewAccountInfo",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:GetAccountPasswordPolicy",
+                  "iam:ListVirtualMFADevices"
+              ],
+              "Resource": "*"
+          },       
+          {
+              "Sid": "AllowManageOwnPasswords",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:ChangePassword",
+                  "iam:GetUser"
+              ],
+              "Resource": "arn:aws:iam::*:user/$${aws:username}"
+          },
+          {
+              "Sid": "AllowManageOwnAccessKeys",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:CreateAccessKey",
+                  "iam:DeleteAccessKey",
+                  "iam:ListAccessKeys",
+                  "iam:UpdateAccessKey"
+              ],
+              "Resource": "arn:aws:iam::*:user/$${aws:username}"
+          },
+          {
+              "Sid": "AllowManageOwnSigningCertificates",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:DeleteSigningCertificate",
+                  "iam:ListSigningCertificates",
+                  "iam:UpdateSigningCertificate",
+                  "iam:UploadSigningCertificate"
+              ],
+              "Resource": "arn:aws:iam::*:user/$${aws:username}"
+          },
+          {
+              "Sid": "AllowManageOwnSSHPublicKeys",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:DeleteSSHPublicKey",
+                  "iam:GetSSHPublicKey",
+                  "iam:ListSSHPublicKeys",
+                  "iam:UpdateSSHPublicKey",
+                  "iam:UploadSSHPublicKey"
+              ],
+              "Resource": "arn:aws:iam::*:user/$${aws:username}"
+          },
+          {
+              "Sid": "AllowManageOwnGitCredentials",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:CreateServiceSpecificCredential",
+                  "iam:DeleteServiceSpecificCredential",
+                  "iam:ListServiceSpecificCredentials",
+                  "iam:ResetServiceSpecificCredential",
+                  "iam:UpdateServiceSpecificCredential"
+              ],
+              "Resource": "arn:aws:iam::*:user/$${aws:username}"
+          },
+          {
+              "Sid": "AllowManageOwnVirtualMFADevice",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:CreateVirtualMFADevice",
+                  "iam:DeleteVirtualMFADevice"
+              ],
+              "Resource": "arn:aws:iam::*:mfa/$${aws:username}"
+          },
+          {
+              "Sid": "AllowManageOwnUserMFA",
+              "Effect": "Allow",
+              "Action": [
+                  "iam:DeactivateMFADevice",
+                  "iam:EnableMFADevice",
+                  "iam:ListMFADevices",
+                  "iam:ResyncMFADevice"
+              ],
+              "Resource": "arn:aws:iam::*:user/$${aws:username}"
+          },
+          {
+              "Sid": "DenyAllExceptListedIfNoMFA",
+              "Effect": "Deny",
+              "NotAction": [
+                  "iam:CreateVirtualMFADevice",
+                  "iam:EnableMFADevice",
+                  "iam:GetUser",
+                  "iam:ListMFADevices",
+                  "iam:ListVirtualMFADevices",
+                  "iam:ResyncMFADevice",
+                  "sts:GetSessionToken"
+              ],
+              "Resource": "*",
+              "Condition": {
+                  "BoolIfExists": {
+                      "aws:MultiFactorAuthPresent": "false"
+                  }
+              }
+          }
+        ]
+      }
+      POLICY
+      }
+
+      output "user_password_map" {
+        # Outputs a map in the format {"mondoo-test@mondoo.com": <PGPEncryptedPassword>, "mondoo-test2@mondoo.com": <PGPEncryptedPassword>}
+        value = { for k, v in aws_iam_user_login_profile.mondoo_test_users_profile : k => v.password }
+      }
+
+      output "user_qr_map" {
+        # Outputs a map in the format {"mondoo-test@mondoo.com": <QRCode>, "mondoo-test2@mondoo.com": <QRCode>}
+        value = { for k, v in aws_iam_virtual_mfa_device.mondoo_test_mfa : k => v.qr_code_png }
+      }
+
+      __AWS Console__
+
+      To enable MFA for any user accounts with AWS console access, see [Enabling a virtual multi-factor authentication (MFA) device (console)](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html) in the AWS documentation.
+      
+      **To enable a virtual MFA device for an IAM user (console)**
+      
+      1. Sign in to the AWS Management Console and open the IAM console at https://console.aws.amazon.com/iam/.
+      2. In the navigation pane, choose Users.
+      3. In the User Name list, choose the name of the intended MFA user.
+      4. Choose the Security credentials tab. Next to Assigned MFA device, choose Manage.
+      5. In the Manage MFA Device wizard, choose Virtual MFA device, and then choose Continue.
+      6. IAM generates and displays configuration information for the virtual MFA device, including a QR code graphic. The graphic is a representation of the "secret configuration key" that is available for manual entry on devices that do not support QR codes.
+      7. Open your virtual MFA app. For a list of apps that you can use for hosting virtual MFA devices, see [Multi-Factor Authentication](http://aws.amazon.com/iam/details/mfa/).
+      8. If the virtual MFA app supports multiple virtual MFA devices or accounts, choose the option to create a new virtual MFA device or account.
+      9. Determine whether the MFA app supports QR codes, and then do one of the following:
+      
+        * From the wizard, choose Show QR code, and then use the app to scan the QR code. For example, you might choose the camera icon or choose an option similar to Scan code, and then use the device's camera to scan the code.
+        * In the Manage MFA Device wizard, choose Show secret key, and then type the secret key into your MFA app.
+      
+      10. When you are finished, the virtual MFA device starts generating one-time passwords.
+      11. In the Manage MFA Device wizard, in the MFA code 1 box, type the one-time password that currently appears in the virtual MFA device. Wait up to 30 seconds for the device to generate a new one-time password. Then type the second one-time password into the MFA code 2 box. 
+      12. Choose Assign MFA.
+
+      __AWS CLI__
+
+      Create an MFA device: 
+
+      ```bash
+      aws iam create-virtual-mfa-device \
+        --virtual-mfa-device-name "mondoo.test@mondoo.com" \
+        --outfile ./QRCode.png \
+        --bootstrap-method QRCodePNG
+      ```
+
+      Enable MFA device for existing user:
+
+      ```bash
+      aws iam enable-mfa-device \
+        --user-name "mondoo.test@mondoo.com" \
+        --serial-number "arn:aws:iam::123456976749:mfa/mondoo.test@mondoo.com" \
+        --authentication-code1 123456 \
+        --authentication-code2 654321
+      ```
   refs:
     - title: Using multi-factor authentication (MFA) in AWS
-      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa.html         
+      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa.html
+    - title: Enabling a virtual multi-factor authentication (MFA) device (console)
+      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html
+    - title: Terraform Documentation - AWS Provider
+      url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
   query: |
-    # @msg Found ${length} users that do not have MFA enabled.
-    # 
-    # ${{arn passwordLastUsed passwordLastChanged properties['user'] }}     
-    aws.iam.credentialReport.where(passwordEnabled == true).all(mfaActive == true)
+    aws.iam.credentialReport.all(
+      mfaActive == true
+    )
 - uid: mondoo-aws-iam-group-has-users-check
   title: Checks whether IAM groups have at least one IAM user
   docs:
     desc: |
       AWS Identity and Access Management (IAM) can help you incorporate the principles of least privilege and separation of duties with access permissions and authorizations by ensuring that IAM groups have at least one IAM user. Placing IAM users in groups based on their associated permissions or job function is one way to incorporate least privilege.
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
       3. Run the following query 
       
          ```mql
@@ -409,16 +696,59 @@ queries:
    - title: AWS Documentation -Managing IAM user groups
      url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_groups_manage.html
   query: |
-    # @msg Found ${length} IAM groups that have no users assigned to the group:
-    # 
-    # ${{ name id arn createDate usernames }}
     aws.iam.groups.all(usernames.length > 0)
-- uid: mondoo-aws-credentials-unused-45-days-greater-are-disabled
-  title: Ensure credentials unused for 45 days or greater are disabled
-  query: |
-    aws.iam.credentialReport.where(passwordEnabled == true).all(time.now - passwordLastUsed < 45 * time.day)
 - uid: mondoo-aws-iam-users-only-one-access-key
   title: Ensure there is only one active access key available for any single IAM user
+  docs:
+    desc: |
+      This control checks for the existence of more than one access key for each user within an AWS account. Each AWS key within an account is something that must be protected, and rotated regularly. Since AWS access keys are long-term credentials, one of the best ways to protect your account is to not allow users to have multiple access keys, which reduces the overall number of keys, and with that the risk of exposure.
+    audit: |
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query:
+         
+         ```mql
+         aws.iam.users.where(accessKeys[0].length >= 1) 
+         ```
+
+    remediation: |
+
+      __From Console:__
+
+      1. Sign in to the AWS Management Console and navigate to IAM dashboard at https://console.aws.amazon.com/iam/.
+      2. In the left navigation panel, choose **Users**.
+      3. Click on the IAM user name that you want to examine.
+      4. On the IAM user configuration page, select **Security Credentials** tab.
+      5. In Access Keys section, choose one access key that is less than 90 days old. This should be the only active key used by this IAM user to access AWS resources programmatically. Test your application(s) to make sure that the chosen access key is working.
+      6. In the same Access Keys section, identify your non-operational access keys (other than the chosen one) and deactivate it by clicking the Make Inactive link.
+
+      If you receive the Change Key Status confirmation box, click Deactivate to switch off the selected key.
+
+      Repeat steps no. 3 - 7 for each IAM user in your AWS account.
+
+      __From Command Line:__
+
+      Using the IAM user and access key information provided in the Audit CLI, choose one access key that is less than 90 days old. This should be the only active key used by this IAM user to access AWS resources programmatically. Test your application(s) to make sure that the chosen access key is working.
+
+      Run the `update-access-key`` command below using the IAM user name and the non-operational access key IDs to deactivate the unnecessary key(s). Refer to the Audit section to identify the unnecessary access key ID for the selected IAM user
+
+      **Note:** The following command does not return any output:
+
+      ```bash
+      aws iam update-access-key --access-key-id <access-key-id> --status Inactive --user-name <user-name>
+      ```
+
+      To confirm that the selected access key pair has been successfully deactivated run the list-access-keys audit command again for that IAM User:
+
+      ```bash
+      aws iam list-access-keys --user-name <user-name>
+      ```
+
+      The command output should expose the metadata for each access key associated with the IAM user. If the non-operational key pair(s) Status is set to Inactive, the key has been successfully deactivated and the IAM user access configuration adheres now to this recommendation.
+
+      Repeat steps no. 1 - 3 for each IAM user in your AWS account.
   query: aws.iam.users.all(accessKeys[0].length <= 1)
 - uid: mondoo-aws-iam-user-no-inline-policies-check
   title: Ensure IAM Users Receive Permissions Only Through Groups
@@ -426,10 +756,10 @@ queries:
     desc: |
       AWS that IAM users must inherit permissions from IAM groups or roles. This policy checks that none of your IAM users have policies attached directly to the user. The rule is NONCOMPLIANT if there is at least one IAM user with policies attached.
     audit: |
-      __Mondoo Shell__
+      __cnspec shell__
 
       1. Open a Terminal.
-      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
       3. Run the following query 
       
          ```mql
@@ -472,74 +802,872 @@ queries:
     - title: Managed policies and inline policies
       url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-vs-inline.html
   query: |
-    # @msg Found ${length} users with AWS managed policies attached:
-    # 
-    # ${{ name arn attachedPolicies }}   
     aws.iam.users.all( attachedPolicies.length == 0 )
 
-    # @msg Found ${length} users with inline policies attached:
-    # 
-    # ${{ name arn policies }}  
     aws.iam.users.all( policies.length == 0 )
-- uid: mondoo-aws-iam-policy-no-statements-with-admin-access
-  title: Ensure IAM policies that allow full "*:*" administrative privileges are not attached
-  query: |
-    aws.iam.attachedPolicies.where(scope == "local") { 
-      defaultVersion { 
-        document['Statement'].where(_['Effect'] == "Allow").none(
-          _['Action'][0] == "*" && _['Resource'][0] == "*"
-        ) 
-      }
-    }
-- uid: mondoo-aws-iam-no-stored-expired-certificates
-  title: Ensure that all the expired SSL/TLS certificates stored in AWS IAM are removed
-  query: |
-    aws.iam.serverCertificates.length == 0 || aws.iam.serverCertificates.all(parse.date(_['Expiration'], 'RFC3339') > time.now)
-- uid: mondoo-aws-s3-bucket-versioning-mfa-delete-enabled
-  title: Checks that versioning and MFA Delete is enabled for all buckets
-  query: |-
-    aws.s3.buckets.all(
-      versioning['Status'] == "Enabled" && versioning['MFADelete'] == "Enabled" 
-    )
-- uid: mondoo-aws-s3-buckets-block-public-access
-  title: Ensure that S3 Buckets are configured with 'Block public access (bucket settings)'
-  query: |
-    aws.s3.buckets.all(
-      publicAccessBlock['BlockPublicAcls'] == true && 
-      publicAccessBlock['BlockPublicPolicy'] == true &&
-      publicAccessBlock['IgnorePublicAcls'] == true &&
-      publicAccessBlock['RestrictPublicBuckets'] == true
-    )
-- uid: mondoo-aws-no-network-acl-ingress-admin-ports
-  title: Ensure no Network ACLs allow ingress from 0.0.0.0/0 to remote server administration ports
-  query: aws.ec2.networkAcls.all( entries.where(egress == false && ruleAction == "allow").all(portRange != null))
-- uid: mondoo-aws-no-sec-groups-ingress-admin-ports
-  title: Ensure no security groups allow ingress from 0.0.0.0/0 to remote server administration ports
-  query: |
-    aws.ec2.securityGroups.where( ipPermissions { ipRanges.contains('0.0.0.0/0') && ipProtocol == 'tcp' }) {
-      ipPermissions.none (
-        fromPort > 22 || toPort < 22
-      )
-    }
-    aws.ec2.securityGroups.where( ipPermissions { ipv6Ranges.contains('::/0') && ipProtocol == 'tcp' }) {
-      ipPermissions.none (
-        fromPort > 22 || toPort < 22
-      )
-    }
-    aws.ec2.securityGroups.where( ipPermissions { ipRanges.contains('0.0.0.0/0') && ipProtocol == 'tcp' }) {
-      ipPermissions.none (
-        fromPort > 3389 || toPort < 3389
-      )
-    }
-    aws.ec2.securityGroups.where( ipPermissions { ipv6Ranges.contains('::/0') && ipProtocol == 'tcp' }) {
-      ipPermissions.none (
-        fromPort > 3389 || toPort < 3389
-      )
-    }
 - uid: mondoo-aws-vpc-default-security-group-closed
   title: Ensure the default security group of every VPC restricts all traffic
+  severity: 80
+  docs: 
+    desc: |
+      The rules for a default security group allow all ingress and egress traffic. To keep users from using the default security group (which cannot be deleted) of a VPC, delete all ingress and egress rules to block all traffic.
+    audit: |
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query: 
+      
+        ```mql
+        aws.ec2.securityGroups.where(
+          name == "default"
+        ).where(
+          ipPermissions.length != 0
+          || ipPermissionsEgress.length != 0
+        ){id name region ipPermissions{*} ipPermissionsEgress{*}}
+        ```
+
+        Example output:
+
+        ```mql
+        aws.ec2.securityGroups.where.where: [
+          0: {
+            ipPermissions: [
+              0: {
+                id: "sg-0bd4b1ef47132d3de-0"
+                fromPort: 0
+                toPort: 0
+                ipProtocol: "-1"
+                ipv6Ranges: []
+                ipRanges: []
+              }
+            ]
+            ipPermissionsEgress: []
+            name: "default"
+            region: "eu-north-1"
+            id: "sg-0bd4b1ef47132d3de"
+          }
+        ]
+        ```
+    remediation: |
+      __Terraform__
+
+      Terraform provides the resource `aws_default_security_group`, which differently from other Terraform resources, has the following effects in the state of the infrastructure.
+
+      1. "Adopts" the default security group for the provided `vpc_id`.
+      2. Removes all inbound (ingress) and outbound (egress) rules for the security group.
+
+      In order to remediate this control using Terraform, please apply the following for every region the account has access to, by aliasing the providers. 
+      
+      **Notice:** it is necessary to create a new security group for all VPCs in order to reassign any resources created and previously using the default security groups.
+
+      ```hcl
+      provider "aws" {
+        alias  = "us_east_1"
+        region = "us-east-1"
+      }
+
+      data "aws_vpcs" "us_east_1" {
+        provider = aws.us_east_1
+      }
+
+      resource "aws_security_group" "replacement_for_default" {
+        name     = "AllowOrDenySomething"
+        for_each = toset(data.aws_vpcs.us_east_1.ids)
+        vpc_id   = each.value
+        ingress {
+          # ... other configuration ...
+        }
+        egress {
+          # ... other configuration ...
+        }
+      }
+
+      resource "aws_default_security_group" "us_east_1" {
+        for_each = toset(data.aws_vpcs.us_east_1.ids)
+        vpc_id   = each.value
+        provider = aws.us_east_1
+      }
+      ```
+
+      __AWS Console__
+
+      To remediate this issue, create new security groups and assign those security groups to your resources (if needed). To prevent the default security groups from being used, remove their inbound and outbound rules.
+      To create new security groups and assign them to your resources
+      
+      1. Open the Amazon VPC console at https://console.aws.amazon.com/vpc/.
+      2. In the navigation pane, choose Security groups. View the default security groups details to see the resources that are assigned to them.
+      3. Create a set of least-privilege security groups for the resources. For details on how to create security groups, see [Creating a security group](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html#CreatingSecurityGroups) in the Amazon VPC User Guide.
+      4. Open the Amazon EC2 console at https://console.aws.amazon.com/ec2/.
+      5. On the Amazon EC2 console, change the security group for the resources that use the default security groups to the least-privilege security group you created. See [Changing an instance's security groups](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html#SG_Changing_Group_Membership) in the Amazon VPC User Guide.
+
+      After you assign the new security groups to the resources, remove the inbound and outbound rules from the default security groups. This ensures that the default security groups are not used.
+
+      To remove the rules from the default security group:
+      
+      1. Open the Amazon VPC console at https://console.aws.amazon.com/vpc/.
+      2. In the navigation pane, choose Security groups.
+      3. Select a default security group and choose the Inbound rules tab. Choose Edit inbound rules. Then delete all inbound rules. Choose Save rules.
+      4. Repeat the previous step for each default security group.
+      5. Select a default security group and choose the Outbound rule tab. Choose Edit outbound rules. Then delete all outbound rules. Choose Save rules.
+      6. Repeat the previous step for each default security group.
+      For more information, see [Working with security groups](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html#WorkingWithSecurityGroups) in the Amazon VPC User Guide.
+
+      __AWS CLI__
+
+      Apply the same logic to the AWS CLI to remediate this control.
+
+      **Notice:** Run this against all regions your account has access to.
+
+      1. Get the security groups in the region.
+      ```bash
+      aws ec2 describe-security-groups
+      ```
+      2. Create a new security group to replace the default in every VPC (if needed).
+      ```bash
+      aws ec2 create-security-group \
+        --description "AllowOrDenySomething" \
+        --group-name "AllowOrDenySomething" \
+        --vpc-id <value>
+      ```
+      3. Modify security group to provide inbound and outbound rules.
+      ```bash
+      aws ec2 modify-security-group-rules \
+        --group-id <value> \
+        --security-group-rules <rules>
+      ```
+      4. Revoke security group rules from default security groups
+      ```bash
+      aws ec2 revoke-security-group-egress \
+        --group-id <id_default_sg>
+      aws ec2 revoke-security-group-ingress \
+        --group-id <id_default_sg>
+      ```
+  refs:
+  - title: AWS Documentation - Security Hub Standards
+    url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-standards-fsbp-controls.html
+  - title: AWS Documentation - AWS CLI Reference - EC2
+    url: https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/index.html#cli-aws-ec2
+  - title: Terraform Documentation - AWS Provider
+    url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
   query: |
-    aws.ec2.securityGroups.where(name == "default") {
-      ipPermissions.all(ipRanges.length == 0 && ipv6Ranges.length == 0 && fromPort == 0 && toPort == 0)
-      ipPermissionsEgress.all(ipRanges.length == 0 && ipv6Ranges.length == 0 && fromPort == 0 && toPort == 0)
-    }
+    aws.ec2.securityGroups.where(name == "default").all(
+      ipPermissions.length == 0
+      && ipPermissionsEgress.length == 0
+    )
+- uid: mondoo-aws-s3-buckets-account-level-block-public-access
+  title: Checks if the required S3 public access block settings are configured from account level
+  severity: 30
+  docs:
+    desc: |
+      Amazon S3 Block Public Access provides settings for access points, buckets, and accounts to help you manage public access to Amazon S3 resources. By default, new buckets, access points, and objects do not allow public access.
+    audit: |
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query: 
+      
+      ```mql
+      aws.s3control.accountPublicAccessBlock
+      ```
+
+      Example output:
+
+      ```mql
+      aws.s3control.accountPublicAccessBlock: null
+      ```
+    remediation: |
+      
+      __Terraform__
+
+      The following Terraform resource configures account level access to S3:
+
+      ```hcl
+      resource "aws_s3_account_public_access_block" "s3_control" {
+        block_public_acls       = true
+        block_public_policy     = true
+        ignore_public_acls      = true
+        restrict_public_buckets = true
+      }
+      ```
+    
+      __AWS Console__
+
+      To edit block public access settings for all the S3 buckets in an AWS account.
+      
+      1. Sign in to the AWS Management Console and open the Amazon S3 console at https://console.aws.amazon.com/s3/.
+      2. Choose Block Public Access settings for this account.
+      3. Choose Edit to change the block public access settings for all the buckets in your AWS account.
+      4. Choose the settings that you want to change, and then choose Save changes.
+      5. When you're asked for confirmation, enter confirm. Then choose Confirm to save your changes.
+
+      __AWS CLI__
+
+      ```bash
+      aws s3control put-public-access-block \
+      --account-id <value> \
+      --public-access-block-configuration '{"BlockPublicAcls": true, "BlockPublicPolicy": true, "IgnorePublicAcls": true, "RestrictPublicBuckets": true}'
+      ```
+  refs:
+    - title: Blocking public access to your Amazon S3 storage
+      url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    - title: Configuring block public access settings for your account
+      url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/configuring-block-public-access-account.html  
+  query: |
+    aws.s3control.accountPublicAccessBlock.values.all( _ == true )
+- uid: mondoo-aws-ec2-ebs-encryption-by-default
+  title: Ensure EBS volume encryption is enabled by default
+  severity: 30
+  docs:
+    desc: |
+      New Amazon EBS volumes aren't encrypted by default. However, there is a setting in the Amazon Elastic Compute Cloud (Amazon EC2) console that turns on encryption by default for all new Amazon EBS volumes and snapshot copies created within a specified Region.
+    audit: |
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query:
+
+        ```mql
+        aws.ec2.ebsEncryptionByDefault
+        ```
+
+        Example output:
+
+        ```mql
+        aws.ec2.ebsEncryptionByDefault
+          aws.ec2.ebsEncryptionByDefault: {
+            ap-northeast-1: false
+            ap-northeast-2: false
+            ap-northeast-3: false
+            ap-south-1: false
+            ap-southeast-1: false
+            ap-southeast-2: false
+            ca-central-1: false
+            eu-central-1: false
+            eu-north-1: false
+            eu-west-1: false
+            eu-west-2: false
+            eu-west-3: false
+            sa-east-1: false
+            us-east-1: true
+            us-east-2: true
+            us-west-1: false
+            us-west-2: false
+          }
+        ```
+    remediation: |
+      __Terraform__
+
+      The `aws_ebs_encryption_by_default` resource can be used to enabled EBS encryption by default. This must be applied to each region.
+
+      ```hcl
+      provider "aws" {
+        region = var.region
+      }
+
+      resource "aws_ebs_encryption_by_default" "example" {
+        enabled = true
+      }
+      ```
+      __AWS Console__
+
+      1. Open the [Amazon EC2 console](https://console.aws.amazon.com/ec2/).
+      2. Select the **Region** from the drop-down menu.
+      3. On the **EC2 Dashboard**, under **Account Attributes**, select **Settings**.
+      4. Under **EBS Storage**, select **Always encrypt new EBS volumes**.
+      5. Select **Change the default key** and choose any of your keys ([default/CMKs](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#master_keys)) as the **Default encryption key**.
+      6. Select **Save Settings**.
+
+      __AWS CLI__
+
+      The following `enable-ebs-encryption-by-default` example enables EBS encryption by default for your AWS account in the current Region.
+
+      ```bash
+      aws ec2 enable-ebs-encryption-by-default
+      ```
+  refs:
+    - title: AWS Documentation - Encryption by default
+      url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html#encryption-by-default
+  query: |
+    aws.ec2.ebsEncryptionByDefault.values.all(_ == true)
+- uid: mondoo-aws-s3-bucket-level-public-access-prohibited
+  title: Checks if Amazon Simple Storage Service (S3) has bucket level public access restrictions at the bucket level.
+  severity: 80
+  docs: 
+    desc: |
+      This control checks whether S3 buckets have bucket-level public access blocks applied. This control fails is if any of the following settings are set to false:
+      
+      1. ignorePublicAcls
+      2. blockPublicPolicy
+      3. blockPublicAcls
+      4. restrictPublicBuckets
+
+      Block Public Access at the S3 bucket level provides controls to ensure that objects never have public access. Public access is granted to buckets and objects through access control lists (ACLs), bucket policies, or both.
+      Unless you intend to have your S3 buckets publicly accessible, you should configure the bucket level Amazon S3 Block Public Access feature.
+    audit: |
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query 
+      
+        ```mql
+        aws.s3.buckets.all( 
+          publicAccessBlock != null 
+          && publicAccessBlock.values.all(_ == true)
+        )
+        ```
+
+        Example output
+
+        ```mql
+        [failed] [].all()
+          actual:   [
+            0: aws.s3.bucket id = arn:aws:s3:::mondoo-test2.policies.test-ui
+          ]
+        ```
+    remediation: |
+      __Terraform__
+
+      The following resource will create a Public Access Block resource and apply it to the specific bucket.
+
+      ```hcl
+      resource "aws_s3_bucket_public_access_block" "example" {
+        bucket   = aws_s3.bucket.example.id
+        block_public_acls       = true
+        block_public_policy     = true
+        ignore_public_acls      = true
+        restrict_public_buckets = true
+      }
+      ```
+
+      __AWS Console__
+
+      To understand how to use the AWS Console to block public access on a bucket level, see:
+      * [Blocking public accessto your Amazon S3 storage](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html)
+
+      __AWS CLI__
+
+      ```bash
+      aws s3api put-public-access-block \
+        --bucket <value>
+        --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+      ```
+  refs:
+  - title: AWS Documentation - Security Hub Standards
+    url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-standards-fsbp-controls.html
+  - title: AWS Documentation - Blocking public access to your Amazon S3 storage
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  - title: AWS CLI Command Reference - aws s3api put-public-access-block
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  - title: Terraform Documentation - AWS Provider - aws_s3bucket_public_access_block
+    url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block
+  query: |
+    aws.s3.buckets.all( 
+      publicAccessBlock != null 
+      && publicAccessBlock.values.all(_ == true)
+    )
+- uid: mondoo-aws-ec2-instance-no-public-ip
+  title: Ensures no instances have a public IP
+  severity: 80
+  docs:
+    desc: |-
+      EC2 instances that have a public IP address are at an increased risk of compromise. It is recommended that EC2 instances not be configured with a public IP address. 
+    audit: |-
+
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query to return a list of all running EC2 instances across all enabled regions that along with the `instanceId`, `region`, and the configured `publicIp`
+
+        ```mql
+        aws.ec2.instances.where( state = "running" && publicIp != "" ) { instanceId region tags publicIp }   
+        ```
+        
+        Example output
+
+        ```mql
+        aws.ec2.instances.where: [
+        0: {
+          instanceId: "i-0070af411a515f14a"
+          tags: {
+            Environment: "windows-development-vpc"
+            Name: "win19-dev-workstation-106e1f1c"
+            Terraform: "true"
+          }
+          publicIp: "54.55.222.9"
+          region: "us-east-1"
+        }
+        ]
+        ```
+    remediation: |-
+      __Terraform__
+      
+      Use the `associate_public_ip_address = false` argument with the `aws_instance` resource to ensure EC2 instances are provisioned without a public IP address
+
+      ```hcl 
+      resource "aws_instance" "no_public_ip" {
+        ...
+        associate_public_ip_address = false
+      }
+      ```
+      __AWS Console__
+
+      By default, nondefault subnets have the IPv4 public addressing attribute set to false, and default subnets have this attribute set to true. An exception is a nondefault subnet created by the Amazon EC2 launch instance wizard — the wizard sets the attribute to true. You can modify this attribute using the Amazon VPC console.
+
+      To modify your subnet's public IPv4 addressing behavior:
+
+      1. Open the Amazon VPC console at https://console.aws.amazon.com/vpc/.
+      2. In the navigation pane, choose **Subnets**.
+      3. Select your subnet and choose **Actions, Edit subnet settings**.
+      4. The **Enable auto-assign public IPv4 address** check box, if selected, requests a public IPv4 address for all instances launched into the selected subnet. Select or clear the check box as required, and then choose **Save**.
+      
+      __AWS CLI__
+
+      The following command runs an EC2 Instance in a default subnet without associating a public IP address to it.
+
+      ```bash
+      aws ec2 run-instances \
+      --image-id <ami_id> \
+      --instance-type <instance_flavor> \
+      --no-associate-public-ip-address \
+      --key-name MyKeyPair
+      ```
+  refs: 
+    - title: AWS Documentation - Modify the IP addressing behavior of your subnets
+      url: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html
+    - title: Terraform Registry - aws_instance
+      url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance
+  query: |
+    aws.ec2.instances.all( 
+      publicIp.length == 0 
+    )
+- uid: mondoo-aws-ec2-imdsv2-check
+  title: Checks whether the instance metadata version is configured with IMDSv2 (http tokens required)
+  severity: 80
+  docs:
+    desc: |
+      EC2 instances should be configured to use IMDSv2 to prevent unauthorized access to instance metadata from application vulnerabilities such as Server Side Request Forgery (SSRF). IMDSv1 has been involved in security exploits.
+
+      By default, you can use either IMDSv1 or IMDSv2, or both. The instance metadata service distinguishes between IMDSv1 and IMDSv2 requests based on whether, for any given request, either the PUT or GET headers, which are unique to IMDSv2, are present in that request. For more information, see [Add defense in depth against open firewalls, reverse proxies, and SSRF vulnerabilities with enhancements to the EC2 Instance Metadata Service](http://aws.amazon.com/blogs/security/defense-in-depth-open-firewalls-reverse-proxies-ssrf-vulnerabilities-ec2-instance-metadata-service/).
+
+    audit: |
+      __cnspec shell__
+
+      1. Open a Terminal.
+      2. Connect cnspec shell to your AWS environment `cnspec shell aws`
+      3. Run the following query
+
+        ```bash
+        aws.ec2.instances.where( httpTokens != "required" ) { arn instanceId region tags httpTokens }
+        ```
+
+        Example Output
+
+        ```mql
+        aws.ec2.instances.where: [
+          0: {
+            instanceId: "i-0070af411a515f14a"
+            region: "us-east-1"
+            arn: "arn:aws:ec2:us-east-1:1234375555:instance/i-0070af411a515f14a"
+            httpTokens: "optional"
+            tags: {
+              Environment: "windows-development-vpc"
+              Name: "win19-dev-workstation-106e1f1c"
+              Terraform: "true"
+            }
+          }
+        ]
+        ```
+
+    remediation: |
+      In order to remediate this control, there are a series of steps necessary to transition to IMDSv2, which not only involve the configuration of existing instances - i.e. changing your Terraform EC2 resources, but also update CLIs, SDKs and software that uses Role credentials.
+
+      If your existing EC2 instance uses IMDSv1, you can reconfigure it to use IMDSv2. For details, see: [Transition to using Instance Metadata Service Version 2](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html#instance-metadata-transition-to-version-2)
+      
+      __Terraform__
+
+      Use the `metadata_options` block to configure `http_tokens = "required"`
+
+      ```hcl
+      resource "aws_instance" "web_host" {
+        metadata_options {
+          http_tokens   = "required"
+        }
+      }
+      ```
+
+      __AWS Console__
+
+      To configure your new EC2 instance with IMDSv2 from the console
+      1. Open the Amazon EC2 console at https://console.aws.amazon.com/ec2/.
+      2. Choose Launch instance and then choose Launch instance.
+      3. In the Configure Instance Details step, under Advanced Details, for Metadata version, choose V2 (token required).
+      4. Choose Review and Launch.
+
+      __AWS CLI__
+      
+      In order to modify a running instance
+
+      ```bash
+      aws ec2 modify-instance-metadata-options \
+      --instance-id <value>
+      --http-tokens required \
+      --http-endpoint enabled
+      ```
+
+      In order to create a new instance
+
+      ```bash
+      aws ec2 run-instances \
+      --image-id <ami_id> \
+      --instance-type <instance_flavor> \
+      --metadata-options "HttpEndpoint=enabled,HttpTokens=required"
+      ```
+
+    refs:
+      - title: AWS Documentation - Use IMDSv2
+        url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
+      - title: AWS Documentation - Transition to using Instance Metadata Service Version 2
+        url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html#instance-metadata-transition-to-version-2
+  query: |
+    aws.ec2.instances.all(
+      httpTokens == "required"
+    )
+- uid: mondoo-aws-vpc-flow-logs-enabled
+  title: Ensure VPC flow logging is enabled in all VPCs
+  severity: 30
+  docs: 
+    desc: |
+      This control checks whether Amazon VPC Flow Logs are found and enabled for all VPCs. Default VPCs should always fail this control as they do not come with flow logs activated.
+    audit: |
+      __Mondoo Shell__
+
+      1. Open a Terminal.
+      2. Connect Mondoo Shell to your AWS environment `mondoo shell -t aws`
+      3. Run the following query 
+      
+        ```mql
+        aws.vpcs.where(
+          flowLogs.length == 0
+        ){id arn region state isDefault flowLogs tags}
+        ```
+
+        Example output: only showing 1 VPC, but default VPCs in all regions will fail this control.
+
+        ```mql
+        aws.vpcs.where: [
+          0: {
+            arn: "arn:aws:vpc:eu-north-1:053121068929:id/vpc-0c3955e3d04d2e09a"
+            flowLogs: []
+            id: "vpc-0c3955e3d04d2e09a"
+            isDefault: true
+            region: "eu-north-1"
+            state: "available"
+            tags: {}
+          }
+          ...
+        ]
+        ```
+    remediation: |
+      There are a few considerations while remediating this control:
+
+      1. Default VPCs should not be used, therefore they should be deleted to avoid enabling flow logs for them.
+      2. Any default or non-default VPC must have flow logs activated.
+      3. Therefore the best way to remediate this control is to: 
+        
+        * Migrate resources from default to non-default VPCs.
+        * Delete default VPCs.
+        * Enable flow logs for the non-default VPCs.
+
+      We recommend using either Terraform or the console as there is automation to delete VPC and its dependencies in place.
+      
+      __Terraform__
+
+      Open source Terraform modules can help us obtain this result by providing ways to delete VPCs and children dependencies.
+
+      **Notice:** The following example is destructive and irreversible. It destroy all children dependencies of default VPCs, including:
+
+      1. Subnets
+      2. Route tables
+      3. NACLs
+      4. Internet Gateways
+
+      This module execution will fail for VPCs containing resources attached to the network interfaces. In this case review the resources and redeploy them to a non-default VPC.
+      
+      ```hcl
+      terraform {
+        required_providers {
+          awsutils = {
+            source = "cloudposse/awsutils"
+          }
+        }
+      }
+
+      # Create one for each region
+      provider "awsutils" {
+        alias  = "ap_northeast_1"
+        region = "ap-northeast-1"
+      }
+
+      # Create one for each region - the creation of this resource will delete the default resources
+      resource "awsutils_default_vpc_deletion" "us_east_1" {
+        provider = awsutils.us_east_1
+      }
+      ```
+
+      To enable Flow logs for VPCs with customer managed KMS key
+
+      ```hcl
+      data "aws_caller_identity" "current" {}
+
+      resource "aws_kms_key" "vpc_flowlog" {
+        description         = "Key to provide encryption to VPC Flow Logs"
+        enable_key_rotation = true
+        policy = jsonencode({
+          Version = "2012-10-17"
+          Statement = [
+            {
+              Effect = "Allow"
+              Action = [
+                "kms:Encrypt*",
+                "kms:Decrypt*",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:Describe*"
+              ]
+              Principal = {
+                Service = "logs.<region>.amazonaws.com"
+              }
+              Resource = "arn:aws:kms:*:${data.aws_caller_identity.current.account_id}:key/*"
+            },
+            {
+              Sid    = "Enable IAM User Permissions"
+              Effect = "Allow"
+              Principal = {
+                "AWS" : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+              }
+              Action   = "kms:*"
+              Resource = "*"
+            }
+          ]
+        })
+      }
+
+      resource "aws_cloudwatch_log_group" "vpc_flowlog" {
+        name              = "VPCFlowLog"
+        kms_key_id        = aws_kms_key.vpc_flowlog.arn
+        retention_in_days = <value>
+      }
+
+      resource "aws_iam_role" "vpc_flowlog" {
+        name = "VPCFlowLog"
+
+        assume_role_policy = jsonencode({
+          Version = "2012-10-17"
+          Statement = [
+            {
+              Sid    = "VPCFlowLog"
+              Effect = "Allow"
+              Principal = {
+                Service = "vpc-flow-logs.amazonaws.com"
+              }
+              Action = "sts:AssumeRole"
+            }
+          ]
+        })
+      }
+
+      resource "aws_iam_policy" "vpc_flowlog" {
+        name = "VpcFlowLog"
+        policy = jsonencode({
+          Version = "2012-10-17"
+          Statement = [
+            {
+              Action = [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+              ],
+              Effect   = "Allow",
+              Resource = "*"
+            }
+          ]
+        })
+      }
+
+      resource "aws_iam_policy_attachment" "vpc_flowlog" {
+        name       = "${aws_iam_policy.vpc_flowlog.name}Attachment"
+        roles      = [aws_iam_role.vpc_flowlog.id]
+        policy_arn = aws_iam_policy.vpc_flowlog.arn
+      }
+
+      resource "aws_flow_log" "example" {
+        iam_role_arn    = aws_iam_role.vpc_flowlog.arn
+        log_destination = aws_cloudwatch_log_group.vpc_flowlog.arn
+        traffic_type    = "ALL"
+        vpc_id          = aws_vpc.example.id
+      }
+      ```
+
+      __AWS Console__
+
+      To delete the default VPCs
+
+      1. Open the Amazon VPC console at https://console.aws.amazon.com/vpc/.
+      2. Under Resources by Region, VPCs, choose See all regions.
+      3. For each region with a default VPC, choose the region to open the VPC home page for that region in another tab.
+      4. Under Your VPCs, check the default VPC.
+      5. Under Actions, choose Delete VPC.
+      6. In the Delete VPC form, acknowledge that you want to delete the default VPC.
+      7. Choose Delete VPC.
+      8. In case there are resources deployed to that VPC, an error will be sent back. In that case:
+        
+        * Create a VPC to hold the resources in the default VPC.
+        * Redeploy your resources to the non-default VPC.
+        * Try deleting the VPC again.
+
+      To enable VPC flow logging
+
+      1. Open the Amazon VPC console at https://console.aws.amazon.com/vpc/.
+      2. Under Virtual Private Cloud, choose Your VPCs.
+      3. Select a VPC to update.
+      4. At the bottom of the page, choose Flow Logs.
+      5. Choose Create flow log.
+      6. For Filter, choose Reject.
+      7. For Destination log group, choose the log group to use.
+      8. For IAM role, choose the IAM role to use.
+      9. Choose Create.
+
+      __AWS CLI__
+
+      Deleting default VPCs using the CLI is discouraged. In order to maintain idempotency of commands, there is no automated deletion of children resources in place.
+      
+      We advise that AWS customers delete default VPCs using either Terraform or the AWS Console (see above).
+      
+      To create flow logs for non-default VPCs and sending it to CloudWatch (recommended), proceed as follows:
+
+      1. Create a policy (`key-policy.json`) to allow the CloudWatch principal access to KMS keys, replace `<account_id>`
+
+      ```javascript
+      {
+        "Version": "2012-10-17"
+        "Statement": [
+          {
+            "Effect": "Allow"
+            "Action": [
+              "kms:Encrypt*",
+              "kms:Decrypt*",
+              "kms:ReEncrypt*",
+              "kms:GenerateDataKey*",
+              "kms:Describe*"
+            ]
+            "Principal": {
+              "Service": "logs.us-east-1.amazonaws.com"
+            }
+            "Resource": "arn:aws:kms:*:<account_id>:key/*"
+          },
+          {
+            "Sid": "Enable IAM User Permissions"
+            "Effect": "Allow"
+            "Principal": {
+              "AWS": "arn:aws:iam::<account_id>:root"
+            }
+            "Action": "kms:*"
+            "Resource": "*"
+          }
+        ]
+      }
+      ```
+
+      ```bash
+      aws kms create-key \
+        --description "Key to provide encryption to VPC Flow Logs" \
+        --policy file://key-policy.json
+      ```
+
+      2. Enable key rotation
+
+      ```bash
+      aws kms enable-key-rotation \
+        --key-id <value>
+      ```
+
+      3. Create a policy (`role-policy.json`) to allow CloudWatch to manage log groups
+
+      ```javascript
+      {
+        "Version": "2012-10-17"
+        "Statement": [
+          {
+            "Action": [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents",
+              "logs:DescribeLogGroups",
+              "logs:DescribeLogStreams"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+          }
+        ]
+      }
+      ```
+
+      4. Create a role
+
+      ```bash
+      aws iam create-role \
+        --path "/" \
+        --role-name "VPCFlowLog"
+      ```
+
+      5. Attach the policy to the role
+
+      ```bash
+      aws iam attach-role-policy \
+        --role-name <value> \
+        --policy-arn <value>
+      ```
+
+      6. Create a CloudWatch log group
+
+      ```bash
+      aws logs create-log-group \
+        --log-group-name <value> \
+        --kms-key-id <value>
+      ```
+
+      7. Create a CloudWatch log flow
+
+      ```bash
+      aws ec2 create-flow-logs \
+        --deliver-logs-permission-arn <iam_role_arn> \
+        --traffic-type "ALL" \
+        --resource-ids "<list>" "<vpcs>" "<ids>" \
+        --resource-type "VPC" \
+        --log-destination-type "cloud-watch-logs" \
+        --log-destination <arn_cloudwatch_log_group>
+      ```
+  refs:
+  - title: AWS Documentation - Security Hub Standards
+    url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-standards-fsbp-controls.html
+  - title: AWS Documentation - AWS CLI Command Reference - logs
+    url: https://awscli.amazonaws.com/v2/documentation/api/latest/reference/logs/index.html
+  - title: AWS Documentation - AWS CLI Command Reference - ec2
+    url: https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/index.html
+  - title: Terraform registry - Cloud Posse AWS Utils Provider
+    url: https://registry.terraform.io/providers/cloudposse/awsutils/latest/docs
+  - title: Terraform Documentation - AWS Provider
+    url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
+  query: |
+    aws.vpcs.all(
+      flowLogs.any(
+        status == "ACTIVE"
+      )
+    )
