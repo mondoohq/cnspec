@@ -478,7 +478,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 func (c *scanConfig) loadPolicies() error {
 	if c.IsIncognito {
 		if len(c.PolicyPaths) == 0 {
-			return errors.New("incognito mode requires policy bundles to be run, but none were specified")
+			return nil
 		}
 
 		bundle, err := policy.BundleFromPaths(c.PolicyPaths...)

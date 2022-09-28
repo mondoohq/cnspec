@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/discovery"
@@ -29,11 +30,13 @@ type LocalScanner struct {
 	resolvedPolicyCache *inmemory.ResolvedPolicyCache
 	queue               *diskQueueClient
 	ctx                 context.Context
+	fetcher             *fetcher
 }
 
 func NewLocalScanner() *LocalScanner {
 	return &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
+		fetcher:             newFetcher(),
 	}
 }
 
@@ -208,6 +211,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			db:       db,
 			services: services,
 			job:      job,
+			fetcher:  s.fetcher,
 			Registry: registry,
 			Schema:   schema,
 			Runtime:  runtime,
@@ -227,6 +231,7 @@ type localAssetScanner struct {
 	db       *inmemory.Db
 	services *policy.LocalServices
 	job      *AssetJob
+	fetcher  *fetcher
 
 	Registry *resources.Registry
 	Schema   *resources.Schema
@@ -265,6 +270,11 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 
 func (s *localAssetScanner) prepareAsset() error {
 	var hub policy.Hub = s.services
+
+	if err := s.ensureBundle(); err != nil {
+		return err
+	}
+
 	// FIXME: we do not currently respect policy filters!
 	_, err := hub.SetBundle(s.job.Ctx, s.job.Bundle)
 	if err != nil {
@@ -282,6 +292,45 @@ func (s *localAssetScanner) prepareAsset() error {
 		PolicyMrns: policyMrns,
 	})
 
+	return err
+}
+
+var assetDetectBundle = executor.MustCompile("asset { kind platform runtime version }")
+
+func (s *localAssetScanner) ensureBundle() error {
+	if s.job.Bundle != nil {
+		return nil
+	}
+
+	features := cnquery.GetFeatures(s.job.Ctx)
+	_, res, err := executor.ExecuteQuery(s.Schema, s.Runtime, assetDetectBundle, nil, features)
+	if err != nil {
+		return errors.Wrap(err, "failed to run asset detection query")
+	}
+
+	// FIXME: remove hardcoded lookup and use embedded datastructures instead
+	data := res["uXkR1hZaaiKQLNb/yTls37e0BcxaJvBgRlZNg+W5daH8RPXDZcwhkYjd/pHl5T096goMCdKUkHzI+Vospnge0w=="].Data.Value.(map[string]interface{})
+	kind := data["1oxYPIhW1eZ+14s234VsQ0Q7p9JSmUaT/RTWBtDRG1ZwKr8YjMcXz76x10J9iu13AcMmGZd43M1NNqPXZtTuKQ=="].(*llx.RawData).Value.(string)
+	platform := data["W+8HW/v60Fx0nqrVz+yTIQjImy4ki4AiqxcedooTPP3jkbCESy77ptEhq9PlrKjgLafHFn8w4vrimU4bwCi6aQ=="].(*llx.RawData).Value.(string)
+	runtime := data["a3RMPjrhk+jqkeXIISqDSi7EEP8QybcXCeefqNJYVUNcaDGcVDdONFvcTM2Wts8qTRXL3akVxpskitXWuI/gdA=="].(*llx.RawData).Value.(string)
+	version := data["5d4FZxbPkZu02MQaHp3C356NJ9TeVsJBw8Enu+TDyBGdWlZM/AE+J5UT/TQ72AmDViKZe97Hxz1Jt3MjcEH/9Q=="].(*llx.RawData).Value.(string)
+
+	var hub policy.Hub = s.services
+	urls, err := hub.DefaultPolicies(s.job.Ctx, &policy.DefaultPoliciesReq{
+		Kind:     kind,
+		Platform: platform,
+		Runtime:  runtime,
+		Version:  version,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(urls.Urls) == 0 {
+		return errors.New("cannot find any default policies for this asset (" + platform + ")")
+	}
+
+	s.job.Bundle, err = s.fetcher.fetchBundles(s.job.Ctx, urls.Urls...)
 	return err
 }
 
