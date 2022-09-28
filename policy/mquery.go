@@ -11,7 +11,7 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/resources/packs/os/info"
+	"go.mondoo.com/cnquery/resources/packs/all/info"
 	"go.mondoo.com/cnquery/types"
 )
 

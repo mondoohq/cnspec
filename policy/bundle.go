@@ -261,6 +261,64 @@ func (p *Bundle) Clean() *Bundle {
 	return p
 }
 
+// Add another policy bundle into this. No duplicate policies, queries, or
+// properties are allowed and will lead to an error. Both bundles must have
+// MRNs for everything. OwnerMRNs must be identical as well.
+func (p *Bundle) AddBundle(other *Bundle) error {
+	if p.OwnerMrn == "" {
+		p.OwnerMrn = other.OwnerMrn
+	} else if p.OwnerMrn != other.OwnerMrn {
+		return errors.New("when combining policy bundles the owner MRNs must be identical")
+	}
+
+	for i := range other.Policies {
+		c := other.Policies[i]
+		if c.Mrn == "" {
+			return errors.New("source policy bundle that is added has missing policy MRNs")
+		}
+
+		for j := range p.Policies {
+			if p.Policies[j].Mrn == c.Mrn {
+				return errors.New("cannot combine policy bundles, duplicate policy: " + c.Mrn)
+			}
+		}
+
+		p.Policies = append(p.Policies, c)
+	}
+
+	for i := range other.Queries {
+		c := other.Queries[i]
+		if c.Mrn == "" {
+			return errors.New("source policy bundle that is added has missing query MRNs")
+		}
+
+		for j := range p.Queries {
+			if p.Queries[j].Mrn == c.Mrn {
+				return errors.New("cannot combine policy bundles, duplicate query: " + c.Mrn)
+			}
+		}
+
+		p.Queries = append(p.Queries, c)
+	}
+
+	for i := range other.Props {
+		c := other.Props[i]
+		if c.Mrn == "" {
+			return errors.New("source policy bundle that is added has missing property MRNs")
+		}
+
+		for j := range p.Props {
+			if p.Props[j].Mrn == c.Mrn {
+				return errors.New("cannot combine policy bundles, duplicate property: " + c.Mrn)
+			}
+		}
+
+		p.Props = append(p.Props, c)
+	}
+
+	return nil
+}
+
 // Compile PolicyBundle into a PolicyBundleMap
 // Does 4 things:
 // 1. turns policy bundle into a map for easier access
