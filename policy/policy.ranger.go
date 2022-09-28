@@ -25,7 +25,7 @@ type Hub interface {
 	GetPolicy(context.Context, *Mrn) (*Policy, error)
 	GetBundle(context.Context, *Mrn) (*Bundle, error)
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
-	List(context.Context, *PolicySearchFilter) (*Policies, error)
+	List(context.Context, *ListReq) (*Policies, error)
 	DefaultPolicies(context.Context, *DefaultPoliciesReq) (*URLs, error)
 }
 
@@ -85,7 +85,7 @@ func (c *HubClient) GetPolicyFilters(ctx context.Context, in *Mrn) (*Mqueries, e
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicyFilters"}, ""), in, out)
 	return out, err
 }
-func (c *HubClient) List(ctx context.Context, in *PolicySearchFilter) (*Policies, error) {
+func (c *HubClient) List(ctx context.Context, in *ListReq) (*Policies, error) {
 	out := new(Policies)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/List"}, ""), in, out)
 	return out, err
@@ -281,7 +281,7 @@ func (p *HubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte) (pb.
 	return p.handler.GetPolicyFilters(ctx, &req)
 }
 func (p *HubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req PolicySearchFilter
+	var req ListReq
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
