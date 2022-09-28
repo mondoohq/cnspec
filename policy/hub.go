@@ -304,8 +304,8 @@ const defaultPolicyPrefix = "https://raw.githubusercontent.com/mondoohq/cnspec-p
 var defaultPolicies = map[string][]string{
 	"aws": {"core/mondoo-aws-baseline.mql.yaml"},
 	"host": {
-		"mondoo-dns-baseline.mql.yaml",
-		"mondoo-tls-baseline.mql.yaml",
+		"core/mondoo-dns-baseline.mql.yaml",
+		"core/mondoo-tls-baseline.mql.yaml",
 	},
 	"github": {"core/mondoo-github-security.mql.yaml"},
 	"gitlab": {"core/mondoo-gitlab-security.mql.yaml"},
@@ -313,13 +313,13 @@ var defaultPolicies = map[string][]string{
 		"core/mondoo-kubernetes-best-practices.mql.yaml",
 		"core/mondoo-kubernetes-security.mql.yaml",
 	},
-	"linux": {"mondoo-linux-security-baseline.mql.yaml"},
-	"macos": {"mondoo-macos-security-baseline.mql.yaml"},
+	"linux": {"core/mondoo-linux-security-baseline.mql.yaml"},
+	"macos": {"core/mondoo-macos-security-baseline.mql.yaml"},
 	"terraform": {
 		"core/mondoo-terraform-aws-security.mql.yaml",
 		"core/mondoo-terraform-gcp-security.mql.yaml",
 	},
-	"windows": {"mondoo-windows-security-baseline.mql.yaml"},
+	"windows": {"core/mondoo-windows-security-baseline.mql.yaml"},
 }
 
 // DefaultPolicies retrieves a list of default policies for a given asset
