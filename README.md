@@ -2,7 +2,7 @@
 
 Cloud-Native Security and Compliance Auditing Framework
 
-cnspec is a cloud-native solution to test the security of your entire fleet. It finds vulnerabilities and misconfigurations on all systems in your infrastructure: cloud accounts, Kubernetes, containers, services, VMs, APIs, and more.
+cnspec is a cloud-native security testing tool for your entire fleet. It finds vulnerabilities and misconfigurations on all systems in your infrastructure: cloud accounts, Kubernetes, containers, services, VMs, APIs, and more.
 
 cnspec is a powerful policy engine built on [cnquery](https://github.com/mondoohq/cnquery), and comes with lots of policies out of the box. It is very simple to use:
 

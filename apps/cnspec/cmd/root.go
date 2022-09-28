@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	rootCmdDesc = "cnspec is a cloud-native testing tool for your entire fleet\n"
+	rootCmdDesc = "cnspec is a cloud-native security testing tool for your entire fleet\n"
 )
 
 const cnspecLogo = (" .--. ,-.,-. .--. .---.  .--.  .--.™\n" +
