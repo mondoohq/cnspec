@@ -15,8 +15,8 @@ func init() {
 
 var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "shell",
-	Short: "Interactive shell for MQL",
-	Long:  `Allows for the interactive exploration of MQL queries`,
+	Short: "Interactive shell for Mondoo Query Language (MQL)",
+	Long:  `Allows for the interactive exploration of Mondoo Query Language (MQL) queries`,
 	CommonFlags: func(cmd *cobra.Command) {
 		cmd.Flags().StringP("password", "p", "", "connection password e.g. for ssh/winrm")
 		cmd.Flags().Bool("ask-pass", false, "ask for connection password")
