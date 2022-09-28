@@ -1008,7 +1008,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 		if isPropQuery {
 			propName, err := mrn.GetResource(curMRN, MRN_RESOURCE_QUERY)
 			if err != nil {
-				return nil, nil, errors.New("could not read property name from query mrn: " + curMRN)
+				return nil, nil, errors.New("could not resolve property name from query mrn: " + curMRN)
 			}
 			props[propName] = &llx.Primitive{Type: mquery.Type} // placeholder
 
