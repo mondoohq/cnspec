@@ -26,6 +26,7 @@ type Hub interface {
 	GetBundle(context.Context, *Mrn) (*Bundle, error)
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
 	List(context.Context, *PolicySearchFilter) (*Policies, error)
+	DefaultPolicies(context.Context, *DefaultPoliciesReq) (*URLs, error)
 }
 
 // client implementation
@@ -89,6 +90,11 @@ func (c *HubClient) List(ctx context.Context, in *PolicySearchFilter) (*Policies
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/List"}, ""), in, out)
 	return out, err
 }
+func (c *HubClient) DefaultPolicies(ctx context.Context, in *DefaultPoliciesReq) (*URLs, error) {
+	out := new(URLs)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DefaultPolicies"}, ""), in, out)
+	return out, err
+}
 
 // server implementation
 
@@ -119,6 +125,7 @@ func NewHubServer(handler Hub, opts ...HubServerOption) http.Handler {
 			"GetBundle":        srv.GetBundle,
 			"GetPolicyFilters": srv.GetPolicyFilters,
 			"List":             srv.List,
+			"DefaultPolicies":  srv.DefaultPolicies,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -296,6 +303,30 @@ func (p *HubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Message, err
 		return nil, err
 	}
 	return p.handler.List(ctx, &req)
+}
+func (p *HubServer) DefaultPolicies(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req DefaultPoliciesReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.DefaultPolicies(ctx, &req)
 }
 
 // service interface definition
