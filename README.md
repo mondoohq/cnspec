@@ -1,6 +1,6 @@
 # cnspec
 
-Cloud Native Security and Compliance Auditing Framework
+Cloud-Native Security and Compliance Auditing Framework
 
 cnspec is a cloud-native solution to test the security of your entire fleet. It finds vulnerabilities and misconfigurations on all systems in your infrastructure: cloud accounts, Kubernetes, containers, services, VMs, APIs, and more.
 
@@ -10,15 +10,20 @@ cnspec is a powerful policy engine built on [cnquery](https://github.com/mondooh
 cnspec scan local
 ``` 
 
-
 ## Installation
 
-Before starting, make sure you install:
+### Dependencies
+
+Before starting, make sure you have the following dependencies installed:
+
 - [Go 1.19.0+](https://golang.org/dl/)
 - [Protocol Buffers v21+](https://github.com/protocolbuffers/protobuf/releases)
-- [cnquery](https://github.com/mondoohq/cnquery)
 
-To install cnspec via Go, run:
+On macOS systems with homebrew run: `brew install go@1.19 protobuf`
+
+### Build & Install
+
+To build and install cnspec via Go, run:
 
 ```bash
 export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
@@ -70,7 +75,6 @@ cnspec comes with policies for most systems out of the box. For each target, it 
 
 To explore more policies, visit our [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
 
-
 ###  Custom policies
 
 You can write custom policies. A policy is simply a YAML file that lets you express any security rule or best practice for your fleet. 
@@ -80,7 +84,6 @@ The best place to start is to look at one of our example policies. You can find 
 ```bash
 cnspec scan local --policy-bundle policy/examples/example.mql.yaml
 ```
-
 
 ## Interactive shell
 
@@ -97,9 +100,6 @@ The shell uses auto-complete which makes it very easy to explore. Once inside th
 ```
 
 To find out more use the `help` command. To exit either hit CTRL+D or type `exit`.
-
-
-
 
 ## Distributing cnspec across your fleet
 
@@ -125,7 +125,6 @@ To add custom policies, you can now upload policies via:
 cnspec policy upload mypolicy.mql.yaml
 ```
 
-
 ## Where to go from here
 
 There are so many things cnspec can do! From testing your entire fleet for vulnerabilities to gathering information about it and creating reports for auditors. With its custom policies cnspec can scan any component you care about!
@@ -139,7 +138,6 @@ Explore our:
 - Using cnspec with Mondoo
 
 Our goal is to secure all layers of your infrastructure. Join our [community](https://github.com/orgs/mondoohq/discussions) today and let’s grow it together!
-
 
 ## Troubleshooting
 
@@ -159,7 +157,6 @@ It is caused by the repository currently being private. You'll have to configure
 	insteadOf = https://github.com/
 ```
 
-
 ## Development
 
 We love emojis in our commits. These are their meanings:
@@ -167,7 +164,6 @@ We love emojis in our commits. These are their meanings:
 🛑 breaking 🐛 bugfix 🧹 cleanup/internals 📄 docs  
 ✨⭐🌟🎉 smaller or larger features 🐎 race condition  
 🌙 MQL 🌈 visual 🍏 fix tests 🎫 auth 🦅 falcon 🐳 container  
-
 
 ## Legal
 
