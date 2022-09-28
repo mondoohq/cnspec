@@ -1,13 +1,5 @@
 # cnspec
 
-```bash
- .--. ,-.,-. .--. .---.  .--.  .--.™
-'  ..': ,. :`._-.': .; `' '_.''  ..'
-`.__.':_;:_;`.__.': ._.'`.__.'`.__.'
-   mondoo™        : :
-                  :_;
-```
-
 **Cloud Native Security and Compliance Auditing Framework**
 
 `cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. Using [policy as code](https://mondoo.com/policy-as-code/), `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers and endpoints, SaaS products, infrastructure as code, APIs, and more.
@@ -27,11 +19,7 @@ Controls:
 ✓ Pass:  Do not enable the "root" account
 ✓ Pass:  Disable Bluetooth Sharing
 ✕ Fail:  Enable security auditing
-✓ Pass:  Disable Printer Sharing
-✓ Pass:  Set a minimum password length
 ✓ Pass:  Enable Firewall
-✕ Fail:  Retain install.log for 365 or more days with no maximum size
-✕ Fail:  Enable Firewall Stealth Mode
 ...
 ✕ Fail:  Ensure Firewall is configured to log
 ✓ Pass:  Ensure nfs server is not running.
@@ -115,11 +103,9 @@ aws ecr-public get-login-password --region us-east-1 | docker login --username A
 cnspec scan docker image public.ecr.aws/r6z5b8t4
 
 # to scan an aws account using the local AWS config
-export AWS_PROFILE=my-profile
 cnspec scan aws
 
 # to scan a kubernetes cluster via your local kubectl config
-export KUBECONFIG=</path/to/k8s/config>
 cnspec scan k8s
 
 # to scan a GitHub repository
@@ -213,7 +199,6 @@ Explore our:
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/references/mql/)
 - [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory
-- [GitHub Actions](https://github.com/mondoohq/actions) - Integrate `cnspec` with GitHub Actions!
 - [HashiCorp Packer](https://github.com/mondoohq/packer-plugin-mondoo) - Integrate `cnspec` with HashiCorp Packer!
 - Using cnspec with Mondoo
 
