@@ -166,7 +166,7 @@ You can type `clear` to clear the terminal. To exit either hit CTRL+D or type `e
 
 The easiest way to scale `cnspec` across your fleet is to have all of your infrastructure pull policies from a central location. The easiest option is to sign-up for a free account on Mondoo Platform. The platform is designed for multi-tenancy, and provides secure private environment that keeps data about your assets in your own account. It makes it very easy for all nodes to report on policies and define custom exceptions for your fleet.
 
-To use `cnquery` with the the Mondoo Platform run:
+To use `cnquery` with the Mondoo Platform run:
 
 ```bash
 cnspec auth login
