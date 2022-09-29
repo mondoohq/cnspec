@@ -268,7 +268,7 @@ func (s *LocalServices) GetPolicyFilters(ctx context.Context, mrn *Mrn) (*Mqueri
 }
 
 // List all policies for a given owner
-func (s *LocalServices) List(ctx context.Context, filter *PolicySearchFilter) (*Policies, error) {
+func (s *LocalServices) List(ctx context.Context, filter *ListReq) (*Policies, error) {
 	if filter == nil {
 		return nil, status.Error(codes.InvalidArgument, "need to provide a filter object for list")
 	}
