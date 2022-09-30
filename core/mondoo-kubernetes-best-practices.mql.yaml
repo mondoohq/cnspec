@@ -11,7 +11,7 @@ policies:
     desc: |-
       The Kubernetes Best Practices Benchmark by Mondoo provides guidance for establishing reliable Kubernetes clusters by encouraging the adoption of best practices.
  
-      If you have questions, comments, or have identified ways to improve this policy, please write us at hello@mondoo.io, or reach out in [GitHub Discussions](https://github.com/orgs/mondoohq/discussions).
+      If you have questions, comments, or have identified ways to improve this policy, please write us at hello@mondoo.com, or reach out in [GitHub Discussions](https://github.com/orgs/mondoohq/discussions).
   specs:
   - asset_filter:
       query: platform.name == "k8s-cronjob"
@@ -22,6 +22,7 @@ policies:
       kubernetes-best-practices-cronjob-readinessProbe:
       kubernetes-best-practices-cronjob-hostalias:
       kubernetes-best-practices-cronjob-default-namespace:
+      kubernetes-best-practices-cronjob-ports-hostport:
     data_queries:
   - asset_filter:
       query: platform.name == "k8s-statefulset"
@@ -32,6 +33,7 @@ policies:
       kubernetes-best-practices-statefulset-readinessProbe:
       kubernetes-best-practices-statefulset-hostalias:
       kubernetes-best-practices-statefulset-default-namespace:
+      kubernetes-best-practices-statefulset-ports-hostport:
     data_queries:
   - asset_filter:
       query: platform.name == "k8s-deployment"
@@ -42,6 +44,7 @@ policies:
       kubernetes-best-practices-deployment-readinessProbe:
       kubernetes-best-practices-deployment-hostalias:
       kubernetes-best-practices-deployment-default-namespace:
+      kubernetes-best-practices-deployment-ports-hostport:
     data_queries:
   - asset_filter:
       query: platform.name == "k8s-job"
@@ -52,6 +55,7 @@ policies:
       kubernetes-best-practices-job-readinessProbe:
       kubernetes-best-practices-job-hostalias:
       kubernetes-best-practices-job-default-namespace:
+      kubernetes-best-practices-job-ports-hostport:
     data_queries:
   - asset_filter:
       query: platform.name == "k8s-replicaset"
@@ -62,6 +66,7 @@ policies:
       kubernetes-best-practices-replicaset-readinessProbe:
       kubernetes-best-practices-replicaset-hostalias:
       kubernetes-best-practices-replicaset-default-namespace:
+      kubernetes-best-practices-replicaset-ports-hostport:
     data_queries:
   - asset_filter:
       query: platform.name == "k8s-daemonset"
@@ -72,6 +77,7 @@ policies:
       kubernetes-best-practices-daemonset-readinessProbe:
       kubernetes-best-practices-daemonset-hostalias:
       kubernetes-best-practices-daemonset-default-namespace:
+      kubernetes-best-practices-daemonset-ports-hostport:
     data_queries:
   - asset_filter:
       query: platform.name == "k8s-pod"
@@ -83,6 +89,7 @@ policies:
       kubernetes-best-practices-pod-hostalias:
       kubernetes-best-practices-pod-no-owner:
       kubernetes-best-practices-pod-default-namespace:
+      kubernetes-best-practices-pod-ports-hostport:
     data_queries:
       # kubernetes-best-practices-gather-pods-security-context:
       # kubernetes-best-practices-gather-deployment-container:
@@ -1607,6 +1614,272 @@ queries:
   query: |
     k8s.cronjob {
       namespace != "default"
+    }
+- uid: kubernetes-best-practices-pod-ports-hostport
+  title: Pods should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      Pods should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no Pods are binding any of their containers to a host port:
+
+      ```kubectl get pods -A -o json | jq -r '.items[] | select( (.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any Pods that bind to a host port, update the Pods (or the Deployments/DaemonSets/CronJobs/etc that produced the Pods) to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        containers:
+          - ports:
+            - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+              name: http
+              protocol: TCP
+            - containerPort: 443
+              name: https
+              protocol: TCP
+      ```
+  query: |
+    k8s.pod.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: kubernetes-best-practices-daemonset-ports-hostport
+  title: DaemonSets should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      DaemonSets should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no DaemonSets are binding any of their containers to a host port:
+
+      ```kubectl get daemonsets -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any DaemonSets that bind to a host port, update the DaemonSets to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        template:
+          spec:
+            containers:
+              - ports:
+                - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+                  name: http
+                  protocol: TCP
+                - containerPort: 443
+                  name: https
+                  protocol: TCP
+      ```
+  query: |
+    k8s.daemonset.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: kubernetes-best-practices-replicaset-ports-hostport
+  title: ReplicaSets should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      ReplicaSets should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no ReplicaSets are binding any of their containers to a host port:
+
+      ```kubectl get replicasets -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any ReplicaSets that bind to a host port, update the ReplicaSets to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: apps/v1
+      kind: ReplicaSet
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        template:
+          spec:
+            containers:
+              - ports:
+                - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+                  name: http
+                  protocol: TCP
+                - containerPort: 443
+                  name: https
+                  protocol: TCP
+      ```
+  query: |
+    k8s.replicaset.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: kubernetes-best-practices-job-ports-hostport
+  title: Jobs should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      Jobs should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no Jobs are binding any of their containers to a host port:
+
+      ```kubectl get jobs -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any ReplicaSets that bind to a host port, update the Jobs to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        template:
+          spec:
+            containers:
+              - ports:
+                - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+                  name: http
+                  protocol: TCP
+                - containerPort: 443
+                  name: https
+                  protocol: TCP
+      ```
+  query: |
+    k8s.job.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: kubernetes-best-practices-deployment-ports-hostport
+  title: Deployments should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      Deployments should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no Deployments are binding any of their containers to a host port:
+
+      ```kubectl get deployments -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any Deployments that bind to a host port, update the Deployments to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        template:
+          spec:
+            containers:
+              - ports:
+                - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+                  name: http
+                  protocol: TCP
+                - containerPort: 443
+                  name: https
+                  protocol: TCP
+      ```
+  query: |
+    k8s.deployment.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: kubernetes-best-practices-statefulset-ports-hostport
+  title: StatefulSets should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      StatefulSets should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no StatefulSets are binding any of their containers to a host port:
+
+      ```kubectl get statefulsets -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any StatefulSets that bind to a host port, update the StatefulSets to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        template:
+          spec:
+            containers:
+              - ports:
+                - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+                  name: http
+                  protocol: TCP
+                - containerPort: 443
+                  name: https
+                  protocol: TCP
+      ```
+  query: |
+    k8s.statefulset.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: kubernetes-best-practices-cronjob-ports-hostport
+  title: CronJobs should not bind to a host port
+  severity: 40
+  docs:
+    desc: |
+      CronJobs should not bind to the underlying host port. Containers that bind to the underlying host's port(s) can be limited regarding where they are scheduled as two containers cannot both bind to the same host port on the same node.
+    audit: |
+      Check to ensure no CronJobs are binding any of their containers to a host port:
+
+      ```kubectl get cronjobs -A -o json | jq -r '.items[] | select( (.spec.jobTemplate.spec.template.spec.containers[].ports | . != null and any(.[].hostPort; . != null)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq```
+    remediation: |
+      For any CronJobs that bind to a host port, update the CronJobs to ensure they do not bind to a host port:
+
+      ```yaml
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: example
+        namespace: example-namespace
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                containers:
+                  - ports:
+                    - containerPort: 80 # <-- ensure no 'hostPort' is defined in any entries of the port configurations
+                      name: http
+                      protocol: TCP
+                    - containerPort: 443
+                      name: https
+                      protocol: TCP
+      ```
+  query: |
+    k8s.cronjob.podSpec {
+      _['containers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
     }
 # Data Queries
 - uid: kubernetes-best-practices-gather-deployment-container
