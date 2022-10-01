@@ -1,3 +1,6 @@
+//go:build debugtest
+// +build debugtest
+
 package plugin_test
 
 import (
