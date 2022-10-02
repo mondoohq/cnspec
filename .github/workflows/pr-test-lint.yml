@@ -1,0 +1,76 @@
+name: Code Test
+
+## Only trigger tests if source is changing
+on:
+  push:
+    paths:
+      - '**.go'
+      - '**.mod'
+      - 'go.sum'
+
+env:
+  GO_VERSION: 1.19
+  GOPRIVATE: "github.com/mondoohq,go.mondoo.com"
+
+jobs:
+  # Check if there is any dirty change for go mod tidy
+  go-mod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git config
+        run: git config --global url."https://${{ secrets.GH_API_TOKEN}}@github.com".insteadOf "https://github.com"
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Check go mod
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod
+
+  golangci-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git config
+        run: git config --global url."https://${{ secrets.GH_API_TOKEN}}@github.com".insteadOf "https://github.com"
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3.2.0
+        with:
+          version: latest
+
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git config
+        run: git config --global url."https://${{ secrets.GH_API_TOKEN}}@github.com".insteadOf "https://github.com"
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Checkout code
+        uses: actions/checkout@v3
+      # https://github.com/actions/cache/blob/main/examples.md#go---modules
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - run: make test/go/plain-ci
+
+      - uses: actions/upload-artifact@v3  # upload test results
+        if: success() || failure()        # run this step even if previous step failed
+        with:                           
+          name: test-results
+          path: report.xml

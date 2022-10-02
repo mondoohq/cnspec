@@ -6,14 +6,14 @@ import (
 )
 
 // WaitGroup is a synchronization primitive that allows waiting
-// for for a collection of goroutines similar to sync.WaitGroup
+// for a collection of goroutines similar to sync.WaitGroup
 // It differs in the following ways:
-// - Add takes in a workID instead of an increment. This workID is
-//   passed to Done to finish it. This allows calling Done on
-//   the same workID twice, making the second one a noop.
-// - There is a way to unblock all goroutines blocked on the
-//   waitgroup without a normal completion. This is done through
-//   Decommission
+//   - Add takes in a workID instead of an increment. This workID is
+//     passed to Done to finish it. This allows calling Done on
+//     the same workID twice, making the second one a noop.
+//   - There is a way to unblock all goroutines blocked on the
+//     waitgroup without a normal completion. This is done through
+//     Decommission
 type WaitGroup struct {
 	cond           *sync.Cond
 	activeWorkIDs  map[string]struct{}
