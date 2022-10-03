@@ -25,6 +25,8 @@ policies:
       kubernetes-security-secure-scheduler_conf:
       kubernetes-security-secure-controller-manager_conf:
       kubernetes-security-secure-pki-directory:
+      kubernetes-security-https-api-server:
+      kubernetes-security-api-server-no-anonymous-auth:
   - title: Kubernetes CronJobs
     asset_filter:
       query: platform.name == "k8s-cronjob"
@@ -84,6 +86,8 @@ policies:
       kubernetes-security-deployment-limitcpu:
       kubernetes-security-deployment-limitmemory:
       kubernetes-security-deployment-capability-net-raw:
+      kubernetes-security-deployment-tiller:
+      kubernetes-security-deployment-k8s-dashboard:
   - title: Kubernetes Jobs
     asset_filter:
       query: platform.name == "k8s-job"
@@ -163,6 +167,8 @@ policies:
       kubernetes-security-pod-limitcpu:
       kubernetes-security-pod-limitmemory:
       kubernetes-security-pod-capability-net-raw:
+      kubernetes-security-pod-tiller:
+      kubernetes-security-pod-k8s-dashboard:
     data_queries:
       # kubernetes-security-gather-pods-security-context:
       # kubernetes-security-gather-deployment-container:
@@ -354,6 +360,34 @@ queries:
         user.name == "root"
         group.name == "root"
       }
+    }
+- uid: kubernetes-security-https-api-server
+  title: Ensure the kube-apiserver is not listening on an insecure HTTP port
+  docs:
+    desc: Ensure the kube-apiserver is not listening on an insecure HTTP port.
+    remediation: |-
+      Find the kube-apiserver process and check the `insecure-port` argument. If the argument is set to `0`, then the kube-apiserver is not listening on an insecure HTTP port:
+
+      ```
+      ps aux | grep kube-apiserver
+      ```
+  query: |
+    processes.where(executable == /kube-apiserver/).list {
+      flags["insecure-port"] == 0
+    }
+- uid: kubernetes-security-api-server-no-anonymous-auth
+  title: Ensure the kube-apiserver does not allow anonymous authentication
+  docs:
+    desc: Ensure the kube-apiserver does not allow anonymous authentication.
+    remediation: |-
+      Find the kube-apiserver process and check the `--anonymous-auth` argument. If the argument is set to `false`, then the kube-apiserver does not allow anonymous authentication:
+
+      ```
+      ps aux | grep kube-apiserver
+      ```
+  query: |
+    processes.where(executable == /kube-apiserver/).list {
+      flags["anonymous-auth"] == "false"
     }
 # Pod queries
 - uid: kubernetes-security-pod-docker-socket
@@ -4054,12 +4088,12 @@ queries:
     audit: |
       Check to ensure no DaemonSets have explicitly asked for the NET_RAW capability (or asked for ALL capabilities which includes NET_RAW):
 
-      ```kubectl get daemonsets -A -o json | jq -r '.items[] | select(.spec.template.spec.containers[].securityContext.capabilities.add | . != null ) | select(.spec.template.spec.containers[].securityContext.capabilities.add | any(.[] ; ascii_upcase | test("ALL|NET_RAW")) ) | .metadata.namespace + "/" + .metadata.name'```
+            ```kubectl get daemonsets -A -o json | jq -r '.items[] | select(.spec.template.spec.containers[].securityContext.capabilities.add | . != null ) | select(.spec.template.spec.containers[].securityContext.capabilities.add | any(.[] ; ascii_upcase | test("ALL|NET_RAW")) ) | .metadata.namespace + "/" + .metadata.name'```
 
 
       Additionally, a DaemonSet that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicity run with NET_RAW. List these DaemonSets with:
 
-      ```kubectl get daemonsets -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].securityContext.capabilities.drop | . == null) or (.spec.template.spec.containers[].securityContext.capabilities.drop | any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name'```
+            ```kubectl get daemonsets -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].securityContext.capabilities.drop | . == null) or (.spec.template.spec.containers[].securityContext.capabilities.drop | any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name'```
     remediation: |
       For any DaemonSets that explicitly add the NET_RAW or ALL capability, update them to ensure they do not ask for the NET_RAW or ALL capability:
 
@@ -4409,6 +4443,66 @@ queries:
         }
       }
     }
+- uid: kubernetes-security-deployment-tiller
+  title: Deployments should not run Tiller (Helm v2)
+  severity: 40
+  docs:
+    desc: |
+      Tiller is the in-cluster component for the Helm v2 package manager. It is communicating directly to the Kubernetes API and therefore it has broad RBAC permissions. An attacker can use that to get cluster-wide access.
+    audit: |
+      Verify there are no deployments running Tiller:
+
+      ```kubectl get deployments -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"```
+    remediation: |
+      Delete any deployments that are running Tiller.
+    query: |
+      k8s.deployment.podSpec["containers"].none( _["image"].contains("tiller") )
+- uid: kubernetes-security-pod-tiller
+  title: Pods should not run Tiller (Helm v2)
+  severity: 40
+  docs:
+    desc: |
+      Tiller is the in-cluster component for the Helm v2 package manager. It is communicating directly to the Kubernetes API and therefore it has broad RBAC permissions. An attacker can use that to get cluster-wide access.
+    audit: |
+      Verify there are no pods running Tiller:
+
+      ```kubectl get pods -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"```
+    remediation: |
+      Delete any pods that are running Tiller.
+    query: |
+      k8s.pod.podSpec["containers"].none( _["image"].contains("tiller") )
+- uid: kubernetes-security-deployment-k8s-dashboard
+  title: Pods should not run Kubernetes dashboard
+  severity: 40
+  docs:
+    desc: |
+      The Kubernetes dahboard allows browsing through cluster resources such as workloads, configmaps and secrets. In 2019 Tesla was hacked because their Kubernetes dashboard was publicly exposed. This allowed the attackers to extract credentials and deploy Bitcoin miners on the cluster.
+    audit: |
+      Verify there are no deployments running Kubernetes dashboard:
+
+      ```kubectl get deployments -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"```
+    remediation: |
+      Delete any deployments that are running Kubernetes dashboard.
+    query: |
+      k8s.deployment.podSpec["containers"].none( _["image"].contains("kubernetes-dashboard") || _["image"].contains("kubernetesui") )
+      k8s.deployment.labels["app"] == null || k8s.pod.labels["app"] != "kubernetes-dashboard"
+      k8s.deployment.labels["k8s-app"] == null || k8s.pod.labels["k8s-app"] != "kubernetes-dashboard"
+- uid: kubernetes-security-pod-k8s-dashboard
+  title: Pods should not run Kubernetes dashboard
+  severity: 40
+  docs:
+    desc: |
+      The Kubernetes dahboard allows browsing through cluster resources such as workloads, configmaps and secrets. In 2019 Tesla was hacked because their Kubernetes dashboard was publicly exposed. This allowed the attackers to extract credentials and deploy Bitcoin miners on the cluster.
+    audit: |
+      Verify there are no pods running Kubernetes dashboard:
+
+      ```kubectl get pods -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"```
+    remediation: |
+      Delete any pods that are running Kubernetes dashboard.
+    query: |
+      k8s.pod.podSpec["containers"].none( _["image"].contains("kubernetes-dashboard") || _["image"].contains("kubernetesui") )
+      k8s.pod.labels["app"] == null || k8s.pod.labels["app"] != "kubernetes-dashboard"
+      k8s.pod.labels["k8s-app"] == null || k8s.pod.labels["k8s-app"] != "kubernetes-dashboard"
 # Data Queries
 - uid: kubernetes-security-gather-deployment-container
   title: Gather all Deployments
