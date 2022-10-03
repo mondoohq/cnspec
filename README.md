@@ -4,13 +4,13 @@
 
 `cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. Using [policy as code](https://mondoo.com/policy-as-code/), `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers and endpoints, SaaS products, infrastructure as code, APIs, and more.
 
-`cnspec` is a powerful policy engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It is both fast and simple to use!
+`cnspec` is a powerful policy engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
 ```bash
 cnspec scan local
 ```
 
-**Example output**
+**Sample output**
 ```bash
 ...
 
@@ -46,16 +46,16 @@ A  80  macOS Security Baseline by Mondoo
 
 ### Dependencies
 
-Before building from source, make sure you have the following dependencies installed:
+Before building from source, be sure to install:
 
 - [Go 1.19.0+](https://golang.org/dl/)
 - [Protocol Buffers v21+](https://github.com/protocolbuffers/protobuf/releases)
 
-On macOS systems with homebrew run: `brew install go@1.19 protobuf`
+On macOS systems with Homebrew, run: `brew install go@1.19 protobuf`
 
-### Build & Install
+### Build & install
 
-To build and install cnspec via Go, run:
+To build and install cnspec using Go, run:
 
 ```bash
 export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
@@ -64,7 +64,7 @@ make cnspec/install
 
 ### Development
 
-Whenever you change protos or other auto-generated files, you will need to regenerate files for the compiler. To do this, make sure you have the necessary tools installed (e.g. protobuf):
+Whenever you change protos or other auto-generated files, you must regenerate files for the compiler. To do this, be sure you have the necessary tools installed (such as protobuf):
 
 ```bash
 make prep
@@ -76,7 +76,7 @@ Then, whenever you make changes, just run:
 make cnspec/generate
 ```
 
-This will generate and update all required files for the build. At this point you can `make cnspec/install` again as outlined above.
+This generates and updates all required files for the build. Now you can `make cnspec/install` again as outlined above.
 
 ## Run a scan
 
@@ -92,7 +92,7 @@ cnspec scan local
 
 ### Remote scan targets
 
-You can also specify remote targets to scan. The following provides examples of scanning remote targets:
+You can also specify remote targets to scan. For example:
 
 ```bash
 # to scan a docker image:
@@ -119,7 +119,7 @@ cnspec scan github repo <org/repo>
 
 ### Custom policies
 
-A `cnspec` policy is simply a YAML file that lets you express any security rule or best practice for your fleet. If you are interested in writing your own policies, or contributing policies back to the `cnspec` community, the best place to start is to look at one of our example policies. You can find them in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
+A `cnspec` policy is simply a YAML file that lets you express any security rule or best practice for your fleet. If you're interested in writing your own policies or contributing policies back to the `cnspec` community, the best place to start is to look at one of our example policies. You can find them in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
 
 To run a policy you have developed locally:
 
@@ -127,9 +127,9 @@ To run a policy you have developed locally:
 cnspec scan local --policy-bundle policy/examples/example.mql.yaml
 ```
 
-## cnspec Interactive shell
+## cnspec interactive shell
 
-`cnspec` also provides an interactive shell to to explore custom assertions. This will help you understand the queries that are used in policies and write custom queries as well. It’s also a great way to interact with both local and remote targets on the fly.
+`cnspec` also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It’s also a great way to interact with both local and remote targets on the fly.
 
 ### Local system shell
 
@@ -140,12 +140,10 @@ cnspec shell local
 `.__.':_;:_;`.__.': ._.'`.__.'`.__.'
    mondoo™        : :
                   :_;
-cnquery>
+cnspec>
 ```
 
-#### Using help command
-
-The shell provides a `help` command to get help on the resources that power `cnquery`. Running `help` without any arguments will list all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource.
+The shell provides a `help` command to get help on the resources that power `cnspec`. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource. For example:
 
 ```bash
 cnquery> help ports
@@ -154,19 +152,21 @@ ports:              TCP/IP ports on the system
   listening []port: TCP/IP ports on the system
 ```
 
-The shell uses auto-complete which makes it very easy to explore. Once inside the shell, you can enter MQL assertions like this:
+The shell uses auto-complete, which makes it easy to explore. Once inside the shell, you can enter MQL assertions like this:
 
 ```coffeescript
 > ports.listening.none( port == 23 )
 ```
 
-You can type `clear` to clear the terminal. To exit either hit CTRL+D or type `exit`.
+To clear the terminal, type `clear`. 
 
-## Scaling cnspec across your fleet
+To exit, either hit CTRL + D or type `exit`.
 
-The easiest way to scale `cnspec` across your fleet is to have all of your infrastructure pull policies from a central location. The easiest option is to sign-up for a free account on Mondoo Platform. The platform is designed for multi-tenancy, and provides secure private environment that keeps data about your assets in your own account. It makes it very easy for all nodes to report on policies and define custom exceptions for your fleet.
+## Scale cnspec across your fleet
 
-To use `cnquery` with the Mondoo Platform run:
+The easiest way to scale `cnspec` across your fleet is to have all of your infrastructure pull policies from a central location. A simple approach is to sign up for a free account on Mondoo Platform. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, all assets can report on policies and you can define custom exceptions for your fleet.
+
+To use `cnspec` with the Mondoo Platform, run:
 
 ```bash
 cnspec auth login
@@ -178,11 +178,11 @@ Once authenticated, you can scan any target:
 cnspec scan <target>
 ```
 
-The results from the scan will be returned to `STDOUT` as well as sent back to the platform.
+`cnspec` returns the results from the scan to `STDOUT` and to the platform.
 
-### Uploading policies
+### Upload policies to your account
 
-To add custom policies to your account, you can now upload policies via:
+With an account on Mondoo Platform, you can upload policies:
 
 ```bash
 cnspec policy upload mypolicy.mql.yaml
@@ -190,7 +190,7 @@ cnspec policy upload mypolicy.mql.yaml
 
 ## Where to go from here
 
-There are so many things cnspec can do! From testing your entire fleet for vulnerabilities to gathering information about it and creating reports for auditors. With its custom policies `cnspec` can scan any component you care about!
+There are so many things `cnspec` can do, from testing your entire fleet for vulnerabilities to gathering information and creating reports for auditors. With its custom policies, `cnspec` can scan any component you care about!
 
 Explore our:
 
@@ -198,10 +198,8 @@ Explore our:
 - [Policy as Code](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/references/mql/)
-- [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory
-- [HashiCorp Packer](https://github.com/mondoohq/packer-plugin-mondoo) - Integrate `cnspec` with HashiCorp Packer!
-- Using cnspec with Mondoo
-
+- [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
+- [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-mondoo) to integrate `cnspec` with HashiCorp Packer!
 
 ## Community and support
 
@@ -218,7 +216,7 @@ fatal: could not read Username for 'https://github.com': terminal prompts disabl
 Confirm the import path was entered correctly.
 ```
 
-It is caused by the repository currently being private. You'll have to configure your gitconfig to use SSH to download the repo:
+It is caused by the repository currently being private. It'll be publish soon, but while it's still private, you need to configure your gitconfig to use SSH to download the repo:
 
 ```
 [url "ssh://git@github.com/"]
