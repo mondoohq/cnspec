@@ -91,10 +91,5 @@ func APIVersion() string {
 
 // Info on this application with version and build
 func Info() string {
-	return "cnquery " + GetVersion() + " (" + GetBuild() + ", " + GetDate() + ")"
-}
-
-// LatestMQLVersion returns the current version of MQL
-func LatestMQLVersion() string {
-	return "v2"
+	return "cnspec " + GetVersion() + " (" + GetBuild() + ", " + GetDate() + ")"
 }
