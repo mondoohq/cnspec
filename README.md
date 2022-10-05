@@ -44,39 +44,14 @@ A  80  macOS Security Baseline by Mondoo
 
 ## Installation
 
-### Dependencies
-
-Before building from source, be sure to install:
-
-- [Go 1.19.0+](https://golang.org/dl/)
-- [Protocol Buffers v21+](https://github.com/protocolbuffers/protobuf/releases)
-
-On macOS systems with Homebrew, run: `brew install go@1.19 protobuf`
-
-### Build & install
-
-To build and install cnspec using Go, run:
+Install `cnspec` with our installation script:
 
 ```bash
-export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
-make cnspec/install
+bash -c "$(curl -sSL https://install.mondoo.com/sh/cnspec)"
 ```
 
-### Development
+If you prefer a package, find it on [GitHub releases](https://github.com/mondoohq/cnspec/releases).
 
-Whenever you change protos or other auto-generated files, you must regenerate files for the compiler. To do this, be sure you have the necessary tools installed (such as protobuf):
-
-```bash
-make prep
-```
-
-Then, whenever you make changes, just run:
-
-```bash
-make cnspec/generate
-```
-
-This generates and updates all required files for the build. Now you can `make cnspec/install` again as outlined above.
 
 ## Run a scan
 
