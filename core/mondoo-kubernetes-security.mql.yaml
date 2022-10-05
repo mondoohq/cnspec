@@ -12,6 +12,8 @@ policies:
       The Kubernetes Workload Security by Mondoo provides guidance for establishing secure Kubernetes workload deployments.
  
       If you have questions, comments, or have identified ways to improve this policy, please write us at hello@mondoo.com, or reach out in [GitHub Discussions](https://github.com/orgs/mondoohq/discussions).
+  props:
+    allowedCiphers: ""
   specs:
   - title: Kubernetes API Server
     asset_filter:
@@ -27,6 +29,23 @@ policies:
       mondoo-kubernetes-security-secure-pki-directory:
       mondoo-kubernetes-security-https-api-server:
       mondoo-kubernetes-security-api-server-no-anonymous-auth:
+  - title: Kubernetes kubelet
+    asset_filter:
+      query: |
+        platform.family.contains(_ == 'linux')
+        processes.where( executable == /kubelet/ ).list != []
+    scoring_queries:
+      mondoo-kubernetes-security-kubelet-anonymous-authentication:
+      mondoo-kubernetes-security-kubelet-event-record-qps:
+      mondoo-kubernetes-security-kubelet-iptables-util-chains:
+      mondoo-kubernetes-security-kubelet-protect-kernel-defaults:
+      mondoo-kubernetes-security-kubelet-read-only-port:
+      mondoo-kubernetes-security-kubelet-authorization-mode:
+      mondoo-kubernetes-security-kubelet-strong-ciphers:
+      mondoo-kubernetes-security-kubelet-tls-certificate:
+      mondoo-kubernetes-security-kubelet-rotate-certificates:
+      mondoo-kubernetes-security-secure-kubelet-config:
+      mondoo-kubernetes-security-secure-kubelet-cert-authorities:
   - title: Kubernetes CronJobs Security by Mondoo
     asset_filter:
       query: platform.name == "k8s-cronjob"
@@ -197,8 +216,230 @@ policies:
       # mondoo-kubernetes-security-gather-statefulset-container:
       # mondoo-kubernetes-security-gather-job-container:
       # mondoo-kubernetes-security-gather-cronjob-container:
+props:
+  - uid: allowedCiphers
+    title: Define the hardened SSL/ TLS ciphers
+    query: |
+      return ["TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA",
+        "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA", "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305", "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_RSA_WITH_3DES_EDE_CBC_SHA", "TLS_RSA_WITH_AES_128_CBC_SHA", "TLS_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_RSA_WITH_AES_256_CBC_SHA", "TLS_RSA_WITH_AES_256_GCM_SHA384"]
 queries:
 # api server / kubelet queries
+- uid: mondoo-kubernetes-security-kubelet-anonymous-authentication
+  title: Disable anonymous authentication for kubelet
+  severity: 100
+  docs:
+    desc: |
+      Ensure that the kubelet is configured to disable anonymous requests to the kubelet server.
+    audit: |
+      If running the kubelet with the CLI parameter '--anonymous-auth', or running with 'authentication.anonymous.enabled' defined in the kubelet configuration file, ensure that the value is set to 'false'.
+    remediation: |
+      Set the '--anonymous-auth' CLI parameter and/or the 'authentication.anonymous.enabled' field in the kubelet configuration file to 'false'.
+  query: |
+    k8s.kubelet.configuration['authentication']['anonymous']['enabled'] == false
+- uid: mondoo-kubernetes-security-kubelet-event-record-qps
+  title: Configure kubelet to capture all event creation
+  severity: 30
+  docs:
+    desc: |
+      Ensure that the kubelet is configured to capture all event creation so as to avoid potentially not logging important events.
+    audit: |
+      If running the kubelet with the CLI parameter '--event-qps', or running with 'eventRecordQPS' defined in the kubelet configuration file, ensure that the value is set to '0'.
+    remediation: |
+      Set the '--event-qps' CLI parameter and/or the 'eventRecordQPS' field in the kubelet configuration file to '0'.
+  query: |
+    k8s.kubelet.configuration['eventRecordQPS'] == 0
+- uid: mondoo-kubernetes-security-kubelet-iptables-util-chains
+  title: Configure kubelet to ensure IPTables rules are set on host
+  severity: 30
+  docs:
+    desc: |
+      Ensure that the kubelet is set up to create IPTable utility rules for various kubernetes components.
+    audit: |
+      If running the kubelet with the CLI parameter '--make-iptables-util-chains', or running with 'makeIPTablesUtilChains' defined in the kubelet configuration file, ensure that the value is set to 'true'.
+    remediation: |
+      Set the '--make-iptables-util-chains' CLI parameter and/or the 'makeIPTablesUtilChains' field in the kubelet configuration file to 'true'.
+  query: |
+    k8s.kubelet.configuration['makeIPTablesUtilChains'] == true
+- uid: mondoo-kubernetes-security-kubelet-protect-kernel-defaults
+  title: Configure kubelet to protect kernel defaults
+  severity: 60
+  docs:
+    desc: |
+      Ensure that the kubelet is set up to error if the underlying kernel tunables are different that the kubelet defaults. By default the kubelet will attempt to modify the kernel as the kubelet starts up.
+    audit: |
+      If running the kubelet with the CLI parameter '--protect-kernel-defaults', or running with 'protectKernelDefaults' defined in the kubelet configuration file, ensure that the value is set to 'true'.
+    remediation: |
+      Set the '--protect-kernel-defaults' CLI parameter and/or the 'readOnlyPort' field in the kubelet configuration file to 'true'.
+  query: |
+    k8s.kubelet.configuration["protectKernelDefaults"] == "true"
+- uid: mondoo-kubernetes-security-kubelet-read-only-port
+  title: Do not allow unauthenticated read-only port on kubelet
+  severity: 60
+  docs:
+    desc: |
+      Ensure the kubelet is not configured to serve up unauthenticated read-only access.
+    audit: |
+      If running the kubelet with the CLI parameter '--read-only-port', or running with 'readOnlyPort' defined in the kubelet configuration file, ensure that the value is either '0' or simply not set ('0' is the default).
+    remediation: |
+      Set the '--read-only-port' CLI parameter or the 'readOnlyPort' field in the kubelet configuration file to '0'.
+  query: |
+    k8s.kubelet.configuration['readOnlyPort'] == 0 || k8s.kubelet.configuration['readOnlyPort'] == null
+- uid: mondoo-kubernetes-security-kubelet-authorization-mode
+  title: Ensure the kubelet is not configured with the AlwaysAllow authorization mode.
+  severity: 100
+  docs:
+    desc: |
+      Ensure the kubelet is not configured with the AlwaysAllow authorization mode.
+    audit: |
+      If running the kubelet with the CLI parameter '--authorization-mode', or running with 'authorization.mode' defined in the kubelet configuration file, ensure that the value is not set to 'AlwaysAllow'.
+    remediation: |
+      If the kubelet is configured with the CLI parameter '--authorization-mode', set it to something that isn't 'AlwaysAllow' (eg 'Webhook').
+
+      If the kubelet is configured via the kubelet config file with the 'authorization.mode' parameter, set it to something that isn't 'AlwaysAllow' (eg. 'Webhook').
+  query: |
+    k8s.kubelet.configuration['authorization']['mode'] != "AlwaysAllow"
+- uid: mondoo-kubernetes-security-kubelet-strong-ciphers
+  title: Configure kubelet to use only strong cryptography
+  severity: 100
+  docs:
+    desc: |
+      Ensure the kubelet runs with only strong cryptography support.
+    audit: |
+      If running the kubelet with the CLI parameter '--tls-cipher-suites', or running with 'tlsCipherSuites' defined in the kubelet configuration file, ensure that the list of allowed ciphers is not empty and that all included ciphers are included in the following list:
+
+      "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256", "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA", "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA", "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305", "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+      "TLS_RSA_WITH_AES_128_CBC_SHA", "TLS_RSA_WITH_AES_128_GCM_SHA256", "TLS_RSA_WITH_AES_256_CBC_SHA", "TLS_RSA_WITH_AES_256_GCM_SHA384"
+    remediation: |
+      Define the list of allowed TLS ciphers to include only items from the strong list of ciphers.
+
+      If the kubelet is configured with the CLI parameter '--tls-cipher-suites', update the list (or define the parameter) to only include strong ciphers.
+
+      If the kubelet is configured via the kubelet config file with the 'tlsCipherSuites' parameter, update the list (or create an entry for 'tlsCipherSuites') to only include string ciphers.
+  query: |
+    k8s.kubelet.configuration['tlsCipherSuites'] != null
+    if (k8s.kubelet.configuration['tlsCipherSuites'] != null) {
+      k8s.kubelet.configuration['tlsCipherSuites'].map( _.trim ).containsOnly(props.allowedCiphers)
+    }
+- uid: mondoo-kubernetes-security-kubelet-tls-certificate
+  title: Run kubelet with a user-provided certificate/key
+  severity: 100
+  docs:
+    desc: |
+      Ensure that the kubelet is not running with self-signed certificates generated by the kubelet itself.
+    audit: |
+      The kubelet CLI parameters override values in the kubelet configuration file.
+
+      Check the kubelet CLI parameters to see whether '--tls-cert-file' and '--tls-private-key' are set to a non-empty path/string.
+
+      Check the kubelet configuration file to see whether 'tlsCertFile' and 'tlsPrivateKeyFile' are set to a non-empty path/string.
+    remediation: |
+      Configure the kubelet to use a user-provided certificate/key pair for serving up HTTPS.
+
+      After acquiring the TLS certificate/key pair, update the kubelet configuration file
+
+      Or if using the deprecated kubelet CLI parameters, update the '--tls-cert-file' and '--tls-private-key-file' parameters to use the new certificate/key.
+  query: |
+    k8s.kubelet.configuration["tlsCertFile"] != null
+    k8s.kubelet.configuration["tlsPrivateKeyFile"] != null
+- uid: mondoo-kubernetes-security-kubelet-rotate-certificates
+  title: Run kubelet with automatic certificate rotation
+  severity: 80
+  docs:
+    desc: |
+      Ensure the kubelet is running with automatic certificate rotation so that the kubelet will automatically renew certificates with the API server as certificates near expiration.
+    audit: |
+      Check the kubelet CLI parameters to ensure '--rotate-certificates' is not set to false, and that the kubelet config file has not set 'rotateCertificates' to false.
+    remediation: |
+      Depending on where the configuration behavior is defined (CLI parameters override config file values), update the kubelet CLI parameters to set '--rotate-certificates' to true, and/or update the kubelet configuration to set 'rotateCertificates' to true.
+  query: |
+    k8s.kubelet.configuration["rotateCertificates"] != "false"
+- uid: mondoo-kubernetes-security-secure-kubelet-config
+  title: Ownership and permissions of kubelet configuration should be restricted
+  severity: 80
+  docs:
+    desc: |
+      Ensure proper file ownership and read-write-execute permissions for kubelet configuration file.
+    audit: |
+      View the kubelet configuration file details:
+
+      ```
+      $ ls -l /etc/kubernetes/kubelet.conf
+      -rw-r--r-- 1 root root 1155 Sep 21 15:03 /etc/kubernetes/kubelet.conf
+      ```
+    remediation: |
+      Update the ownership and permissions:
+
+      ```
+      chown root:root /etc/kubernetes/kubelet.conf
+      chmod 600 /etc/kubernetes/kubelet.conf
+      ```
+  query: |
+    if (file(k8s.kubelet.configuration['config']).exists) {
+      file(k8s.kubelet.configuration['config']) {
+        user.name == "root"
+        group.name == "root"
+      }
+      file(k8s.kubelet.configuration['config']).permissions {
+        user_readable == true
+        user_executable == false
+        group_readable == false
+        group_writeable == false
+        group_executable == false
+        other_readable == false
+        other_writeable == false
+        other_executable == false
+      }
+    }
+- uid: mondoo-kubernetes-security-secure-kubelet-cert-authorities
+  title: Specify a kubelet certificate authorities file and ensure proper ownership and permissions
+  severity: 100
+  docs:
+    desc: |
+      Ensure appropriate ownership and permissions for the kubelet's certificate authorities configuration file.
+    audit: |
+      View the ownership and permissions:
+
+      ```
+      $ ls -l /etc/srv/kubernetes/pki/ca-certificates.crt
+      -rw------- 1 root root 1159 Sep 13 04:14 /etc/srv/kubernetes/pki/ca-certificates.crt
+      ```
+    remediation: |
+      Update the ownership and permissions:
+
+      ```
+      chown root:root /etc/srv/kubernetes/pki/ca-certificates.crt
+      chmod 600 /etc/srv/kubernetes/pki/ca-certificates.crt
+      ```
+  query: |
+    k8s.kubelet.configuration['authentication']['x509']['clientCAFile'] != null
+    if (k8s.kubelet.configuration['authentication']['x509']['clientCAFile'] != null) {
+      cafile = k8s.kubelet.configuration["authentication"]["x509"]["clientCAFile"]
+      file(cafile) {
+        user.name == "root"
+        group.name == "root"
+      }
+      file(cafile).permissions {
+        user_readable == true
+        user_executable == false
+        group_readable == false
+        group_writeable == false
+        group_executable == false
+        other_readable == false
+        other_writeable == false
+        other_executable == false
+      }
+    }
 - uid: mondoo-kubernetes-security-secure-kube-apiserver-yml
   title: Set secure file permissions on the API server pod specification file
   docs:
@@ -5401,7 +5642,7 @@ queries:
   severity: 40
   docs:
     desc: |
-      The Kubernetes dahboard allows browsing through cluster resources such as workloads, configmaps and secrets. In 2019 Tesla was hacked because their Kubernetes dashboard was publicly exposed. This allowed the attackers to extract credentials and deploy Bitcoin miners on the cluster.
+      The Kubernetes dashboard allows browsing through cluster resources such as workloads, configmaps and secrets. In 2019 Tesla was hacked because their Kubernetes dashboard was publicly exposed. This allowed the attackers to extract credentials and deploy Bitcoin miners on the cluster.
     audit: |
       Verify there are no deployments running Kubernetes dashboard:
       ```kubectl get deployments -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"```
@@ -5416,7 +5657,7 @@ queries:
   severity: 40
   docs:
     desc: |
-      The Kubernetes dahboard allows browsing through cluster resources such as workloads, configmaps and secrets. In 2019 Tesla was hacked because their Kubernetes dashboard was publicly exposed. This allowed the attackers to extract credentials and deploy Bitcoin miners on the cluster.
+      The Kubernetes dashboard allows browsing through cluster resources such as workloads, configmaps and secrets. In 2019 Tesla was hacked because their Kubernetes dashboard was publicly exposed. This allowed the attackers to extract credentials and deploy Bitcoin miners on the cluster.
     audit: |
       Verify there are no pods running Kubernetes dashboard:
       ```kubectl get pods -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"```
