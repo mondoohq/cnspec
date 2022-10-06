@@ -3,6 +3,7 @@ package reporter
 import (
 	"fmt"
 	io "io"
+	"sort"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/termenv"
@@ -13,6 +14,11 @@ import (
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
+
+type assetMrnName struct {
+	Mrn  string
+	Name string
+}
 
 type defaultReporter struct {
 	*Reporter
@@ -28,17 +34,36 @@ type defaultReporter struct {
 func (r *defaultReporter) print() error {
 	r.bundle = r.data.Bundle.ToMap()
 
+	// sort assets by name, to make it more intuitive
+	i := 0
+	orderedAssets := make([]assetMrnName, len(r.data.Assets))
+	for assetMrn, asset := range r.data.Assets {
+		orderedAssets[i] = assetMrnName{
+			Mrn:  assetMrn,
+			Name: asset.Name,
+		}
+		i++
+	}
+	sort.Slice(orderedAssets, func(i, j int) bool {
+		return orderedAssets[i].Name < orderedAssets[j].Name
+	})
+
 	if !r.isSummary {
-		r.printQueries()
+		r.printAssetSections(orderedAssets)
 	}
 
-	r.printSummary()
+	r.printSummary(orderedAssets)
 	return nil
 }
 
-func (r *defaultReporter) printSummary() {
-	for mrn, asset := range r.data.Assets {
-		r.printAssetSummary(mrn, asset)
+func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
+	r.out.Write([]byte(termenv.String(fmt.Sprintf(`Summary (%d assets)
+========================
+`, len(r.data.Assets))).Foreground(r.Colors.Secondary).String()))
+	for _, assetMrnName := range orderedAssets {
+		assetMrn := assetMrnName.Mrn
+		asset := r.data.Assets[assetMrn]
+		r.printAssetSummary(assetMrn, asset)
 	}
 }
 
@@ -80,17 +105,10 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		return
 	}
 
-	// TODO: we should re-use the report results
-	r.printVulns(resolved, report, report.RawResults())
-
 	score := printCompactScoreSummary(report.Score)
 	report.ComputeStats(resolved)
 
-	r.out.Write([]byte(termenv.String(`Summary
-========================
-
-`).Foreground(r.Colors.Secondary).String()))
-	r.out.Write([]byte(termenv.String(fmt.Sprintf("Target:     %s\n", target)).Foreground(r.Colors.Primary).String()))
+	r.out.Write([]byte(termenv.String(fmt.Sprintf("\nTarget:     %s\n", target)).Foreground(r.Colors.Primary).String()))
 
 	if report.Stats == nil || report.Stats.Total == 0 {
 		r.out.Write([]byte(fmt.Sprintf("Datapoints: %d\n", len(report.Data))))
@@ -152,33 +170,48 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 	}
 }
 
-// TODO: this should be done during the execution, as queries come in, not at the end!
-// Remove all this code and migrate it to tap or something
-// ============================= vv ============================================
-
-func (r *defaultReporter) printQueries() {
+func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 	r.out.Write([]byte{'\n'})
 	queries := r.bundle.QueryMap()
-	for mrn, asset := range r.data.Assets {
-		r.printAssetQueries(queries, mrn, asset)
+
+	for _, assetMrnName := range orderedAssets {
+		assetMrn := assetMrnName.Mrn
+		asset := r.data.Assets[assetMrn]
+		target := asset.Name
+		if target == "" {
+			target = assetMrn
+		}
+
+		r.out.Write([]byte(termenv.String("Asset: ").Foreground(r.Colors.Secondary).String()))
+		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s\n", target)).Foreground(r.Colors.Primary).String()))
+		r.out.Write([]byte(termenv.String("========================").Foreground(r.Colors.Secondary).String()))
 		r.out.Write([]byte{'\n'})
+		report, ok := r.data.Reports[assetMrn]
+		if !ok {
+			// nothing to do, we get an error message in the summary code
+			break
+		}
+
+		resolved, ok := r.data.ResolvedPolicies[assetMrn]
+		if !ok {
+			// nothing to do, we get an additional error message in the summary code
+			break
+		}
+
+		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
+		r.out.Write([]byte{'\n'})
+		// TODO: we should re-use the report results
+		r.printVulns(resolved, report, report.RawResults())
+
 	}
 	r.out.Write([]byte{'\n'})
 }
 
-func (r *defaultReporter) printAssetQueries(queries map[string]*policy.Mquery, assetMrn string, asset *policy.Asset) {
-	report, ok := r.data.Reports[assetMrn]
-	if !ok {
-		// nothing to do, we get an error message in the summary code
-		return
-	}
+// TODO: this should be done during the execution, as queries come in, not at the end!
+// Remove all this code and migrate it to tap or something
+// ============================= vv ============================================
 
-	resolved, ok := r.data.ResolvedPolicies[assetMrn]
-	if !ok {
-		// nothing to do, we get an additional error message in the summary code
-		return
-	}
-
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*policy.Mquery, assetMrn string, asset *policy.Asset) {
 	results := report.RawResults()
 
 	r.out.Write([]byte("Data queries:\n"))
