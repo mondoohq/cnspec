@@ -43,6 +43,18 @@ Whenever you change protos or other auto-generated files, you must regenerate fi
 make prep
 ```
 
+You also need to have the required dependencies present:
+
+```bash
+make prep/repos
+```
+
+When the repo is already present and something changed upstream, update the dependencies:
+
+```bash
+make prep/repos/update
+```
+
 Then, whenever you make changes, just run:
 
 ```bash
