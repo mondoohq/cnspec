@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/mrn"
 	"sigs.k8s.io/yaml"
 )
@@ -37,6 +38,8 @@ func BundleFromPaths(paths ...string) (*Bundle, error) {
 		log.Error().Err(err).Msg("could merge bundle files")
 		return nil, err
 	}
+
+	logger.DebugDumpYAML("resolved_mql_bundle.mql", aggregatedBundle)
 	return aggregatedBundle, nil
 }
 
@@ -58,7 +61,7 @@ func walkPolicyBundleFiles(filenames []string) ([]string, error) {
 				if err != nil {
 					return err
 				}
-				// we ignore nested directories
+				// we ignore directories because WalkDir already walks them
 				if d.IsDir() {
 					return nil
 				}
@@ -86,6 +89,7 @@ func aggregateFilesToBundle(paths []string) (*Bundle, error) {
 
 	for i := range paths {
 		path := paths[i]
+		log.Debug().Str("path", path).Msg("loading policy bundle file")
 		bundle, err := bundleFromSingleFile(path)
 		if err != nil {
 			return nil, errors.Wrap(err, "could not load file: "+path)

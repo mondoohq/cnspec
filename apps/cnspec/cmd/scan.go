@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -485,7 +486,6 @@ func (c *scanConfig) loadPolicies() error {
 		if err != nil {
 			return err
 		}
-
 		c.Bundle = bundle
 		return nil
 	}
@@ -495,8 +495,10 @@ func (c *scanConfig) loadPolicies() error {
 
 func RunScan(config *scanConfig) *policy.ReportCollection {
 	scanner := scan.NewLocalScanner()
-
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
+
+	// always overwrite the owner of the bundle since run incognito
+	config.Bundle.OwnerMrn = "//local.cnspec.io/run/" + uuid.New().String()
 
 	reports, err := scanner.RunIncognito(
 		ctx,
