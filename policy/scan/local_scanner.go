@@ -269,7 +269,7 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 }
 
 func (s *localAssetScanner) prepareAsset() error {
-	var hub policy.Hub = s.services
+	var hub policy.PolicyHub = s.services
 
 	if err := s.ensureBundle(); err != nil {
 		return err
@@ -286,7 +286,7 @@ func (s *localAssetScanner) prepareAsset() error {
 		policyMrns[i] = s.job.Bundle.Policies[i].Mrn
 	}
 
-	var resolver policy.Resolver = s.services
+	var resolver policy.PolicyResolver = s.services
 	_, err = resolver.Assign(s.job.Ctx, &policy.PolicyAssignment{
 		AssetMrn:   s.job.Asset.Mrn,
 		PolicyMrns: policyMrns,
@@ -320,7 +320,7 @@ func (s *localAssetScanner) ensureBundle() error {
 		family[i] = fraw[i].(string)
 	}
 
-	var hub policy.Hub = s.services
+	var hub policy.PolicyHub = s.services
 	urls, err := hub.DefaultPolicies(s.job.Ctx, &policy.DefaultPoliciesReq{
 		Kind:     kind,
 		Platform: platform,
@@ -341,8 +341,8 @@ func (s *localAssetScanner) ensureBundle() error {
 }
 
 func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy, error) {
-	var hub policy.Hub = s.services
-	var resolver policy.Resolver = s.services
+	var hub policy.PolicyHub = s.services
+	var resolver policy.PolicyResolver = s.services
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
 	assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
@@ -387,7 +387,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 }
 
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
-	var resolver policy.Resolver = s.services
+	var resolver policy.PolicyResolver = s.services
 
 	// TODO: we do not needs this anymore since we recieve updates already
 	log.Info().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")

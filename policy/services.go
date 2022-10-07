@@ -21,8 +21,8 @@ type Library interface {
 }
 
 type Services struct {
-	Hub
-	Resolver
+	PolicyHub
+	PolicyResolver
 }
 
 // LocalServices is a bundle of all the services for handling policies.

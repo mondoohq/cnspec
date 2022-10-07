@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-//go:generate protoc --proto_path=../:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. policy.proto
+//go:generate protoc --proto_path=../:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
 
 func (sv *SeverityValue) UnmarshalJSON(data []byte) error {
 	var sev int64
@@ -70,7 +70,7 @@ func (dqi *DataQueryInfo) UnmarshalJSON(data []byte) error {
 }
 
 // WaitUntilDone for a score and an entity
-func WaitUntilDone(resolver Resolver, entity string, scoringMrn string, timeout time.Duration) (bool, error) {
+func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, timeout time.Duration) (bool, error) {
 	var found bool
 	start := time.Now()
 	ctx := context.Background()
