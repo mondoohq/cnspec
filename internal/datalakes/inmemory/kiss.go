@@ -2,6 +2,13 @@ package inmemory
 
 import "sync"
 
+// kvStore is an general-purpose abstraction for key-value stores
+type kvStore interface {
+	Get(key interface{}) (interface{}, bool)
+	Set(key interface{}, value interface{}, cost int64) bool
+	Del(key interface{})
+}
+
 // kissDb for ristretto-like behavior; works synchronously
 type kissDb struct {
 	mu   sync.Mutex

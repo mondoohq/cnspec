@@ -7,13 +7,6 @@ import (
 	"go.mondoo.com/cnspec/policy"
 )
 
-// kvStore is an general-purpose abstraction for key-value stores
-type kvStore interface {
-	Get(key interface{}) (interface{}, bool)
-	Set(key interface{}, value interface{}, cost int64) bool
-	Del(key interface{})
-}
-
 // Db is the ent-based Database backend for Mondoo services
 // It allows you to interact with the underlying data in Mondoo.
 type Db struct {
