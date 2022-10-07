@@ -4,6 +4,8 @@ import (
 	"fmt"
 	io "io"
 	"sort"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/termenv"
@@ -57,13 +59,17 @@ func (r *defaultReporter) print() error {
 }
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
-	r.out.Write([]byte(termenv.String(fmt.Sprintf(`Summary (%d assets)
-========================
-`, len(r.data.Assets))).Foreground(r.Colors.Secondary).String()))
+	summaryHeader := fmt.Sprintf("Summary (%d assets)", len(r.data.Assets))
+	summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
+	r.out.Write([]byte(termenv.String(summaryHeader + "\n" + summaryDivider + "\n").Foreground(r.Colors.Secondary).String()))
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
 		asset := r.data.Assets[assetMrn]
 		r.printAssetSummary(assetMrn, asset)
+	}
+
+	if r.isCompact {
+		r.out.Write([]byte("\nTo get more information, please run this scan with \"-o full\".\n"))
 	}
 }
 
@@ -163,15 +169,11 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 
 	if !r.IsIncognito {
 		panic("PROVIDE UPSTREAM URL")
-	} else {
-		if r.isCompact {
-			r.out.Write([]byte("To get more information, please run this scan with \"-o full\".\n"))
-		}
 	}
 }
 
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
-	r.out.Write([]byte{'\n'})
+	r.out.Write([]byte{'\n', '\n'})
 	queries := r.bundle.QueryMap()
 
 	for _, assetMrnName := range orderedAssets {
@@ -182,9 +184,11 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
+		assetString := fmt.Sprintf("Asset: %s", target)
+		assetDivider := strings.Repeat("=", utf8.RuneCountInString(assetString))
 		r.out.Write([]byte(termenv.String("Asset: ").Foreground(r.Colors.Secondary).String()))
 		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s\n", target)).Foreground(r.Colors.Primary).String()))
-		r.out.Write([]byte(termenv.String("========================").Foreground(r.Colors.Secondary).String()))
+		r.out.Write([]byte(termenv.String(assetDivider).Foreground(r.Colors.Secondary).String()))
 		r.out.Write([]byte{'\n'})
 		report, ok := r.data.Reports[assetMrn]
 		if !ok {
@@ -214,7 +218,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*policy.Mquery, assetMrn string, asset *policy.Asset) {
 	results := report.RawResults()
 
-	r.out.Write([]byte("Data queries:\n"))
+	dataQueriesOutput := ""
 	resolved.WithDataQueries(func(id string, query *policy.ExecutionQuery) {
 		data := query.Code.FilterResults(results)
 		result := r.Reporter.Printer.Results(query.Code, data, report.ResolvedPolicyVersion == "v2")
@@ -224,10 +228,14 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		if r.isCompact {
 			result = stringx.MaxLines(10, result)
 		}
-		r.out.Write([]byte(result))
-		r.out.Write([]byte{'\n'})
+		dataQueriesOutput += result + "\n"
 	})
-	r.out.Write([]byte("\n"))
+
+	if len(dataQueriesOutput) > 0 {
+		r.out.Write([]byte("Data queries:\n"))
+		r.out.Write([]byte(dataQueriesOutput))
+		r.out.Write([]byte("\n"))
+	}
 
 	r.out.Write([]byte("Controls:\n"))
 	for id, score := range report.Scores {
