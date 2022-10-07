@@ -176,11 +176,8 @@ configure your Azure credentials and have SSH access to your instances.`,
 			"github": {
 				Short: "Connect to a GitHub organization or repository",
 			},
-			"gitlab-org": {
+			"github-org": {
 				Short: "Connect to a GitHub organization",
-			},
-			"github-user": {
-				Short: "Connect to a GitHub user",
 			},
 			"github-repo": {
 				Short: "Connect to a GitHub repository",
