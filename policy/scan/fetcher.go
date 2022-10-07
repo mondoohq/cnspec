@@ -4,31 +4,18 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"os"
-	"regexp"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/policy"
 )
 
 type fetcher struct {
-	cache        map[string]*policy.Bundle
-	github_token string
+	cache map[string]*policy.Bundle
 }
 
-var reGithubToken = regexp.MustCompile(`^[a-zA-Z0-9]+$`)
-
 func newFetcher() *fetcher {
-	github_token := os.Getenv("GITHUB_TOKEN")
-	if !reGithubToken.MatchString(github_token) {
-		log.Warn().Msg("invalid github token via environment variable, ignoring it")
-		github_token = ""
-	}
-
 	return &fetcher{
-		cache:        map[string]*policy.Bundle{},
-		github_token: github_token,
+		cache: map[string]*policy.Bundle{},
 	}
 }
 
@@ -61,10 +48,6 @@ func (f *fetcher) fetchBundles(ctx context.Context, urls ...string) (*policy.Bun
 }
 
 func (f *fetcher) fetchBundle(url string) (*policy.Bundle, error) {
-	if f.github_token != "" {
-		url += "?token=" + f.github_token
-	}
-
 	client := http.Client{
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			r.URL.Opaque = r.URL.Path
