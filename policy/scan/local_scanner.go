@@ -181,15 +181,13 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			}
 
 			job.connection = m
-			policyResults, err := s.runMotorizedAsset(job)
-
+			results, err := s.runMotorizedAsset(job)
 			if err != nil {
 				job.Reporter.AddScanError(job.Asset, err)
 				return
 			}
 
-			job.Reporter.AddReport(job.Asset, policyResults)
-
+			job.Reporter.AddReport(job.Asset, results)
 		}(connections[c])
 	}
 }

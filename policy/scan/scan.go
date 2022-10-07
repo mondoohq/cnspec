@@ -33,10 +33,3 @@ type AssetJob struct {
 	Reporter      Reporter
 	connection    *motor.Motor
 }
-
-type AssetReport struct {
-	Mrn            string
-	ResolvedPolicy *policy.ResolvedPolicy
-	Bundle         *policy.Bundle
-	Report         *policy.Report
-}

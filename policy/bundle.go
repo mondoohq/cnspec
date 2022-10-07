@@ -198,7 +198,7 @@ func (p *Bundle) ToMap() *PolicyBundleMap {
 }
 
 // FilterPolicies only keeps the given policy UIDs or MRNs and removes every other one.
-// If a given policy has an MRN set (but no UID) it will try to get the UID from the MRN
+// If a given policy has a MRN set (but no UID) it will try to get the UID from the MRN
 // and also filter by that criteria.
 // If the list of IDs is empty this function doesn't do anything.
 // This function does not remove orphaned queries from the bundle.

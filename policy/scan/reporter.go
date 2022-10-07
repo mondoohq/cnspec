@@ -11,6 +11,13 @@ type Reporter interface {
 	AddScanError(asset *asset.Asset, err error)
 }
 
+type AssetReport struct {
+	Mrn            string
+	ResolvedPolicy *policy.ResolvedPolicy
+	Bundle         *policy.Bundle
+	Report         *policy.Report
+}
+
 type AggregateReporter struct {
 	assets           map[string]*policy.Asset
 	assetReports     map[string]*policy.Report
