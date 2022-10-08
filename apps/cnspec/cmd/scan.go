@@ -249,11 +249,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	},
 	CommonFlags: func(cmd *cobra.Command) {
-		// FIXME: remove in v7.0 vv
-		// we are moving over to the new mondoo scan syntax
-		cmd.Flags().StringP("connection", "t", "", "set the method used to connect to the asset. supported connections are 'local://', 'docker://' and 'ssh://'")
-		// ^^
-
 		// inventories for multi-asset scan
 		cmd.Flags().String("inventory-file", "", "path to inventory file")
 		cmd.Flags().String("inventory", "", "inventory file")
@@ -291,10 +286,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// global asset flags
 		cmd.Flags().Bool("insecure", false, "disable TLS/SSL checks or SSH hostkey config")
 		cmd.Flags().Bool("sudo", false, "run with sudo")
-		// FIXME: remove in v7.0 vv
-		cmd.Flags().Bool("exit-0-on-success", false, "return 0 as exit code if the scan execution was successful")
-		cmd.Flags().MarkHidden("exit-0-on-success")
-		// ^^
 		cmd.Flags().Int("score-threshold", 0, "if any score falls below the threshold, exit 1")
 		cmd.Flags().Bool("record", false, "record backend calls")
 		cmd.Flags().MarkHidden("record")
@@ -329,9 +320,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		viper.BindPFlag("insecure", cmd.Flags().Lookup("insecure"))
 		viper.BindPFlag("policies", cmd.Flags().Lookup("policy"))
 		viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
-		// FIXME: remove in v7.0 vv
-		viper.BindPFlag("exit-0-on-success", cmd.Flags().Lookup("exit-0-on-success"))
-		// ^^
+
 		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
@@ -348,36 +337,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			fmt.Println("Available output formats: " + reporter.AllFormats())
 			os.Exit(0)
 		}
-
-		// if users supply an inventory, we want to continue with it and move forward
-		hasInventory := false
-		if x, _ := cmd.Flags().GetString("inventory-file"); x != "" {
-			hasInventory = true
-		}
-		if x, _ := cmd.Flags().GetString("inventory-ansible"); x != "" {
-			hasInventory = true
-		}
-		if x, _ := cmd.Flags().GetString("inventory-domainlist"); x != "" {
-			hasInventory = true
-		}
-
-		// FIXME: remove in v7.0 vv
-		// We are still supporting the --connection flag througout v6.x and will remove
-		// it after. Remember to migrate the zero-state here
-		connection, _ := cmd.Flags().GetString("connection")
-		// Since we support the fallback for --connection, we check if it was provided
-		// first before we print the help in case no subcommand was called
-		if connection == "" && !hasInventory {
-			cmd.Help()
-			fmt.Print(`
-Please run one of the subcommands to specify the target system. For example:
-
-    $ mondoo scan local
-
-`)
-			os.Exit(1)
-		}
-		// ^^
 	},
 	Run: func(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) {
 		conf, err := getCobraScanConfig(cmd, args, provider, assetType)
