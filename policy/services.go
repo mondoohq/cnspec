@@ -12,7 +12,7 @@ const (
 
 var globalEmpty = &Empty{}
 
-// Library is a subset of the DataLake focused on methods around policy and query existance
+// Library is a subset of the DataLake focused on methods around policy and query existence
 type Library interface {
 	// QueryExists checks if the given MRN exists
 	QueryExists(ctx context.Context, mrn string) (bool, error)
