@@ -409,6 +409,9 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	// Index queries + update MRNs and checksums
 	for i := range p.Queries {
 		query := p.Queries[i]
+		if query == nil {
+			return nil, errors.New("received null query")
+		}
 
 		// remove leading and trailing whitespace of docs, refs and tags
 		query.Sanitize()
@@ -440,6 +443,9 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	// Validate integrity of references + translate UIDs to MRNs
 	for i := range p.Policies {
 		policy := p.Policies[i]
+		if policy == nil {
+			return nil, errors.New("received null policy")
+		}
 
 		err := translateSpecUIDs(ownerMrn, policy, uid2mrn)
 		if err != nil {
