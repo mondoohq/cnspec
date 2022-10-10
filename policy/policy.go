@@ -193,6 +193,14 @@ func MatchingAssetFilters(policyMrn string, assetFilters []*Mquery, p *Policy) (
 	return res, nil
 }
 
+func getPolicyNoop(ctx context.Context, mrn string) (*Policy, error) {
+	return nil, errors.New("policy not found: " + mrn)
+}
+
+func getQueryNoop(ctx context.Context, mrn string) (*Mquery, error) {
+	return nil, errors.New("query not found: " + mrn)
+}
+
 func (p *Policy) UpdateChecksums(ctx context.Context,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*Mquery, error),
@@ -203,6 +211,14 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 		bundle = &PolicyBundleMap{
 			Queries: map[string]*Mquery{},
 		}
+	}
+
+	if getPolicy == nil {
+		getPolicy = getPolicyNoop
+	}
+
+	if getQuery == nil {
+		getQuery = getQueryNoop
 	}
 
 	// conditionals first: do we have local checksums set or not
@@ -354,10 +370,10 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		// POLICIES (must be sorted)
 		policyMRNs := make([]string, len(spec.Policies))
-		i = 0
+		idx := 0
 		for k := range spec.Policies {
-			policyMRNs[i] = k
-			i++
+			policyMRNs[idx] = k
+			idx++
 		}
 		sort.Strings(policyMRNs)
 		for _, policyMRN := range policyMRNs {
@@ -387,10 +403,10 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		// SCORING (must be sorted)
 		queryIDs = make([]string, len(spec.ScoringQueries))
-		i = 0
+		idx = 0
 		for k := range spec.ScoringQueries {
-			queryIDs[i] = k
-			i++
+			queryIDs[idx] = k
+			idx++
 		}
 		sort.Strings(queryIDs)
 		for _, queryID := range queryIDs {
@@ -413,13 +429,14 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		// DATA (must be sorted)
 		queryIDs = make([]string, len(spec.DataQueries))
-		i = 0
+		idx = 0
 		for k := range spec.DataQueries {
-			queryIDs[i] = k
-			i++
+			queryIDs[idx] = k
+			idx++
 		}
 		sort.Strings(queryIDs)
-		for _, queryID := range queryIDs {
+		for i := range queryIDs {
+			queryID := queryIDs[i]
 			q, ok := bundle.Queries[queryID]
 			if !ok {
 				q, err = getQuery(ctx, queryID)
@@ -483,6 +500,11 @@ func checksumAddSpec(checksum checksums.Fast, spec *ScoringSpec) checksums.Fast 
 func (p *Policy) InvalidateGraphChecksums() {
 	p.GraphContentChecksum = ""
 	p.GraphExecutionChecksum = ""
+}
+
+func (p *Policy) InvalidateLocalChecksums() {
+	p.LocalContentChecksum = ""
+	p.LocalExecutionChecksum = ""
 }
 
 func (p *Policy) InvalidateExecutionChecksums() {
