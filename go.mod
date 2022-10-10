@@ -32,6 +32,7 @@ require (
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc
 	google.golang.org/grpc v1.48.0
 	google.golang.org/protobuf v1.28.1
+	gopkg.in/yaml.v3 v3.0.1
 	sigs.k8s.io/yaml v1.3.0
 )
 
@@ -417,7 +418,6 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	honnef.co/go/tools v0.3.3 // indirect
 	howett.net/plist v1.0.0 // indirect
 	k8s.io/api v0.25.0 // indirect
