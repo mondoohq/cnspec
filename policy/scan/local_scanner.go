@@ -183,7 +183,14 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.connection = m
 			results, err := s.runMotorizedAsset(job)
 			if err != nil {
-				job.Reporter.AddScanError(job.Asset, err)
+				if statusError, ok := status.FromError(err); ok {
+					if statusError.Message() == "asset does not match any of the activated policies" {
+						job.Reporter.AddReport(job.Asset, &AssetReport{})
+						log.Warn().Err(err).Str("asset", job.Asset.Name).Msg("failed to scan asset")
+					}
+				} else {
+					job.Reporter.AddScanError(job.Asset, err)
+				}
 				return
 			}
 

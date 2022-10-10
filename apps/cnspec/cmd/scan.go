@@ -506,7 +506,7 @@ func RunScan(config *scanConfig) *policy.ReportCollection {
 			PolicyFilters: config.PolicyNames,
 		})
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to run scan")
+		log.Warn().Err(err).Msg("failed to run scan")
 	}
 
 	return reports

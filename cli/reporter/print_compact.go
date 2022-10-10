@@ -101,6 +101,10 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		}
 		return
 	}
+	if report == nil {
+		// the asset didn't match any policy, so no report was generated
+		return
+	}
 
 	resolved, ok := r.data.ResolvedPolicies[assetMrn]
 	if !ok {
@@ -184,22 +188,26 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
+		report, ok := r.data.Reports[assetMrn]
+		if !ok {
+			// nothing to do, we get an error message in the summary code
+			continue
+		}
+		if report == nil {
+			// the asset didn't match any policy, so no report was generated
+			continue
+		}
 		assetString := fmt.Sprintf("Asset: %s", target)
 		assetDivider := strings.Repeat("=", utf8.RuneCountInString(assetString))
 		r.out.Write([]byte(termenv.String("Asset: ").Foreground(r.Colors.Secondary).String()))
 		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s\n", target)).Foreground(r.Colors.Primary).String()))
 		r.out.Write([]byte(termenv.String(assetDivider).Foreground(r.Colors.Secondary).String()))
 		r.out.Write([]byte{'\n'})
-		report, ok := r.data.Reports[assetMrn]
-		if !ok {
-			// nothing to do, we get an error message in the summary code
-			break
-		}
 
 		resolved, ok := r.data.ResolvedPolicies[assetMrn]
 		if !ok {
 			// nothing to do, we get an additional error message in the summary code
-			break
+			continue
 		}
 
 		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
