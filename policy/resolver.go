@@ -415,7 +415,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		return nil, err
 	}
 	if len(matchingFilters) == 0 {
-		return nil, newPolicyAssetMatchError(assetFilters, policyObj)
+		return nil, NewPolicyAssetMatchError(assetFilters, policyObj)
 	}
 
 	assetFiltersMap := make(map[string]struct{}, len(matchingFilters))
@@ -545,7 +545,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	return &resolvedPolicy, nil
 }
 
-func newPolicyAssetMatchError(assetFilters []*Mquery, p *Policy) error {
+func NewPolicyAssetMatchError(assetFilters []*Mquery, p *Policy) error {
 	if len(assetFilters) == 0 {
 		// send a proto error with details, so that the agent can render it properly
 		msg := "asset does not match any of the activated policies"

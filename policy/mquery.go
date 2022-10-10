@@ -241,3 +241,13 @@ func ChecksumAssetFilters(queries []*Mquery) (string, error) {
 
 	return afc.String(), nil
 }
+
+// RefreshChecksums of all queries
+func (m *Mqueries) RefreshChecksums(props map[string]*llx.Primitive) error {
+	for i := range m.Items {
+		if _, err := m.Items[i].RefreshChecksumAndType(props); err != nil {
+			return err
+		}
+	}
+	return nil
+}
