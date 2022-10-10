@@ -283,3 +283,12 @@ func (p *PolicyBundleMap) queryExists(ctx context.Context, mrn string) error {
 
 	return errors.New("cannot find query '" + mrn + "'")
 }
+
+// QueryMap extracts all the queries from the policy bundle map
+func (bundle *PolicyBundleMap) QueryMap() map[string]*Mquery {
+	res := make(map[string]*Mquery, len(bundle.Queries))
+	for _, v := range bundle.Queries {
+		res[v.CodeId] = v
+	}
+	return res
+}
