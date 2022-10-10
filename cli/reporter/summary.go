@@ -167,6 +167,8 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 		ratings := []map[string]int{}
 
 		for k := range summaryStats.policyNames {
+			// We are looking for MRNs that are policies only. Everything else
+			// may be filtered
 			if err := policy.IsPolicyMrn(k); err != nil {
 				continue
 			}

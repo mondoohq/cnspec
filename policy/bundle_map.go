@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/mrn"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
@@ -180,8 +181,8 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 
 // ValidatePolicy against the given bundle
 func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
-	if err := IsPolicyMrn(policy.Mrn); err != nil {
-		return err
+	if mrn.IsValid(policy.Mrn) {
+		return errors.New("policy MRN is not valid: " + policy.Mrn)
 	}
 
 	for i := range policy.Specs {
