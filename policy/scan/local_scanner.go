@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gogo/status"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
@@ -274,9 +273,12 @@ func (s *localAssetScanner) prepareAsset() error {
 		return err
 	}
 
-	// always overwrite the owner of bundle since we run incognito
-	if s.job.Bundle != nil {
-		s.job.Bundle.OwnerMrn = "//local.cnspec.io/run/" + uuid.New().String()
+	if s.job.Bundle == nil {
+		return errors.New("no bundle provided to run")
+	}
+
+	if len(s.job.Bundle.Policies) == 0 {
+		return errors.New("bundle doesn't contain any policies")
 	}
 
 	// FIXME: we do not currently respect policy filters!

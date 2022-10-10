@@ -181,7 +181,7 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 
 // ValidatePolicy against the given bundle
 func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
-	if mrn.IsValid(policy.Mrn) {
+	if !mrn.IsValid(policy.Mrn) {
 		return errors.New("policy MRN is not valid: " + policy.Mrn)
 	}
 

@@ -32,3 +32,18 @@ func TestBundleFromPaths(t *testing.T) {
 		assert.Len(t, bundle.Policies, 2)
 	})
 }
+
+func TestPolicyBundleSort(t *testing.T) {
+	pb, err := BundleFromPaths("./testdata/policybundle-deps.mql.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(pb.Policies))
+	pbm := pb.ToMap()
+
+	policies, err := pbm.PoliciesSortedByDependency()
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(policies))
+
+	assert.Equal(t, "//policy.api.mondoo.app/policies/debian-10-level-1-server", policies[0].Mrn)
+	assert.Equal(t, "//captain.api.mondoo.app/spaces/adoring-moore-542492", policies[1].Mrn)
+	assert.Equal(t, "//assets.api.mondoo.app/spaces/adoring-moore-542492/assets/1dKBiOi5lkI2ov48plcowIy8WEl", policies[2].Mrn)
+}

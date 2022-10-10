@@ -25,10 +25,6 @@ func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Em
 
 // SetBundle stores a bundle of policies and queries in this marketplace
 func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
-	if len(bundle.OwnerMrn) == 0 {
-		return globalEmpty, status.Error(codes.InvalidArgument, "owner MRN is required")
-	}
-
 	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
 	FixZeroValuesInPolicyBundle(bundle)
 
@@ -58,10 +54,6 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 
 	if policyObj == nil || len(policyObj.Mrn) == 0 {
 		return nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
-	}
-
-	if len(policyObj.OwnerMrn) == 0 {
-		return nil, nil, status.Error(codes.InvalidArgument, "owner mrn is required")
 	}
 
 	policyObj.RefreshLocalAssetFilters()
