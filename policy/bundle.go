@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -323,6 +324,28 @@ func (p *Bundle) AddBundle(other *Bundle) error {
 	return nil
 }
 
+// PolicyMRNs in this bundle
+func (p *Bundle) PolicyMRNs() []string {
+	mrns := []string{}
+	for i := range p.Policies {
+		// ensure a mrn is generated
+		p.Policies[i].RefreshMRN(p.OwnerMrn)
+		mrns = append(mrns, p.Policies[i].Mrn)
+	}
+	return mrns
+}
+
+// SortContents of this policy bundle sorts Queries and Policies by MRNs
+func (p *Bundle) SortContents() {
+	sort.SliceStable(p.Queries, func(i, j int) bool {
+		return p.Queries[i].Mrn < p.Queries[j].Mrn
+	})
+
+	sort.SliceStable(p.Policies, func(i, j int) bool {
+		return p.Policies[i].Mrn < p.Policies[j].Mrn
+	})
+}
+
 // Compile PolicyBundle into a PolicyBundleMap
 // Does 4 things:
 // 1. turns policy bundle into a map for easier access
@@ -522,13 +545,4 @@ func translateSpecUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]st
 	}
 
 	return nil
-}
-
-// QueryMap extracts all the queries from the policy bundle map
-func (bundle *PolicyBundleMap) QueryMap() map[string]*Mquery {
-	res := make(map[string]*Mquery, len(bundle.Queries))
-	for _, v := range bundle.Queries {
-		res[v.CodeId] = v
-	}
-	return res
 }
