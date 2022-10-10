@@ -303,7 +303,15 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		contentChecksum = contentChecksum.Add(p.Docs.Desc)
 	}
 
-	executionChecksum = executionChecksum.Add(p.Mrn)
+	// Special handling for asset MRNs: While for most policies the MRN is
+	// important, for assets that's not the case. We can safely ignore it for
+	// the sake of the execution checksum. This also helps to indicate where
+	// policies overlap.
+	if x, _ := mrn.GetResource(p.Mrn, MRN_RESOURCE_ASSET); x != "" {
+		executionChecksum = executionChecksum.Add("root")
+	} else {
+		executionChecksum = executionChecksum.Add(p.Mrn)
+	}
 
 	// tags
 	arr := make([]string, len(p.Tags))
