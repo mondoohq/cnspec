@@ -26,7 +26,7 @@ require (
 	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.13.0
 	github.com/stretchr/testify v1.8.0
-	go.mondoo.com/cnquery v0.0.0-20221008235237-1858632361fc
+	go.mondoo.com/cnquery v0.0.0-20221010190413-e3fd3f82e8b1
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.10.0
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc
@@ -98,7 +98,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.15.18 // indirect
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.23.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/backup v1.17.9 // indirect
-	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.18.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.18.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.21.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.15.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.19.17 // indirect
@@ -115,7 +115,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.18.19 // indirect
 	github.com/aws/aws-sdk-go-v2/service/elasticsearchservice v1.16.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/emr v1.20.11 // indirect
-	github.com/aws/aws-sdk-go-v2/service/guardduty v1.15.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/guardduty v1.15.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/iam v1.18.19 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.9.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.1.18 // indirect
