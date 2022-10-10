@@ -120,7 +120,7 @@ func TestPolicyChecksums(t *testing.T) {
 			b.Queries[0].CodeId = "12345"
 		},
 		"query spec set": func() {
-			p.Specs[0].ScoringQueries["//policy.api.mondoo.app/queries/sshd-01"] = &ScoringSpec{
+			p.Specs[0].ScoringQueries["//local.cnspec.io/run/local-execution/queries/sshd-01"] = &ScoringSpec{
 				ScoringSystem: ScoringSystem_WORST,
 			}
 		},

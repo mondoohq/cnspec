@@ -355,7 +355,8 @@ func (p *Bundle) SortContents() {
 func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap, error) {
 	ownerMrn := p.OwnerMrn
 	if ownerMrn == "" {
-		return nil, errors.New("failed to compile bundle, the owner MRN is empty")
+		// this only happens for local bundles where queries have no mrn yet
+		ownerMrn = "//local.cnspec.io/run/local-execution"
 	}
 
 	var err error
