@@ -5,7 +5,6 @@ go 1.19
 require (
 	github.com/charmbracelet/bubbletea v0.22.1
 	github.com/cockroachdb/errors v1.9.0
-	github.com/gogo/status v1.1.0
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/go-hclog v1.2.0
 	github.com/hashicorp/go-multierror v1.1.1
@@ -30,7 +29,6 @@ require (
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.10.0
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc
-	google.golang.org/grpc v1.48.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/yaml.v3 v3.0.1
 	sigs.k8s.io/yaml v1.3.0
@@ -202,6 +200,7 @@ require (
 	github.com/gofrs/uuid v4.2.0+incompatible // indirect
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/gogo/status v1.1.0 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -414,6 +413,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	google.golang.org/api v0.94.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
+	google.golang.org/grpc v1.48.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
