@@ -303,10 +303,8 @@ func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*Mquery) *
 	}
 
 	bundle.Policies[id] = policy
-	if queries != nil {
-		for k, v := range queries {
-			bundle.Queries[k] = v
-		}
+	for k, v := range queries {
+		bundle.Queries[k] = v
 	}
 	return bundle
 }
