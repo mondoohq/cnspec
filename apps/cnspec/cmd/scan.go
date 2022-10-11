@@ -354,7 +354,10 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			log.Fatal().Err(err).Msg("failed to resolve policies")
 		}
 
-		report := RunScan(conf)
+		report, err := RunScan(conf)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to run scan")
+		}
 		printReports(report, conf, cmd)
 	},
 })
@@ -493,11 +496,11 @@ func (c *scanConfig) loadPolicies() error {
 	return errors.New("Cannot yet resolve policies other than incognito")
 }
 
-func RunScan(config *scanConfig) *policy.ReportCollection {
+func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 	scanner := scan.NewLocalScanner()
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 
-	reports, err := scanner.RunIncognito(
+	return scanner.RunIncognito(
 		ctx,
 		&scan.Job{
 			DoRecord:      config.DoRecord,
@@ -505,11 +508,6 @@ func RunScan(config *scanConfig) *policy.ReportCollection {
 			Bundle:        config.Bundle,
 			PolicyFilters: config.PolicyNames,
 		})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to run scan")
-	}
-
-	return reports
 }
 
 func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.Command) {

@@ -125,7 +125,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 		select {
 		case <-ctx.Done():
 			log.Warn().Msg("request context has been canceled")
-			return reporter.Reports(), false, reporter.Error()
+			return reporter.Reports(), false, nil
 		default:
 		}
 
@@ -140,7 +140,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 		})
 	}
 
-	return reporter.Reports(), true, reporter.Error()
+	return reporter.Reports(), true, nil
 }
 
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
@@ -183,6 +183,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.connection = m
 			results, err := s.runMotorizedAsset(job)
 			if err != nil {
+				log.Warn().Err(err).Str("asset", job.Asset.Name).Msg("could not scan asset")
 				job.Reporter.AddScanError(job.Asset, err)
 				return
 			}
@@ -237,6 +238,9 @@ type localAssetScanner struct {
 	Progress progress.Progress
 }
 
+// run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
+// case of an error, the results may contain partial results. The error is only returned if the scan failed to run not
+// when individual policies failed.
 func (s *localAssetScanner) run() (*AssetReport, error) {
 	s.Progress.Open()
 
@@ -252,18 +256,20 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
-	report, err := s.getReport()
-	if err != nil {
-		return nil, err
-	}
-
-	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
-	return &AssetReport{
+	ar := &AssetReport{
 		Mrn:            s.job.Asset.Mrn,
 		ResolvedPolicy: resolvedPolicy,
 		Bundle:         bundle,
-		Report:         report,
-	}, nil
+	}
+
+	report, err := s.getReport()
+	if err != nil {
+		return ar, err
+	}
+
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
+	ar.Report = report
+	return ar, nil
 }
 
 func (s *localAssetScanner) prepareAsset() error {
@@ -396,7 +402,7 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	var resolver policy.PolicyResolver = s.services
 
 	// TODO: we do not needs this anymore since we recieve updates already
-	log.Info().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
+	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
 	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
 	s.Progress.Close()
 	// handle error
