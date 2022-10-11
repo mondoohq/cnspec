@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/gogo/status"
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
-	"google.golang.org/grpc/codes"
+	"go.mondoo.com/ranger-rpc/codes"
+	"go.mondoo.com/ranger-rpc/status"
 )
 
 // MutatePolicy modifies a policy. If it does not find the policy, and if the
