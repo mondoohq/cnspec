@@ -25,7 +25,7 @@ require (
 	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.13.0
 	github.com/stretchr/testify v1.8.0
-	go.mondoo.com/cnquery v0.0.0-20221010190413-e3fd3f82e8b1
+	go.mondoo.com/cnquery v0.0.0-20221011125402-5fb2281299d0
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.10.0
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc
@@ -110,7 +110,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eks v1.22.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.22.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing v1.14.18 // indirect
-	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.18.19 // indirect
+	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.18.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/elasticsearchservice v1.16.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/emr v1.20.11 // indirect
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.15.10 // indirect
@@ -198,9 +198,7 @@ require (
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gofrs/uuid v4.2.0+incompatible // indirect
-	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/gogo/status v1.1.0 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
