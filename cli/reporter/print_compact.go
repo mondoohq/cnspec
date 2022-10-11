@@ -85,13 +85,14 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		target = assetMrn
 	}
 
+	r.out.Write([]byte(termenv.String(fmt.Sprintf("\nTarget:     %s\n", target)).Foreground(r.Colors.Primary).String()))
+
 	report, ok := r.data.Reports[assetMrn]
 	if !ok {
 		// If scanning the asset has failed, there will be no report, we should first look if there's an error for that target.
 		if err, ok := r.data.Errors[assetMrn]; ok {
 			r.out.Write([]byte(termenv.String(fmt.Sprintf(
-				`✕ Error for asset %s: %s`,
-				target, err,
+				`✕ Errors:   %s`, err,
 			)).Foreground(r.Colors.Error).String()))
 		} else {
 			r.out.Write([]byte(fmt.Sprintf(
@@ -99,6 +100,7 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 				target,
 			)))
 		}
+		r.out.Write([]byte{'\n'})
 		return
 	}
 	if report == nil {
@@ -117,8 +119,6 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 
 	score := printCompactScoreSummary(report.Score)
 	report.ComputeStats(resolved)
-
-	r.out.Write([]byte(termenv.String(fmt.Sprintf("\nTarget:     %s\n", target)).Foreground(r.Colors.Primary).String()))
 
 	if report.Stats == nil || report.Stats.Total == 0 {
 		r.out.Write([]byte(fmt.Sprintf("Datapoints: %d\n", len(report.Data))))
