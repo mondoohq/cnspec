@@ -293,3 +293,20 @@ func (bundle *PolicyBundleMap) QueryMap() map[string]*Mquery {
 	}
 	return res
 }
+
+func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*Mquery) *PolicyBundleMap {
+	var id string
+	if policy.Mrn != "" {
+		id = policy.Mrn
+	} else {
+		id = policy.Uid
+	}
+
+	bundle.Policies[id] = policy
+	if queries != nil {
+		for k, v := range queries {
+			bundle.Queries[k] = v
+		}
+	}
+	return bundle
+}
