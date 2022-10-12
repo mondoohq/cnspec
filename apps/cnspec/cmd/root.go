@@ -8,6 +8,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
+	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/theme"
@@ -102,4 +103,13 @@ func initLogger(cmd *cobra.Command) {
 		level = "debug"
 	}
 	logger.Set(level)
+}
+
+func GenerateMarkdown(dir string) error {
+	rootCmd.DisableAutoGenTag = true
+
+	// We need to remove our fancy logo from the markdown output,
+	// since it messes with the formatting.
+	rootCmd.Long = rootCmdDesc
+	return doc.GenMarkdownTree(rootCmd, dir)
 }
