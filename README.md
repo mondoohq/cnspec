@@ -178,36 +178,13 @@ Explore our:
 
 ## Community and support
 
-Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of `cnspec`, join our [community](https://github.com/orgs/mondoohq/discussions) today and let’s grow it together! 
-
-## Troubleshooting
-
-### Private repository access
-
-If you see this error:
-
-```
-fatal: could not read Username for 'https://github.com': terminal prompts disabled
-Confirm the import path was entered correctly.
-```
-
-It is caused by the repository currently being private. It'll be publish soon, but while it's still private, you need to configure your gitconfig to use SSH to download the repo:
-
-```
-[url "ssh://git@github.com/"]
-	insteadOf = https://github.com/
-```
+Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of `cnspec`, join our [community](https://github.com/orgs/mondoohq/discussions) today and let’s grow it together!
 
 ## Development
 
-We love emojis in our commits. These are their meanings:
-
-🛑 breaking 🐛 bugfix 🧹 cleanup/internals 📄 docs  
-✨⭐🌟🎉 smaller or larger features 🐎 race condition  
-🌙 MQL 🌈 visual 🍏 fix tests 🎫 auth 🦅 falcon 🐳 container  
+See our [Development Documentation](docs/development.md) for information on building and contributing to cnspec.
 
 ## Legal
 
 - **Copyright:** 2018-2022, Mondoo Inc, proprietary
 - **Authors:** Christoph Hartmann, Dominik Richter
-
