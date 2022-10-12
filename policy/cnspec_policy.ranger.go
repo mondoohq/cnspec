@@ -20,10 +20,10 @@ import (
 
 type PolicyHub interface {
 	SetBundle(context.Context, *Bundle) (*Empty, error)
-	DeletePolicy(context.Context, *Mrn) (*Empty, error)
 	ValidateBundle(context.Context, *Bundle) (*Empty, error)
-	GetPolicy(context.Context, *Mrn) (*Policy, error)
 	GetBundle(context.Context, *Mrn) (*Bundle, error)
+	GetPolicy(context.Context, *Mrn) (*Policy, error)
+	DeletePolicy(context.Context, *Mrn) (*Empty, error)
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
 	List(context.Context, *ListReq) (*Policies, error)
 	DefaultPolicies(context.Context, *DefaultPoliciesReq) (*URLs, error)
@@ -60,14 +60,14 @@ func (c *PolicyHubClient) SetBundle(ctx context.Context, in *Bundle) (*Empty, er
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetBundle"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
-	out := new(Empty)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeletePolicy"}, ""), in, out)
-	return out, err
-}
 func (c *PolicyHubClient) ValidateBundle(ctx context.Context, in *Bundle) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ValidateBundle"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyHubClient) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
+	out := new(Bundle)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundle"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyHubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
@@ -75,9 +75,9 @@ func (c *PolicyHubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, erro
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicy"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
-	out := new(Bundle)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundle"}, ""), in, out)
+func (c *PolicyHubClient) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeletePolicy"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyHubClient) GetPolicyFilters(ctx context.Context, in *Mrn) (*Mqueries, error) {
@@ -119,10 +119,10 @@ func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.H
 		Name: "PolicyHub",
 		Methods: map[string]ranger.Method{
 			"SetBundle":        srv.SetBundle,
-			"DeletePolicy":     srv.DeletePolicy,
 			"ValidateBundle":   srv.ValidateBundle,
-			"GetPolicy":        srv.GetPolicy,
 			"GetBundle":        srv.GetBundle,
+			"GetPolicy":        srv.GetPolicy,
+			"DeletePolicy":     srv.DeletePolicy,
 			"GetPolicyFilters": srv.GetPolicyFilters,
 			"List":             srv.List,
 			"DefaultPolicies":  srv.DefaultPolicies,
@@ -160,30 +160,6 @@ func (p *PolicyHubServer) SetBundle(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.SetBundle(ctx, &req)
 }
-func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req Mrn
-	var err error
-
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil, errors.New("could not access header")
-	}
-
-	switch md.First("Content-Type") {
-	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
-		err = pb.Unmarshal(*reqBytes, &req)
-	default:
-		// handle case of empty object
-		if len(*reqBytes) > 0 {
-			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-	return p.handler.DeletePolicy(ctx, &req)
-}
 func (p *PolicyHubServer) ValidateBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Bundle
 	var err error
@@ -207,6 +183,30 @@ func (p *PolicyHubServer) ValidateBundle(ctx context.Context, reqBytes *[]byte) 
 		return nil, err
 	}
 	return p.handler.ValidateBundle(ctx, &req)
+}
+func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Mrn
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetBundle(ctx, &req)
 }
 func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
@@ -232,7 +232,7 @@ func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.GetPolicy(ctx, &req)
 }
-func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
 
@@ -254,7 +254,7 @@ func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.M
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.GetBundle(ctx, &req)
+	return p.handler.DeletePolicy(ctx, &req)
 }
 func (p *PolicyHubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
