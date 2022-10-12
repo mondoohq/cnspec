@@ -278,14 +278,14 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *p
 		passfail = termenv.String("✕ Fail:  ").Foreground(color).String()
 	}
 
-	var suffix string
+	var scoreIndicator string
 	if query.Severity != nil && score.Value != 100 {
-		suffix = termenv.String(
-			fmt.Sprintf(" %s %d", rating.Letter(), score.Value),
+		scoreIndicator = termenv.String(
+			fmt.Sprintf("%s %3d  ", rating.Letter(), score.Value),
 		).Foreground(color).String()
 	}
 
-	return passfail + title + suffix + "\n"
+	return passfail + scoreIndicator + title + "\n"
 }
 
 func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery, asset *policy.Asset, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
