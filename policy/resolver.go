@@ -240,11 +240,9 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 	}
 
 	policyObj := Policy{
-		Mrn:  policyMrn,
-		Name: name, // just as a placeholder, replace with something better
-		// should we set a semver version here as well?, right now, the policy validation makes an
-		// exception for space and asset policies
-		Version: "n/a",
+		Mrn:     policyMrn,
+		Name:    name, // placeholder
+		Version: "",   // no version, semver otherwise
 		Specs: []*PolicySpec{{
 			Policies:       policyScoringSpec,
 			ScoringQueries: map[string]*ScoringSpec{},
