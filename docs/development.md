@@ -1,6 +1,8 @@
-### Dependencies
+# Development
 
-## Prerequisites
+## Building
+
+### Prerequisites
 
 Before building from source, be sure to install:
 
@@ -28,14 +30,13 @@ If `go` is not installed or an older version exists, follow instructions on [the
 
 3. Build and install
 
-   #### Unix-like systems
+    #### Unix-like systems
     ```sh
     # To install `cnspec` using Go into the $GOBIN directory:
-    export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
     make cnspec/install
     ```
 
-## Develop cnspec
+## Developing cnspec
 
 Whenever you change protos or other auto-generated files, you must regenerate files for the compiler. To do this, be sure you have the necessary tools installed (such as protobuf):
 
@@ -61,4 +62,14 @@ Then, whenever you make changes, just run:
 make cnspec/generate
 ```
 
-This generates and updates all required files for the build. Now you can `make cnspec/install` again as outlined above.
+This generates and updates all required files for the build. At this point you can `make cnspec/install` again as outlined above.
+
+## Contributing Changes
+
+### Marking PRs with Emojis
+
+We love emojis in our commits. These are their meanings:
+
+🛑 breaking 🐛 bugfix 🧹 cleanup/internals 📄 docs  
+✨⭐🌟🎉 smaller or larger features 🐎 race condition  
+🌙 MQL 🌈 visual 🍏 fix tests 🎫 auth 🦅 falcon 🐳 container  
