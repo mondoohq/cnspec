@@ -30,3 +30,25 @@ jobs:
           args: release --rm-dist --timeout 120m
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install RPM packaging dependencies
+        run: sudo apt-get install -y rpm reprepro
+      - name: Set up GPG for RPM
+        run: |
+          echo "${{ secrets.GPG_PASSPHRASE }}" > passphrase
+          echo "${{ secrets.GPG_PUBKEY }}" > mondoo_gpg2_pub.gpg
+          echo "${{ secrets.GPG_PUBKEY }}" | gpg --import --no-tty --batch --yes
+          echo "${{ secrets.GPG_SECKEY }}" | gpg --import --passphrase-file passphrase --allow-secret-key-import --pinentry-mode loopback --no-tty --batch --yes
+          echo "allow-preset-passphrase" > ~/.gnupg/gpg-agent.conf
+          # Find keygrip with 'gpg --list-secret-keys --with-keygrip'
+          gpg-connect-agent RELOADAGENT /bye
+          echo "${{secrets.GPG_PASSPHRASE}}" | /usr/lib/gnupg2/gpg-preset-passphrase --preset "${{secrets.GPG_KEYGRIP}}"
+          rpm --import mondoo_gpg2_pub.gpg
+      - name: Sign RPMs
+        run: |
+          cp scripts/rpmmacros ~/.rpmmacros
+          export GPG_TTY=$(tty)
+          ls -l dist/*.rpm
+          rpmsign --addsign dist/*.rpm
+          # Check package data and signatures
+          rpm -qpi dist/*.rpm
+
