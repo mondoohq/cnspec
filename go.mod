@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.22.1
 	github.com/cockroachdb/errors v1.9.0
 	github.com/google/uuid v1.3.0
-	github.com/hashicorp/go-hclog v1.2.0
+	github.com/hashicorp/go-hclog v1.3.1
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-plugin v1.4.3
 	github.com/hashicorp/go-version v1.6.0
