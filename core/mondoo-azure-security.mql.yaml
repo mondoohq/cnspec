@@ -1,0 +1,740 @@
+owner_mrn: //policy.api.mondoo.app
+policies:
+- uid: mondoo-azure-security
+  name: Microsoft Azure Security by Mondoo
+  version: 1.0.0
+  is_public: true
+  scoring_system: 2
+  authors:
+    - name: Mondoo, Inc
+      email: hello@mondoo.com
+  docs:
+    desc: |-
+      Azure Security by Mondoo provides guidance for establishing minimum recommended security and operational best practices for Azure.
+        
+      If you have questions, comments, or have identified ways to improve this policy, please write us at hello@mondoo.com, or reach out in [GitHub Discussions](https://github.com/orgs/mondoohq/discussions).
+  specs:
+  - asset_filter:
+      query: |
+        platform.name == "azure"
+        platform.kind == "api"
+    scoring_queries:
+      mondoo-azure-security-ensure-os-disk-are-encrypted: null
+      mondoo-azure-security-ssh-access-restricted-from-internet: null
+      mondoo-azure-security-rdp-access-restricted-from-internet: null
+      mondoo-azure-security-secure-transfer-required-enabled: null
+      mondoo-azure-security-public-access-level-private-blob-containers: null
+      mondoo-azure-security-default-network-access-rule-storage-accounts-deny: null
+      mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0: null
+queries: 
+  - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
+    title: Ensure that 'OS' disks are encrypted
+    severity: 80
+    docs:
+      desc: |
+        This control checks that both OS disks (boot volumes) are encrypted. Customer Managed keys can be either ADE or Server Side Encryption(SSE).
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.compute.vms { osDisk { properties['encryption'] } }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.compute.vms { osDisk { properties['encryption'] } }
+          ```
+      remediation: |
+        ###Terraform
+
+        __Encrypt disks Linux VM__
+
+        ```hcl
+        # Encrypt Linux OS disk with Terraform
+        resource "azurerm_linux_virtual_machine" "example" {
+          name                = "example-linux-machine"
+          resource_group_name = azurerm_resource_group.example.name
+          location            = azurerm_resource_group.example.location
+          
+          ... 
+
+          encryption_at_host_enabled = true
+          
+          ... 
+        }
+        ```
+
+        __Encrypt disks Windows VM__
+
+        ```hcl
+        resource "azurerm_windows_virtual_machine" "example" {
+          name                = "example-windows-machine"
+          resource_group_name = azurerm_resource_group.example.name
+          location            = azurerm_resource_group.example.location
+          
+          ... 
+
+          encryption_at_host_enabled = true
+          
+          ... 
+        }
+        ```
+
+        __Encrypt disks managed disks__
+
+        ```hcl
+        resource "azurerm_managed_disk" "example" {
+          name                 = var.disk_name
+          location             = var.location
+          resource_group_name  = var.resource_group_name
+          ... 
+
+          encryption_settings {
+            enabled = true
+          }
+          
+          ... 
+        }
+        ```
+      
+        ###Azure Console
+
+        To update via the Azure Console:
+
+        1. Log in to the Azure Console at https://portal.azure.com/.
+        2. Go to **Virtual machines**.
+        2. For each virtual machine, go to **Settings**
+        3. Click on **Disks**.
+        4. Click the **X** to detach the disk from the VM.
+        5. Search for **Disks** and locate any unattached disk.
+        6. Click the disk, then select **Encryption**.
+        7. Change your encryption type, then select the encryption set.
+        8. Click **Save**.
+        9. Go back to the VM and re-attach the disk.
+
+        ###Azure CLI 
+
+        ```bash
+        az vm encryption enable -g <resource_group> --name <vm_name> --disk-encryption-keyvault <keyvault_name>
+        ```
+    refs:
+      - title: Overview of managed disk encryption options
+        url: Overview of managed disk encryption options
+    query: |
+      azurerm.compute.vms {
+        osDisk {
+          properties['encryption'] != null
+        }
+      }
+  - uid: mondoo-azure-security-ssh-access-restricted-from-internet
+    title: Ensure that SSH access is restricted from the internet
+    severity: 80
+    docs:
+      desc: |
+        This control checks whether SSH on port 22 is not configured to allow access from anywhere with the CIDR block "0.0.0.0". 
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.network.securityGroups { securityRules }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.network.securityGroups { securityRules }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        # Ensure the `source_address_prefix` is configured to a restrictive CIDR address
+
+        resource "azurerm_network_security_group" "my_terraform_nsg" {
+          name                = "myNetworkSecurityGroup"
+          location            = azurerm_resource_group.rg.location
+          resource_group_name = azurerm_resource_group.rg.name
+
+          security_rule {
+            name                       = "SSH"
+            priority                   = 1001
+            direction                  = "Inbound"
+            access                     = "Allow"
+            protocol                   = "Tcp"
+            source_port_range          = "*"
+            destination_port_range     = "22"
+            source_address_prefix      = "192.168.22.5/24"
+            destination_address_prefix = "*"
+          }
+        }
+        ```
+    query: |
+      azurerm.network.securityGroups {
+        securityRules.where ( 
+          _.properties['access'] == 'Allow' && 
+          _.properties['direction'] == 'Inbound' &&
+          _.properties['protocol'] == /TCP|\*/ && 
+          _.properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ 
+        ) { 
+            destinationPortRange { _['fromPort'] > 22 || _['toPort'] < 22 
+          }
+        }
+      }
+  - uid: mondoo-azure-security-rdp-access-restricted-from-internet
+    title: Ensure that RDP access is restricted from the internet
+    severity: 80
+    docs:
+      desc: |
+        This control checks whether RDP on port 3389 is not configured to allow access from anywhere with the CIDR block "0.0.0.0". 
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.network.securityGroups { securityRules }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.network.securityGroups { securityRules }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        # Ensure the `source_address_prefix` is configured to a restrictive CIDR address
+        
+        resource "azurerm_network_security_group" "example" {
+          name                = "example-rdp-security"
+          location            = azurerm_resource_group.rg.location
+          resource_group_name = azurerm_resource_group.rg.name
+
+          security_rule {
+            name                       = "RDP"
+            priority                   = 1001
+            direction                  = "Inbound"
+            access                     = "Allow"
+            protocol                   = "Tcp"
+            source_port_range          = "*"
+            destination_port_range     = "3389"
+            source_address_prefix      = "192.168.22.5/24"
+            destination_address_prefix = "*"
+          }
+        }
+        ```
+    query: |
+      azurerm.network.securityGroups {
+        securityRules.where ( 
+          _.properties['access'] == 'Allow' && 
+          _.properties['direction'] == 'Inbound' && 
+          _.properties['protocol'] == /TCP|\*/ && 
+          _.properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ 
+        ) {
+            destinationPortRange {
+              _['fromPort'] > 3389 || _['toPort'] < 3389
+            }
+          }
+      }
+  - uid: mondoo-azure-security-secure-transfer-required-enabled
+    title: Ensure that 'Secure transfer required' is set to 'Enabled'
+    severity: 80
+    docs:
+      desc: |
+        This control checks that data encryption in transit is enabled.
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.storage.accounts { properties['supportsHttpsTrafficOnly'] }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.storage.accounts { properties['supportsHttpsTrafficOnly'] }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        resource "azurerm_storage_account" "example_storage_account" {
+          ...
+          enable_https_traffic_only = true
+        }
+        ```    
+    query: |
+      azurerm.storage.accounts {
+        properties['supportsHttpsTrafficOnly'] == true || properties['enableHttpsTrafficOnly'] == true
+      }
+  - uid: mondoo-azure-security-public-access-level-private-blob-containers
+    title: Ensure that 'Public access level' is set to Private for blob containers
+    severity: 80
+    docs:
+      desc: |
+        This control checks that anonymous access to blob containers is disabled, and public access on storage accounts is disabled.
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.storage.accounts { containers { properties['publicAccess'] == "None" } }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.storage.accounts { containers { properties['publicAccess'] == "None" } }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        resource "azurerm_storage_container" "example_storage_container" {
+            ...
+          container_access_type = "private"
+        }
+        ```
+
+        ###Azure Portal 
+
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **Storage Accounts**.
+        3. Navigate to **BLOB SERVICE**.
+        4. Select **Containers**.
+        5. Select a container and click **Access policy**. 
+        6. Set **Public Access Level** to **Private**. 
+        7. Repeat For each Container. 
+
+        Repeat steps 3-7 for each storage account. 
+    
+        ###Azure CLI
+
+        ```bash
+        az storage container set-permission 
+        --name <container_name> 
+        --public-access off 
+        --account-name <account_name> 
+        --account-key <account_key>
+        ```
+    query: |
+      azurerm.storage.accounts {
+        containers {
+          properties['publicAccess'] == "None"
+        }
+      }
+  - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
+    title: Ensure the default network access rule for Storage Accounts is set to deny
+    severity: 80
+    docs:
+      desc: |
+        This control checks that access to the default network for storage accounts is set to deny. 
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.storage.accounts { containers { properties['publicAccess'] == "None" } }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.storage.accounts { containers { properties['publicAccess'] == "None" } }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        # Ensure the `default_action` is set to `Deny`
+
+        resource "azurerm_storage_account_network_rules" "example_storage_account" {
+          resource_group_name  = azurerm_resource_group.example.name
+          storage_account_name = azurerm_storage_account.example.name
+
+          default_action       = "Deny"
+        }
+        ```
+
+        ```hcl
+        resource "azurerm_storage_account" "example_storage_account" {
+          name                = "example_storage_account"
+          resource_group_name = azurerm_resource_group.example.name
+          location            = azurerm_resource_group.example.location
+
+          network_rules {
+            default_action = "Deny"
+          }
+
+          ... 
+        }
+        ```      
+    query: |
+      azurerm.storage.accounts {
+        properties['networkAcls']['defaultAction'] == "Deny"
+      }
+  - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
+    title: Ensure 'Trusted Microsoft Services' is enabled for Storage Account access
+    severity: 80
+    docs:
+      desc: |
+        This control checks that 'Trusted Microsoft Services' is enabled for Storage Account access.
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.storage.accounts { containers { properties['publicAccess'] == "None" } }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.storage.accounts { containers { properties['publicAccess'] == "None" } }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        resource "azurerm_storage_account" "example" {
+            ...
+          network_rules {
+            ...
+            bypass = ["AzureServices"]
+            ...
+          }
+        }
+        ``` 
+    query: |
+      azurerm.storage.accounts {
+        properties['networkAcls']['bypass'] == "AzureServices"
+      }
+  - uid: mondoo-azure-security-ensure-auditing-on
+    title: Ensure that 'Auditing' is set to 'On' for SQL servers
+    severity: 80
+    docs:
+      desc: |
+        This control checks that 'Auditing' is set to 'On' for SQL servers.
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.sql.servers { auditingPolicy['state'] }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.sql.servers { auditingPolicy['state'] }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        resource "azurerm_sql_server" "example_sql_server" {
+          ...
+
+          extended_auditing_policy {
+            storage_endpoint                        = azurerm_storage_account.example.primary_blob_endpoint
+            storage_account_access_key              = azurerm_storage_account.example.primary_access_key
+            storage_account_access_key_is_secondary = true
+            retention_in_days                       = 90
+          }
+        }
+        ``` 
+    query: |
+      azurerm.sql.servers {
+        auditingPolicy['state'] == "Enabled"
+      }
+  - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-90-days
+    title: Ensure that 'Auditing' Retention is 'greater than 90 days'
+    severity: 80
+    docs:
+      desc: |
+        This control checks that 'Auditing' Retention is 'greater than or equal to 90 days'
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.sql.servers { auditingPolicy['retentionDays'] }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.sql.servers { auditingPolicy['retentionDays'] }
+          ```
+      remediation: |
+        ###Terraform
+
+        ```hcl
+        resource "azurerm_sql_server" "example" {
+          ...
+          extended_auditing_policy {
+            storage_endpoint           = azurerm_storage_account.example.primary_blob_endpoint
+            storage_account_access_key = azurerm_storage_account.example.primary_access_key
+            storage_account_access_key_is_secondary = true
+            retention_in_days                       = 90
+          }
+        }
+        ```     
+    query: |
+      azurerm.sql.servers {
+        auditingPolicy['retentionDays'] >= 90
+      }
+  - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0
+    title: Ensure no SQL Databases allow ingress 0.0.0.0/0 (ANY IP)
+    severity: 80
+    docs:
+      desc: |
+        This control checks that no SQL databases allow ingress connections from "0.0.0.0". 
+      audit: |
+        __cnquery run__
+
+        To audit Microsoft Azure with `cnquery run`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
+        2. Run the following query:
+
+          ```mql
+          cnquery run azure -c "azurerm.sql.servers { firewallRules { startIpAddress } }"
+          cnquery run azure -c "azurerm.postgresql.servers { firewallRules { startIpAddress } }"
+          cnquery run azure -c "azurerm.mariadb.servers { firewallRules { startIpAddress } }"
+          cnquery run azure -c "azurerm.mysql.servers { firewallRules { startIpAddress } }"
+          ```
+
+        __cnquery shell__
+
+        To audit Microsoft Azure with `cnquery shell`:
+
+        1. Run `az login` to authenticate with the correct Azure subscription and tenant. 
+        2. Launch `cnquery shell`:
+
+          ```bash
+          cnquery shell azure
+          ```
+        
+        3. Run the following query:
+
+          ```mql
+          azurerm.sql.servers { firewallRules { startIpAddress } }
+          azurerm.postgresql.servers { firewallRules { startIpAddress } }
+          azurerm.mariadb.servers { firewallRules { startIpAddress } } 
+          azurerm.mysql.servers { firewallRules { startIpAddress } } 
+          ```
+      remediation: |
+        ###Terraform
+
+        __mySQL__
+
+        ```hcl
+        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+
+        resource "azurerm_mysql_firewall_rule" "example" {
+          ...
+          start_ip_address    = "192.168.2.22"
+          end_ip_address      = "255.255.255.255"
+        }
+        ``` 
+        
+        __MariaDB__
+        
+        ```hcl
+        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+
+        resource "azurerm_mariadb_firewall_rule" "example" {
+          ...
+          start_ip_address    = "192.168.2.22"
+          end_ip_address      = "255.255.255.255"
+        }
+        ``` 
+
+        __SQL__
+
+        ```hcl
+        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+
+        resource "azurerm_sql_firewall_rule" "example" {
+          ...
+          start_ip_address    = "192.168.2.22"
+          end_ip_address      = "255.255.255.255"
+        }
+        ```
+
+        __Postgres__
+
+        ```hcl
+        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+
+        resource "azurerm_postgresql_firewall_rule" "example" {
+          ...
+          start_ip_address    = "192.168.2.22"
+          end_ip_address      = "255.255.255.255"
+        }
+        ``` 
+    query: |
+      azurerm.sql.servers {
+        firewallRules.length >= 1
+        firewallRules {
+          startIpAddress != '0.0.0.0'
+        }
+      }
+      azurerm.postgresql.servers {
+        firewallRules.length >= 1
+        firewallRules {
+          startIpAddress != '0.0.0.0'
+        }
+      }
+      azurerm.mysql.servers {
+        firewallRules.length >= 1
+        firewallRules {
+          startIpAddress != '0.0.0.0'
+        }
+      }
+      azurerm.mariadb.servers {
+        firewallRules.length >= 1
+        firewallRules {
+          startIpAddress != '0.0.0.0'
+        }
+      }
