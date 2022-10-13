@@ -31,7 +31,6 @@ If `go` is not installed or an older version exists, follow instructions on [the
    #### Unix-like systems
     ```sh
     # To install `cnspec` using Go into the $GOBIN directory:
-    export GOPRIVATE="github.com/mondoohq,go.mondoo.com"
     make cnspec/install
     ```
 
