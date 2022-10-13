@@ -258,14 +258,8 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 	CommonFlags: func(cmd *cobra.Command) {
 		// inventories for multi-asset scan
 		cmd.Flags().String("inventory-file", "", "path to inventory file")
-		cmd.Flags().String("inventory", "", "inventory file")
-		cmd.Flags().MarkDeprecated("inventory", "use new `inventory-file` flag instead")
 		cmd.Flags().Bool("inventory-ansible", false, "set inventory format to ansible")
-		cmd.Flags().Bool("ansible-inventory", false, "set inventory format to ansible")
-		cmd.Flags().MarkDeprecated("ansible-inventory", "use the new flag `inventory-ansible` instead")
 		cmd.Flags().Bool("inventory-domainlist", false, "set inventory format to domain list")
-		cmd.Flags().Bool("domainlist-inventory", false, "set inventory format to domain list")
-		cmd.Flags().MarkDeprecated("domainlist-inventory", "use the new flag `inventory-domainlist` instead")
 
 		// policies & incognito mode
 		cmd.Flags().Bool("incognito", false, "incognito mode. do not report scan results to the Mondoo platform.")
@@ -314,11 +308,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		viper.BindPFlag("id-detector", cmd.Flags().Lookup("id-detector"))
 		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
 		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
-
-		// deprecated flags
-		viper.BindPFlag("inventory", cmd.Flags().Lookup("inventory"))
-		viper.BindPFlag("ansible-inventory", cmd.Flags().Lookup("ansible-inventory"))
-		viper.BindPFlag("domainlist-inventory", cmd.Flags().Lookup("domainlist-inventory"))
 
 		// for all assets
 		viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))

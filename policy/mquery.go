@@ -17,7 +17,7 @@ import (
 
 // Compile a given query and return the bundle. Both v1 and v2 versions are compiled.
 // Both versions will be given the same code id.
-func (m *Mquery) Compile(props map[string]*llx.Primitive, mustCompileV1 bool) (*llx.CodeBundle, error) {
+func (m *Mquery) Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
 	if m.Query == "" {
 		return nil, errors.New("query is not implemented '" + m.Mrn + "'")
 	}
@@ -30,34 +30,12 @@ func (m *Mquery) Compile(props map[string]*llx.Primitive, mustCompileV1 bool) (*
 		return nil, err
 	}
 
-	v1Code, err := mqlc.Compile(m.Query, schema,
-		cnquery.Features{}, props)
-	if err != nil {
-		log.Debug().Err(err).Str("query", m.Query).Msg("query only compiles with piper code")
-		if mustCompileV1 {
-			return nil, err
-		}
-	} else {
-		v2Code.DeprecatedV5Code = v1Code.GetDeprecatedV5Code()
-	}
-
-	if v2Code.DeprecatedV5Code != nil {
-		v2Code.CodeV2.Id = v2Code.DeprecatedV5Code.Id
-		if v2Code.GetLabels().GetLabels() == nil {
-			v2Code.Labels = v1Code.Labels
-		} else {
-			for k, v := range v1Code.Labels.GetLabels() {
-				v2Code.Labels.Labels[k] = v
-			}
-		}
-		v2Code.DeprecatedV5Assertions = v1Code.GetDeprecatedV5Assertions()
-	}
 	return v2Code, nil
 }
 
 // RefreshAsAssetFilter filters treats this query as an asset filter and sets its Mrn, Title, and Checksum
 func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
-	bundle, err := m.refreshChecksumAndType(nil, true)
+	bundle, err := m.refreshChecksumAndType(nil)
 	if err != nil {
 		return bundle, err
 	}
@@ -71,11 +49,11 @@ func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
 
 // RefreshChecksumAndType by compiling the query and updating the Checksum field
 func (m *Mquery) RefreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
-	return m.refreshChecksumAndType(props, false)
+	return m.refreshChecksumAndType(props)
 }
 
-func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive, mustCompileV1 bool) (*llx.CodeBundle, error) {
-	bundle, err := m.Compile(props, mustCompileV1)
+func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+	bundle, err := m.Compile(props)
 	if err != nil {
 		return bundle, errors.New("failed to compile query '" + m.Query + "': " + err.Error())
 	}
@@ -92,30 +70,18 @@ func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive, mustCom
 
 	// TODO: record multiple entrypoints and types
 	// TODO(jaym): is it possible that the 2 could produce different types
-	if bundle.DeprecatedV5Code != nil {
-		if len(bundle.DeprecatedV5Code.Entrypoints) == 1 {
-			ep := bundle.DeprecatedV5Code.Entrypoints[0]
-			chunk := bundle.DeprecatedV5Code.Code[ep-1]
-			typ := chunk.Type()
-			m.Type = string(typ)
-		} else {
-			m.Type = string(types.Any)
-		}
+	if entrypoints := bundle.CodeV2.Entrypoints(); len(entrypoints) == 1 {
+		ep := entrypoints[0]
+		chunk := bundle.CodeV2.Chunk(ep)
+		typ := chunk.Type()
+		m.Type = string(typ)
 	} else {
-		if entrypoints := bundle.CodeV2.Entrypoints(); len(entrypoints) == 1 {
-			ep := entrypoints[0]
-			chunk := bundle.CodeV2.Chunk(ep)
-			typ := chunk.Type()
-			m.Type = string(typ)
-		} else {
-			m.Type = string(types.Any)
-		}
+		m.Type = string(types.Any)
 	}
 
 	c := checksums.New.
 		Add(m.Query).
 		Add(m.CodeId).
-		Add(bundle.DeprecatedV5Code.GetId()).
 		Add(m.Mrn).
 		Add(m.Type).
 		Add(m.Title).Add("v2")
@@ -225,7 +191,7 @@ func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string
 
 func ChecksumAssetFilters(queries []*Mquery) (string, error) {
 	for i := range queries {
-		if _, err := queries[i].refreshChecksumAndType(nil, true); err != nil {
+		if _, err := queries[i].refreshChecksumAndType(nil); err != nil {
 			return "", errors.New("failed to compile query: " + err.Error())
 		}
 	}

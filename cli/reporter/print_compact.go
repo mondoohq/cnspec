@@ -229,7 +229,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 	dataQueriesOutput := ""
 	resolved.WithDataQueries(func(id string, query *policy.ExecutionQuery) {
 		data := query.Code.FilterResults(results)
-		result := r.Reporter.Printer.Results(query.Code, data, report.ResolvedPolicyVersion == "v2")
+		result := r.Reporter.Printer.Results(query.Code, data)
 		if result == "" {
 			return
 		}
@@ -325,15 +325,13 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 			if codeBundle == nil {
 				r.out.Write([]byte(r.Reporter.Printer.Error("failed to find code bundle for query '" + query.Mrn + "' in bundle")))
 			} else {
-				useV2Code := report.ResolvedPolicyVersion == "v2"
-
 				r.out.Write([]byte("  Result:\n"))
 				assessment := policy.Query2Assessment(codeBundle, report)
 				if assessment != nil {
-					r.out.Write([]byte(stringx.Indent(4, r.Printer.Assessment(codeBundle, assessment, useV2Code))))
+					r.out.Write([]byte(stringx.Indent(4, r.Printer.Assessment(codeBundle, assessment))))
 				} else {
 					data := codeBundle.FilterResults(results)
-					result := r.Reporter.Printer.Results(codeBundle, data, useV2Code)
+					result := r.Reporter.Printer.Results(codeBundle, data)
 					r.out.Write([]byte(stringx.Indent(4, result)))
 				}
 			}

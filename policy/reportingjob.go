@@ -7,11 +7,9 @@ import (
 )
 
 // RefreshChecksum recalculates the reporting job checksum
-func (r *ReportingJob) RefreshChecksum(useV2Code bool) {
+func (r *ReportingJob) RefreshChecksum() {
 	checksum := checksums.New
-	if useV2Code {
-		checksum = checksum.Add("v2")
-	}
+	checksum = checksum.Add("v2")
 	checksum = checksum.Add(r.Uuid)
 	checksum = checksum.Add(r.QrId)
 

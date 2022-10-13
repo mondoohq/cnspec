@@ -26,9 +26,8 @@ type executionManager struct {
 	// to return all the results after
 	timeout time.Duration
 	// stopChan is a channel that is closed when a stop is requested
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
-	useV2Code bool
+	stopChan chan struct{}
+	wg       sync.WaitGroup
 }
 
 type runQueueItem struct {
@@ -37,7 +36,7 @@ type runQueueItem struct {
 }
 
 func newExecutionManager(schema *resources.Schema, runtime *resources.Runtime, runQueue chan runQueueItem,
-	resultChan chan *llx.RawResult, timeout time.Duration, useV2Code bool,
+	resultChan chan *llx.RawResult, timeout time.Duration,
 ) *executionManager {
 	return &executionManager{
 		runQueue:   runQueue,
@@ -47,7 +46,6 @@ func newExecutionManager(schema *resources.Schema, runtime *resources.Runtime, r
 		errChan:    make(chan error, 1),
 		stopChan:   make(chan struct{}),
 		timeout:    timeout,
-		useV2Code:  useV2Code,
 	}
 }
 
@@ -127,7 +125,7 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 
 	checksums := map[string]struct{}{}
 	// Find the list of things we must wait for before execution of this codebundle is considered done
-	for _, checksum := range CodepointChecksums(codeBundle, em.useV2Code) {
+	for _, checksum := range CodepointChecksums(codeBundle) {
 		if _, ok := checksums[checksum]; !ok {
 			checksums[checksum] = struct{}{}
 			// We must use a synchronization primitive because the llx.Run callback
@@ -152,30 +150,20 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 		return nil
 	}
 
-	var executor iExecutor
 	var err error
-	var codeID string
-	if em.useV2Code {
-		codeID = codeBundle.CodeV2.GetId()
-		log.Debug().Str("qrid", codeID).Msg("starting query execution")
-		defer func() {
-			log.Debug().Str("qrid", codeID).Msg("finished query execution")
-		}()
-		// TODO(jaym): sendResult may not be correct. We may need to fill in the
-		// checksum
-		x, err := llx.NewExecutorV2(codeBundle.CodeV2, em.runtime, props, sendResult)
-		if err == nil {
-			x.Run()
-		}
-		executor = x
-	} else {
-		codeID = codeBundle.DeprecatedV5Code.GetId()
-		log.Debug().Str("qrid", codeID).Msg("starting query execution")
-		defer func() {
-			log.Debug().Str("qrid", codeID).Msg("finished query execution")
-		}()
-		executor, err = llx.RunV1(codeBundle.DeprecatedV5Code, em.runtime, props, sendResult)
+
+	codeID := codeBundle.CodeV2.GetId()
+	log.Debug().Str("qrid", codeID).Msg("starting query execution")
+	defer func() {
+		log.Debug().Str("qrid", codeID).Msg("finished query execution")
+	}()
+	// TODO(jaym): sendResult may not be correct. We may need to fill in the
+	// checksum
+	x, err := llx.NewExecutorV2(codeBundle.CodeV2, em.runtime, props, sendResult)
+	if err == nil {
+		x.Run()
 	}
+
 	if err != nil {
 		return err
 	}
@@ -202,15 +190,7 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 		log.Warn().Strs("missing", unreported).Str("qrid", codeID).Msg("unreported datapoints")
 	}
 
-	if err := executor.Unregister(); err != nil {
-		return err
-	}
-
 	return errOut
 }
 
 var errQueryTimeout = errors.New("query execution timed out")
-
-type iExecutor interface {
-	Unregister() error
-}

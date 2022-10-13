@@ -5,77 +5,7 @@ import (
 	"go.mondoo.com/cnquery/llx"
 )
 
-func isV2Code(bundle *llx.CodeBundle, report *Report) bool {
-	return report.GetResolvedPolicyVersion() == "v2"
-}
-
 func Query2Assessment(bundle *llx.CodeBundle, report *Report) *llx.Assessment {
-	if isV2Code(bundle, report) {
-		return Query2AssessmentV2(bundle, report)
-	}
-	return Query2AssessmentV1(bundle, report)
-}
-
-// Report2Assessment converts a given bundle into an assessment given data from a report
-func Query2AssessmentV1(bundle *llx.CodeBundle, report *Report) *llx.Assessment {
-	if bundle.GetDeprecatedV5Code() == nil {
-		return nil
-	}
-
-	if report == nil {
-		report = &Report{}
-	}
-
-	// TODO: investigate why this is ever nil but it is sometimes
-	if report.Data == nil {
-		report.Data = map[string]*llx.Result{}
-	}
-
-	// TODO: we might want to store these differently per-entrypoint
-	if score, ok := report.Scores[bundle.DeprecatedV5Code.Id]; ok {
-		if len(bundle.DeprecatedV5Code.Entrypoints) == 1 {
-			c := bundle.DeprecatedV5Code.Checksums[bundle.DeprecatedV5Code.Entrypoints[0]]
-			if _, ok := report.Data[c]; !ok {
-				if score.Value == 100 {
-					report.Data[c] = llx.BoolTrue.Result()
-				} else {
-					report.Data[c] = llx.BoolFalse.Result()
-				}
-			}
-		}
-	}
-
-	return llx.Results2AssessmentLookupV1(bundle, func(s string) (*llx.RawResult, bool) {
-		score, ok := report.Scores[s]
-		if ok {
-			if score.Value == 100 {
-				return &llx.RawResult{
-					CodeID: s,
-					Data:   llx.BoolTrue,
-				}, true
-			}
-
-			return &llx.RawResult{
-				CodeID: s,
-				Data:   llx.BoolFalse,
-			}, true
-		}
-
-		data, ok := report.Data[s]
-		if ok && data != nil {
-			return data.RawResultV2(), true
-		}
-
-		log.Debug().
-			Str("codeID", bundle.DeprecatedV5Code.Id).
-			Str("checksum", s).
-			Bool("found-but-nil", ok).
-			Msg("could not look up result for field in query")
-		return nil, false
-	})
-}
-
-func Query2AssessmentV2(bundle *llx.CodeBundle, report *Report) *llx.Assessment {
 	if bundle.GetCodeV2() == nil {
 		return nil
 	}
@@ -126,7 +56,7 @@ func Query2AssessmentV2(bundle *llx.CodeBundle, report *Report) *llx.Assessment 
 		}
 
 		log.Debug().
-			Str("codeID", bundle.DeprecatedV5Code.Id).
+			Str("codeID", bundle.CodeV2.Id).
 			Str("checksum", s).
 			Bool("found-but-nil", ok).
 			Msg("could not look up result for field in query")
