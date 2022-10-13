@@ -8,4 +8,4 @@ We welcome all contributions. For more information on contributing to cnspec-pol
 
 ### Join the community!
 
-Join the [Mondoo Slack Community](https://mondoo.link/slack) to collaborate on policy as code and security automation.
+Join the [Mondoo Community GitHub Discussions](https://github.com/orgs/mondoohq/discussions) to collaborate on policy as code and security automation.
