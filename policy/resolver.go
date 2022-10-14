@@ -169,6 +169,16 @@ func (s *LocalServices) UpdateAssetJobs(ctx context.Context, req *UpdateAssetJob
 	return globalEmpty, s.cacheUpstreamJobs(ctx, req.AssetMrn, resolvedPolicy)
 }
 
+// GetResolvedPolicy for a given asset
+func (s *LocalServices) GetResolvedPolicy(ctx context.Context, mrn *Mrn) (*ResolvedPolicy, error) {
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.GetResolvedPolicy(ctx, mrn)
+	}
+
+	res, err := s.DataLake.GetResolvedPolicy(ctx, mrn.Mrn)
+	return res, err
+}
+
 // StoreResults saves the given scores and date for an asset
 func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) (*Empty, error) {
 	logger.AddTag(ctx, "asset", req.AssetMrn)
