@@ -8,6 +8,12 @@ on:
 
 jobs:
   goreleaser:
+    permissions:
+      # Add "contents" to write release
+      contents: 'write'
+      # Add "id-token" for google-github-actions/auth
+      id-token: 'write'
+
     runs-on: self-hosted
     timeout-minutes: 120
     steps:
@@ -19,6 +25,17 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: 1.19
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v0'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIP }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - id: 'gcp_secrets'
+        uses: 'google-github-actions/get-secretmanager-secrets@v0'
+        with:
+          secrets: |-
+            code_sign_cert_b64:mondoo-base-infra/mondoo_code_sign_certificate_pfx_b64
+            code_sign_cert_challenge:mondoo-base-infra/mondoo_code_sign_challenge
       - name: "Write RPM Signing Cert"
         run: |
           gpgkey="$(mktemp -t gpgkey.XXX)"
@@ -26,6 +43,13 @@ jobs:
           echo "GPG_KEY_PATH=$gpgkey" >> $GITHUB_ENV
         env:
           GPG_KEY: '${{ secrets.GPG_KEY}}'
+      - name: "Write Windows Signing Cert"
+        run: |
+          cert="$(mktemp -t cert.XXX)"
+          base64 -d <<<"$CERT_CONTENTS" > "$cert"
+          echo "CERT_FILE=$cert" >> $GITHUB_ENV
+        env:
+          CERT_CONTENTS: '${{ steps.gcp_secrets.outputs.code_sign_cert_b64 }}'
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v3
         with:
@@ -35,6 +59,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          CERT_PASSWORD: ${{ steps.gcp_secrets.outputs.code_sign_cert_challenge }}
       - name: Check RPMs 
         run: |
           rpm -qpi dist/*.rpm
