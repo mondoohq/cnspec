@@ -296,6 +296,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
 		// output rendering
 		cmd.Flags().StringP("output", "o", "compact", "set output format: "+reporter.AllFormats())
+		cmd.Flags().BoolP("json", "j", false, "set output to JSON (shorthand)")
 		cmd.Flags().Bool("no-pager", false, "disable interactive scan output pagination")
 		cmd.Flags().String("pager", "", "enable scan output pagination with custom pagination command. default is 'less -R'")
 	},
@@ -403,6 +404,12 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		fmt.Println("Available output formats: " + reporter.AllFormats())
 		os.Exit(0)
 	}
+
+	// --json takes precedence
+	if ok, _ := cmd.Flags().GetBool("json"); ok {
+		output = "json"
+	}
+	conf.Output = output
 
 	// check if the user used --password without a value
 	askPass, err := cmd.Flags().GetBool("ask-pass")
