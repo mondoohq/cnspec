@@ -40,7 +40,7 @@ func RunQuery(conf *proto.RunQueryConfig) error {
 		Output: ioutil.Discard,
 	})
 
-	pluginCmd := exec.Command("sh", "-c", cnqueryLocation()+" run_as_plugin")
+	pluginCmd := exec.Command(cnqueryLocation(), "run_as_plugin")
 
 	addColorConfig(pluginCmd)
 
