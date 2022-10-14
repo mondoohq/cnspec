@@ -52,6 +52,8 @@ type DataLake interface {
 
 	// CachedResolvedPolicy returns the resolved policy if it exists
 	CachedResolvedPolicy(ctx context.Context, policyMrn string, assetFilterChecksum string, version ResolvedPolicyVersion) (*ResolvedPolicy, error)
+	// GetResolvedPolicy returns the resolved policy for a given asset
+	GetResolvedPolicy(ctx context.Context, assetMrn string) (*ResolvedPolicy, error)
 	// ResolveQuery looks up a given query and caches it for later access (optional)
 	ResolveQuery(ctx context.Context, mrn string, cache map[string]interface{}) (*Mquery, error)
 	// SetResolvedPolicy to the data store; cached indicates if it was cached from

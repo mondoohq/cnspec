@@ -337,6 +337,7 @@ type PolicyResolver interface {
 	Resolve(context.Context, *ResolveReq) (*ResolvedPolicy, error)
 	UpdateAssetJobs(context.Context, *UpdateAssetJobsReq) (*Empty, error)
 	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
+	GetResolvedPolicy(context.Context, *Mrn) (*ResolvedPolicy, error)
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
 	GetReport(context.Context, *EntityScoreRequest) (*Report, error)
 	GetScore(context.Context, *EntityScoreRequest) (*Report, error)
@@ -393,6 +394,11 @@ func (c *PolicyResolverClient) ResolveAndUpdateJobs(ctx context.Context, in *Upd
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ResolveAndUpdateJobs"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) GetResolvedPolicy(ctx context.Context, in *Mrn) (*ResolvedPolicy, error) {
+	out := new(ResolvedPolicy)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetResolvedPolicy"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) StoreResults(ctx context.Context, in *StoreResultsReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreResults"}, ""), in, out)
@@ -436,6 +442,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"Resolve":              srv.Resolve,
 			"UpdateAssetJobs":      srv.UpdateAssetJobs,
 			"ResolveAndUpdateJobs": srv.ResolveAndUpdateJobs,
+			"GetResolvedPolicy":    srv.GetResolvedPolicy,
 			"StoreResults":         srv.StoreResults,
 			"GetReport":            srv.GetReport,
 			"GetScore":             srv.GetScore,
@@ -568,6 +575,30 @@ func (p *PolicyResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqByte
 		return nil, err
 	}
 	return p.handler.ResolveAndUpdateJobs(ctx, &req)
+}
+func (p *PolicyResolverServer) GetResolvedPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Mrn
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetResolvedPolicy(ctx, &req)
 }
 func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req StoreResultsReq

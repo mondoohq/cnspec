@@ -334,6 +334,22 @@ func (db *Db) GetData(ctx context.Context, assetMrn string, fields map[string]ty
 	return res, nil
 }
 
+// GetResolvedPolicy returns the resolved policy for a given asset
+func (db *Db) GetResolvedPolicy(ctx context.Context, assetMrn string) (*policy.ResolvedPolicy, error) {
+	x, ok := db.cache.Get(dbIDAsset + assetMrn)
+	if !ok {
+		return nil, errors.New("cannot find asset '" + assetMrn + "'")
+	}
+
+	assetw := x.(wrapAsset)
+
+	if assetw.ResolvedPolicy == nil {
+		return nil, errors.New("cannot find resolved policy for asset '" + assetMrn + "'")
+	}
+
+	return assetw.ResolvedPolicy, nil
+}
+
 // CachedResolvedPolicy returns the resolved policy if it exists
 func (db *Db) CachedResolvedPolicy(ctx context.Context, policyMrn string, assetFilterChecksum string, version policy.ResolvedPolicyVersion) (*policy.ResolvedPolicy, error) {
 	policyObj, err := db.GetValidatedPolicy(ctx, policyMrn)
