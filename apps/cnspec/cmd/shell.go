@@ -4,10 +4,12 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"go.mondoo.com/cnquery"
 	cnquery_app "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/motor/discovery/common"
 	"go.mondoo.com/cnquery/motor/providers"
+	"go.mondoo.com/cnspec"
 )
 
 func init() {
@@ -214,6 +216,11 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 
 		conf.WelcomeMessage = cnspecLogo
+
+		// FIXME: workaround for `mondoo.version`, remove once we call the plugin
+		if cnquery.Version == "" {
+			cnquery.Version = cnspec.Version
+		}
 
 		err = cnquery_app.StartShell(conf)
 		if err != nil {
