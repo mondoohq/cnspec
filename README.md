@@ -169,7 +169,7 @@ There are so many things `cnspec` can do, from testing your entire fleet for vul
 
 Explore our:
 
-- Policy Marketplace
+- [Policy Bundles](https://github.com/mondoohq/cnspec-policies)
 - [Policy as Code](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/references/mql/)
