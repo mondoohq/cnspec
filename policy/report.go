@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"encoding/json"
+
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
 )
@@ -78,4 +80,16 @@ func (sd *ScoreDistribution) Add(score *Score) {
 	case ScoreRating_failed:
 		sd.F++
 	}
+}
+
+func (p *ReportCollection) ToJSON() ([]byte, error) {
+	// removes the data to ensure the data is not exported
+	// NOTE: this has the side-effect that data is manipulated and a console print on the same struct
+	// would not work. When we need that, we need to copy the struct before we export it
+	for k := range p.Reports {
+		p.Reports[k].Data = nil
+	}
+
+	// pretty print json
+	return json.MarshalIndent(p, "", "  ")
 }

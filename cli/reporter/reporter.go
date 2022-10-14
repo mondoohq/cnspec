@@ -7,6 +7,7 @@ import (
 
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor"
 )
@@ -43,9 +44,6 @@ func New(typ string) (*Reporter, error) {
 }
 
 func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
-	var res []byte
-	var err error
-
 	switch r.Format {
 	case Compact:
 		rr := &defaultReporter{
@@ -77,8 +75,9 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 	// 	return nil
 	// case YAML:
 	// 	res, err = data.ToYAML()
-	// case JSON:
-	// 	res, err = data.ToJSON()
+	case JSON:
+		w := shared.IOWriter{Writer: out}
+		return ReportCollectionToJSON(data, &w)
 	// case JUnit:
 	// 	res, err = data.ToJunit()
 	// case CSV:
@@ -86,11 +85,4 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 	default:
 		return errors.New("unknown reporter type, don't recognize this Format")
 	}
-
-	if err != nil {
-		return err
-	}
-	out.Write(res)
-
-	return nil
 }
