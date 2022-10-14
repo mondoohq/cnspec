@@ -75,30 +75,36 @@ func TestBuilder(t *testing.T) {
 
 	b.AddQuery(
 		&llx.CodeBundle{
-			DeprecatedV5Code: &llx.CodeV1{
-				Id:          "propertyquery",
-				Datapoints:  []int32{1},
-				Entrypoints: []int32{2},
-				Checksums:   map[int32]string{1: "checksum1", 2: "pqep"},
+			CodeV2: &llx.CodeV2{
+				Id: "propertyquery",
+				Blocks: []*llx.Block{{
+					Datapoints:  []uint64{1},
+					Entrypoints: []uint64{2},
+				}},
+				Checksums: map[uint64]string{1: "checksum1", 2: "pqep"},
 			},
 		}, nil, nil)
 
 	b.AddQuery(
 		&llx.CodeBundle{
-			DeprecatedV5Code: &llx.CodeV1{
-				Id:          "query1",
-				Entrypoints: []int32{1},
-				Checksums:   map[int32]string{1: "checksum2"},
+			CodeV2: &llx.CodeV2{
+				Id: "query1",
+				Blocks: []*llx.Block{{
+					Entrypoints: []uint64{1},
+				}},
+				Checksums: map[uint64]string{1: "checksum2"},
 			},
 		}, map[string]string{"prop": "checksum1"}, nil)
 
 	b.AddQuery(
 		&llx.CodeBundle{
-			DeprecatedV5Code: &llx.CodeV1{
-				Id:          "query2",
-				Datapoints:  []int32{1},
-				Entrypoints: []int32{2},
-				Checksums:   map[int32]string{1: "checksum3", 2: "checksum4"},
+			CodeV2: &llx.CodeV2{
+				Id: "query2",
+				Blocks: []*llx.Block{{
+					Datapoints:  []uint64{1},
+					Entrypoints: []uint64{2},
+				}},
+				Checksums: map[uint64]string{1: "checksum3", 2: "checksum4"},
 			},
 		}, nil, map[string]*llx.Primitive{
 			"resolvedprop": llx.StringPrimitive("hello"),
@@ -107,29 +113,35 @@ func TestBuilder(t *testing.T) {
 
 	b.AddQuery(
 		&llx.CodeBundle{
-			DeprecatedV5Code: &llx.CodeV1{
-				Id:         "query3",
-				Datapoints: []int32{1},
-				Checksums:  map[int32]string{1: "checksum5"},
+			CodeV2: &llx.CodeV2{
+				Id: "query3",
+				Blocks: []*llx.Block{{
+					Datapoints: []uint64{1},
+				}},
+				Checksums: map[uint64]string{1: "checksum5"},
 			},
 		}, nil, nil)
 	b.CollectDatapoint("checksum5")
 
 	b.AddQuery(
 		&llx.CodeBundle{
-			DeprecatedV5Code: &llx.CodeV1{
-				Id:         "query4",
-				Datapoints: []int32{1},
-				Checksums:  map[int32]string{1: "checksum6"},
+			CodeV2: &llx.CodeV2{
+				Id: "query4",
+				Blocks: []*llx.Block{{
+					Datapoints: []uint64{1},
+				}},
+				Checksums: map[uint64]string{1: "checksum6"},
 			},
 		}, nil, nil)
 
 	b.AddQuery(
 		&llx.CodeBundle{
-			DeprecatedV5Code: &llx.CodeV1{
-				Id:         "query5",
-				Datapoints: []int32{1, 2},
-				Checksums:  map[int32]string{1: "checksum5", 2: "checksum7"},
+			CodeV2: &llx.CodeV2{
+				Id: "query5",
+				Blocks: []*llx.Block{{
+					Datapoints: []uint64{1, 2},
+				}},
+				Checksums: map[uint64]string{1: "checksum5", 2: "checksum7"},
 			},
 			MinMondooVersion: "9999.9999.9999",
 		}, nil, nil)

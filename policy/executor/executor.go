@@ -27,7 +27,7 @@ type Executor struct {
 	Results       *RawResults
 	CodeID2Bundle *CodeID2Bundle
 	bundleErrors  *llx.DictGroupTracker
-	executors     map[string]*llx.MQLExecutorV1
+	executors     map[string]*llx.MQLExecutorV2
 	watchers      *watcherMap
 	waitGroup     *internal.WaitGroup
 }
@@ -203,7 +203,7 @@ func (e *Executor) AreAllResultsCollected() bool {
 
 // Compile a given code with the default schema
 func (e *Executor) Compile(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
-	return mqlc.Compile(code, e.schema, cnquery.Features{}, props)
+	return mqlc.Compile(code, e.schema, cnquery.Features{byte(cnquery.PiperCode)}, props)
 }
 
 func (e *Executor) AddCode(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
@@ -219,10 +219,10 @@ func (e *Executor) AddCode(code string, props map[string]*llx.Primitive) (*llx.C
 
 // AddCode to the executor
 func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props map[string]*llx.Primitive) error {
-	codeID := codeBundle.DeprecatedV5Code.Id
+	codeID := codeBundle.CodeV2.Id
 
 	org, ok := e.RunningCode.Load(codeID)
-	if ok && org.DeprecatedV5Code.Id == codeBundle.DeprecatedV5Code.Id {
+	if ok && org.CodeV2.Id == codeBundle.CodeV2.Id {
 		return nil
 	}
 
@@ -233,7 +233,7 @@ func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props map[string]*l
 
 	e.RunningCode.Store(codeID, codeBundle)
 	e.bundleErrors.ClearGroup(codeID)
-	if len(codeBundle.DeprecatedV5Code.Entrypoints)+len(codeBundle.DeprecatedV5Code.Datapoints) == 0 {
+	if len(codeBundle.CodeV2.Entrypoints())+len(codeBundle.CodeV2.Datapoints()) == 0 {
 		e.updateBundle(codeID)
 	} else {
 		runSafe, runerr := isRunSafe(codeBundle)
@@ -245,17 +245,20 @@ func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props map[string]*l
 		waitGroup := e.waitGroup
 		results := e.Results
 		scoreResults := e.ScoreResults
-		var err error
-		var executor *llx.MQLExecutorV1
-		if !runSafe {
-			executor, err = llx.NoRunV1(codeBundle.DeprecatedV5Code, runerr, e.runtime, props, func(res *llx.RawResult) {
-				e.onResult(res, waitGroup, results, scoreResults)
-			})
-		} else {
-			executor, err = llx.RunV1(codeBundle.DeprecatedV5Code, e.runtime, props, func(res *llx.RawResult) {
-				e.onResult(res, waitGroup, results, scoreResults)
-			})
+
+		executor, err := llx.NewExecutorV2(codeBundle.CodeV2, e.runtime, props, func(res *llx.RawResult) {
+			e.onResult(res, waitGroup, results, scoreResults)
+		})
+		if err != nil {
+			return err
 		}
+
+		if !runSafe {
+			executor.NoRun(runerr)
+		} else {
+			err = executor.Run()
+		}
+
 		if err != nil {
 			return err
 		}
@@ -391,9 +394,10 @@ func (e *Executor) updateBundle(bundleID string) {
 	var score int
 
 	var errorsMsg string
-	for i := range bundle.DeprecatedV5Code.Entrypoints {
-		ref := bundle.DeprecatedV5Code.Entrypoints[i]
-		checksum := bundle.DeprecatedV5Code.Checksums[ref]
+	entrypoints := bundle.CodeV2.Entrypoints()
+	for i := range entrypoints {
+		ref := entrypoints[i]
+		checksum := bundle.CodeV2.Checksums[ref]
 		cur, ok := e.Results.Load(checksum)
 		if !ok {
 			allFound = false
@@ -504,7 +508,7 @@ func (e *Executor) DecomissionAndReset() {
 
 	if e.RunningCode == nil || e.executors == nil {
 		e.RunningCode = &RunningCode{}
-		e.executors = map[string]*llx.MQLExecutorV1{}
+		e.executors = map[string]*llx.MQLExecutorV2{}
 	} else {
 		e.RunningCode.Range(func(codeID string, code *llx.CodeBundle) bool {
 			e.RemoveCode(codeID, "< decommission >")
@@ -522,10 +526,11 @@ func (e *Executor) DecomissionAndReset() {
 
 func (e *Executor) incrementWaitGroup(codeBundle *llx.CodeBundle) {
 	// map all codeIDs to the code bundle they belong to
-	refs := append(codeBundle.DeprecatedV5Code.Entrypoints, codeBundle.DeprecatedV5Code.Datapoints...)
+
+	refs := append(codeBundle.CodeV2.Entrypoints(), codeBundle.CodeV2.Datapoints()...)
 	for i := range refs {
 		ep := refs[i]
-		checksum := codeBundle.DeprecatedV5Code.Checksums[ep]
+		checksum := codeBundle.CodeV2.Checksums[ep]
 
 		policyGroup, loaded := e.CodeID2Bundle.LoadOrStore(checksum, map[string]struct{}{})
 		if !loaded {
@@ -533,7 +538,7 @@ func (e *Executor) incrementWaitGroup(codeBundle *llx.CodeBundle) {
 		}
 
 		// TODO(jaym): Is it possible for multiple writers to policyGroup?
-		policyGroup[codeBundle.DeprecatedV5Code.Id] = struct{}{}
+		policyGroup[codeBundle.CodeV2.Id] = struct{}{}
 	}
 
 	stats := e.waitGroup.Stats()
@@ -545,21 +550,21 @@ func (e *Executor) incrementWaitGroup(codeBundle *llx.CodeBundle) {
 
 func (e *Executor) decrementWaitGroup(codeBundle *llx.CodeBundle) {
 	// map all codeIDs to the code bundle they belong to
-	refs := append(codeBundle.DeprecatedV5Code.Entrypoints, codeBundle.DeprecatedV5Code.Datapoints...)
+	refs := append(codeBundle.CodeV2.Entrypoints(), codeBundle.CodeV2.Datapoints()...)
 	for i := range refs {
 		ep := refs[i]
-		checksum := codeBundle.DeprecatedV5Code.Checksums[ep]
+		checksum := codeBundle.CodeV2.Checksums[ep]
 
 		policyGroup, ok := e.CodeID2Bundle.Load(checksum)
 		if !ok {
 			log.Warn().
 				Str("checksum", checksum).
-				Str("codeID", codeBundle.DeprecatedV5Code.Id).
+				Str("codeID", codeBundle.CodeV2.Id).
 				Msg("executor> cannot find code entrypoint to decrement waitgroup")
 			continue
 		}
 
-		delete(policyGroup, codeBundle.DeprecatedV5Code.Id)
+		delete(policyGroup, codeBundle.CodeV2.Id)
 		if len(policyGroup) == 0 {
 			e.CodeID2Bundle.Delete(checksum)
 
@@ -570,7 +575,7 @@ func (e *Executor) decrementWaitGroup(codeBundle *llx.CodeBundle) {
 		}
 	}
 
-	e.ScoreResults.Delete(codeBundle.DeprecatedV5Code.Id)
+	e.ScoreResults.Delete(codeBundle.CodeV2.Id)
 
 	// TODO: we probably need to clean up the wait group more... hard to tell
 
@@ -624,9 +629,10 @@ func (e *Executor) MissingQueries() []*MissingQuery {
 			missing.Entrypoints = append(missing.Entrypoints, id)
 		}
 
-		for i := range bundle.DeprecatedV5Code.Entrypoints {
-			ep := bundle.DeprecatedV5Code.Entrypoints[i]
-			checksum := bundle.DeprecatedV5Code.Checksums[ep]
+		entrypoints := bundle.CodeV2.Entrypoints()
+		for i := range entrypoints {
+			ep := entrypoints[i]
+			checksum := bundle.CodeV2.Checksums[ep]
 			_, ok := e.ScoreResults.Load(checksum)
 			if !ok {
 				found = true

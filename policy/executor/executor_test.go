@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/providers/mock"
@@ -97,7 +98,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 			received[res.CodeID]++
 		})
 
-		codeBundle, err := mqlc.Compile(code, resource_pack.Registry.Schema(), nil, nil)
+		codeBundle, err := mqlc.Compile(code, resource_pack.Registry.Schema(), cnquery.Features{byte(cnquery.PiperCode)}, nil)
 		require.NoError(t, err)
 		executor.AddCodeBundle(codeBundle, nil)
 
@@ -126,7 +127,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 
 func TestExecutor(t *testing.T) {
 	runTest(t, "", map[string]value{
-		"JSMihOSc8ss=": {
+		"+tMUN+5YkDw=": {
 			1, nil, nil,
 		},
 	})
@@ -138,7 +139,7 @@ func TestExecutor(t *testing.T) {
 		"a15HA8C3jENBZ+X5vgqz3/octJmFOANb1n5dVyefrHSAvY4oyU/gigll79skqGHVn82I+hduvsoTRV43qOejLA==": {
 			1, nil, true,
 		},
-		"r427tRVa5cg=": {
+		"Sz65cAIF9S0=": {
 			1, nil, true,
 		},
 	})
@@ -158,28 +159,32 @@ func TestUnknownResource(t *testing.T) {
 
 	err := executor.AddCodeBundle(&llx.CodeBundle{
 		Source: "fakey.mcfakerson",
-		DeprecatedV5Code: &llx.CodeV1{
+		CodeV2: &llx.CodeV2{
 			Id: "SuUuPeRFaKe=",
-			Checksums: map[int32]string{
-				1: "fakeychecksum==",
-				2: "mcfakersonchecksum==",
+			Checksums: map[uint64]string{
+				(1<<32 | 1): "fakeychecksum==",
+				(1<<32 | 2): "mcfakersonchecksum==",
 			},
-			Code: []*llx.Chunk{
+			Blocks: []*llx.Block{
 				{
-					Call: llx.Chunk_FUNCTION,
-					Id:   "fakey",
-				},
-				{
-					Call: llx.Chunk_FUNCTION,
-					Function: &llx.Function{
-						DeprecatedV5Binding: 1,
-						Type:                string(types.Bool),
+					Chunks: []*llx.Chunk{
+						{
+							Call: llx.Chunk_FUNCTION,
+							Id:   "fakey",
+						},
+						{
+							Call: llx.Chunk_FUNCTION,
+							Function: &llx.Function{
+								Binding: (1<<32 | 1),
+								Type:    string(types.Bool),
+							},
+							Id: "mcfakerson",
+						},
 					},
-					Id: "mcfakerson",
+					Entrypoints: []uint64{
+						(1<<32 | 2),
+					},
 				},
-			},
-			Entrypoints: []int32{
-				2,
 			},
 		},
 	}, nil)
@@ -207,28 +212,32 @@ func TestMinMondooVersion(t *testing.T) {
 
 	err := executor.AddCodeBundle(&llx.CodeBundle{
 		Source: "fakey.mcfakerson",
-		DeprecatedV5Code: &llx.CodeV1{
+		CodeV2: &llx.CodeV2{
 			Id: "SuUuPeRFaKe=",
-			Checksums: map[int32]string{
-				1: "fakeychecksum==",
-				2: "mcfakersonchecksum==",
+			Checksums: map[uint64]string{
+				(1<<32 | 1): "fakeychecksum==",
+				(1<<32 | 2): "mcfakersonchecksum==",
 			},
-			Code: []*llx.Chunk{
+			Blocks: []*llx.Block{
 				{
-					Call: llx.Chunk_FUNCTION,
-					Id:   "fakey",
-				},
-				{
-					Call: llx.Chunk_FUNCTION,
-					Function: &llx.Function{
-						DeprecatedV5Binding: 1,
-						Type:                string(types.Bool),
+					Chunks: []*llx.Chunk{
+						{
+							Call: llx.Chunk_FUNCTION,
+							Id:   "fakey",
+						},
+						{
+							Call: llx.Chunk_FUNCTION,
+							Function: &llx.Function{
+								Binding: (1<<32 | 1),
+								Type:    string(types.Bool),
+							},
+							Id: "mcfakerson",
+						},
 					},
-					Id: "mcfakerson",
+					Entrypoints: []uint64{
+						(1<<32 | 2),
+					},
 				},
-			},
-			Entrypoints: []int32{
-				2,
 			},
 		},
 		MinMondooVersion: "999.999.999",
@@ -258,28 +267,32 @@ func TestMinMondooVersionLocal(t *testing.T) {
 
 	err := executor.AddCodeBundle(&llx.CodeBundle{
 		Source: "fakey.mcfakerson",
-		DeprecatedV5Code: &llx.CodeV1{
+		CodeV2: &llx.CodeV2{
 			Id: "SuUuPeRFaKe=",
-			Checksums: map[int32]string{
-				1: "fakeychecksum==",
-				2: "mcfakersonchecksum==",
+			Checksums: map[uint64]string{
+				(1<<32 | 1): "fakeychecksum==",
+				(1<<32 | 2): "mcfakersonchecksum==",
 			},
-			Code: []*llx.Chunk{
+			Blocks: []*llx.Block{
 				{
-					Call: llx.Chunk_FUNCTION,
-					Id:   "fakey",
-				},
-				{
-					Call: llx.Chunk_FUNCTION,
-					Function: &llx.Function{
-						DeprecatedV5Binding: 1,
-						Type:                string(types.Bool),
+					Chunks: []*llx.Chunk{
+						{
+							Call: llx.Chunk_FUNCTION,
+							Id:   "fakey",
+						},
+						{
+							Call: llx.Chunk_FUNCTION,
+							Function: &llx.Function{
+								Binding: (1<<32 | 1),
+								Type:    string(types.Bool),
+							},
+							Id: "mcfakerson",
+						},
 					},
-					Id: "mcfakerson",
+					Entrypoints: []uint64{
+						(1<<32 | 2),
+					},
 				},
-			},
-			Entrypoints: []int32{
-				2,
 			},
 		},
 		MinMondooVersion: "999.999.999",
@@ -308,28 +321,32 @@ func TestMinMondooVersionMissing(t *testing.T) {
 
 	err := executor.AddCodeBundle(&llx.CodeBundle{
 		Source: "fakey.mcfakerson",
-		DeprecatedV5Code: &llx.CodeV1{
+		CodeV2: &llx.CodeV2{
 			Id: "SuUuPeRFaKe=",
-			Checksums: map[int32]string{
-				1: "fakeychecksum==",
-				2: "mcfakersonchecksum==",
+			Checksums: map[uint64]string{
+				(1<<32 | 1): "fakeychecksum==",
+				(1<<32 | 2): "mcfakersonchecksum==",
 			},
-			Code: []*llx.Chunk{
+			Blocks: []*llx.Block{
 				{
-					Call: llx.Chunk_FUNCTION,
-					Id:   "fakey",
-				},
-				{
-					Call: llx.Chunk_FUNCTION,
-					Function: &llx.Function{
-						DeprecatedV5Binding: 1,
-						Type:                string(types.Bool),
+					Chunks: []*llx.Chunk{
+						{
+							Call: llx.Chunk_FUNCTION,
+							Id:   "fakey",
+						},
+						{
+							Call: llx.Chunk_FUNCTION,
+							Function: &llx.Function{
+								Binding: (1<<32 | 1),
+								Type:    string(types.Bool),
+							},
+							Id: "mcfakerson",
+						},
 					},
-					Id: "mcfakerson",
+					Entrypoints: []uint64{
+						(1<<32 | 2),
+					},
 				},
-			},
-			Entrypoints: []int32{
-				2,
 			},
 		},
 	}, nil)

@@ -12,7 +12,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/fasthash/fnv1a"
-	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
@@ -128,13 +127,7 @@ func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAss
 			}
 		}
 
-		features := cnquery.GetFeatures(ctx)
-		useV2Code := features.IsActive(cnquery.PiperCode)
-		if useV2Code {
-			err = s.DataLake.SetAssetResolvedPolicy(ctx, req.AssetMrn, res, V2Code)
-		} else {
-			err = s.DataLake.SetAssetResolvedPolicy(ctx, req.AssetMrn, res, MassResolved)
-		}
+		err = s.DataLake.SetAssetResolvedPolicy(ctx, req.AssetMrn, res, V2Code)
 		if err != nil {
 			return nil, err
 		}
@@ -287,7 +280,6 @@ type resolverCache struct {
 	reportingJobsByUUID map[string]*ReportingJob
 	reportingJobsActive map[string]bool
 	errors              []*policyResolutionError
-	useV2Code           bool
 	bundleMap           *PolicyBundleMap
 }
 
@@ -315,11 +307,7 @@ func checksumStrings(strings ...string) string {
 }
 
 func (r *resolverCache) relativeChecksum(s string) string {
-	if r.useV2Code {
-		return checksumStrings(r.graphExecutionChecksum, r.assetFiltersChecksum, "v2", s)
-	} else {
-		return checksumStrings(r.graphExecutionChecksum, r.assetFiltersChecksum, s)
-	}
+	return checksumStrings(r.graphExecutionChecksum, r.assetFiltersChecksum, "v2", s)
 }
 
 func (p *policyResolverCache) clone() *policyResolverCache {
@@ -377,8 +365,6 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 
 func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
-	features := cnquery.GetFeatures(ctx)
-	useV2Code := features.IsActive(cnquery.PiperCode)
 
 	// phase 1: resolve asset filters and see if we can find a cached policy
 	// trying first with all asset filters
@@ -388,11 +374,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	var rp *ResolvedPolicy
-	if useV2Code {
-		rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, allFiltersChecksum, V2Code)
-	} else {
-		rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, allFiltersChecksum, MassResolved)
-	}
+	rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, allFiltersChecksum, V2Code)
 	if err != nil {
 		return nil, err
 	}
@@ -428,11 +410,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 
 	// ... and if the filters changed, try to look up the resolved policy again
 	if assetFiltersChecksum != allFiltersChecksum {
-		if useV2Code {
-			rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, assetFiltersChecksum, V2Code)
-		} else {
-			rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, assetFiltersChecksum, MassResolved)
-		}
+		rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, assetFiltersChecksum, V2Code)
 		if err != nil {
 			return nil, err
 		}
@@ -458,7 +436,6 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		reportingJobsByQrID:    map[string]*ReportingJob{},
 		reportingJobsByUUID:    map[string]*ReportingJob{},
 		reportingJobsActive:    map[string]bool{},
-		useV2Code:              useV2Code,
 		bundleMap:              bundleMap,
 	}
 
@@ -502,7 +479,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		Msg("resolver> phase 3: turn policy into jobs [ok]")
 
 	// phase 4: get all queries + assign them reporting jobs + update scoring jobs
-	executionJob, collectorJob, err := s.jobsToQueries(ctx, useV2Code, policyMrn, cache)
+	executionJob, collectorJob, err := s.jobsToQueries(ctx, policyMrn, cache)
 	if err != nil {
 		logCtx.Error().
 			Err(err).
@@ -515,11 +492,11 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		Msg("resolver> phase 4: aggregate queries and jobs [ok]")
 
 	// phase 5: refresh all checksums
-	s.refreshChecksums(executionJob, collectorJob, useV2Code)
+	s.refreshChecksums(executionJob, collectorJob)
 
 	// the final phases are done in the DataLake
 	for _, rj := range collectorJob.ReportingJobs {
-		rj.RefreshChecksum(useV2Code)
+		rj.RefreshChecksum()
 	}
 
 	resolvedPolicy := ResolvedPolicy{
@@ -531,11 +508,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		ReportingJobUuid:       reportingJob.Uuid,
 	}
 
-	if useV2Code {
-		err = s.DataLake.SetResolvedPolicy(ctx, policyMrn, &resolvedPolicy, V2Code, false)
-	} else {
-		err = s.DataLake.SetResolvedPolicy(ctx, policyMrn, &resolvedPolicy, MassResolved, false)
-	}
+	err = s.DataLake.SetResolvedPolicy(ctx, policyMrn, &resolvedPolicy, V2Code, false)
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +550,7 @@ func NewPolicyAssetMatchError(assetFilters []*Mquery, p *Policy) error {
 	return status.Error(codes.InvalidArgument, msg)
 }
 
-func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob, useV2Code bool) {
+func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
 	// execution job
 	{
 		queryKeys := make([]string, len(executionJob.Queries))
@@ -589,9 +562,7 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 		sort.Strings(queryKeys)
 
 		checksum := checksums.New
-		if useV2Code {
-			checksum = checksum.Add("v2")
-		}
+		checksum = checksum.Add("v2")
 		for i := range queryKeys {
 			key := queryKeys[i]
 			checksum = checksum.Add(executionJob.Queries[key].Checksum)
@@ -606,7 +577,7 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 			reportingJobKeys := make([]string, len(collectorJob.ReportingJobs))
 			i := 0
 			for k, rj := range collectorJob.ReportingJobs {
-				rj.RefreshChecksum(useV2Code)
+				rj.RefreshChecksum()
 				reportingJobKeys[i] = k
 				i++
 			}
@@ -905,7 +876,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, 
 	return nil
 }
 
-func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, policyMrn string, cache *resolverCache) (*ExecutionJob, *CollectorJob, error) {
+func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cache *resolverCache) (*ExecutionJob, *CollectorJob, error) {
 	ctx, span := tracer.Start(ctx, "resolver/jobsToQueries")
 	defer span.End()
 
@@ -973,7 +944,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 		_, isDataQuery := cache.dataQueries[curMRN]
 		_, isPropQuery := cache.propQueries[curMRN]
 
-		executionQuery, dataChecksum, err := s.mquery2executionQuery(mquery, useV2Code, props, propsToChecksums, collectorJob, !(isDataQuery || isPropQuery))
+		executionQuery, dataChecksum, err := s.mquery2executionQuery(mquery, props, propsToChecksums, collectorJob, !(isDataQuery || isPropQuery))
 		if err != nil {
 			return nil, nil, errors.New("resolver> failed to compile query for ID " + curMRN + ": " + err.Error())
 		}
@@ -1099,141 +1070,79 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, useV2Code bool, polic
 	return executionJob, collectorJob, nil
 }
 
-func (s *LocalServices) mquery2executionQuery(query *Mquery, useV2Code bool, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool) (*ExecutionQuery, string, error) {
-	bundle, err := query.Compile(props, false)
+func (s *LocalServices) mquery2executionQuery(query *Mquery, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool) (*ExecutionQuery, string, error) {
+	bundle, err := query.Compile(props)
 	if err != nil {
 		return nil, "", err
 	}
 
-	if useV2Code {
-		code := bundle.CodeV2
+	code := bundle.CodeV2
 
-		dataChecksum := ""
-		codeEntrypoints := code.Entrypoints()
-		if len(codeEntrypoints) == 1 {
-			ref := codeEntrypoints[0]
-			dataChecksum = code.Checksums[ref]
-		}
-
-		codeDatapoints := code.Datapoints()
-
-		refs := make([]uint64, len(codeDatapoints))
-		copy(refs, codeDatapoints)
-
-		// We collect the entrypoints as they contain information we
-		// need to correctly build the assessments
-		refs = append(refs, codeEntrypoints...)
-
-		datapoints := make([]string, len(refs))
-		for i := range refs {
-			ref := refs[i]
-			checksum := code.Checksums[ref]
-			datapoints[i] = checksum
-
-			// TODO: correct transplation from upper and lower parts of ref
-
-			typ := code.Chunk(ref).DereferencedTypeV2(code)
-			collectorJob.Datapoints[checksum] = &DataQueryInfo{
-				Type: string(typ),
-			}
-		}
-
-		// translate properties: we get bundle props < name => Type >
-		// we need to get execution query props: < name => checksum >
-		eqProps := map[string]string{}
-		for name := range bundle.Props {
-			checksum := propsToChecksums[name]
-			if checksum == "" {
-				return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.Query + "'")
-			}
-			eqProps[name] = checksum
-		}
-
-		res := ExecutionQuery{
-			Query:      query.Query,
-			Checksum:   query.Checksum,
-			Properties: eqProps,
-			Datapoints: datapoints,
-			Code:       bundle,
-		}
-
-		return &res, dataChecksum, nil
-	} else {
-		dataChecksum := ""
-		code := bundle.DeprecatedV5Code
-		if code == nil {
-			return nil, "", nil
-		}
-		if len(code.Entrypoints) == 1 {
-			ref := code.Entrypoints[0]
-			dataChecksum = code.Checksums[ref]
-		}
-
-		refs := make([]int32, len(code.Datapoints))
-		copy(refs, code.Datapoints)
-
-		// We collect the entrypoints as they contain information we
-		// need to correctly build the assessments
-		refs = append(refs, code.Entrypoints...)
-
-		datapoints := make([]string, len(refs))
-		for i := range refs {
-			ref := refs[i]
-			checksum := code.Checksums[ref]
-			datapoints[i] = checksum
-
-			typ := code.Code[ref-1].DereferencedTypeV1(code)
-			collectorJob.Datapoints[checksum] = &DataQueryInfo{
-				Type: string(typ),
-			}
-		}
-
-		// translate properties: we get bundle props < name => Type >
-		// we need to get execution query props: < name => checksum >
-		eqProps := map[string]string{}
-		for name := range bundle.Props {
-			checksum := propsToChecksums[name]
-			if checksum == "" {
-				return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.Query + "'")
-			}
-			eqProps[name] = checksum
-		}
-
-		res := ExecutionQuery{
-			Query:      query.Query,
-			Checksum:   query.Checksum,
-			Properties: eqProps,
-			Datapoints: datapoints,
-			Code:       bundle,
-		}
-
-		return &res, dataChecksum, nil
+	dataChecksum := ""
+	codeEntrypoints := code.Entrypoints()
+	if len(codeEntrypoints) == 1 {
+		ref := codeEntrypoints[0]
+		dataChecksum = code.Checksums[ref]
 	}
+
+	codeDatapoints := code.Datapoints()
+
+	refs := make([]uint64, len(codeDatapoints))
+	copy(refs, codeDatapoints)
+
+	// We collect the entrypoints as they contain information we
+	// need to correctly build the assessments
+	refs = append(refs, codeEntrypoints...)
+
+	datapoints := make([]string, len(refs))
+	for i := range refs {
+		ref := refs[i]
+		checksum := code.Checksums[ref]
+		datapoints[i] = checksum
+
+		// TODO: correct transplation from upper and lower parts of ref
+
+		typ := code.Chunk(ref).DereferencedTypeV2(code)
+		collectorJob.Datapoints[checksum] = &DataQueryInfo{
+			Type: string(typ),
+		}
+	}
+
+	// translate properties: we get bundle props < name => Type >
+	// we need to get execution query props: < name => checksum >
+	eqProps := map[string]string{}
+	for name := range bundle.Props {
+		checksum := propsToChecksums[name]
+		if checksum == "" {
+			return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.Query + "'")
+		}
+		eqProps[name] = checksum
+	}
+
+	res := ExecutionQuery{
+		Query:      query.Query,
+		Checksum:   query.Checksum,
+		Properties: eqProps,
+		Datapoints: datapoints,
+		Code:       bundle,
+	}
+
+	return &res, dataChecksum, nil
 }
 
 func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, resolvedPolicy *ResolvedPolicy) error {
-	features := cnquery.GetFeatures(ctx)
-	useV2Code := features.IsActive(cnquery.PiperCode)
 	var err error
 
 	if err = s.DataLake.EnsureAsset(ctx, assetMrn); err != nil {
 		return errors.New("resolver> failed to cache upstream jobs: " + err.Error())
 	}
 
-	if useV2Code {
-		err = s.DataLake.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code, true)
-	} else {
-		err = s.DataLake.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved, true)
-	}
+	err = s.DataLake.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code, true)
 	if err != nil {
 		return errors.New("resolver> failed to cache resolved upstream policy: " + err.Error())
 	}
 
-	if useV2Code {
-		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
-	} else {
-		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved)
-	}
+	err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
 	if err != nil {
 		return errors.New("resolver> failed to cache resolved upstream policy into asset: " + err.Error())
 	}
@@ -1247,13 +1156,5 @@ func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, as
 		return err
 	}
 
-	features := cnquery.GetFeatures(ctx)
-	useV2Code := features.IsActive(cnquery.PiperCode)
-
-	if useV2Code {
-		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
-	} else {
-		err = s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, MassResolved)
-	}
-	return err
+	return s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
 }

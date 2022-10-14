@@ -19,13 +19,10 @@ type GraphExecutor interface {
 func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressFn progress.Progress,
 ) error {
-	useV2Code := features.IsActive(cnquery.PiperCode)
-
-	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc, useV2Code))
+	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
 	defer collector.FlushAndStop()
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)
-	builder.WithUseV2Code(useV2Code)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
 	builder.WithFeatureBoolAssertions(features.IsActive(cnquery.BoolAssertions))
@@ -56,8 +53,8 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 		}
 		builder.AddQuery(codeBundle, nil, nil)
 
-		builder.CollectScore(codeBundle.DeprecatedV5Code.Id)
-		queryMap[codeBundle.DeprecatedV5Code.Id] = m
+		builder.CollectScore(codeBundle.CodeV2.Id)
+		queryMap[codeBundle.CodeV2.Id] = m
 	}
 
 	passingFilterQueries := map[string]struct{}{}
@@ -97,22 +94,14 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 }
 
 func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
-	useV2Code := features.IsActive(cnquery.PiperCode)
-
 	builder := internal.NewBuilder()
-	builder.WithUseV2Code(useV2Code)
 	builder.WithFeatureBoolAssertions(features.IsActive(cnquery.BoolAssertions))
 
 	builder.AddQuery(codeBundle, nil, props)
-	for _, checksum := range internal.CodepointChecksums(codeBundle, useV2Code) {
+	for _, checksum := range internal.CodepointChecksums(codeBundle) {
 		builder.CollectDatapoint(checksum)
 	}
-	qrID := ""
-	if useV2Code {
-		qrID = codeBundle.CodeV2.Id
-	} else {
-		qrID = codeBundle.DeprecatedV5Code.Id
-	}
+	qrID := codeBundle.CodeV2.Id
 	builder.CollectScore(qrID)
 
 	resultMap := map[string]*llx.RawResult{}

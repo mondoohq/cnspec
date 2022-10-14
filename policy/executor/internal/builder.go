@@ -52,7 +52,6 @@ type GraphBuilder struct {
 	// runtime to send all the expected datapoints.
 	queryTimeout time.Duration
 
-	useV2Code             bool
 	featureBoolAssertions bool
 }
 
@@ -134,10 +133,6 @@ func (b *GraphBuilder) WithQueryTimeout(timeout time.Duration) {
 	b.queryTimeout = timeout
 }
 
-func (b *GraphBuilder) WithUseV2Code(useV2Code bool) {
-	b.useV2Code = useV2Code
-}
-
 func (b *GraphBuilder) WithFeatureBoolAssertions(featureBoolAssertions bool) {
 	b.featureBoolAssertions = featureBoolAssertions
 }
@@ -146,14 +141,8 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 	resultChan := make(chan *llx.RawResult, 128)
 
 	queries := make(map[string]query, len(b.queries))
-	if b.useV2Code {
-		for _, q := range b.queries {
-			queries[q.codeBundle.GetCodeV2().GetId()] = q
-		}
-	} else {
-		for _, q := range b.queries {
-			queries[q.codeBundle.GetDeprecatedV5Code().GetId()] = q
-		}
+	for _, q := range b.queries {
+		queries[q.codeBundle.GetCodeV2().GetId()] = q
 	}
 
 	ge := &GraphExecutor{
@@ -162,7 +151,7 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 		priorityMap:  map[NodeID]int{},
 		queryTimeout: b.queryTimeout,
 		executionManager: newExecutionManager(schema, runtime, make(chan runQueueItem, len(queries)),
-			resultChan, b.queryTimeout, b.useV2Code),
+			resultChan, b.queryTimeout),
 		resultChan: resultChan,
 		doneChan:   make(chan struct{}),
 	}
@@ -250,7 +239,7 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 // This is only done for datapoints which will not be reported by a runnable query
 func (ge *GraphExecutor) handleUnrunnableQueries(unrunnableQueries []query) {
 	for _, q := range unrunnableQueries {
-		for _, checksum := range CodepointChecksums(q.codeBundle, ge.executionManager.useV2Code) {
+		for _, checksum := range CodepointChecksums(q.codeBundle) {
 			if _, ok := ge.nodes[NodeID(checksum)]; ok {
 				// If the datapoint will be reported by another query, skip
 				// handling it
@@ -309,7 +298,6 @@ func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolved
 	nodeData := &ExecutionQueryNodeData{
 		queryID:            queryID,
 		codeBundle:         codeBundle,
-		useV2Code:          ge.executionManager.useV2Code,
 		requiredProperties: map[string]*executionQueryProperty{},
 		runState:           notReadyQueryNotReady,
 		runQueue:           ge.executionManager.runQueue,
@@ -322,7 +310,7 @@ func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolved
 	}
 
 	// These don't report anything, but they make the graph connected
-	for _, checksum := range CodepointChecksums(codeBundle, ge.executionManager.useV2Code) {
+	for _, checksum := range CodepointChecksums(codeBundle) {
 		var expectedType *string
 		if t, ok := datapointTypeMap[checksum]; ok {
 			expectedType = &t
@@ -383,7 +371,7 @@ func (ge *GraphExecutor) addReportingQueryNode(queryID string, q query, featureB
 	// We don't add edges from the code.Datapoints to the query
 	// These get send to the reporting job and are not important
 	// for the query completion
-	for _, checksum := range EntrypointChecksums(q.codeBundle, ge.executionManager.useV2Code) {
+	for _, checksum := range EntrypointChecksums(q.codeBundle) {
 		nodeData.results[checksum] = &DataResult{
 			checksum: checksum,
 			resolved: false,
@@ -462,7 +450,6 @@ func (ge *GraphExecutor) addDatapointNode(datapointChecksum string, expectedType
 
 	nodeData := &DatapointNodeData{
 		expectedType: expectedType,
-		useV2Code:    ge.executionManager.useV2Code,
 		isReported:   res != nil,
 		res:          res,
 	}
@@ -520,41 +507,25 @@ func insertSorted(ss []string, s string) []string {
 	return ss
 }
 
-func CodepointChecksums(codeBundle *llx.CodeBundle, useV2Code bool) []string {
-	return append(EntrypointChecksums(codeBundle, useV2Code),
-		DatapointChecksums(codeBundle, useV2Code)...)
+func CodepointChecksums(codeBundle *llx.CodeBundle) []string {
+	return append(EntrypointChecksums(codeBundle),
+		DatapointChecksums(codeBundle)...)
 }
 
-func EntrypointChecksums(codeBundle *llx.CodeBundle, useV2Code bool) []string {
+func EntrypointChecksums(codeBundle *llx.CodeBundle) []string {
 	var checksums []string
-	if useV2Code {
-		// TODO (jaym): double check with dom this is the way to get entrypoints
-		checksums = make([]string, len(codeBundle.CodeV2.Blocks[0].Entrypoints))
-		for i, ref := range codeBundle.CodeV2.Blocks[0].Entrypoints {
-			checksums[i] = codeBundle.CodeV2.Checksums[ref]
-		}
-	} else {
-		checksums = make([]string, len(codeBundle.DeprecatedV5Code.Entrypoints))
-		for i, ref := range codeBundle.DeprecatedV5Code.Entrypoints {
-			checksums[i] = codeBundle.DeprecatedV5Code.Checksums[ref]
-		}
+	checksums = make([]string, len(codeBundle.CodeV2.Blocks[0].Entrypoints))
+	for i, ref := range codeBundle.CodeV2.Blocks[0].Entrypoints {
+		checksums[i] = codeBundle.CodeV2.Checksums[ref]
 	}
 	return checksums
 }
 
-func DatapointChecksums(codeBundle *llx.CodeBundle, useV2Code bool) []string {
+func DatapointChecksums(codeBundle *llx.CodeBundle) []string {
 	var checksums []string
-	if useV2Code {
-		// TODO (jaym): double check with dom this is the way to get entrypoints
-		checksums = make([]string, len(codeBundle.CodeV2.Blocks[0].Datapoints))
-		for i, ref := range codeBundle.CodeV2.Blocks[0].Datapoints {
-			checksums[i] = codeBundle.CodeV2.Checksums[ref]
-		}
-	} else {
-		checksums = make([]string, len(codeBundle.DeprecatedV5Code.Datapoints))
-		for i, ref := range codeBundle.DeprecatedV5Code.Datapoints {
-			checksums[i] = codeBundle.DeprecatedV5Code.Checksums[ref]
-		}
+	checksums = make([]string, len(codeBundle.CodeV2.Blocks[0].Datapoints))
+	for i, ref := range codeBundle.CodeV2.Blocks[0].Datapoints {
+		checksums[i] = codeBundle.CodeV2.Checksums[ref]
 	}
 	return checksums
 }
