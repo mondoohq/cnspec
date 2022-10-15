@@ -93,8 +93,8 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 			// print data results
 			// copy all contents where we have labels
 			filteredResults := map[string]*llx.RawResult{}
-			for i := range codeBundle.DeprecatedV5Code.Checksums {
-				checksum := codeBundle.DeprecatedV5Code.Checksums[i]
+			for i := range codeBundle.CodeV2.Checksums {
+				checksum := codeBundle.CodeV2.Checksums[i]
 
 				res, ok := results[checksum]
 				if ok {
