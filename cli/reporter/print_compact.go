@@ -34,6 +34,11 @@ type defaultReporter struct {
 }
 
 func (r *defaultReporter) print() error {
+	// catch case where the scan was not successful and no bundle was fetched from server
+	if r.data == nil || r.data.Bundle == nil {
+		return nil
+	}
+
 	r.bundle = r.data.Bundle.ToMap()
 
 	// sort assets by name, to make it more intuitive
@@ -219,8 +224,10 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		r.out.Write([]byte{'\n'})
 	}
 
-	if !r.IsIncognito {
-		panic("PROVIDE UPSTREAM URL")
+	if !r.IsIncognito && report.Url != "" {
+		r.out.Write([]byte("Report URL: "))
+		r.out.Write([]byte(report.Url))
+		r.out.Write([]byte{'\n'})
 	}
 }
 

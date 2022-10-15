@@ -26,7 +26,7 @@ type AggregateReporter struct {
 	resolvedPolicies map[string]*policy.ResolvedPolicy
 }
 
-func NewAggregateReporter(bundle *policy.Bundle, assetList []*asset.Asset) *AggregateReporter {
+func NewAggregateReporter(assetList []*asset.Asset) *AggregateReporter {
 	assets := make(map[string]*policy.Asset, len(assetList))
 	for i := range assetList {
 		cur := assetList[i]
@@ -40,7 +40,6 @@ func NewAggregateReporter(bundle *policy.Bundle, assetList []*asset.Asset) *Aggr
 		assets:           assets,
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
-		bundle:           bundle,
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 	}
 }
@@ -48,6 +47,7 @@ func NewAggregateReporter(bundle *policy.Bundle, assetList []*asset.Asset) *Aggr
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
+
 	r.bundle = results.Bundle
 }
 
