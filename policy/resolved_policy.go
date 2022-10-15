@@ -1,6 +1,9 @@
 package policy
 
-import "go.mondoo.com/cnquery/llx"
+import (
+	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/llx"
+)
 
 // WithDataQueries cycles through all data queries of the resolved policy and calls the given function
 func (x *ResolvedPolicy) WithDataQueries(f func(id string, query *ExecutionQuery)) {
@@ -31,4 +34,43 @@ func (x *ResolvedPolicy) NumDataQueries() int {
 		numDataQueries++
 	}
 	return numDataQueries
+}
+
+// RootBundlePolicies retrieves the top policies frmo the resolved policy based on a given
+// bundle. Typically this would be the asset, if it is in the bundle. Otherwise
+// it may be whatever first policies show up in the bundle.
+func (x *ResolvedPolicy) RootBundlePolicies(bundle *PolicyBundleMap, assetMrn string) ([]*Policy, error) {
+	if p := bundle.Policies[assetMrn]; p != nil {
+		return []*Policy{p}, nil
+	}
+
+	// if we can't find the asset, we look for the first working policy instead
+	startJob := x.ReportingJobUuid
+	if startJob == "" {
+		return nil, errors.New("cannot find the primary policy")
+	}
+
+	jobs := []string{startJob}
+	res := []*Policy{}
+	for i := 0; i < len(jobs); i++ {
+		job := x.CollectorJob.ReportingJobs[jobs[i]]
+		if job == nil {
+			return nil, errors.New("cannot find jobs in resolved policy to get policies")
+		}
+
+		p, ok := bundle.Policies[job.QrId]
+		if ok {
+			res = append(res, p)
+		} else {
+			for j := range job.Spec {
+				jobs = append(jobs, j)
+			}
+		}
+	}
+
+	if len(res) == 0 {
+		return nil, errors.New("cannot find any primary policies")
+	}
+
+	return res, nil
 }

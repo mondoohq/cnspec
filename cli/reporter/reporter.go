@@ -15,7 +15,6 @@ import (
 var (
 	vulnReportDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("platform.vulnerabilityReport"))
 	kernelListDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("kernel.installed"))
-	advisoryPolicyMrn           = "//policy.api.mondoo.app/policies/platform-vulnerability"
 )
 
 type Reporter struct {
@@ -70,9 +69,15 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 			data:      data,
 		}
 		return rr.print()
-	// case Report:
-	// 	r.printReport(data, out)
-	// 	return nil
+	case Report:
+		rr := &reportRenderer{
+			printer:  r.Printer,
+			pager:    r.Pager,
+			usePager: r.UsePager,
+			out:      out,
+			data:     data,
+		}
+		return rr.print()
 	// case YAML:
 	// 	res, err = data.ToYAML()
 	case JSON:
