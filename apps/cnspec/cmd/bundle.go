@@ -79,8 +79,45 @@ var policyValidateCmd = &cobra.Command{
 	},
 }
 
+func formatPath(mqlBundlePath string) error {
+	log.Info().Str("file", mqlBundlePath).Msg("format policy bundle(s)")
+	fi, err := os.Stat(mqlBundlePath)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	if fi.IsDir() {
+		filepath.WalkDir(mqlBundlePath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			// we ignore nested directories
+			if d.IsDir() {
+				return nil
+			}
+
+			// only consider .yaml|.yml files
+			if strings.HasSuffix(d.Name(), ".mql.yaml") {
+				err := formatFile(path)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+			}
+			return nil
+		})
+	} else {
+		err := formatFile(mqlBundlePath)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func formatFile(filename string) error {
-	log.Info().Str("filename", filename).Msg("format file")
+	log.Info().Str("file", filename).Msg("format file")
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -108,43 +145,15 @@ var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
 	Short:   "Apply style formatting to policy bundles",
-	Args:    cobra.ExactArgs(1),
+	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		log.Info().Str("file", args[0]).Msg("format policy bundle(s)")
-
-		mqlBundlePath := args[0]
-		fi, err := os.Stat(mqlBundlePath)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		if fi.IsDir() {
-			filepath.WalkDir(mqlBundlePath, func(path string, d fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				// we ignore nested directories
-				if d.IsDir() {
-					return nil
-				}
-
-				// only consider .yaml|.yml files
-				if strings.HasSuffix(d.Name(), ".mql.yaml") {
-					err := formatFile(path)
-					if err != nil {
-						fmt.Println(err)
-						os.Exit(1)
-					}
-				}
-				return nil
-			})
-		} else {
-			err := formatFile(mqlBundlePath)
+		for _, path := range args {
+			err := formatPath(path)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
+
 		}
 		log.Info().Msg("completed formatting policy bundle(s)")
 	},
