@@ -70,7 +70,7 @@ and images as well as images in docker registries:
 
 Additionally, you can quickly scan a container registry:
 
-    $ cnspec scan container registry harbor.yourdomain.com
+    $ cnspec scan container registry harbor.lunalectric.com
     $ cnspec scan container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 
 Mondoo also support GCP's container registry, GCR:
@@ -130,7 +130,7 @@ if it's not the full ID:
 You can also explicitly request the scan of an image or a container registry:
 
     cnspec scan container image ubuntu:20.04
-    cnspec scan container registry harbor.yourdomain.com/project/repository
+    cnspec scan container registry harbor.lunalectric.com/project/repository
 `,
 			},
 			"container-image": {
@@ -140,7 +140,7 @@ You can also explicitly request the scan of an image or a container registry:
 				Short: "Scan a container registry",
 				Long: `Scan a container registry. Supports more parameters for different registries:
 
-    cnspec scan container registry harbor.yourdomain.com/project/repository
+    cnspec scan container registry harbor.lunalectric.com/project/repository
     cnspec scan container registry yourname.azurecr.io
     cnspec scan container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 `,
@@ -233,12 +233,12 @@ configure your Azure credentials and have SSH access to your instances.`,
 				Long: `
 This command triggers a new policy scan for Microsoft 365:
 
-    $ cnspec scan ms365 --tenant-id {tennant id} --client-id {client id} --client-secret {client secret}
+    $ cnspec scan ms365 --tenant-id {tenant id} --client-id {client id} --client-secret {client secret}
 
 This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
-    $ cnspec scan ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
-    $ cnspec scan ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
+    $ cnspec scan ms365 --tenant-id {tenant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
+    $ cnspec scan ms365 --tenant-id {tenant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
 `,
 			},
 			"host": {

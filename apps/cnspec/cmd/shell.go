@@ -90,17 +90,17 @@ if it's not the full ID:
 You can also explicitly connect to an image or a container registry:
 
     cnspec shell container image ubuntu:20.04
-    cnspec shell container registry harbor.yourdomain.com/project/repository
+    cnspec shell container registry harbor.lunalectric.com/project/repository
 `,
 			},
 			"container-image": {
-				Short: "Connec to a container image",
+				Short: "Connect to a container image",
 			},
 			"container-registry": {
 				Short: "Connect to a container registry",
 				Long: `Connect to a container registry. Supports more parameters for different registries:
 
-    cnspec shell container registry harbor.yourdomain.com/project/repository
+    cnspec shell container registry harbor.lunalectric.com/project/repository
     cnspec shell container registry yourname.azurecr.io
     cnspec shell container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 `,
@@ -193,12 +193,12 @@ configure your Azure credentials and have SSH access to your instances.`,
 				Long: `
 This command opens a shell to a Microsoft 365 tenant:
 
-    $ cnspec shell ms365 --tenant-id {tennant id} --client-id {client id} --client-secret {client secret}
+    $ cnspec shell ms365 --tenant-id {tenant id} --client-id {client id} --client-secret {client secret}
 
 This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
-    $ cnspec shell ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
-    $ cnspec shell ms365 --tenant-id {tennant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
+    $ cnspec shell ms365 --tenant-id {tenant id} --client-id {client id} --certificate-path {certificate.pfx} --certificate-secret {certificate secret}
+    $ cnspec shell ms365 --tenant-id {tenant id} --client-id {client id} --certificate-path {certificate.pfx} --ask-pass
 `,
 			},
 			"host": {
