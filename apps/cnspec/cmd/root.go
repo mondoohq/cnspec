@@ -80,8 +80,8 @@ func init() {
 
 	config.DefaultConfigFile = "mondoo.yml"
 
-	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().String("log-level", "info", "set log-level: error, warn, info, debug, trace")
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
+	rootCmd.PersistentFlags().String("log-level", "info", "Set log level: error, warn, info, debug, trace")
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 	viper.BindEnv("features")

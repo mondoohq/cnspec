@@ -39,7 +39,7 @@ var embedPolicyTemplate []byte
 
 var policyInitCmd = &cobra.Command{
 	Use:   "init [path]",
-	Short: "Creates an example policy bundle that can be used as a starting point. If no filename is provided, `example-policy.mql.yml` us used",
+	Short: "Create an example policy bundle that can be used as a starting point. If no filename is provided, `example-policy.mql.yml` is used",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := "example-policy.mql.yaml"
@@ -107,7 +107,7 @@ func formatFile(filename string) error {
 var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
-	Short:   "reformat policy bundles",
+	Short:   "Apply style formatting to policy bundles",
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Info().Str("file", args[0]).Msg("format policy bundle(s)")
