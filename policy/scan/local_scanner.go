@@ -270,8 +270,8 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var policyErr error
 
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
-		if s.apiEndpoint != "" {
-			log.Info().Msg("using API endpoint " + s.apiEndpoint)
+		if s.apiEndpoint != "" && !job.Incognito {
+			log.Debug().Msg("using API endpoint " + s.apiEndpoint)
 			upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
 			if err != nil {
 				return err
