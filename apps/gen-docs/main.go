@@ -13,6 +13,9 @@ func main() {
 	dir := flags.String("docs-path", "", "Path directory where you want to generate doc files")
 
 	if err := flags.Parse(os.Args); err != nil {
+		if err == pflag.ErrHelp {
+			os.Exit(0)
+		}
 		log.Fatal().Err(err).Msg("error: could not parse flags")
 	}
 
