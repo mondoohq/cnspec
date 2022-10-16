@@ -341,6 +341,7 @@ type PolicyResolver interface {
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
+	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
 }
 
 // client implementation
@@ -414,6 +415,11 @@ func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) SynchronizeAssets(ctx context.Context, in *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error) {
+	out := new(SynchronizeAssetsResp)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SynchronizeAssets"}, ""), in, out)
+	return out, err
+}
 
 // server implementation
 
@@ -446,6 +452,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"StoreResults":         srv.StoreResults,
 			"GetReport":            srv.GetReport,
 			"GetScore":             srv.GetScore,
+			"SynchronizeAssets":    srv.SynchronizeAssets,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -671,4 +678,28 @@ func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (
 		return nil, err
 	}
 	return p.handler.GetScore(ctx, &req)
+}
+func (p *PolicyResolverServer) SynchronizeAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req SynchronizeAssetsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.SynchronizeAssets(ctx, &req)
 }

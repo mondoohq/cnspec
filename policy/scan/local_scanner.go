@@ -35,15 +35,17 @@ type LocalScanner struct {
 
 	// for remote connectivity
 	apiEndpoint string
+	spaceMrn    string
 	plugins     []ranger.ClientPlugin
 }
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, plugins []ranger.ClientPlugin) func(s *LocalScanner) {
+func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) func(s *LocalScanner) {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
 		s.plugins = plugins
+		s.spaceMrn = spaceMrn
 	}
 }
 
@@ -139,22 +141,50 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, incognito bo
 		return nil, false, errors.New("could not find an asset that we can connect to")
 	}
 
-	// ensure we have non-empty asset MRNs
-	for i := range assetList {
-		cur := assetList[i]
-		if cur.Mrn == "" && cur.Id == "" {
-			randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
-			x, err := mrn.NewMRN(randID)
-			if err != nil {
-				return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
-			}
-			cur.Mrn = x.String()
+	// sync assets
+	if s.apiEndpoint != "" && !incognito {
+		log.Info().Msg("Syncing assets")
+		upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+		if err != nil {
+			return nil, false, err
+		}
+		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
+			SpaceMrn: s.spaceMrn,
+			List:     assetList,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		log.Info().Int("assets", len(resp.Details)).Msg("got assets details")
+		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
+		for i := range resp.Details {
+			log.Info().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
+			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
+		}
 
-			// TODO: this is a hack, we need to implement the asset sync
-			cur.Mrn = "//assets.api.mondoo.app/spaces/test-infallible-taussig-796596/assets/2GBkbG6y7qeVtRsuIVBIsMpHGSM"
+		// attach the asset details to the assets list
+		for i := range assetList {
+			log.Info().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
+			platformMrn := assetList[i].PlatformIds[0]
+			assetList[i].Mrn = platformAssetMapping[platformMrn].AssetMrn
+			assetList[i].Url = platformAssetMapping[platformMrn].Url
+		}
+	} else {
+		// ensure we have non-empty asset MRNs
+		for i := range assetList {
+			cur := assetList[i]
+			if cur.Mrn == "" && cur.Id == "" {
+				randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+				x, err := mrn.NewMRN(randID)
+				if err != nil {
+					return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
+				}
+				cur.Mrn = x.String()
+			}
 		}
 	}
 
+	// plan scan jobs
 	reporter := NewAggregateReporter(assetList)
 	job.Bundle.FilterPolicies(job.PolicyFilters)
 

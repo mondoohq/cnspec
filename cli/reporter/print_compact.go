@@ -2,7 +2,7 @@ package reporter
 
 import (
 	"fmt"
-	io "io"
+	"io"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -224,9 +224,13 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		r.out.Write([]byte{'\n'})
 	}
 
-	if !r.IsIncognito && report.Url != "" {
+	if !r.IsIncognito && report.Url != "" || asset.Url != "" {
 		r.out.Write([]byte("Report URL: "))
-		r.out.Write([]byte(report.Url))
+		url := report.Url
+		if url == "" {
+			url = asset.Url
+		}
+		r.out.Write([]byte(url))
 		r.out.Write([]byte{'\n'})
 	}
 }

@@ -33,6 +33,7 @@ func NewAggregateReporter(assetList []*asset.Asset) *AggregateReporter {
 		assets[cur.Mrn] = &policy.Asset{
 			Mrn:  cur.Mrn,
 			Name: cur.Name,
+			Url:  cur.Url,
 		}
 	}
 

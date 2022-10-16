@@ -495,7 +495,7 @@ func (c *scanConfig) loadPolicies() error {
 func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 	opts := []scan.ScannerOption{}
 	if config.UpstreamConfig != nil {
-		opts = append(opts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.Plugins))
+		opts = append(opts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn, config.UpstreamConfig.Plugins))
 	}
 
 	scanner := scan.NewLocalScanner(opts...)

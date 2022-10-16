@@ -203,7 +203,7 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 	return globalEmpty, nil
 }
 
-// GetReport retreives a report for a given asset and policy
+// GetReport retrieves a report for a given asset and policy
 func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Report, error) {
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
 }
@@ -220,6 +220,11 @@ func (s *LocalServices) GetScore(ctx context.Context, req *EntityScoreReq) (*Rep
 		ScoringMrn: req.ScoreMrn,
 		Score:      &score,
 	}, nil
+}
+
+// SynchronizeAssets is not require for local services
+func (s *LocalServices) SynchronizeAssets(ctx context.Context, req *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error) {
+	return nil, nil
 }
 
 // HELPER METHODS
