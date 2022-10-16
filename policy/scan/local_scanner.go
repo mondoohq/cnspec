@@ -22,6 +22,7 @@ import (
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor"
+	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -31,13 +32,34 @@ type LocalScanner struct {
 	queue               *diskQueueClient
 	ctx                 context.Context
 	fetcher             *fetcher
+
+	// for remote connectivity
+	apiEndpoint string
+	spaceMrn    string
+	plugins     []ranger.ClientPlugin
 }
 
-func NewLocalScanner() *LocalScanner {
-	return &LocalScanner{
+type ScannerOption func(*LocalScanner)
+
+func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) func(s *LocalScanner) {
+	return func(s *LocalScanner) {
+		s.apiEndpoint = apiEndpoint
+		s.plugins = plugins
+		s.spaceMrn = spaceMrn
+	}
+}
+
+func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
+	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
 		fetcher:             newFetcher(),
 	}
+
+	for i := range opts {
+		opts[i](ls)
+	}
+
+	return ls
 }
 
 func (s *LocalScanner) EnableQueue() error {
@@ -54,7 +76,26 @@ func (s *LocalScanner) EnableQueue() error {
 }
 
 func (s *LocalScanner) Run(ctx context.Context, job *Job) (*policy.ReportCollection, error) {
-	panic("Not yet implemented (local scanner #Run(job))")
+	if job == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
+	}
+
+	if job.Inventory == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing inventory")
+	}
+
+	if ctx == nil {
+		return nil, errors.New("no context provided to run job with local scanner")
+	}
+
+	dctx := discovery.InitCtx(ctx)
+
+	reports, _, err := s.distributeJob(job, dctx, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return reports, nil
 }
 
 func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.ReportCollection, error) {
@@ -72,7 +113,7 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.Repo
 
 	dctx := discovery.InitCtx(ctx)
 
-	reports, _, err := s.distributeJob(job, dctx)
+	reports, _, err := s.distributeJob(job, dctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +121,7 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.Repo
 	return reports, nil
 }
 
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.ReportCollection, bool, error) {
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, incognito bool) (*policy.ReportCollection, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	im, err := inventory.New(inventory.WithInventory(job.Inventory))
 	if err != nil {
@@ -100,21 +141,51 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 		return nil, false, errors.New("could not find an asset that we can connect to")
 	}
 
-	// ensure we have non-empty asset MRNs
-	for i := range assetList {
-		cur := assetList[i]
-		if cur.Mrn == "" && cur.Id == "" {
-			randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
-			x, err := mrn.NewMRN(randID)
-			if err != nil {
-				return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
+	// sync assets
+	if s.apiEndpoint != "" && !incognito {
+		log.Info().Msg("Syncing assets")
+		upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+		if err != nil {
+			return nil, false, err
+		}
+		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
+			SpaceMrn: s.spaceMrn,
+			List:     assetList,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		log.Info().Int("assets", len(resp.Details)).Msg("got assets details")
+		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
+		for i := range resp.Details {
+			log.Info().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
+			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
+		}
+
+		// attach the asset details to the assets list
+		for i := range assetList {
+			log.Info().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
+			platformMrn := assetList[i].PlatformIds[0]
+			assetList[i].Mrn = platformAssetMapping[platformMrn].AssetMrn
+			assetList[i].Url = platformAssetMapping[platformMrn].Url
+		}
+	} else {
+		// ensure we have non-empty asset MRNs
+		for i := range assetList {
+			cur := assetList[i]
+			if cur.Mrn == "" && cur.Id == "" {
+				randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+				x, err := mrn.NewMRN(randID)
+				if err != nil {
+					return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
+				}
+				cur.Mrn = x.String()
 			}
-			cur.Mrn = x.String()
 		}
 	}
 
-	reporter := NewAggregateReporter(job.Bundle, assetList)
-
+	// plan scan jobs
+	reporter := NewAggregateReporter(assetList)
 	job.Bundle.FilterPolicies(job.PolicyFilters)
 
 	for i := range assetList {
@@ -131,6 +202,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context) (*policy.Rep
 
 		s.RunAssetJob(&AssetJob{
 			DoRecord:      job.DoRecord,
+			Incognito:     incognito,
 			Asset:         asset,
 			Bundle:        job.Bundle,
 			PolicyFilters: job.PolicyFilters,
@@ -198,8 +270,13 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var policyErr error
 
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
-		if services.Upstream != nil {
-			panic("cannot work with upstream yet")
+		if s.apiEndpoint != "" {
+			log.Info().Msg("using API endpoint " + s.apiEndpoint)
+			upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+			if err != nil {
+				return err
+			}
+			services.Upstream = upstream
 		}
 
 		registry := all.Registry
@@ -275,6 +352,11 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 func (s *localAssetScanner) prepareAsset() error {
 	var hub policy.PolicyHub = s.services
 
+	// if we are using upstream we get the bundle from there
+	if !s.job.Incognito {
+		return nil
+	}
+
 	if err := s.ensureBundle(); err != nil {
 		return err
 	}
@@ -303,7 +385,6 @@ func (s *localAssetScanner) prepareAsset() error {
 		AssetMrn:   s.job.Asset.Mrn,
 		PolicyMrns: policyMrns,
 	})
-
 	return err
 }
 
@@ -395,7 +476,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 		return nil, nil, err
 	}
 
-	return s.job.Bundle, resolvedPolicy, nil
+	return assetBundle, resolvedPolicy, nil
 }
 
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
@@ -414,7 +495,7 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
-	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreRequest{
+	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreReq{
 		// NOTE: we assign policies to the asset before we execute the tests, therefore this resolves all policies assigned to the asset
 		EntityMrn: s.job.Asset.Mrn,
 		ScoreMrn:  s.job.Asset.Mrn,

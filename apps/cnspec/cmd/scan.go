@@ -489,14 +489,30 @@ func (c *scanConfig) loadPolicies() error {
 		return nil
 	}
 
-	return errors.New("Cannot yet resolve policies other than incognito")
+	return nil
 }
 
 func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
-	scanner := scan.NewLocalScanner()
+	opts := []scan.ScannerOption{}
+	if config.UpstreamConfig != nil {
+		opts = append(opts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn, config.UpstreamConfig.Plugins))
+	}
+
+	scanner := scan.NewLocalScanner(opts...)
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 
-	return scanner.RunIncognito(
+	if config.IsIncognito {
+		return scanner.RunIncognito(
+			ctx,
+			&scan.Job{
+				DoRecord:      config.DoRecord,
+				Inventory:     config.Inventory,
+				Bundle:        config.Bundle,
+				PolicyFilters: config.PolicyNames,
+			})
+	}
+
+	return scanner.Run(
 		ctx,
 		&scan.Job{
 			DoRecord:      config.DoRecord,

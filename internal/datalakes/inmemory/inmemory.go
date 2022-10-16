@@ -49,7 +49,7 @@ func WithDb(resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalS
 }
 
 // Prefixes for all keys that are stored in the cache.
-// Prevent collissions by creating namespaces for different types of data.
+// Prevent collisions by creating namespaces for different types of data.
 const (
 	dbIDQuery          = "q\x00"
 	dbIDPolicy         = "p\x00"
