@@ -231,6 +231,10 @@ func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error)
 	return s.DataLake.GetValidatedPolicy(ctx, in.Mrn)
 }
 
+func (s *LocalServices) GetRawBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
+	return nil, status.Error(codes.Unimplemented, "unimplemented")
+}
+
 // GetBundle retrieves the given policy and all its dependencies (policies/queries)
 func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
 	if in == nil || len(in.Mrn) == 0 {
