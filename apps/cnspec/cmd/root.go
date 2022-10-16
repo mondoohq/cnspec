@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog"
@@ -105,11 +107,66 @@ func initLogger(cmd *cobra.Command) {
 	logger.Set(level)
 }
 
+var reMdName = regexp.MustCompile(`/([^/]+)\.md$`)
+
 func GenerateMarkdown(dir string) error {
 	rootCmd.DisableAutoGenTag = true
 
 	// We need to remove our fancy logo from the markdown output,
 	// since it messes with the formatting.
 	rootCmd.Long = rootCmdDesc
-	return doc.GenMarkdownTree(rootCmd, dir)
+
+	files := []string{}
+	err := doc.GenMarkdownTreeCustom(rootCmd, dir, func(s string) string {
+		files = append(files, s)
+
+		titles := reMdName.FindStringSubmatch(s)
+		if len(titles) == 0 {
+			return ""
+		}
+		title := strings.ReplaceAll(titles[1], "_", " ")
+
+		return "---\n" +
+			"id: " + titles[1] + "\n" +
+			"title: " + title + "\n" +
+			"---\n\n"
+	}, func(s string) string { return s })
+	if err != nil {
+		return err
+	}
+
+	// we need to remove the first headline, since it is doubled with the
+	// headline from the ID. Really annyoing, all this needs a rewrite.
+	for i := range files {
+		file := files[i]
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+
+		if !strings.HasPrefix(string(raw), "---\nid:") {
+			continue
+		}
+
+		start := strings.Index(string(raw), "\n## ")
+		if start < 0 {
+			continue
+		}
+
+		end := start
+		for i := start + 3; i < len(raw); i++ {
+			if raw[i] == '\n' {
+				end = i
+				break
+			}
+		}
+
+		res := append(raw[0:start], raw[end:]...)
+		err = os.WriteFile(file, res, 0o644)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
