@@ -342,6 +342,9 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	}
 
 	// execution fields in policy
+	if p.ScoringSystem == ScoringSystem_SCORING_UNSPECIFIED {
+		p.ScoringSystem = ScoringSystem_AVERAGE
+	}
 	executionChecksum = executionChecksum.Add(p.ScoringSystem.String())
 
 	// PROPS (must be sorted)
@@ -553,6 +556,30 @@ func IsPolicyMrn(candidate string) error {
 	}
 	if policyID == "" {
 		return errors.New("policy MRN is invalid, no policy ID in " + candidate)
+	}
+	return nil
+}
+
+func (s *ScoringSystem) UnmarshalJSON(data []byte) error {
+	// check if we have a number
+	var code int32
+	err := json.Unmarshal(data, &code)
+	if err == nil {
+		*s = ScoringSystem(code)
+	} else {
+		var name string
+		_ = json.Unmarshal(data, &name)
+
+		switch name {
+		case "highest impact":
+			*s = ScoringSystem_WORST
+		case "weighted":
+			*s = ScoringSystem_WEIGHTED
+		case "average", "":
+			*s = ScoringSystem_AVERAGE
+		default:
+			return errors.New("unknown scoring system: " + string(data))
+		}
 	}
 	return nil
 }
