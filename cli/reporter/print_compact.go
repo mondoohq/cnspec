@@ -79,6 +79,45 @@ func printCompactScoreSummary(score *policy.Score) string {
 		score.Value, score.Completion())
 }
 
+func failureHbar(stats *policy.Stats) string {
+	var res string
+
+	if stats.Failed.A > 0 {
+		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_a)
+		pct := float32(stats.Failed.A) / float32(stats.Total) * 100
+		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
+	}
+	if stats.Failed.B > 0 {
+		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_b)
+		pct := float32(stats.Failed.B) / float32(stats.Total) * 100
+		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
+	}
+	if stats.Failed.C > 0 {
+		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_c)
+		pct := float32(stats.Failed.C) / float32(stats.Total) * 100
+		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
+	}
+	if stats.Failed.D > 0 {
+		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_d)
+		pct := float32(stats.Failed.D) / float32(stats.Total) * 100
+		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
+	}
+	if stats.Failed.F > 0 {
+		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_failed)
+		pct := float32(stats.Failed.F) / float32(stats.Total) * 100
+		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
+	}
+
+	return res
+}
+
+func addSpace(s string) string {
+	if s == "" {
+		return s
+	}
+	return s + " "
+}
+
 func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset) {
 	target := asset.Name
 	if target == "" {
@@ -125,22 +164,31 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 	} else {
 		passCnt := report.Stats.Passed.Total
 		passPct := float32(passCnt) / float32(report.Stats.Total) * 100
-		passProgress := components.Hbar(15, passPct)
 		failCnt := report.Stats.Failed.Total
 		failPct := float32(failCnt) / float32(report.Stats.Total) * 100
-		failProgress := components.Hbar(15, failPct)
 		errCnt := report.Stats.Errors.Total
 		errPct := float32(errCnt) / float32(report.Stats.Total) * 100
-		errProgress := components.Hbar(15, errPct)
 		skipCnt := report.Stats.Skipped + report.Stats.Unknown
 		skipPct := float32(skipCnt) / float32(report.Stats.Total) * 100
-		skipProgress := components.Hbar(15, skipPct)
 
 		r.out.Write([]byte(r.scoreColored(report.Score.Rating(), fmt.Sprintf("Score:      %s\n", score))))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("✓ Passed:   %s%.0f%% (%d)\n", passProgress, passPct, passCnt)).Foreground(r.Colors.Success).String()))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("✕ Failed:   %s%.0f%% (%d)\n", failProgress, failPct, failCnt)).Foreground(r.Colors.Critical).String()))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("! Errors:   %s%.0f%% (%d)\n", errProgress, errPct, errCnt)).Foreground(r.Colors.Error).String()))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("» Skipped:  %s%.0f%% (%d)\n", skipProgress, skipPct, skipCnt)).Foreground(r.Colors.Disabled).String()))
+		r.out.Write([]byte(
+			termenv.String(fmt.Sprintf("✓ Passed:   %s%.0f%% (%d)\n",
+				addSpace(components.Hbar(15, passPct)), passPct, passCnt),
+			).Foreground(r.Colors.Success).String()))
+		r.out.Write([]byte(
+			termenv.String("✕ Failed:   ").Foreground(r.Colors.Critical).String() +
+				addSpace(failureHbar(report.Stats)) +
+				termenv.String(fmt.Sprintf("%.0f%% (%d)\n", failPct, failCnt)).Foreground(r.Colors.Critical).String(),
+		))
+		r.out.Write([]byte(
+			termenv.String(fmt.Sprintf("! Errors:   %s%.0f%% (%d)\n",
+				addSpace(components.Hbar(15, errPct)), errPct, errCnt),
+			).Foreground(r.Colors.Error).String()))
+		r.out.Write([]byte(
+			termenv.String(fmt.Sprintf("» Skipped:  %s%.0f%% (%d)\n",
+				addSpace(components.Hbar(15, skipPct)), skipPct, skipCnt),
+			).Foreground(r.Colors.Disabled).String()))
 
 	}
 
