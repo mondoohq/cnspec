@@ -20,11 +20,11 @@ const (
 	rootCmdDesc = "cnspec is a cloud-native security testing tool for your entire fleet\n"
 )
 
-const cnspecLogo = (" .--. ,-.,-. .--. .---.  .--.  .--.™\n" +
-	"'  ..': ,. :`._-.': .; `' '_.''  ..'\n" +
-	"`.__.':_;:_;`.__.': ._.'`.__.'`.__.'\n" +
-	"   mondoo™        : :               \n" +
-	"                  :_;               ")
+const cnspecLogo = "  ___ _ __  ___ _ __   ___  ___ \n" +
+	" / __| '_ \\/ __| '_ \\ / _ \\/ __|\n" +
+	"| (__| | | \\__ \\ |_) |  __/ (__ \n" +
+	" \\___|_| |_|___/ .__/ \\___|\\___|\n" +
+	"   mondoo™     |_|              "
 
 func init() {
 	theme.DefaultTheme.Landing = landing()
