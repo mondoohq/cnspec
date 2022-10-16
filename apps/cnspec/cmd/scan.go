@@ -283,10 +283,10 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().StringToString("annotation", nil, "add an annotation to the asset") // user-added, editable
 
 		// global asset flags
-		cmd.Flags().Bool("insecure", false, "disable TLS/SSL checks or SSH hostkey config")
-		cmd.Flags().Bool("sudo", false, "run with sudo")
+		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config")
+		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo")
 		cmd.Flags().Int("score-threshold", 0, "if any score falls below the threshold, exit 1")
-		cmd.Flags().Bool("record", false, "record backend calls")
+		cmd.Flags().Bool("record", false, "Record backend calls")
 		cmd.Flags().MarkHidden("record")
 
 		// v6 should make detect-cicd and category flag public, default for "detect-cicd" should switch to true
