@@ -339,8 +339,8 @@ type PolicyResolver interface {
 	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
 	GetResolvedPolicy(context.Context, *Mrn) (*ResolvedPolicy, error)
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
-	GetReport(context.Context, *EntityScoreRequest) (*Report, error)
-	GetScore(context.Context, *EntityScoreRequest) (*Report, error)
+	GetReport(context.Context, *EntityScoreReq) (*Report, error)
+	GetScore(context.Context, *EntityScoreReq) (*Report, error)
 }
 
 // client implementation
@@ -404,12 +404,12 @@ func (c *PolicyResolverClient) StoreResults(ctx context.Context, in *StoreResult
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreResults"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
+func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreRequest) (*Report, error) {
+func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
 	return out, err
@@ -625,7 +625,7 @@ func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byt
 	return p.handler.StoreResults(ctx, &req)
 }
 func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req EntityScoreRequest
+	var req EntityScoreReq
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -649,7 +649,7 @@ func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) 
 	return p.handler.GetReport(ctx, &req)
 }
 func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req EntityScoreRequest
+	var req EntityScoreReq
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)

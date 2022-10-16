@@ -14,7 +14,7 @@ import (
 // Why do we want the scan stuff as a proto? Because we have a disk queue
 // and it makes it easier and faster to serialize.
 
-//go:generate protoc -I ../../cnquery --proto_path=../../:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy_scan.proto
+//go:generate protoc --proto_path=../../:../../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy_scan.proto
 
 // 50MB default size
 const ResolvedPolicyCacheSize = 52428800

@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-//go:generate protoc --proto_path=../:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
+//go:generate protoc --proto_path=../:../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
 
 func (sv *SeverityValue) UnmarshalJSON(data []byte) error {
 	var sev int64
@@ -76,7 +76,7 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 	ctx := context.Background()
 
 	for time.Now().Sub(start) < timeout {
-		res, err := resolver.GetScore(ctx, &EntityScoreRequest{
+		res, err := resolver.GetScore(ctx, &EntityScoreReq{
 			EntityMrn: entity,
 			ScoreMrn:  scoringMrn,
 		})

@@ -465,7 +465,7 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
-	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreRequest{
+	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreReq{
 		// NOTE: we assign policies to the asset before we execute the tests, therefore this resolves all policies assigned to the asset
 		EntityMrn: s.job.Asset.Mrn,
 		ScoreMrn:  s.job.Asset.Mrn,
