@@ -2,9 +2,9 @@
 
 **Open source, cloud-native security and policy project**
 
-`cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. Using [policy as code](https://mondoo.com/policy-as-code/), `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers and endpoints, SaaS products, infrastructure as code, APIs, and more.
+`cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers and endpoints, SaaS products, infrastructure as code, APIs, and more.
 
-`cnspec` is a powerful policy engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It's both fast and simple to use!
+`cnspec` is a powerful Policy as Code engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
 ```bash
 cnspec scan local
@@ -92,16 +92,6 @@ cnspec scan github repo <org/repo>
 
 `cnspec` policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). `cnspec` comes with default security policies configured for all supported targets. The default policies are available via the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
 
-### Custom policies
-
-A `cnspec` policy is simply a YAML file that lets you express any security rule or best practice for your fleet. If you're interested in writing your own policies or contributing policies back to the `cnspec` community, the best place to start is to look at one of our example policies. You can find them in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
-
-To run a policy you have developed locally:
-
-```bash
-cnspec scan local --policy-bundle policy/examples/example.mql.yaml
-```
-
 ## cnspec interactive shell
 
 `cnspec` also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It’s also a great way to interact with both local and remote targets on the fly.
@@ -162,6 +152,18 @@ With an account on Mondoo Platform, you can upload policies:
 ```bash
 cnspec policy upload mypolicy.mql.yaml
 ```
+
+## Custom policies
+
+A `cnspec` policy is simply a YAML file that lets you express any security rule or best practice for your fleet.
+
+A few examples can be found in the `examples` folder in this repo. You can run any of these policies via:
+
+```bash
+cnspec scan local -f examples/example.mql.yaml
+```
+
+If you're interested in writing your own policies or contributing policies back to the `cnspec` community, see our [policy as code guide](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/).
 
 ## Where to go from here
 
