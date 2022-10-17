@@ -46,7 +46,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 
 	builder := internal.NewBuilder()
 	for _, m := range queries {
-		codeBundle, err := mqlc.Compile(m.Query, schema, cnquery.Features{}, nil)
+		codeBundle, err := mqlc.Compile(m.Query, nil, mqlc.NewConfig(schema, cnquery.DefaultFeatures))
 		if err != nil {
 			errs = append(errs, err)
 			continue

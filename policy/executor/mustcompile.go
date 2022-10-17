@@ -8,7 +8,7 @@ import (
 )
 
 func MustCompile(code string) *llx.CodeBundle {
-	codeBundle, err := mqlc.Compile(code, info.Registry.Schema(), cnquery.DefaultFeatures, nil)
+	codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(info.Registry.Schema(), cnquery.DefaultFeatures))
 	if err != nil {
 		panic(err)
 	}

@@ -203,7 +203,7 @@ func (e *Executor) AreAllResultsCollected() bool {
 
 // Compile a given code with the default schema
 func (e *Executor) Compile(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
-	return mqlc.Compile(code, e.schema, cnquery.Features{byte(cnquery.PiperCode)}, props)
+	return mqlc.Compile(code, props, mqlc.NewConfig(e.schema, cnquery.DefaultFeatures))
 }
 
 func (e *Executor) AddCode(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
