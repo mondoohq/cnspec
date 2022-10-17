@@ -9,7 +9,7 @@ import (
 
 func TestBundleFromPaths(t *testing.T) {
 	t.Run("mql bundle file with multiple queries", func(t *testing.T) {
-		bundle, err := BundleFromPaths("./examples/example.mql.yaml")
+		bundle, err := BundleFromPaths("../examples/example.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 4)
@@ -17,7 +17,7 @@ func TestBundleFromPaths(t *testing.T) {
 	})
 
 	t.Run("mql bundle file with multiple policies and queries", func(t *testing.T) {
-		bundle, err := BundleFromPaths("./examples/multi.mql.yaml")
+		bundle, err := BundleFromPaths("../examples/multi.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 5)
@@ -25,7 +25,7 @@ func TestBundleFromPaths(t *testing.T) {
 	})
 
 	t.Run("mql bundle file with directory structure", func(t *testing.T) {
-		bundle, err := BundleFromPaths("./examples/directory")
+		bundle, err := BundleFromPaths("../examples/directory")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 5)
