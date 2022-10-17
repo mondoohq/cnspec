@@ -98,7 +98,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 			received[res.CodeID]++
 		})
 
-		codeBundle, err := mqlc.Compile(code, resource_pack.Registry.Schema(), cnquery.Features{byte(cnquery.PiperCode)}, nil)
+		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(resource_pack.Registry.Schema(), cnquery.DefaultFeatures))
 		require.NoError(t, err)
 		executor.AddCodeBundle(codeBundle, nil)
 

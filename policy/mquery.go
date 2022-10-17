@@ -24,8 +24,7 @@ func (m *Mquery) Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, erro
 
 	schema := info.Registry.Schema()
 
-	v2Code, err := mqlc.Compile(m.Query, schema,
-		cnquery.Features{byte(cnquery.PiperCode)}, props)
+	v2Code, err := mqlc.Compile(m.Query, props, mqlc.NewConfig(schema, cnquery.DefaultFeatures))
 	if err != nil {
 		return nil, err
 	}
