@@ -32,7 +32,7 @@ func testChecksums(t *testing.T, equality []bool, expected map[string]string, ac
 }
 
 func TestPolicyChecksums(t *testing.T) {
-	f, err := os.ReadFile("./examples/example.mql.yaml")
+	f, err := os.ReadFile("../examples/example.mql.yaml")
 	require.NoError(t, err)
 
 	b := Bundle{}
