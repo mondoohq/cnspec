@@ -25,7 +25,6 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
-	builder.WithFeatureBoolAssertions(features.IsActive(cnquery.BoolAssertions))
 	if progressFn != nil {
 		builder.WithProgressReporter(progressFn)
 	}
@@ -95,7 +94,6 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 
 func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
 	builder := internal.NewBuilder()
-	builder.WithFeatureBoolAssertions(features.IsActive(cnquery.BoolAssertions))
 
 	builder.AddQuery(codeBundle, nil, props)
 	for _, checksum := range internal.CodepointChecksums(codeBundle) {
