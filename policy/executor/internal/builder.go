@@ -51,8 +51,6 @@ type GraphBuilder struct {
 	// queryTimeout is the amount of time to wait for the underlying lumi
 	// runtime to send all the expected datapoints.
 	queryTimeout time.Duration
-
-	featureBoolAssertions bool
 }
 
 func NewBuilder() *GraphBuilder {
@@ -133,10 +131,6 @@ func (b *GraphBuilder) WithQueryTimeout(timeout time.Duration) {
 	b.queryTimeout = timeout
 }
 
-func (b *GraphBuilder) WithFeatureBoolAssertions(featureBoolAssertions bool) {
-	b.featureBoolAssertions = featureBoolAssertions
-}
-
 func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtime, assetMrn string) (*GraphExecutor, error) {
 	resultChan := make(chan *llx.RawResult, 128)
 
@@ -192,7 +186,7 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 		} else {
 			unrunnableQueries = append(unrunnableQueries, q)
 		}
-		ge.addReportingQueryNode(queryID, q, b.featureBoolAssertions)
+		ge.addReportingQueryNode(queryID, q)
 	}
 
 	scoresToCollect := make([]string, len(b.collectScoreQrIDs))
@@ -350,16 +344,15 @@ func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolved
 	ge.nodes[n.id] = n
 }
 
-func (ge *GraphExecutor) addReportingQueryNode(queryID string, q query, featureBoolAssertions bool) {
+func (ge *GraphExecutor) addReportingQueryNode(queryID string, q query) {
 	n, ok := ge.nodes[NodeID(queryID)]
 	if ok {
 		return
 	}
 
 	nodeData := &ReportingQueryNodeData{
-		results:               map[string]*DataResult{},
-		queryID:               queryID,
-		featureBoolAssertions: featureBoolAssertions,
+		results: map[string]*DataResult{},
+		queryID: queryID,
 	}
 
 	n = &Node{

@@ -251,8 +251,7 @@ func (nodeData *DatapointNodeData) recalculate() *envelope {
 
 // ReportingQueryNodeData is the data for queries of type ReportingQueryNodeType.
 type ReportingQueryNodeData struct {
-	featureBoolAssertions bool
-	queryID               string
+	queryID string
 
 	results     map[string]*DataResult
 	invalidated bool
@@ -338,19 +337,12 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 			continue
 		}
 
-		if nodeData.featureBoolAssertions {
-			success, valid := cur.Data.IsSuccess()
-			if !success && valid {
-				allTrue = false
-			}
-			if valid {
-				allSkipped = false
-			}
-		} else {
+		success, valid := cur.Data.IsSuccess()
+		if !success && valid {
+			allTrue = false
+		}
+		if valid {
 			allSkipped = false
-			if truthy, _ := cur.Data.IsTruthy(); !truthy {
-				allTrue = false
-			}
 		}
 	}
 

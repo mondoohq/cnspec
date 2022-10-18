@@ -633,11 +633,10 @@ func TestReportingQueryNode(t *testing.T) {
 	})
 }
 
-func TestReportingQueryNode_FeatureBoolAssertions(t *testing.T) {
+func TestReportingQueryNode_BoolAssertion(t *testing.T) {
 	newNodeData := func() *ReportingQueryNodeData {
 		data := &ReportingQueryNodeData{
-			queryID:               "testqueryid",
-			featureBoolAssertions: true,
+			queryID: "testqueryid",
 		}
 		return data
 	}
