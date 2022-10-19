@@ -6,41 +6,8 @@
 
 `cnspec` is a powerful Policy as Code engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
-```bash
-cnspec scan local
-```
+![cnspec scan example](docs/gif/cnspec-scan.gif)
 
-**Sample output**
-```bash
-...
-
-Controls:
-✓ Pass:  Disable Media Sharing
-✓ Pass:  Do not enable the "root" account
-✓ Pass:  Disable Bluetooth Sharing
-✕ Fail:  Enable security auditing
-✓ Pass:  Enable Firewall
-...
-✕ Fail:  Ensure Firewall is configured to log
-✓ Pass:  Ensure nfs server is not running.
-✓ Pass:  Disable Content Caching
-✕ Fail:  Ensure AirDrop Is Disabled
-✓ Pass:  Control access to audit records
-
-
-Summary
-========================
-
-Target:     user-macbook-pro
-Score:      A    80/100     (100% completed)
-✓ Passed:   ███████████ 70% (21)
-✕ Failed:   ███ 17% (5)
-! Errors:   ██ 13% (4)
-» Skipped:  0% (0)
-
-Policies:
-A  80  macOS Security Baseline by Mondoo
-```
 
 ## Installation
 
