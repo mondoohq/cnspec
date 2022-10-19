@@ -325,7 +325,10 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 func (r *defaultReporter) printScore(title string, score *policy.Score, query *policy.Mquery) string {
 	// FIXME: this is only a workaround for a deeper bug with the score value
 	if query.Severity != nil {
-		score.Value = 100 - uint32(query.Severity.Value)
+		floor := 100 - uint32(query.Severity.Value)
+		if floor > score.Value {
+			score.Value = floor
+		}
 	}
 	rating := score.Rating()
 	color := cnspecComponents.DefaultRatingColors.Color(rating)
