@@ -132,12 +132,48 @@ cnspec scan local -f examples/example.mql.yaml
 
 If you're interested in writing your own policies or contributing policies back to the `cnspec` community, see our [policy as code guide](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/).
 
-## Where to go from here
+## Supported Targets
+
+| Description                  | Provider                   | Example                                                                                                                                               |
+| ---------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AWS accounts                 | `aws`                      | `cnspec scan aws`                                                                                                                                     |
+| AWS EC2 instances            | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
+| AWS EC2 Instance Connect     | `aws ec2 instance-connect` | `cnspec scan aws ec2 instance-connect ec2-user@INSTANCEID`                                                                                            |
+| AWS EC2 EBS snapshot         | `aws ec2 ebs snapshot`     | `cnspec scan aws ec2 ebs snapshot SNAPSHOTID`                                                                                                         |
+| AWS EC2 EBS volume           | `aws ec2 ebs volume`       | `cnspec scan aws ec2 ebs volume VOLUMEID`                                                                                                             |
+| Container images             | `container`, `docker`      | `cnspec scan container ubuntu:latest`                                                                                                                 |
+| Container registries         | `container registry`       | `cnspec scan container registry index.docker.io/library/rockylinux:8 `                                                                                |
+| DNS records                  | `host`                     | `cnspec scan host mondoo.com`                                                                                                                         |
+| GitHub organizations         | `github org`               | `cnspec scan github org mondoohq`                                                                                                                     |
+| GitHub repositories          | `github repo`              | `cnspec scan github repo mondoohq/cnspec`                                                                                                             |
+| GitLab groups                | `gitlab`                   | `cnspec scan gitlab --group mondoohq`                                                                                                                 |
+| Google Cloud projects        | `gcp`                      | `cnspec scan gcp`                                                                                                                                     |
+| Kubernetes cluster nodes     | `local`, `ssh`             | `cnspec scan ssh user@host`                                                                                                                           |
+| Kubernetes clusters          | `k8s`                      | `cnspec scan k8s`                                                                                                                                     |
+| Kubernetes manifests         | `k8s`                      | `cnspec scan k8s manifest.yaml `                                                                                                                      |
+| Kubernetes workloads         | `k8s`                      | `cnspec scan k8s --discover pods,deployments`                                                                                                         |
+| Linux hosts                  | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@host`                                                                                            |
+| macOS hosts                  | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@IP_ADDRESS`                                                                                      |
+| Microsoft 365 accounts       | `ms365`                    | `cnspec scan ms365 --tenant-id TENANT_ID --client-id CLIENT_ID --certificate-path PFX_FILE`                                                           |
+| Microsoft Azure accounts     | `azure`                    | `cnspec scan azure --subscription SUBSCRIPTION_ID`                                                                                                    |
+| Microsoft Azure instances    | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
+| Running containers           | `docker`                   | `cnspec scan docker CONTAINER_ID`                                                                                                                     |
+| SSL certificates on websites | `host`                     | `cnspec scan host mondoo.com`                                                                                                                         |
+| Terraform HCL                | `terraform`                | `cnspec scan terraform HCL_FILE_OR_PATH`                                                                                                              |
+| Terraform plan               | `terraform plan`           | `cnspec scan terraform plan plan.json`                                                                                                                |
+| Terraform state              | `terraform state`          | `cnspec scan terraform state state.json`                                                                                                              |
+| Vagrant virtual machines     | `vagrant`                  | `cnspec scan vagrant HOST`                                                                                                                            |
+| VMware vSphere               | `vsphere`                  | `cnspec scan vsphere user@domain@host --ask-pass`                                                                                                     |
+| Windows hosts                | `local`, `ssh`, `winrm`    | `cnspec scan local`,<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass` or<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
+
+
+## What’s next?
 
 There are so many things `cnspec` can do, from testing your entire fleet for vulnerabilities to gathering information and creating reports for auditors. With its custom policies, `cnspec` can scan any component you care about!
 
 Explore our:
 
+- [cnspec docs](https://mondoo.com/docs/cnspec/)
 - [Policy Bundles](https://github.com/mondoohq/cnspec-policies)
 - [Policy as Code](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
@@ -145,7 +181,7 @@ Explore our:
 - [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
 - [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-mondoo) to integrate `cnspec` with HashiCorp Packer!
 
-## Community and support
+## Join the community!
 
 Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of `cnspec`, join our [community](https://github.com/orgs/mondoohq/discussions) today and let’s grow it together!
 
