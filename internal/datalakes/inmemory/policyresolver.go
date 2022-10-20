@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
@@ -615,12 +614,6 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 		} else {
 			score.FailureTime = org.FailureTime
 		}
-	} else if score.Type == policy.ScoreType_Error && strings.Contains(score.Message, "not found") {
-		// asset most like vanished during scanning, e.g., k8s pod or AWS auto scaling instance
-		score.ValueModifiedTime = now
-		score.FailureTime = now
-		score.Type = policy.ScoreType_Unscored
-		// change message??? Are we really sure it vanished?
 	} else {
 		score.ValueModifiedTime = org.ValueModifiedTime
 		score.FailureTime = org.FailureTime

@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"strings"
+
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
@@ -304,6 +306,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	allSkipped := true
 	allTrue := true
 	foundError := false
+	assetVanishedDuringScan := false
 	var scoreFound *llx.RawData
 	var scoreValue int
 
@@ -313,6 +316,16 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 		if cur == nil {
 			allFound = false
 			break
+		}
+
+		if cur.Data.Error != nil && strings.HasSuffix(cur.Data.Error.Error(), "not found") {
+			assetVanishedDuringScan = true
+			// append ; if we accumulate errors
+			if errorsMsg != "" {
+				errorsMsg += "; "
+			}
+			errorsMsg += cur.Data.Error.Error()
+			continue
 		}
 
 		if cur.Data.Error != nil {
@@ -347,7 +360,16 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	}
 
 	if allFound {
-		if foundError {
+		if assetVanishedDuringScan {
+			return &policy.Score{
+				QrId:            nodeData.queryID,
+				Type:            policy.ScoreType_Unscored,
+				Value:           0,
+				ScoreCompletion: 100,
+				Weight:          1,
+				Message:         errorsMsg,
+			}
+		} else if foundError {
 			return &policy.Score{
 				QrId:            nodeData.queryID,
 				Type:            policy.ScoreType_Error,
