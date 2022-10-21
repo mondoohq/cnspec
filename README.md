@@ -1,5 +1,13 @@
 # cnspec
 
+```
+  ___ _ __  ___ _ __   ___  ___ 
+ / __| '_ \/ __| '_ \ / _ \/ __|
+| (__| | | \__ \ |_) |  __/ (__ 
+ \___|_| |_|___/ .__/ \___|\___|
+   mondoo™     |_|              
+```
+
 **Open source, cloud-native security and policy project**
 
 `cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers and endpoints, SaaS products, infrastructure as code, APIs, and more.
@@ -67,12 +75,6 @@ cnspec scan github repo <org/repo>
 
 ```bash
 cnspec shell local
- .--. ,-.,-. .--. .---.  .--.  .--.™
-'  ..': ,. :`._-.': .; `' '_.''  ..'
-`.__.':_;:_;`.__.': ._.'`.__.'`.__.'
-   mondoo™        : :
-                  :_;
-cnspec>
 ```
 
 The shell provides a `help` command to get help on the resources that power `cnspec`. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource. For example:
