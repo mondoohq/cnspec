@@ -154,7 +154,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 
 	// sync assets
 	if upstreamConfig.ApiEndpoint != "" && !upstreamConfig.Incognito {
-		log.Info().Msg("Syncing assets")
+		log.Info().Msg("syncing assets")
 		upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
 		if err != nil {
 			return nil, false, err
@@ -166,16 +166,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		if err != nil {
 			return nil, false, err
 		}
-		log.Info().Int("assets", len(resp.Details)).Msg("got assets details")
+		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
 		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
 		for i := range resp.Details {
-			log.Info().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
+			log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
 			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
 		}
 
 		// attach the asset details to the assets list
 		for i := range assetList {
-			log.Info().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
+			log.Debug().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
 			platformMrn := assetList[i].PlatformIds[0]
 			assetList[i].Mrn = platformAssetMapping[platformMrn].AssetMrn
 			assetList[i].Url = platformAssetMapping[platformMrn].Url

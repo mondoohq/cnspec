@@ -3,14 +3,14 @@ package components
 import (
 	"fmt"
 	"io"
-	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/olekukonko/tablewriter"
-	"go.mondoo.com/cnquery/resources/packs/core/vadvisor"
-	cvss_proto "go.mondoo.com/cnquery/resources/packs/core/vadvisor/cvss"
+	"go.mondoo.com/cnquery/upstream/mvd"
+	"go.mondoo.com/cnquery/upstream/mvd/cvss"
+	"go.mondoo.com/cnspec/cli/components/advisories"
 )
 
 func NewAdvisoryResultTable() AdvisoryResultTable {
@@ -27,16 +27,15 @@ type AdvisoryResultTable struct {
 }
 
 // renderReportCli prints one vuln report on CLI
-func (a AdvisoryResultTable) Render(r *vadvisor.VulnReport) (string, error) {
+func (a AdvisoryResultTable) Render(r *mvd.VulnReport) (string, error) {
 	b := &strings.Builder{}
 	if r == nil {
 		return "", errors.New("report cannot be empty")
 	}
 	indicator := NewCvssIndicator()
-	// severity := r.Severity()
 
 	// platform advisories
-	platformAdvisory := []*vadvisor.Advisory{}
+	platformAdvisory := []*mvd.Advisory{}
 	for i := range r.Advisories {
 		advisory := r.Advisories[i]
 		if len(advisory.FixedPlatforms) == 0 {
@@ -49,9 +48,9 @@ func (a AdvisoryResultTable) Render(r *vadvisor.VulnReport) (string, error) {
 	if len(platformAdvisory) > 0 {
 		// sort advisories by score
 		if a.ScoreAscending {
-			sort.Sort(vadvisor.BySeverity(platformAdvisory))
+			sort.Sort(mvd.BySeverity(platformAdvisory))
 		} else {
-			sort.Sort(sort.Reverse(vadvisor.BySeverity(platformAdvisory)))
+			sort.Sort(sort.Reverse(mvd.BySeverity(platformAdvisory)))
 		}
 
 		// render platform advisories
@@ -69,7 +68,7 @@ func (a AdvisoryResultTable) Render(r *vadvisor.VulnReport) (string, error) {
 		for i := range platformAdvisory {
 			advisory := platformAdvisory[i]
 			score := IntScore2Float(advisory.Score)
-			severity := cvss_proto.Rating(score)
+			severity := cvss.Rating(score)
 			icon := indicator.Render(severity)
 
 			currentVersion := r.Platform.Release
@@ -96,15 +95,14 @@ func (a AdvisoryResultTable) Render(r *vadvisor.VulnReport) (string, error) {
 
 	// packages advisories
 	if r.Stats != nil && r.Stats.Packages != nil && r.Stats.Packages.Affected > 0 {
-		// FIXME: the remaining code here needs to be ported
-		// reportWriter := NewCliTableWriter(b, a.DetailedPackageRisks)
-		// err := r.RenderReport(reportWriter, vadvisor.RowWriterOpts{
-		// 	AdvisoryDetails: a.DetailedPackageRisks,
-		// 	ScoreAscending:  a.ScoreAscending,
-		// })
-		// if err != nil {
-		// 	return "", err
-		// }
+		reportWriter := NewCliTableWriter(b, a.DetailedPackageRisks)
+		err := advisories.RenderReport(r, reportWriter, advisories.RowWriterOpts{
+			AdvisoryDetails: a.DetailedPackageRisks,
+			ScoreAscending:  a.ScoreAscending,
+		})
+		if err != nil {
+			return "", err
+		}
 	}
 
 	return b.String(), nil
@@ -129,7 +127,7 @@ func NewCliTableWriter(writer io.Writer, detailedPackageRisks bool) *CliTableWri
 
 type CliTableWriter struct {
 	table                *tablewriter.Table
-	lastEntry            *ReportFindingRow
+	lastEntry            *advisories.ReportFindingRow
 	pkgCount             int
 	maxSamePkg           int
 	detailedPackageRisks bool
@@ -146,7 +144,7 @@ func (c *CliTableWriter) WriteHeader() error {
 	return nil
 }
 
-func (c *CliTableWriter) renderRow(row *ReportFindingRow, overrideIndicator string) {
+func (c *CliTableWriter) renderRow(row *advisories.ReportFindingRow, overrideIndicator string) {
 	if row == nil {
 		return
 	}
@@ -154,7 +152,7 @@ func (c *CliTableWriter) renderRow(row *ReportFindingRow, overrideIndicator stri
 	icon := ""
 
 	score := IntScore2Float(row.Score)
-	severity := cvss_proto.Rating(score)
+	severity := cvss.Rating(score)
 	// eg. if no cve was attached to the advisory the score will be -1
 	reportScore := ""
 	if score >= float32(0.0) {
@@ -185,11 +183,8 @@ func (c *CliTableWriter) renderRow(row *ReportFindingRow, overrideIndicator stri
 	c.table.Append(line)
 }
 
-func (c *CliTableWriter) Write(row ReportFindingRow) error {
+func (c *CliTableWriter) Write(row advisories.ReportFindingRow) error {
 	lastIcon := ""
-	if len(row.Advisory) > 0 {
-		row.Advisory = getAdvisoryUrl(row.Advisory)
-	}
 
 	// render previous entry
 	if c.lastEntry != nil {
@@ -215,7 +210,7 @@ func (c *CliTableWriter) Write(row ReportFindingRow) error {
 			if c.maxSamePkg > 1 {
 				// check if we got more items than we rendered
 				if c.maxSamePkg > 0 && c.pkgCount > c.maxSamePkg {
-					c.lastEntry = &ReportFindingRow{
+					c.lastEntry = &advisories.ReportFindingRow{
 						Score:     c.lastEntry.Score,
 						Name:      c.lastEntry.Name,
 						Installed: c.lastEntry.Installed,
@@ -259,10 +254,4 @@ func (c *CliTableWriter) Flush() {
 
 func IntScore2Float(score int32) float32 {
 	return float32(score) / 10
-}
-
-// TODO: remove hardcoded old references
-func getAdvisoryUrl(id string) string {
-	path := url.QueryEscape(id)
-	return fmt.Sprintf("https://console.mondoo.com/vuln/%s", path)
 }

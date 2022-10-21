@@ -11,8 +11,8 @@ import (
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/resources/packs/core"
-	"go.mondoo.com/cnquery/resources/packs/core/vadvisor"
 	"go.mondoo.com/cnquery/stringx"
+	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -25,7 +25,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	// render mini score card
 	score := report.Scores[policyObj.Mrn]
 
-	var vulnReport vadvisor.VulnReport
+	var vulnReport mvd.VulnReport
 	results := report.Data
 	value, ok := results[vulnReportDatapointChecksum]
 	if !ok {
@@ -73,96 +73,8 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 
 	// summary graph
 	if vulnReport.Stats != nil {
-		stats := vulnReport.Stats
-
-		// only render if we have advisories
-		if stats.Advisories.Total > 0 {
-			total := stats.Advisories.Total
-			colorMap := []termenv.Color{
-				colors.DefaultColorTheme.Critical,
-				colors.DefaultColorTheme.High,
-				colors.DefaultColorTheme.Medium,
-				colors.DefaultColorTheme.Low,
-				colors.DefaultColorTheme.Good,
-			}
-			labels := []string{"Critical", "High", "Medium", "Low", "None"}
-			datapoints := []float64{
-				(float64(stats.Advisories.Critical) / float64(total)),
-				(float64(stats.Advisories.High) / float64(total)),
-				(float64(stats.Advisories.Medium) / float64(total)),
-				(float64(stats.Advisories.Low) / float64(total)),
-				(float64(stats.Advisories.None) / float64(total)),
-			}
-
-			// only add unknown if it really happend
-			if vulnReport.Stats.Advisories.Unknown > 0 {
-				colorMap = append(colorMap, colors.DefaultColorTheme.Unknown)
-				labels = append(labels, "Unknown")
-				datapoints = append(datapoints, (float64(vulnReport.Stats.Advisories.Unknown) / float64(total)))
-			}
-
-			// render advisories bar chart
-			advisoriesBarChart := components.NewBarChart(
-				components.WithBarChartBorder(),
-				components.WithBarChartTitle("Advisories"),
-				components.WithBarChartLabelFunc(components.BarChartPercentageLabelFunc),
-			)
-			b.WriteString(advisoriesBarChart.Render(datapoints, colorMap, labels))
-			b.WriteString("\n")
-		}
-
-		// only render if we have packages scanned, not the case for vmware ESXi
-		if stats.Packages.Total > 0 {
-			pkgTotal := stats.Packages.Total
-			pkgColorMap := []termenv.Color{
-				colors.DefaultColorTheme.Unknown,
-				colors.DefaultColorTheme.Critical,
-				colors.DefaultColorTheme.High,
-				colors.DefaultColorTheme.Medium,
-				colors.DefaultColorTheme.Low,
-			}
-			pkgLabels := []string{"Total", "Critical", "High", "Medium", "Low"}
-			pkgDatapoints := []float64{
-				float64(1.0), // number of packages is always 100%
-				(float64(stats.Packages.Critical) / float64(pkgTotal)),
-				(float64(stats.Packages.High) / float64(pkgTotal)),
-				(float64(stats.Packages.Medium) / float64(pkgTotal)),
-				(float64(stats.Packages.Low) / float64(pkgTotal)),
-			}
-
-			// values for datapoints
-			valueLabels := []int32{pkgTotal, stats.Packages.Critical, stats.Packages.High, stats.Packages.Medium, stats.Packages.Low}
-
-			// render packages bar chart
-			packagesBarChart := components.NewBarChart(
-				components.WithBarChartBorder(),
-				components.WithBarChartTitle("Packages"),
-				components.WithBarChartLabelFunc(func(i int, datapoints []float64) string {
-					return strconv.FormatInt(int64(valueLabels[i]), 10)
-				}),
-			)
-			b.WriteString(packagesBarChart.Render(pkgDatapoints, pkgColorMap, pkgLabels))
-			b.WriteString("\n")
-		}
-	}
-
-	if vulnReport.Stats == nil || vulnReport.Stats.Advisories.Total == 0 {
-		color := components.DefaultRatingColors.Color(policy.ScoreRating_aPlus)
-		indicatorChar := '■'
-		title := "No advisories found"
-		state := "(passed)"
-		b.WriteString(termenv.String(string(indicatorChar)).Foreground(color).String())
-		b.WriteString(termenv.String(" " + title + " " + state).Foreground(color).String())
-		b.WriteString("\n\n")
-	} else {
-		// render advisory table
-		renderer := components.NewAdvisoryResultTable()
-		output, err := renderer.Render(&vulnReport)
-		if err != nil {
-			return err.Error()
-		}
-		b.WriteString(output)
-		b.WriteString("\n")
+		b.WriteString(RenderVulnerabilityStats(&vulnReport))
+		b.WriteString(RenderVulnReport(&vulnReport))
 	}
 
 	// render additional information
@@ -262,4 +174,122 @@ func scoreIndicator(score *policy.Score) string {
 	char := '■'
 	color := components.DefaultRatingColors.Color(scoreRating(score))
 	return termenv.String(string(char)).Foreground(color).String()
+}
+
+func RenderVulnerabilityStats(vulnReport *mvd.VulnReport) string {
+	if vulnReport == nil || vulnReport.Stats == nil {
+		return ""
+	}
+
+	var b bytes.Buffer
+
+	// summary graph
+	stats := vulnReport.Stats
+
+	// only render if we have advisories
+	if stats.Advisories.Total > 0 {
+		total := stats.Advisories.Total
+		colorMap := []termenv.Color{
+			colors.DefaultColorTheme.Critical,
+			colors.DefaultColorTheme.High,
+			colors.DefaultColorTheme.Medium,
+			colors.DefaultColorTheme.Low,
+			colors.DefaultColorTheme.Good,
+		}
+		labels := []string{"Critical", "High", "Medium", "Low", "None"}
+		datapoints := []float64{
+			(float64(stats.Advisories.Critical) / float64(total)),
+			(float64(stats.Advisories.High) / float64(total)),
+			(float64(stats.Advisories.Medium) / float64(total)),
+			(float64(stats.Advisories.Low) / float64(total)),
+			(float64(stats.Advisories.None) / float64(total)),
+		}
+
+		// only add unknown if it really happend
+		if vulnReport.Stats.Advisories.Unknown > 0 {
+			colorMap = append(colorMap, colors.DefaultColorTheme.Unknown)
+			labels = append(labels, "Unknown")
+			datapoints = append(datapoints, (float64(vulnReport.Stats.Advisories.Unknown) / float64(total)))
+		}
+
+		// render advisories bar chart
+		advisoriesBarChart := components.NewBarChart(
+			components.WithBarChartBorder(),
+			components.WithBarChartTitle("Advisories"),
+			components.WithBarChartLabelFunc(components.BarChartPercentageLabelFunc),
+		)
+		b.WriteString(advisoriesBarChart.Render(datapoints, colorMap, labels))
+		b.WriteString("\n")
+	}
+
+	// only render if we have packages scanned, not the case for vmware ESXi
+	if stats.Packages.Total > 0 {
+		pkgTotal := stats.Packages.Total
+		pkgColorMap := []termenv.Color{
+			colors.DefaultColorTheme.Unknown,
+			colors.DefaultColorTheme.Critical,
+			colors.DefaultColorTheme.High,
+			colors.DefaultColorTheme.Medium,
+			colors.DefaultColorTheme.Low,
+		}
+		pkgLabels := []string{"Total", "Critical", "High", "Medium", "Low"}
+
+		max := stats.Packages.Critical
+		if stats.Packages.High > max {
+			max = stats.Packages.High
+		}
+		if stats.Packages.Medium > max {
+			max = stats.Packages.Medium
+		}
+		if stats.Packages.Low > max {
+			max = stats.Packages.Low
+		}
+		pkgDatapoints := []float64{
+			float64(1.0), // number of packages is always 100%
+			(float64(stats.Packages.Critical) / float64(max)),
+			(float64(stats.Packages.High) / float64(max)),
+			(float64(stats.Packages.Medium) / float64(max)),
+			(float64(stats.Packages.Low) / float64(max)),
+		}
+
+		// values for datapoints
+		valueLabels := []int32{pkgTotal, stats.Packages.Critical, stats.Packages.High, stats.Packages.Medium, stats.Packages.Low}
+
+		// render packages bar chart
+		packagesBarChart := components.NewBarChart(
+			components.WithBarChartBorder(),
+			components.WithBarChartTitle("Packages"),
+			components.WithBarChartLabelFunc(func(i int, datapoints []float64) string {
+				return strconv.FormatInt(int64(valueLabels[i]), 10)
+			}),
+		)
+		b.WriteString(packagesBarChart.Render(pkgDatapoints, pkgColorMap, pkgLabels))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func RenderVulnReport(vulnReport *mvd.VulnReport) string {
+	var b bytes.Buffer
+	if vulnReport == nil || vulnReport.Stats == nil || vulnReport.Stats.Advisories.Total == 0 {
+		color := components.DefaultRatingColors.Color(policy.ScoreRating_aPlus)
+		indicatorChar := '■'
+		title := "No advisories found"
+		state := "(passed)"
+		b.WriteString(termenv.String(string(indicatorChar)).Foreground(color).String())
+		b.WriteString(termenv.String(" " + title + " " + state).Foreground(color).String())
+		b.WriteString("\n\n")
+	} else {
+		// render advisory table
+		renderer := components.NewAdvisoryResultTable()
+		output, err := renderer.Render(vulnReport)
+		if err != nil {
+			return err.Error()
+		}
+		b.WriteString(output)
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
