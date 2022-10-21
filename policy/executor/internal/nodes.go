@@ -318,7 +318,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 			break
 		}
 
-		if cur.Data.Error != nil && strings.HasSuffix(cur.Data.Error.Error(), "not found") {
+		if cur.Data.Error != nil && strings.HasSuffix(cur.Data.Error.Error(), "could not find k8s resource") {
 			assetVanishedDuringScan = true
 			// append ; if we accumulate errors
 			if errorsMsg != "" {
