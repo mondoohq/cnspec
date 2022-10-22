@@ -7,13 +7,19 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
-
-	"go.mondoo.com/cnspec/apps/cnspec/cmd/fmtbundle"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
+	"go.mondoo.com/cnquery/cli/config"
+	"go.mondoo.com/cnquery/stringx"
+	"go.mondoo.com/cnquery/upstream"
+	"go.mondoo.com/cnspec/apps/cnspec/cmd/fmtbundle"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/ranger-rpc"
 )
 
 func init() {
@@ -25,6 +31,10 @@ func init() {
 
 	// fmt
 	policyBundlesCmd.AddCommand(policyFmtCmd)
+
+	// bundle add
+	policyUploadCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle")
+	policyBundlesCmd.AddCommand(policyUploadCmd)
 
 	rootCmd.AddCommand(policyBundlesCmd)
 }
@@ -60,6 +70,48 @@ var policyInitCmd = &cobra.Command{
 	},
 }
 
+func validate(policyBundle *policy.Bundle) []string {
+	errors := []string{}
+
+	// check that we have uids for policies and queries
+	for i := range policyBundle.Policies {
+		policy := policyBundle.Policies[i]
+		policyId := strconv.Itoa(i)
+
+		if policy.Uid == "" {
+			errors = append(errors, fmt.Sprintf("policy %s does not define a uid", policyId))
+		} else {
+			policyId = policy.Uid
+		}
+
+		if policy.Name == "" {
+			errors = append(errors, fmt.Sprintf("policy %s does not define a name", policyId))
+		}
+	}
+
+	for j := range policyBundle.Queries {
+		query := policyBundle.Queries[j]
+		queryId := strconv.Itoa(j)
+		if query.Uid == "" {
+			errors = append(errors, fmt.Sprintf("query %s does not define a uid", queryId))
+		} else {
+			queryId = query.Uid
+		}
+
+		if query.Title == "" {
+			errors = append(errors, fmt.Sprintf("query %s does not define a name", queryId))
+		}
+	}
+
+	// we compile after the checks because it removes the uids and replaces it with mrns
+	_, err := policyBundle.Compile(context.Background(), nil)
+	if err != nil {
+		log.Fatal().Err(err).Msg("could not validate policy bundle")
+	}
+
+	return errors
+}
+
 var policyValidateCmd = &cobra.Command{
 	Use:   "validate [path]",
 	Short: "Validates a policy bundle",
@@ -71,9 +123,13 @@ var policyValidateCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not load policy bundle")
 		}
 
-		_, err = policyBundle.Compile(context.Background(), nil)
-		if err != nil {
-			log.Fatal().Err(err).Msg("could not validate policy bundle")
+		errors := validate(policyBundle)
+		if len(errors) > 0 {
+			log.Error().Msg("could not validate policy bundle")
+			for i := range errors {
+				fmt.Fprintf(os.Stderr, stringx.Indent(2, errors[i]))
+			}
+			os.Exit(1)
 		}
 		log.Info().Msg("valid policy bundle")
 	},
@@ -156,5 +212,84 @@ var policyFmtCmd = &cobra.Command{
 
 		}
 		log.Info().Msg("completed formatting policy bundle(s)")
+	},
+}
+
+var policyUploadCmd = &cobra.Command{
+	Use:   "upload [path]",
+	Short: "Adds a user-owned policy to Mondoo's Query Hub",
+	Args:  cobra.ExactArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, optsErr := cnquery_config.ReadConfig()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		filename := args[0]
+		log.Info().Str("file", filename).Msg("load policy bundle")
+		policyBundle, err := policy.BundleFromPaths(filename)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not load policy bundle")
+		}
+
+		errors := validate(policyBundle)
+		if len(errors) > 0 {
+			log.Error().Msg("could not validate policy bundle")
+			for i := range errors {
+				fmt.Fprintf(os.Stderr, stringx.Indent(2, errors[i]))
+			}
+			os.Exit(1)
+		}
+		log.Info().Msg("valid policy bundle")
+
+		// compile manipulates the bundle, therefore we read it again
+		policyBundle, err = policy.BundleFromPaths(filename)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not load policy bundle")
+		}
+
+		log.Info().Str("space", opts.SpaceMrn).Msg("add policy bundle to space")
+		overrideVersionFlag := false
+		overrideVersion := viper.GetString("policy-version")
+		if len(overrideVersion) > 0 {
+			overrideVersionFlag = true
+		}
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnquery has no credentials. Log in with `cnquery login`")
+		}
+
+		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		queryHubServices, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), ranger.DefaultHttpClient(), certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to policy hub")
+		}
+
+		// set the owner mrn for spaces
+		policyBundle.OwnerMrn = opts.SpaceMrn
+		ctx := context.Background()
+
+		// override version and/or labels
+		for i := range policyBundle.Policies {
+			p := policyBundle.Policies[i]
+
+			// override policy version
+			if overrideVersionFlag {
+				p.Version = overrideVersion
+			}
+		}
+
+		// send data upstream
+		_, err = queryHubServices.SetBundle(ctx, policyBundle)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not add policy bundle")
+		}
+
+		log.Info().Msg("successfully added policies")
 	},
 }
