@@ -8,6 +8,7 @@ import (
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/vault"
+	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -24,13 +25,13 @@ func init() {
 }
 
 type AssetJob struct {
-	DoRecord      bool
-	Incognito     bool
-	Asset         *asset.Asset
-	Bundle        *policy.Bundle
-	PolicyFilters []string
-	Ctx           context.Context
-	GetCredential func(cred *vault.Credential) (*vault.Credential, error)
-	Reporter      Reporter
-	connection    *motor.Motor
+	DoRecord       bool
+	UpstreamConfig resources.UpstreamConfig
+	Asset          *asset.Asset
+	Bundle         *policy.Bundle
+	PolicyFilters  []string
+	Ctx            context.Context
+	GetCredential  func(cred *vault.Credential) (*vault.Credential, error)
+	Reporter       Reporter
+	connection     *motor.Motor
 }
