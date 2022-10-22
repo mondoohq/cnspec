@@ -28,7 +28,7 @@ bash -c "$(curl -sSL https://install.mondoo.com/sh/cnspec)"
 If you prefer a package, find it on [GitHub releases](https://github.com/mondoohq/cnspec/releases).
 
 
-## Run a scan
+## Run a scan with policies
 
 Use the `cnspec scan` subcommand to check local and remote targets for misconfigurations and vulnerabilities.
 
@@ -42,7 +42,7 @@ cnspec scan local
 
 ### Remote scan targets
 
-You can also specify remote targets to scan. For example:
+You can also specify [remote targets](#supported-targets) to scan. For example:
 
 ```bash
 # to scan a docker image:
@@ -55,6 +55,9 @@ cnspec scan docker image public.ecr.aws/r6z5b8t4
 # to scan an aws account using the local AWS config
 cnspec scan aws
 
+# scan ec2 instance with EC2 Instance Connect
+cnspec scan aws ec2 instance-connect root@i-1234567890abcdef0
+
 # to scan a kubernetes cluster via your local kubectl config
 cnspec scan k8s
 
@@ -63,9 +66,59 @@ export GITHUB_TOKEN=<personal_access_token>
 cnspec scan github repo <org/repo> 
 ```
 
-## Policies
+### Policies
 
 `cnspec` policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). `cnspec` comes with default security policies configured for all supported targets. The default policies are available via the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
+
+## Vulnerability Scan
+
+`cnspec` supports vulnerability scanning for a wide-range of platforms. The vulnerability scanning is not restricted to container images, it works for build and runtime.
+
+![cnspec vuln example](docs/gif/cnspec-vuln.gif)
+
+NOTE: The current version requires to be logged in to Mondoo Platform. Future versions will be able to scan the platforms without the requirement to be logged in.
+
+### Examples
+
+```bash
+# scan container image
+cnspec vuln docker debian:10
+
+# scan aws instance via EC@ instance connect
+cnspec vuln aws ec2 instance-connect root@i-1234567890abcdef0
+
+# scan instance via SSH
+cnspec vuln ssh user@host
+
+# scan windows via SSH or Winrm
+cnspec vuln ssh user@host --ask-pass
+cnspec vuln winrm user@host --ask-pass
+
+# scan VMware vSsphere ESXi hosts
+cnspec vuln vsphere user@host --ask-pass
+
+# scan Linux, Windows
+cnspec vuln local
+```
+
+| Platform                 | Versions                 |
+|--------------------------|--------------------------|
+| Alpine                   | 3.10 - 3.16              |
+| AlmaLinux                | 8, 9                     |
+| Amazon Linux             | 1, 2, 2022               |
+| Arch Linux               | Rolling                  |
+| CentOS                   | 6, 7                     |
+| Debian                   | 8, 9, 10, 11             |
+| Fedora                   | 30 - 36                  |
+| openSUSE                 | Leap 15.4                |
+| Oracle Linux             | 6, 7, 8                  |
+| Photon Linux             | 2, 3, 4                  |
+| Red Hat Enterprise Linux | 6, 7, 8                  |
+| Rocky Linux              | 8                        |
+| SUSE Linux Enterprise    | 12, 15                   |
+| Ubuntu                   | 18.04, 20.04, 22.04      |
+| VMware vSphere ESXi      | 6, 7                     |
+| Windows                  | 10, 11, 2016, 2019, 2022 |
 
 ## cnspec interactive shell
 
@@ -103,7 +156,7 @@ The easiest way to scale `cnspec` across your fleet is to have all of your infra
 To use `cnspec` with the Mondoo Platform, run:
 
 ```bash
-cnspec auth login
+cnspec login --token TOKEN
 ```
 
 Once authenticated, you can scan any target:
@@ -114,12 +167,10 @@ cnspec scan <target>
 
 `cnspec` returns the results from the scan to `STDOUT` and to the platform.
 
-### Upload policies to your account
-
 With an account on Mondoo Platform, you can upload policies:
 
 ```bash
-cnspec policy upload mypolicy.mql.yaml
+cnspec bundle upload mypolicy.mql.yaml
 ```
 
 ## Custom policies
