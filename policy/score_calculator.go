@@ -102,9 +102,12 @@ func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
 
 func (c *averageScoreCalculator) Add(score *Score) {
 	switch score.Type {
+	case ScoreType_Skip:
+		c.allErrored = false
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
+		c.allErrored = false
 
 	case ScoreType_Result:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
@@ -186,10 +189,12 @@ func (c *weightedScoreCalculator) Init() {
 
 func (c *weightedScoreCalculator) Add(score *Score) {
 	switch score.Type {
+	case ScoreType_Skip:
+		c.allErrored = false
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
-
+		c.allErrored = false
 	case ScoreType_Result:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
@@ -264,10 +269,12 @@ func (c *worstScoreCalculator) Init() {
 
 func (c *worstScoreCalculator) Add(score *Score) {
 	switch score.Type {
+	case ScoreType_Skip:
+		c.allErrored = false
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
-
+		c.allErrored = false
 	case ScoreType_Result:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
