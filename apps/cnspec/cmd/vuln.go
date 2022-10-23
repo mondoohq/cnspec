@@ -200,6 +200,10 @@ scan be executed on an instance that is running inside of AWS.`,
 			log.Fatal().Err(err).Msg("failed to prepare config")
 		}
 
+		if conf.UpstreamConfig == nil {
+			log.Fatal().Msg("vulnerability scan requires authentication, future versions will not have this restriction, login with `cnspec login --token`")
+		}
+
 		ctx := discovery.InitCtx(context.Background())
 
 		log.Info().Msgf("discover related assets for %d asset(s)", len(conf.Inventory.Spec.Assets))
