@@ -11,8 +11,8 @@ import (
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/resources/packs/core/vadvisor"
 	"go.mondoo.com/cnquery/stringx"
+	"go.mondoo.com/cnquery/upstream/mvd"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -430,7 +430,7 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 
 	rawData := value.Data.Value
 
-	var vulnReport vadvisor.VulnReport
+	var vulnReport mvd.VulnReport
 	cfg := &mapstructure.DecoderConfig{
 		Metadata: nil,
 		Result:   &vulnReport,
@@ -447,7 +447,7 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 	r.printVulnSummary(&vulnReport)
 }
 
-func (r *defaultReporter) printVulnList(report *vadvisor.VulnReport) {
+func (r *defaultReporter) printVulnList(report *mvd.VulnReport) {
 	if report.GetStats() == nil || report.Stats.Advisories.Total == 0 {
 		color := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_aPlus)
 		indicatorChar := '■'
@@ -457,20 +457,10 @@ func (r *defaultReporter) printVulnList(report *vadvisor.VulnReport) {
 		r.out.Write([]byte("\n\n"))
 		return
 	}
-
-	// FIXME: print advisory results
-	// renderer := components.NewAdvisoryResultTable()
-	// renderer.ScoreAscending = true
-	// output, err := renderer.Render(report)
-	// if err != nil {
-	// 	r.out.Write([]byte(r.Printer.Error(err.Error() + "\n\n")))
-	// 	return
-	// }
-	// r.out.Write([]byte(output))
-	// r.out.Write([]byte("\n"))
+	r.out.Write([]byte(RenderVulnReport(report)))
 }
 
-func (r *defaultReporter) printVulnSummary(report *vadvisor.VulnReport) {
+func (r *defaultReporter) printVulnSummary(report *mvd.VulnReport) {
 	if report.GetStats() == nil {
 		return
 	}
@@ -485,5 +475,5 @@ func (r *defaultReporter) printVulnSummary(report *vadvisor.VulnReport) {
 		DataCompletion:  100,
 	}
 
-	r.out.Write([]byte(r.scoreColored(vulnScore.Rating(), fmt.Sprintf("Overall CVSS score: %.1f\n\n\n", cvss))))
+	r.out.Write([]byte(r.scoreColored(vulnScore.Rating(), fmt.Sprintf("Overall CVSS score: %.1f\n\n", cvss))))
 }
