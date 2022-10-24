@@ -320,8 +320,8 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 		}
 
 		if cur.Data.Error != nil {
-			var k8sNotFoundErr *resources.ResourceNotFound
-			if errors.As(cur.Data.Error, &k8sNotFoundErr) {
+			var resourceNotFoundErr *resources.ResourceNotFound
+			if errors.As(cur.Data.Error, &resourceNotFoundErr) {
 				assetVanishedDuringScan = true
 			} else {
 				allSkipped = false
