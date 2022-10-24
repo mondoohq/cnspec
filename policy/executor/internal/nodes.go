@@ -1,10 +1,11 @@
 package internal
 
 import (
-	"strings"
+	"errors"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
+	k8s_common "go.mondoo.com/cnquery/resources/packs/k8s"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
@@ -318,19 +319,14 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 			break
 		}
 
-		if cur.Data.Error != nil && strings.HasSuffix(cur.Data.Error.Error(), "could not find k8s resource") {
-			assetVanishedDuringScan = true
-			// append ; if we accumulate errors
-			if errorsMsg != "" {
-				errorsMsg += "; "
-			}
-			errorsMsg += cur.Data.Error.Error()
-			continue
-		}
-
 		if cur.Data.Error != nil {
-			allSkipped = false
-			foundError = true
+			var k8sNotFoundErr *k8s_common.K8sObjectNotFound
+			if errors.As(cur.Data.Error, &k8sNotFoundErr) {
+				assetVanishedDuringScan = true
+			} else {
+				allSkipped = false
+				foundError = true
+			}
 			// append ; if we accumulate errors
 			if errorsMsg != "" {
 				errorsMsg += "; "
