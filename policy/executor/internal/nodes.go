@@ -1,8 +1,11 @@
 package internal
 
 import (
+	"errors"
+
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
@@ -304,6 +307,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	allSkipped := true
 	allTrue := true
 	foundError := false
+	assetVanishedDuringScan := false
 	var scoreFound *llx.RawData
 	var scoreValue int
 
@@ -316,8 +320,13 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 		}
 
 		if cur.Data.Error != nil {
-			allSkipped = false
-			foundError = true
+			var resourceNotFoundErr *resources.ResourceNotFound
+			if errors.As(cur.Data.Error, &resourceNotFoundErr) {
+				assetVanishedDuringScan = true
+			} else {
+				allSkipped = false
+				foundError = true
+			}
 			// append ; if we accumulate errors
 			if errorsMsg != "" {
 				errorsMsg += "; "
@@ -347,7 +356,16 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	}
 
 	if allFound {
-		if foundError {
+		if assetVanishedDuringScan {
+			return &policy.Score{
+				QrId:            nodeData.queryID,
+				Type:            policy.ScoreType_Unscored,
+				Value:           0,
+				ScoreCompletion: 100,
+				Weight:          1,
+				Message:         errorsMsg,
+			}
+		} else if foundError {
 			return &policy.Score{
 				QrId:            nodeData.queryID,
 				Type:            policy.ScoreType_Error,
