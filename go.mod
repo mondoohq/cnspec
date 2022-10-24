@@ -28,7 +28,7 @@ require (
 	github.com/stretchr/testify v1.8.0
 	go.mondoo.com/cnquery v0.0.0-20221024153533-13a4a7b6a6cf
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
-	go.opentelemetry.io/otel v1.11.0
+	go.opentelemetry.io/otel v1.11.1
 	golang.org/x/sync v0.0.0-20220923202941-7f9b1623fab7
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc
 	google.golang.org/protobuf v1.28.1
@@ -396,7 +396,7 @@ require (
 	github.com/zclconf/go-cty v1.11.0 // indirect
 	gitlab.com/bosi/decorder v0.2.3 // indirect
 	go.opencensus.io v0.23.0 // indirect
-	go.opentelemetry.io/otel/trace v1.11.0 // indirect
+	go.opentelemetry.io/otel/trace v1.11.1 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
 	go.uber.org/zap v1.23.0 // indirect
