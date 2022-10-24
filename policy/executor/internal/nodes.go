@@ -5,7 +5,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/llx"
-	k8s_common "go.mondoo.com/cnquery/resources/packs/k8s"
+	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
@@ -320,7 +320,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 		}
 
 		if cur.Data.Error != nil {
-			var k8sNotFoundErr *k8s_common.K8sResourceNotFound
+			var k8sNotFoundErr *resources.ResourceNotFound
 			if errors.As(cur.Data.Error, &k8sNotFoundErr) {
 				assetVanishedDuringScan = true
 			} else {
