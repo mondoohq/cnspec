@@ -1,7 +1,4 @@
-FROM alpine:3.16
-RUN apk update &&\
-    apk add ca-certificates wget tar &&\
-    rm -rf /var/cache/apk/*
+FROM mondoo/cnquery:7.2.0
 COPY cnspec /usr/local/bin
 ENTRYPOINT ["cnspec"]
 CMD ["help"]
