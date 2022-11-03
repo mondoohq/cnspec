@@ -349,8 +349,27 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			log.Fatal().Err(err).Msg("failed to run scan")
 		}
 		printReports(report, conf, cmd)
+
+		if getWorstScore(report) < uint32(conf.ScoreThreshold) {
+			os.Exit(1)
+		}
 	},
 })
+
+func getWorstScore(report *policy.ReportCollection) uint32 {
+	worstScore := uint32(100)
+	for _, r := range report.Reports {
+		if r == nil || r.Score == nil {
+			continue
+		}
+
+		if r.Score.Value < worstScore {
+			worstScore = r.Score.Value
+		}
+	}
+
+	return worstScore
+}
 
 // helper method to retrieve the list of policies for the policy flag
 func getPoliciesForCompletion() []string {
@@ -371,8 +390,9 @@ type scanConfig struct {
 	PolicyNames []string
 	Bundle      *policy.Bundle
 
-	IsIncognito bool
-	DoRecord    bool
+	IsIncognito    bool
+	ScoreThreshold int
+	DoRecord       bool
 
 	UpstreamConfig *resources.UpstreamConfig
 }
@@ -390,11 +410,12 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	}
 
 	conf := scanConfig{
-		Features:    opts.GetFeatures(),
-		IsIncognito: viper.GetBool("incognito"),
-		DoRecord:    viper.GetBool("record"),
-		PolicyPaths: viper.GetStringSlice("policy-bundle"),
-		PolicyNames: viper.GetStringSlice("policies"),
+		Features:       opts.GetFeatures(),
+		IsIncognito:    viper.GetBool("incognito"),
+		DoRecord:       viper.GetBool("record"),
+		PolicyPaths:    viper.GetStringSlice("policy-bundle"),
+		PolicyNames:    viper.GetStringSlice("policies"),
+		ScoreThreshold: viper.GetInt("score-threshold"),
 	}
 
 	// if users want to get more information on available output options,
