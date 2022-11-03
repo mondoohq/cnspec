@@ -2,6 +2,9 @@ package scan
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	"go.mondoo.com/cnquery/motor/inventory"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
@@ -176,7 +180,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		// attach the asset details to the assets list
 		for i := range assetList {
 			log.Debug().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
-			platformMrn := assetList[i].PlatformIds[0]
+			platformMrn, err := s.getPlatformMrnFromAsset(assetList[i])
+			if err != nil {
+				return nil, false, errors.Wrap(err, "failed to generate a platform MRN")
+			}
 			assetList[i].Mrn = platformAssetMapping[platformMrn].AssetMrn
 			assetList[i].Url = platformAssetMapping[platformMrn].Url
 		}
@@ -313,6 +320,155 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	}
 
 	return res, policyErr
+}
+
+type detectedCicdProject struct {
+	Name      string
+	ProjectID string
+	Type      string
+}
+
+func returnTheEmptyOnes(labels map[string]string, required []string) []string {
+	empty := []string{}
+	for _, l := range required {
+		if labels[l] == "" {
+			empty = append(empty, l)
+		}
+	}
+	return empty
+}
+
+const CICDPlatformIdPrefix = "//platformid.api.mondoo.app/runtime/cicd/"
+
+// getPlatformMrnFromAsset read the asset labels and determines the project
+// To achieve this it builds up a project identifier that can be used
+// to re-recognize it over many runs.
+func (s *LocalScanner) getPlatformMrnFromAsset(in *asset.Asset) (string, error) {
+	if in.Category != asset.AssetCategory_CATEGORY_CICD {
+		return in.PlatformIds[0], nil
+	}
+
+	cicdDetected := detectedCicdProject{}
+	projectId := ""
+	platformId := ""
+
+	labels := in.Labels
+	switch labels["mondoo.com/exec-environment"] {
+	case "actions.github.com":
+		cicdDetected.Type = labels["mondoo.com/exec-environment"]
+		cicdDetected.Name = labels["actions.github.com/repository"]
+		safeRef := mrn.SafeComponentString(labels["actions.github.com/ref"])
+		runID := mrn.SafeComponentString(labels["actions.github.com/run-id"])
+		job := mrn.SafeComponentString(labels["actions.github.com/job"])
+		action := mrn.SafeComponentString(labels["actions.github.com/action"])
+
+		if cicdDetected.Name != "" && safeRef != "" && runID != "" && job != "" && action != "" {
+			projectId = CICDPlatformIdPrefix + "actions.github.com/" + mrn.SafeComponentString(cicdDetected.Name)
+			platformId = projectId + "/ref/" + safeRef + "/run/" + runID + "/job/" + job + "/action/" + action
+		} else {
+			return "", fmt.Errorf("missing required env var for cicd asset: %v", returnTheEmptyOnes(labels, []string{"actions.github.com/repository", "actions.github.com/ref", "actions.github.com/run-id", "actions.github.com/job", "actions.github.com/action"}))
+		}
+
+	case "gitlab.com":
+		cicdDetected.Type = labels["mondoo.com/exec-environment"]
+		cicdDetected.Name = labels["gitlab.com/project-path"]
+		// TODO(jaym): The docs dont mention CI_COMMIT_REF_NAME works with
+		// pull requests
+		safeRef := mrn.SafeComponentString(labels["gitlab.com/commit-ref-name"])
+		jobID := mrn.SafeComponentString(labels["gitlab.com/job-id"])
+
+		if cicdDetected.Name != "" && safeRef != "" && jobID != "" {
+			projectId = CICDPlatformIdPrefix + "gitlab.com/" + mrn.SafeComponentString(cicdDetected.Name)
+			platformId = projectId + "/ref/" + safeRef + "/run/" + jobID
+		} else {
+			return "", fmt.Errorf("missing required env var for cicd asset: %v", returnTheEmptyOnes(labels, []string{"gitlab.com/project-path", "gitlab.com/commit-ref-name", "gitlab.com/job-id"}))
+		}
+
+	case "k8s.mondoo.com":
+		cicdDetected.Type = labels["mondoo.com/exec-environment"]
+		// TODO: allow users to define a cluster name with the integration
+		cicdDetected.Name = "K8S Cluster " + labels["k8s.mondoo.com/cluster-id"]
+		clusterID := mrn.SafeComponentString(labels["k8s.mondoo.com/cluster-id"])
+		resourceUID := mrn.SafeComponentString(labels["k8s.mondoo.com/uid"])
+		resourceVersion := mrn.SafeComponentString(labels["k8s.mondoo.com/resource-version"])
+
+		// resource version is important but not always there, the CREATE event has no resourceVersion yet
+		if clusterID != "" {
+			projectId = CICDPlatformIdPrefix + "k8s.mondoo.com/" + clusterID
+			if resourceVersion != "" {
+				platformId = projectId + "/" + resourceUID + "/" + resourceVersion
+			} else {
+				platformId = projectId + "/" + resourceUID
+			}
+		} else if clusterID == "" || resourceUID == "" {
+			return "", fmt.Errorf("missing required env var for cicd asset: %v", returnTheEmptyOnes(labels, []string{"k8s.mondoo.com/cluster-id", "k8s.mondoo.com/uid"}))
+		}
+
+	case "circleci.com":
+		cicdDetected.Type = labels["mondoo.com/exec-environment"]
+		cicdDetected.Name = labels["circleci.com/project-reponame"]
+		safeRef := mrn.SafeComponentString(labels["circleci.com/sha1"])
+		jobID := mrn.SafeComponentString(labels["circleci.com/build-num"])
+
+		if cicdDetected.Name != "" && safeRef != "" && jobID != "" {
+			projectId = CICDPlatformIdPrefix + "circleci.com/" + mrn.SafeComponentString(cicdDetected.Name)
+			platformId = projectId + "/ref/" + safeRef + "/run/" + jobID
+		} else {
+			return "", fmt.Errorf("missing required env var for cicd asset: %v", returnTheEmptyOnes(labels, []string{"circleci.com/project-reponame", "circleci.com/sha1", "circleci.com/build-num"}))
+		}
+
+	case "devops.azure.com":
+		cicdDetected.Type = labels["mondoo.com/exec-environment"]
+		cicdDetected.Name = labels["devops.azure.com/repository-name"]
+		safeRef := mrn.SafeComponentString(labels["devops.azure.com/sourceversion"])
+		jobID := mrn.SafeComponentString(labels["devops.azure.com/buildid"])
+
+		if cicdDetected.Name != "" && safeRef != "" && jobID != "" {
+			projectId = CICDPlatformIdPrefix + "devops.azure.com/" + mrn.SafeComponentString(cicdDetected.Name)
+			platformId = projectId + "/ref/" + safeRef + "/run/" + jobID
+		} else {
+			return "", fmt.Errorf("missing required env var for cicd asset: %v", returnTheEmptyOnes(labels, []string{"devops.azure.com/repository-name", "devops.azure.com/sourceversion", "devops.azure.com/buildid"}))
+		}
+
+	case "jenkins.io":
+		cicdDetected.Type = labels["mondoo.com/exec-environment"]
+		cicdDetected.Name = labels["jenkins.io/jobname"]
+		safeRef := mrn.SafeComponentString(labels["jenkins.io/gitcommit"])
+		if safeRef == "" {
+			log.Warn().Msg("no git commit value found in env for jenkins job, using job name")
+			safeRef = labels["jenkins.io/jobname"]
+		}
+		jobID := mrn.SafeComponentString(labels["jenkins.io/buildid"])
+
+		if cicdDetected.Name != "" && safeRef != "" && jobID != "" {
+			projectId = CICDPlatformIdPrefix + "jenkins.io/" + mrn.SafeComponentString(cicdDetected.Name)
+			platformId = projectId + "/ref/" + safeRef + "/run/" + jobID
+		} else {
+			return "", fmt.Errorf("missing required env var for cicd asset: %v", returnTheEmptyOnes(labels, []string{"jenkins.io/jobname", "jenkins.io/gitcommit", "jenkins.io/buildid", "jenkins.io/jobname"}))
+		}
+
+	default:
+		return "", errors.New("unexpected mondoo.com/exec-environment for cicd asset: " + labels["mondoo.com/exec-environment"])
+	}
+
+	if projectId == "" || platformId == "" {
+		return "", errors.New("could not determine projectId or platformId for cicd asset")
+	}
+
+	if strings.HasPrefix(in.PlatformIds[0], CICDPlatformIdPrefix) {
+		platformId = in.PlatformIds[0]
+	} else {
+		// Since we can have >1 asset for a single CI/CD scan, we hash the fleet platformId for the asset and append it
+		// to the CI/CD platformId. In this way we make sure each asset from a single CI/CD scan gets a unique platformId.
+		h := sha256.New()
+		h.Write([]byte(in.PlatformIds[0]))
+		hash := hex.EncodeToString(h.Sum(nil))
+		platformId = platformId + "/hash/" + hash
+	}
+
+	cicdDetected.ProjectID = projectId
+
+	return platformId, nil
 }
 
 type localAssetScanner struct {
