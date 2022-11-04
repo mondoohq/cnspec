@@ -79,6 +79,10 @@ policy/generate:
 
 #   🏗 Binary   #
 
+.PHONY: cnspec/build
+cnspec/build:
+	go build -o cnspec ${LDFLAGSDIST} apps/cnspec/cnspec.go
+
 .PHONY: cnspec/install
 cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
