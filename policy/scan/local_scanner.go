@@ -169,16 +169,21 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
 		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
 		for i := range resp.Details {
-			log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
-			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
+			log.Debug().Str("platform-mrn", i).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
+			platformAssetMapping[i] = resp.Details[i]
 		}
 
 		// attach the asset details to the assets list
 		for i := range assetList {
 			log.Debug().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
-			platformMrn := assetList[i].PlatformIds[0]
-			assetList[i].Mrn = platformAssetMapping[platformMrn].AssetMrn
-			assetList[i].Url = platformAssetMapping[platformMrn].Url
+			platformId := assetList[i].PlatformIds[0]
+			if err != nil {
+				return nil, false, errors.Wrap(err, "failed to generate a platform MRN")
+			}
+			assetList[i].Mrn = platformAssetMapping[platformId].AssetMrn
+			assetList[i].Url = platformAssetMapping[platformId].Url
+			// only needed for CI/CD, can be removed when fleet and CI/CD have the same platform MRN
+			assetList[i].PlatformIds = []string{platformAssetMapping[platformId].PlatformMrn}
 		}
 	} else {
 		// ensure we have non-empty asset MRNs
