@@ -105,7 +105,7 @@ cnspec vuln ssh user@host
 cnspec vuln ssh user@host --ask-pass
 cnspec vuln winrm user@host --ask-pass
 
-# scan VMware vSsphere ESXi hosts
+# scan VMware vSphere ESXi hosts
 cnspec vuln vsphere user@host --ask-pass
 
 # scan Linux, Windows
