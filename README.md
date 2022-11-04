@@ -63,13 +63,13 @@ cnspec scan docker image ubuntu:22.04
 aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/r6z5b8t4
 cnspec scan docker image public.ecr.aws/r6z5b8t4
 
-# to scan an aws account using the local AWS config
+# to scan an AWS account using the local AWS config
 cnspec scan aws
 
-# scan ec2 instance with EC2 Instance Connect
+# scan an EC2 instance with EC2 Instance Connect
 cnspec scan aws ec2 instance-connect root@i-1234567890abcdef0
 
-# to scan a kubernetes cluster via your local kubectl config
+# to scan a Kubernetes cluster via your local kubectl config
 cnspec scan k8s
 
 # to scan a GitHub repository
@@ -87,7 +87,7 @@ cnspec scan github repo <org/repo>
 
 ![cnspec vuln example](docs/gif/cnspec-vuln.gif)
 
-NOTE: The current version requires to be logged in to Mondoo Platform. Future versions will be able to scan the platforms without the requirement to be logged in.
+NOTE: The current version requires you to be logged in to Mondoo Platform. Future versions will be able to scan the platforms without the requirement to be logged in.
 
 ### Examples
 
