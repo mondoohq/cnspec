@@ -3,11 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
 
 	"go.mondoo.com/cnquery/motor/discovery/common"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/ranger-rpc/plugins/scope"
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -19,6 +22,7 @@ import (
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/inventoryloader"
+	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/motor/asset"
 	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
 	"go.mondoo.com/cnquery/motor/providers"
@@ -443,13 +447,19 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount != nil {
-		log.Info().Msg("using service account credentials")
 		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-
+		plugins := []ranger.ClientPlugin{certAuth}
+		// determine information about the client
+		sysInfo, err := sysinfo.GatherSystemInfo()
+		if err != nil {
+			log.Warn().Err(err).Msg("could not gather client information")
+		}
+		plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
+		log.Info().Msg("using service account credentials")
 		conf.UpstreamConfig = &resources.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
-			Plugins:     []ranger.ClientPlugin{certAuth},
+			Plugins:     plugins,
 		}
 	}
 
@@ -473,6 +483,38 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	}
 
 	return &conf, nil
+}
+
+func defaultRangerPlugins(sysInfo *sysinfo.SystemInfo, features cnquery.Features) []ranger.ClientPlugin {
+	plugins := []ranger.ClientPlugin{}
+	plugins = append(plugins, scope.NewRequestIDRangerPlugin())
+	plugins = append(plugins, sysInfoHeader(sysInfo, features))
+	return plugins
+}
+
+func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features cnquery.Features) ranger.ClientPlugin {
+	const (
+		HttpHeaderUserAgent      = "User-Client"
+		HttpHeaderClientFeatures = "Mondoo-Features"
+		HttpHeaderPlatformID     = "Mondoo-PlatformID"
+	)
+
+	h := http.Header{}
+	info := map[string]string{
+		"cnspec": cnspec.Version,
+		"build":  cnspec.Build,
+	}
+	if sysInfo != nil {
+		info["PN"] = sysInfo.Platform.Name
+		info["PR"] = sysInfo.Platform.Version
+		info["PA"] = sysInfo.Platform.Arch
+		info["IP"] = sysInfo.IP
+		info["HN"] = sysInfo.Hostname
+		h.Set(HttpHeaderPlatformID, sysInfo.PlatformId)
+	}
+	h.Set(HttpHeaderUserAgent, scope.XInfoHeader(info))
+	h.Set(HttpHeaderClientFeatures, features.Encode())
+	return scope.NewCustomHeaderRangerPlugin(h)
 }
 
 func (c *scanConfig) loadPolicies() error {
