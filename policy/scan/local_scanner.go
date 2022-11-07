@@ -177,9 +177,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		for i := range assetList {
 			log.Debug().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
 			platformId := assetList[i].PlatformIds[0]
-			if err != nil {
-				return nil, false, errors.Wrap(err, "failed to generate a platform MRN")
-			}
 			assetList[i].Mrn = platformAssetMapping[platformId].AssetMrn
 			assetList[i].Url = platformAssetMapping[platformId].Url
 			// only needed for CI/CD, can be removed when fleet and CI/CD have the same platform MRN
