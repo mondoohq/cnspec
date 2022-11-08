@@ -29,6 +29,7 @@ import (
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
+	"golang.org/x/exp/slices"
 )
 
 type LocalScanner struct {
@@ -565,10 +566,12 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 	return queries, err
 }
 
+var platformFixKinds = []providers.Kind{providers.Kind_KIND_CONTAINER_IMAGE}
+
 func setPlatforms(ctx context.Context, assetList []*asset.Asset, im inventory.InventoryManager, record bool) error {
 	for i := range assetList {
 		a := assetList[i]
-		if a.Platform.Kind == providers.Kind_KIND_CONTAINER_IMAGE {
+		if slices.Contains(platformFixKinds, a.Platform.Kind) {
 			conns, err := resolver.OpenAssetConnections(ctx, a, im.GetCredential, record)
 			if err != nil {
 				return err
