@@ -14,8 +14,10 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	"go.mondoo.com/cnquery/motor/inventory"
+	"go.mondoo.com/cnquery/motor/providers"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
@@ -161,6 +163,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		if err != nil {
 			return nil, false, err
 		}
+
+		// TODO: this is a temporary fix for populating the platform information for assets that only set it
+		// during a scan, e.g. container images. This should be removed once we start using MQL for retrieving
+		// platform information.
+		if err := setPlatforms(ctx, assetList, im, job.DoRecord); err != nil {
+			return nil, false, err
+		}
+
 		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 			SpaceMrn: upstreamConfig.SpaceMrn,
 			List:     assetList,
@@ -553,4 +563,33 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 	}
 
 	return queries, err
+}
+
+func setPlatforms(ctx context.Context, assetList []*asset.Asset, im inventory.InventoryManager, record bool) error {
+	for i := range assetList {
+		a := assetList[i]
+		if a.Platform.Kind == providers.Kind_KIND_CONTAINER_IMAGE {
+			conns, err := resolver.OpenAssetConnections(ctx, a, im.GetCredential, record)
+			if err != nil {
+				return err
+			}
+
+			for c := range conns {
+				// We use a function since we want to close the motor once the current iteration finishes. If we directly
+				// use defer in the loop m.Close() for each connection will only be executed once the entire loop is
+				// finished.
+				func(m *motor.Motor) {
+					// ensures temporary files get deleted
+					defer m.Close()
+					p, err := m.Platform()
+					if err != nil {
+						log.Error().Err(err).Msg("could not get platform")
+						return
+					}
+					a.Platform = p
+				}(conns[c])
+			}
+		}
+	}
+	return nil
 }
