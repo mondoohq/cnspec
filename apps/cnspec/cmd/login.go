@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	"go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/authentication/statictoken"
-	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
 
 func init() {
@@ -222,33 +220,4 @@ func register(token string) {
 	}
 
 	log.Info().Msgf("client %s has logged in successfully", viper.Get("agent_mrn"))
-}
-
-func defaultRangerPlugins(sysInfo *sysinfo.SystemInfo, features cnquery.Features) []ranger.ClientPlugin {
-	plugins := []ranger.ClientPlugin{}
-	plugins = append(plugins, scope.NewRequestIDRangerPlugin())
-	plugins = append(plugins, sysInfoHeader(sysInfo, features))
-	return plugins
-}
-
-func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features cnquery.Features) ranger.ClientPlugin {
-	const (
-		HttpHeaderUserAgent      = "User-Client"
-		HttpHeaderClientFeatures = "Mondoo-Features"
-		HttpHeaderPlatformID     = "Mondoo-PlatformID"
-	)
-
-	h := http.Header{}
-	h.Set(HttpHeaderUserAgent, scope.XInfoHeader(map[string]string{
-		"cnquery": cnquery.Version,
-		"build":   cnquery.Build,
-		"PN":      sysInfo.Platform.Name,
-		"PR":      sysInfo.Platform.Version,
-		"PA":      sysInfo.Platform.Arch,
-		"IP":      sysInfo.IP,
-		"HN":      sysInfo.Hostname,
-	}))
-	h.Set(HttpHeaderClientFeatures, features.Encode())
-	h.Set(HttpHeaderPlatformID, sysInfo.PlatformId)
-	return scope.NewCustomHeaderRangerPlugin(h)
 }
