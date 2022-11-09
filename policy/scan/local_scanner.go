@@ -17,7 +17,6 @@ import (
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	"go.mondoo.com/cnquery/motor/inventory"
-	"go.mondoo.com/cnquery/motor/providers"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
@@ -574,5 +573,3 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 
 	return queries, err
 }
-
-var platformFixKinds = []providers.Kind{providers.Kind_KIND_CONTAINER_IMAGE}
