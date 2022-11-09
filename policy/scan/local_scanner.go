@@ -29,7 +29,6 @@ import (
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
-	"golang.org/x/exp/slices"
 )
 
 type LocalScanner struct {
@@ -165,13 +164,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 			return nil, false, err
 		}
 
-		// TODO: this is a temporary fix for populating the platform information for assets that only set it
-		// during a scan, e.g. container images. This should be removed once we start using MQL for retrieving
-		// platform information.
-		if err := setPlatforms(ctx, assetList, im, job.DoRecord); err != nil {
-			return nil, false, err
-		}
-
 		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 			SpaceMrn: upstreamConfig.SpaceMrn,
 			List:     assetList,
@@ -251,6 +243,15 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 		return
 	}
 
+	var upstream *policy.Services
+	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
+		log.Debug().Msg("using API endpoint " + s.apiEndpoint)
+		upstream, err = policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+		if err != nil {
+			log.Error().Err(err).Msg("could not connect to upstream")
+		}
+	}
+
 	for c := range connections {
 		// We use a function since we want to close the motor once the current iteration finishes. If we directly
 		// use defer in the loop m.Close() for each connection will only be executed once the entire loop is
@@ -274,7 +275,15 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 					log.Warn().Err(err).Msg("failed to query platform information")
 				} else {
 					job.Asset.Platform = p
-					// resyncAssets = append(resyncAssets, assetEntry)
+					if upstream != nil {
+						_, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
+							SpaceMrn: s.spaceMrn,
+							List:     []*asset.Asset{job.Asset},
+						})
+						if err != nil {
+							log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+						}
+					}
 				}
 			}
 
@@ -567,32 +576,3 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 }
 
 var platformFixKinds = []providers.Kind{providers.Kind_KIND_CONTAINER_IMAGE}
-
-func setPlatforms(ctx context.Context, assetList []*asset.Asset, im inventory.InventoryManager, record bool) error {
-	for i := range assetList {
-		a := assetList[i]
-		if slices.Contains(platformFixKinds, a.Platform.Kind) {
-			conns, err := resolver.OpenAssetConnections(ctx, a, im.GetCredential, record)
-			if err != nil {
-				return err
-			}
-
-			for c := range conns {
-				// We use a function since we want to close the motor once the current iteration finishes. If we directly
-				// use defer in the loop m.Close() for each connection will only be executed once the entire loop is
-				// finished.
-				func(m *motor.Motor) {
-					// ensures temporary files get deleted
-					defer m.Close()
-					p, err := m.Platform()
-					if err != nil {
-						log.Error().Err(err).Msg("could not get platform")
-						return
-					}
-					a.Platform = p
-				}(conns[c])
-			}
-		}
-	}
-	return nil
-}
