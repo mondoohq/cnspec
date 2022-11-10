@@ -1,4 +1,5 @@
-FROM mondoo/cnquery:7.3.0
+ARG VERSION
+FROM mondoo/cnquery:$VERSION
 COPY cnspec /usr/local/bin
 ENTRYPOINT ["cnspec"]
 CMD ["help"]
