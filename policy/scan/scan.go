@@ -16,6 +16,7 @@ import (
 // and it makes it easier and faster to serialize.
 
 //go:generate protoc --proto_path=../../:../../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy_scan.proto
+//go:generate protoc --proto_path=../../:../../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. scan_api.proto
 
 // 50MB default size
 const ResolvedPolicyCacheSize = 52428800

@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+import "motor/asset/asset.proto";
+import "motor/inventory/v1/inventory.proto";
+import "motor/providers/provider.proto";
+import "google/protobuf/struct.proto";
+import "policy/cnspec_policy.proto";
+
+package cnspec.policy.scan;
+option go_package = "go.mondoo.com/cnspec/policy/scan";
+
+service Scan {
+  // Run executes a scan immediately and reports the result to Mondoo Platform
+  rpc Run(ScanJob) returns (ScanResult) {}
+  // RunIncognito executes a scan immediately and does not report the results to Mondoo Platform
+  rpc RunIncognito(IncognitoScanJob) returns (ScanResult) {}
+  // Schedule put a scan job onto the queue for later execution
+  rpc Schedule(ScanJob) returns (Empty) {}
+
+  // RunAdmissionReview scan a Kubernetes AdmissionReview object
+  rpc RunAdmissionReview(AdmissionReviewJob) returns (ScanResult) {}
+
+  // GarbageCollectAssets wraps the underlying DeleteAssets() to allow
+  // specifying filters to identify and delete assets en masse
+  rpc GarbageCollectAssets(GarbageCollectOptions) returns (Empty) {}
+}
+
+// Defines the possible outputs for a scan. If NONE is used, then no output is returned. If RAW is used,
+// then a raw object ReportCollection object is returned.
+enum ReportType {
+  NONE = 0;
+  ERROR = 1;
+  FULL = 2;
+}
+
+message Empty {}
+
+message ScanJob {
+  cnquery.motor.inventory.v1.Inventory inventory = 1;
+
+  // TODO: we may want to make this part of the inventory since it makes a lot more sense to combine it
+  cnquery.motor.inventory.v1.VaultConfiguration vaultCfg = 20;
+  string credentialsQuery = 21;
+  ReportType report_type = 22;
+}
+
+message AdmissionReviewJob {
+  google.protobuf.Struct data = 1;
+
+  // Map of string keys and values that can be used to organize and categorize the assets
+  map<string, string> labels = 2;
+  ReportType report_type = 3;
+
+  // Additional options for the manifest job
+  map<string,string> options = 4;
+
+  // Additional discovery settings for the manifest job
+  cnquery.motor.providers.v1.Discovery discovery = 5;
+}
+
+message GarbageCollectOptions {
+  string older_than = 1; // RFC3339
+  string mangaged_by = 2;
+  string platform_runtime = 3;
+}
+
+message File {
+  bytes data = 1;
+}
+
+message IncognitoScanJob {
+  cnquery.motor.inventory.v1.Inventory inventory = 1;
+  repeated string selected_policies = 4;
+  repeated cnspec.policy.v1.Bundle policy_bundles = 5;
+
+  // TODO: we may want to make this part of the inventory since it makes a lot more sense to combine it
+  cnquery.motor.inventory.v1.VaultConfiguration vaultCfg = 20;
+  string credentialsQuery = 21;
+  ReportType report_type = 22;
+}
+
+message ScanResult {
+  cnspec.policy.v1.Score worstScore = 1;
+  bool ok = 2;
+  oneof result {
+    // Set only if report_type is FULL.
+    ReportCollection full = 3;
+
+    // Set only if report_type is ERROR.
+    ErrorCollection errors = 4;
+
+    // Set only if report_type is NONE.
+    Empty none = 5;
+  }
+}
+
+message ErrorCollection {
+  map<string, string> errors = 1;
+}
+
+message ReportCollection {
+  map<string, cnquery.motor.asset.v1.Asset> assets = 1;
+  cnspec.policy.v1.Bundle bundle = 2;
+  map<string,  cnspec.policy.v1.Report> reports = 3;
+  map<string,  string> errors = 4;
+  map<string, cnspec.policy.v1.ResolvedPolicy> resolved_policies = 5;
+}
