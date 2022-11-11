@@ -11,6 +11,26 @@ import (
 	"go.mondoo.com/cnspec/policy"
 )
 
+func printScore(score *policy.Score, mrn string, out shared.OutputHelper, prefix string) bool {
+	if score == nil {
+		return false
+	}
+
+	status := score.TypeLabel()
+	if score.Type == policy.ScoreType_Result {
+		if score.Value == 100 {
+			status = "pass"
+		} else {
+			status = "fail"
+		}
+	}
+
+	out.WriteString(prefix + llx.PrettyPrintString(mrn) +
+		":{\"score\":" + strconv.FormatUint(uint64(score.Value), 10) + "," +
+		"\"status\":\"" + status + "\"}")
+	return true
+}
+
 func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelper) error {
 	if data == nil {
 		return nil
@@ -82,31 +102,21 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 		}
 
 		pre2 := ""
+		// try to get the policy first
+		if printScore(report.Scores[id], id, out, pre2) {
+			pre2 = ","
+		}
+
 		for qid := range resolved.ExecutionJob.Queries {
 			mrn := queryMrnIdx[qid]
 			// policies and other stuff
 			if mrn == "" {
 				continue
 			}
-			// controls
-			score, ok := report.Scores[qid]
-			if !ok {
-				continue
-			}
 
-			status := score.TypeLabel()
-			if score.Type == policy.ScoreType_Result {
-				if score.Value == 100 {
-					status = "pass"
-				} else {
-					status = "fail"
-				}
+			if printScore(report.Scores[qid], mrn, out, pre2) {
+				pre2 = ","
 			}
-
-			out.WriteString(pre2 + llx.PrettyPrintString(mrn) +
-				":{\"score\":" + strconv.FormatUint(uint64(score.Value), 10) + "," +
-				"\"status\":\"" + status + "\"}")
-			pre2 = ","
 		}
 		out.WriteString("}")
 	}
