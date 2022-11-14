@@ -1795,6 +1795,10 @@ queries:
       url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   query: |
     k8s.pod {
+      ephemeralContainers {
+        # @msg Container ${ _.name  } should set allowPrivilegeEscalation to false
+        securityContext['allowPrivilegeEscalation'] != true
+      }
       initContainers {
         # @msg Container ${ _.name  } should set allowPrivilegeEscalation to false
         securityContext['allowPrivilegeEscalation'] != true
@@ -2149,6 +2153,10 @@ queries:
       url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   query: |
     k8s.pod {
+      ephemeralContainers {
+        # @msg Container ${ _.name  } should not set `privileged` to `true`
+        securityContext['privileged'] != true
+      }
       initContainers {
         # @msg Container ${ _.name  } should not set `privileged` to `true`
         securityContext['privileged'] != true
@@ -2557,6 +2565,10 @@ queries:
       url: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   query: |
     k8s.pod {
+      ephemeralContainers {
+        # @msg Container ${ _.name  } should set readOnlyRootFilesystem to true
+        securityContext['readOnlyRootFilesystem'] == true
+      }
       initContainers {
         # @msg Container ${ _.name  } should set readOnlyRootFilesystem to true
         securityContext['readOnlyRootFilesystem'] == true
@@ -2924,6 +2936,12 @@ queries:
     if (k8s.pod.annotations['policies.k8s.mondoo.com/mondoo-kubernetes-security-pod-runasnonroot'] != 'ignore') {
       k8s.pod {
         podSecurityContext=podSpec['securityContext']
+        ephemeralContainers {
+          a = podSecurityContext['runAsNonRoot'] == true && securityContext['runAsNonRoot'] == null
+          res = securityContext['runAsNonRoot'] == true || a
+          # @msg Container ${ _.name  } should set runAsNonRoot to true
+          res == true
+        }
         initContainers {
           a = podSecurityContext['runAsNonRoot'] == true && securityContext['runAsNonRoot'] == null
           res = securityContext['runAsNonRoot'] == true || a
@@ -4627,6 +4645,15 @@ queries:
       url: https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy
   query: |
     k8s.pod {
+      ephemeralContainers {
+        # @msg Container ${ _.name  } should set imagePullPolicy to Always
+        imagePullPolicy == 'Always'
+
+        correctImage = image != /:latest/ && image.contains(':') == true
+
+        # @msg Container ${ _.name  } should set an image tag or digest
+        correctImage == true
+      }
       initContainers {
         # @msg Container ${ _.name  } should set imagePullPolicy to Always
         imagePullPolicy == 'Always'
@@ -5727,6 +5754,28 @@ queries:
         }
       }
     }
+    k8s.pod {
+      podSpec['ephemeralContainers'] {
+        _['securityContext']['capabilities'] != null
+        _['securityContext']['capabilities'] {
+          _['add'] == null || _['add'].none(_.upcase == "ALL")
+          _['add'] == null || _['add'].none(_.upcase == "NET_RAW")
+          _['drop'] != null
+          _['drop'].any(_.upcase == "NET_RAW") || _['drop'].any(_.upcase == "ALL")
+        }
+      }
+    }
+    k8s.pod {
+      podSpec['initContainers'] {
+        _['securityContext']['capabilities'] != null
+        _['securityContext']['capabilities'] {
+          _['add'] == null || _['add'].none(_.upcase == "ALL")
+          _['add'] == null || _['add'].none(_.upcase == "NET_RAW")
+          _['drop'] != null
+          _['drop'].any(_.upcase == "NET_RAW") || _['drop'].any(_.upcase == "ALL")
+        }
+      }
+    }
 - uid: mondoo-kubernetes-security-daemonset-capability-net-raw
   title: DaemonSets should not run with NET_RAW capability
   severity: 80
@@ -6159,6 +6208,30 @@ queries:
         }
       }
     }
+    k8s.pod {
+      podSpec['initContainers'] {
+        if( _['securityContext']['capabilities'] != null ) {
+          _['securityContext']['capabilities'] {
+            _['add'] == null || _['add'].none(_.upcase == "ALL")
+            _['add'] == null || _['add'].none(_.upcase == "SYS_ADMIN")
+          }
+        } else {
+            true
+        }
+      }
+    }
+    k8s.pod {
+      podSpec['ephemeralContainers'] {
+        if( _['securityContext']['capabilities'] != null ) {
+          _['securityContext']['capabilities'] {
+            _['add'] == null || _['add'].none(_.upcase == "ALL")
+            _['add'] == null || _['add'].none(_.upcase == "SYS_ADMIN")
+          }
+        } else {
+            true
+        }
+      }
+    }
 - uid: mondoo-kubernetes-security-daemonset-capability-sys-admin
   title: DaemonSets should not run with SYS_ADMIN capability
   severity: 80
@@ -6479,6 +6552,12 @@ queries:
         _['ports'] == null || _['ports'].all(_['hostPort'] == null)
       }
     }
+    k8s.pod.podSpec {
+      _['initContainers'] {
+        _['name']
+        _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
 - uid: mondoo-kubernetes-security-daemonset-ports-hostport
   title: DaemonSets should not bind to a host port
   severity: 80
@@ -6780,6 +6859,42 @@ queries:
     k8s.pod.podSpec {
       hostPathVolumes = _['volumes'].where(_['hostPath'] != null).map(_['name'])
       _['containers'] {
+        _['name']
+        if( _['volumeMounts'] != null ) {
+          _['volumeMounts'] {
+            n = _['name']
+            if( hostPathVolumes.contains(n) ) {
+              _['readOnly'] == true
+            } else {
+              true
+            }
+          }
+        } else {
+          true
+        }
+      }
+    }
+    k8s.pod.podSpec {
+      hostPathVolumes = _['volumes'].where(_['hostPath'] != null).map(_['name'])
+      _['initContainers'] {
+        _['name']
+        if( _['volumeMounts'] != null ) {
+          _['volumeMounts'] {
+            n = _['name']
+            if( hostPathVolumes.contains(n) ) {
+              _['readOnly'] == true
+            } else {
+              true
+            }
+          }
+        } else {
+          true
+        }
+      }
+    }
+    k8s.pod.podSpec {
+      hostPathVolumes = _['volumes'].where(_['hostPath'] != null).map(_['name'])
+      _['ephemeralContainers'] {
         _['name']
         if( _['volumeMounts'] != null ) {
           _['volumeMounts'] {
@@ -7133,6 +7248,8 @@ queries:
       Delete any pods that are running Tiller.
   query: |
     k8s.pod.podSpec["containers"].none( _["image"].contains("tiller") )
+    k8s.pod.podSpec["initContainers"].none( _["image"].contains("tiller") )
+    k8s.pod.podSpec["ephemeralContainers"].none( _["image"].contains("tiller") )
 - uid: mondoo-kubernetes-security-deployment-k8s-dashboard
   title: Pods should not run Kubernetes dashboard
   severity: 40
@@ -7161,6 +7278,8 @@ queries:
       Delete any pods that are running Kubernetes dashboard.
   query: |
     k8s.pod.podSpec["containers"].none( _["image"].contains("kubernetes-dashboard") || _["image"].contains("kubernetesui") )
+    k8s.pod.podSpec["initContainers"].none( _["image"].contains("kubernetes-dashboard") || _["image"].contains("kubernetesui") )
+    k8s.pod.podSpec["ephemeralContainers"].none( _["image"].contains("kubernetes-dashboard") || _["image"].contains("kubernetesui") )
     k8s.pod.labels["app"] == null || k8s.pod.labels["app"] != "kubernetes-dashboard"
     k8s.pod.labels["k8s-app"] == null || k8s.pod.labels["k8s-app"] != "kubernetes-dashboard"
 # Data Queries
@@ -7209,6 +7328,10 @@ queries:
         name
         resources
         livenessProbe
+        securityContext
+      }
+      ephemeralContainers {
+        name
         securityContext
       }
     }
