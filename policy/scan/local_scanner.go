@@ -77,7 +77,7 @@ func (s *LocalScanner) EnableQueue() error {
 	return err
 }
 
-func (s *LocalScanner) Run(ctx context.Context, job *Job) (*policy.ReportCollection, error) {
+func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -107,7 +107,7 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*policy.ReportCollect
 	return reports, nil
 }
 
-func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.ReportCollection, error) {
+func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult, error) {
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -134,7 +134,7 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.Repo
 	return reports, nil
 }
 
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig resources.UpstreamConfig) (*policy.ReportCollection, bool, error) {
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig resources.UpstreamConfig) (*ScanResult, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	im, err := inventory.New(inventory.WithInventory(job.Inventory))
 	if err != nil {
@@ -200,7 +200,17 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	}
 
 	// plan scan jobs
-	reporter := NewAggregateReporter(assetList)
+	var reporter Reporter
+	switch job.ReportType {
+	case ReportType_FULL:
+		reporter = NewAggregateReporter(assetList)
+	case ReportType_ERROR:
+		reporter = NewErrorReporter(assetList)
+	case ReportType_NONE:
+		reporter = NewNoOpReporter(assetList)
+	default:
+		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
+	}
 	job.Bundle.FilterPolicies(job.PolicyFilters)
 
 	for i := range assetList {

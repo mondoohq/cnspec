@@ -529,24 +529,34 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 
 	if config.IsIncognito {
-		return scanner.RunIncognito(
+		res, err := scanner.RunIncognito(
 			ctx,
 			&scan.Job{
 				DoRecord:      config.DoRecord,
 				Inventory:     config.Inventory,
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
+				ReportType:    scan.ReportType_FULL,
 			})
+		if err != nil {
+			return nil, err
+		}
+		return res.GetFull(), nil
 	}
 
-	return scanner.Run(
+	res, err := scanner.Run(
 		ctx,
 		&scan.Job{
 			DoRecord:      config.DoRecord,
 			Inventory:     config.Inventory,
 			Bundle:        config.Bundle,
 			PolicyFilters: config.PolicyNames,
+			ReportType:    scan.ReportType_FULL,
 		})
+	if err != nil {
+		return nil, err
+	}
+	return res.GetFull(), nil
 }
 
 func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.Command) {
