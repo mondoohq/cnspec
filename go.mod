@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/go-hclog v1.3.1
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/hashicorp/go-plugin v1.4.5
+	github.com/hashicorp/go-plugin v1.4.6
 	github.com/hashicorp/go-version v1.6.0
 	github.com/joncrlsn/dque v0.0.0-20211108142734-c2ef48c5192a
 	github.com/lucasb-eyer/go-colorful v1.2.0
