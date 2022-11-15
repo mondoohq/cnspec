@@ -1018,7 +1018,8 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 		if !isDataQuery {
 			rj.QrId = mquery.CodeId
 
-			if mquery.Severity != nil {
+			impact := mquery.ImpactValue()
+			if impact != nil {
 				for _, parentID := range rj.Notify {
 					parentJob, ok := collectorJob.ReportingJobs[parentID]
 					if !ok {
@@ -1029,8 +1030,8 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 						spec = &ScoringSpec{}
 						parentJob.Spec[rj.Uuid] = spec
 					}
-					if spec.Severity == nil {
-						spec.Severity = &SeverityValue{Value: mquery.Severity.Value}
+					if impact == nil {
+						spec.Impact = &ImpactValue{Value: mquery.Impact.Value}
 					}
 				}
 			}

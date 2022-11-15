@@ -32,6 +32,19 @@ func (m *Mquery) Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, erro
 	return v2Code, nil
 }
 
+func (m *Mquery) ImpactValue() *ImpactValue {
+	if m.GetImpact() != nil {
+		return m.Impact
+	}
+
+	// FIXME: DEPRECATED, remove in v8.0 vv
+	if m.GetSeverity != nil {
+		return m.Severity
+	}
+	// ^^
+	return nil
+}
+
 // RefreshAsAssetFilter filters treats this query as an asset filter and sets its Mrn, Title, and Checksum
 func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
 	bundle, err := m.refreshChecksumAndType(nil)
@@ -111,8 +124,9 @@ func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive) (*llx.C
 			Add(m.Tags[k])
 	}
 
-	if m.Severity != nil {
-		c = c.AddUint(uint64(m.Severity.Value))
+	impact := m.ImpactValue()
+	if impact != nil {
+		c = c.AddUint(uint64(impact.Value))
 	}
 
 	m.Checksum = c.String()

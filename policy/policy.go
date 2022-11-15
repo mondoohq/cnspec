@@ -16,7 +16,7 @@ import (
 
 //go:generate protoc --proto_path=../:../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
 
-func (sv *SeverityValue) UnmarshalJSON(data []byte) error {
+func (sv *ImpactValue) UnmarshalJSON(data []byte) error {
 	var sev int64
 
 	if err := json.Unmarshal(data, &sev); err == nil {

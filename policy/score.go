@@ -53,3 +53,16 @@ func (s *Score) MessageLine() string {
 	res := strings.TrimSpace(s.Message)
 	return strings.ReplaceAll(res, "\n", " ")
 }
+
+func (s *ScoringSpec) ImpactValue() *ImpactValue {
+	if s.GetImpact() != nil {
+		return s.Impact
+	}
+
+	// FIXME: DEPRECATED, remove in v8.0 vv
+	if s.GetSeverity() != nil {
+		return s.Severity
+	}
+	// ^^
+	return nil
+}
