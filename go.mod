@@ -3,7 +3,7 @@ module go.mondoo.com/cnspec
 go 1.19
 
 require (
-	github.com/charmbracelet/bubbletea v0.23.0
+	github.com/charmbracelet/bubbletea v0.23.1
 	github.com/cockroachdb/errors v1.9.0
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/go-hclog v1.3.1
