@@ -1,7 +1,7 @@
 policies:
   - uid: mondoo-tls-security
     name: Mondoo TLS/SSL Security Baseline
-    version: 1.1.0
+    version: 1.2.0
     is_public: true
     authors:
       - name: Mondoo, Inc
@@ -25,7 +25,7 @@ policies:
         ### Scan a host 
 
         ```bash
-        cnspec scan host <hostname>
+        cnspec scan host <fqdn>
         ```
 
         ## Join the community!
@@ -36,10 +36,11 @@ policies:
     tags:
       tls:
       ssl:
+    scoring_system: 2
     specs:
       - title: Secure TLS/SSL connection
         asset_filter:
-          query: platform.family.contains('network')
+          query: asset.family.contains('network')
         scoring_queries:
           mondoo-tls-security-no-weak-tls-versions: null
           mondoo-tls-security-no-rc4-ciphers: null
@@ -55,11 +56,12 @@ policies:
           mondoo-tls-security-mitigate-beast: null
       - title: Valid TLS/SSL certificate
         asset_filter:
-          query: platform.family.contains('network')
+          query: asset.family.contains('network')
         scoring_queries:
           mondoo-tls-security-cert-domain-name-match: null
           mondoo-tls-security-cert-is-valid: null
           mondoo-tls-security-cert-no-cert-expired: null
+          mondoo-tls-security-cert-no-certs-expired: null
           mondoo-tls-security-cert-not-self-signed: null
           mondoo-tls-security-cert-not-revoked: null
           mondoo-tls-security-cert-no-weak-signature: null
@@ -67,71 +69,92 @@ policies:
 queries:
   - uid: mondoo-tls-security-cert-domain-name-match
     title: The certificate's domain name must match
+    impact: 50
     query: |
       tls.certificates.first.subject.commonName == platform.fqdn
   - uid: mondoo-tls-security-cert-is-valid
     title: The certificate is valid
+    impact: 95
     query: |
       tls.certificates.first {
+        subject.commonName
         notBefore < time.now
         notAfter - notBefore < 398*time.day
       }
   - uid: mondoo-tls-security-cert-no-cert-expired
-    title: None of the certificates have expired
+    title: Certificate has not expired
     query: |
-      tls.certificates.all( expiresIn > 0*time.day )
+      tls.certificates.first.subject.commonName
+      switch {
+        case tls.certificates.first.expiresIn.days > 150: score(100);
+        case tls.certificates.first.expiresIn.days > 120: score(70);
+        case tls.certificates.first.expiresIn.days > 90: score(50);
+        case tls.certificates.first.expiresIn.days > 60: score(20);
+        case tls.certificates.first.expiresIn.days > 30: score(9);
+        default: score(0);
+      }
+  - uid: mondoo-tls-security-cert-no-certs-expired
+    title: None of the certificates (intermediate, root) have expired
+    impact: 95
+    query: |
+      tls.certificates {
+        subject.commonName
+        expiresIn.days > 0
+      }
   - uid: mondoo-tls-security-cert-not-self-signed
     title: Do not use a self-signed certificate
+    impact: 70
     query: |
       tls.certificates.last.isCA
   - uid: mondoo-tls-security-cert-not-revoked
     title: Do not use revoked certificates
+    impact: 95
     query: |
-      # @msg Found ${length} certificates in this chain that have been revoked:
-      # ${{ 
-      #   subject.commonName
-      #   issuer.commonName
-      #   ocspServer
-      # }}
-      tls.certificates.none( isRevoked )
+      tls.certificates {
+        subject.commonName
+        isRevoked != true
+      }
   - uid: mondoo-tls-security-cert-no-weak-signature
     title: Do not use weak certificate signatures
+    impact: 95
     query: |
-      # @msg Found ${length} certificates in this chain that use weak signatures:
-      # ${{ 
-      #   subject.commonName
-      #   issuer.commonName
-      #   signingAlgorithm
-      # }}
-      tls.certificates.none(
-        signingAlgorithm == /md2|md5|sha1/i
-      )
+      tls.certificates {
+        subject.commonName
+        signingAlgorithm != /md2|md5|sha1/i
+      }
   - uid: mondoo-tls-security-no-weak-tls-versions
     title: Avoid weak SSL and TLS versions
+    impact: 80
     query: |
       tls.versions.containsOnly(["tls1.2", "tls1.3"])
   - uid: mondoo-tls-security-no-rc4-ciphers
     title: Avoid RC4 ciphers
+    impact: 90
     query: |
       tls.ciphers.none( /rc4/i )
   - uid: mondoo-tls-security-no-null-cipher-suites
     title: Avoid NULL cipher suites
+    impact: 95
     query: |
       tls.ciphers.none( /null/i )
   - uid: mondoo-tls-security-no-export-cipher-suites
     title: Avoid export ciphers suites
+    impact: 95
     query: |
       tls.ciphers.none( /export/i )
   - uid: mondoo-tls-security-no-diffie-hellman-cipher-suites
     title: Avoid anonymous Diffie-Hellman suites
+    impact: 95
     query: |
       tls.ciphers.none( /dh_anon/i )
   - uid: mondoo-tls-security-no-weak-block-ciphers
     title: Avoid weak block ciphers
+    impact: 95
     query:
       tls.ciphers.none( /des|rc2|idea/i )
   - uid: mondoo-tls-security-no-weak-block-cipher-modes
     title: Avoid weak block cipher modes
+    impact: 80
     query: 
       tls.ciphers.none( /cbc/i )
   - uid: mondoo-tls-security-no-rsa-key-exchange
@@ -140,14 +163,17 @@ queries:
       tls.ciphers.none( /^tls_rsa/i )
   - uid: mondoo-tls-security-no-old-cipher-suites
     title: Avoid old cipher suites
+    impact: 95
     query:
       tls.ciphers.none( /^old/i )
   - uid: mondoo-tls-security-ciphers-include-aead-ciphers
     title: Preferred ciphers must include AEAD ciphers
+    impact: 80
     query:
       tls.ciphers.any( /chacha20_poly1305|gcm|ccm/i )
   - uid: mondoo-tls-security-ciphers-include-pfs
     title: Preferred ciphers must include perfect forward secrecy (PFS)
+    impact: 80
     query:
       tls.ciphers.any( /ecdhe_(rsa|ecdsa)|dhe_(rsa|dss)|cecpq/i )
   - uid: mondoo-tls-security-mitigate-beast
@@ -157,12 +183,12 @@ queries:
         url: https://kb.vmware.com/s/article/2008784
     query: |
       switch {
-      case tls.versions.containsOnly(["tls1.2", "tls1.3"]):
-        score(100);
-      case tls.ciphers.all( /rc4/i ):
-        score(100);
-      case tls.ciphers.none( /null|dh_anon|export|des|rc2|idea/ ):
-        score(80);
-      default:
-        score(0);
+        case tls.versions.containsOnly(["tls1.2", "tls1.3"]):
+          score(100);
+        case tls.ciphers.all( /rc4/i ):
+          score(100);
+        case tls.ciphers.none( /null|dh_anon|export|des|rc2|idea/ ):
+          score(80);
+        default:
+          score(0);
       }
