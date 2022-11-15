@@ -62,7 +62,7 @@ func NewMultiBar(id string, data progressData) *progressbar {
 		id:           id,
 		maxNameWidth: maxNameWidth,
 		Data:         data,
-		isTTY:        isatty.IsTerminal(os.Stdout.Fd()) && false, // FIXME: re-enable the detection
+		isTTY:        isatty.IsTerminal(os.Stdout.Fd()),
 	}
 }
 
@@ -77,8 +77,7 @@ func (p *progressbar) Open() error {
 		go func() {
 			(logger.LogOutputWriter.(*logger.BufferedWriter)).Pause()
 			defer (logger.LogOutputWriter.(*logger.BufferedWriter)).Resume()
-
-			if err := tea.NewProgram(p).Start(); err != nil {
+			if _, err := tea.NewProgram(p).Run(); err != nil {
 				panic(err)
 			}
 		}()
@@ -106,7 +105,9 @@ func (p *progressbar) OnProgress(current int, total int) {
 }
 
 func (p *progressbar) Close() {
+	p.lock.Lock()
 	p.Data.complete = true
+	p.lock.Unlock()
 }
 
 const (
@@ -124,10 +125,6 @@ func (p *progressbar) Init() tea.Cmd {
 
 // Update is a required interface method for the underlying renderer
 func (p *progressbar) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if p.Data.complete {
-		return p, tea.Quit
-	}
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -145,6 +142,9 @@ func (p *progressbar) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return p, nil
 
 	case tickMsg:
+		if p.Data.complete {
+			return p, tea.Quit
+		}
 		return p, tickCmd()
 
 	default:
@@ -155,15 +155,12 @@ func (p *progressbar) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View is a required interface method for the underlying renderer
 func (p *progressbar) View() string {
 	pad := strings.Repeat(" ", p.padding)
-
 	out := ""
-	p.lock.Lock()
 	for i := range p.Data.Names {
 		name := p.Data.Names[i]
 		value := p.Data.Completion[i]
 		out += "\n" + pad + p.bar.View(value) + " " + name
 	}
-	p.lock.Unlock()
 
 	out += "\n"
 	return out
