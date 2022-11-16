@@ -67,6 +67,7 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
 		fetcher:             newFetcher(),
+		ctx:                 context.Background(),
 	}
 
 	for i := range opts {
