@@ -342,6 +342,7 @@ type PolicyResolver interface {
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
+	DeleteAssets(context.Context, *DeleteAssetsRequest) (*DeleteAssetsConfirmation, error)
 }
 
 // client implementation
@@ -420,6 +421,11 @@ func (c *PolicyResolverClient) SynchronizeAssets(ctx context.Context, in *Synchr
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SynchronizeAssets"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) DeleteAssets(ctx context.Context, in *DeleteAssetsRequest) (*DeleteAssetsConfirmation, error) {
+	out := new(DeleteAssetsConfirmation)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeleteAssets"}, ""), in, out)
+	return out, err
+}
 
 // server implementation
 
@@ -453,6 +459,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetReport":            srv.GetReport,
 			"GetScore":             srv.GetScore,
 			"SynchronizeAssets":    srv.SynchronizeAssets,
+			"DeleteAssets":         srv.DeleteAssets,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -702,4 +709,28 @@ func (p *PolicyResolverServer) SynchronizeAssets(ctx context.Context, reqBytes *
 		return nil, err
 	}
 	return p.handler.SynchronizeAssets(ctx, &req)
+}
+func (p *PolicyResolverServer) DeleteAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req DeleteAssetsRequest
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.DeleteAssets(ctx, &req)
 }

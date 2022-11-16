@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -22,6 +24,8 @@ import (
 )
 
 func init() {
+	serveApiCmd.Flags().String("address", "127.0.0.1", "address to listen on")
+	serveApiCmd.Flags().Uint("port", 8080, "port to listen on")
 	rootCmd.AddCommand(serveApiCmd)
 }
 
@@ -31,9 +35,11 @@ var serveApiCmd = &cobra.Command{
 	Short:  "EXPERIMENTAL: Serve a REST API for running scans",
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("port", cmd.Flags().Lookup("port"))
-		viper.BindPFlag("bind", cmd.Flags().Lookup("bind"))
-		viper.BindPFlag("token", cmd.Flags().Lookup("token"))
-		viper.BindPFlag("token-file-path", cmd.Flags().Lookup("token-file-path"))
+		viper.BindPFlag("address", cmd.Flags().Lookup("address"))
+
+		// TODO: will be added later
+		// viper.BindPFlag("token", cmd.Flags().Lookup("token"))
+		// viper.BindPFlag("token-file-path", cmd.Flags().Lookup("token-file-path"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, optsErr := cnspec_config.ReadConfig()
@@ -41,19 +47,6 @@ var serveApiCmd = &cobra.Command{
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
 		}
 		config.DisplayUsedConfig()
-
-		// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
-		// runtimeEnv := execruntime.Detect()
-		// if opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv() || opts.Category == "cicd" {
-		// 	log.Info().Msg("detected ci-cd environment")
-		// 	// NOTE: we only apply those runtime environment labels for CI/CD runs to ensure other assets from the
-		// 	// inventory are not touched, we may consider to add the data to the flagAsset
-		// 	if runtimeEnv != nil {
-		// 		runtimeLabels := runtimeEnv.Labels()
-		// 		conf.Inventory.ApplyLabels(runtimeLabels)
-		// 	}
-		// 	conf.Inventory.ApplyCategory(asset.AssetCategory_CATEGORY_CICD)
-		// }
 
 		serviceAccount := opts.GetServiceCredential()
 		if serviceAccount == nil {
@@ -75,9 +68,18 @@ var serveApiCmd = &cobra.Command{
 			Plugins:     plugins,
 		}
 
-		scanner := scan.NewScanner(upstreamConfig)
+		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn, upstreamConfig.Plugins), scan.DisableProgressBar())
+		if err := scanner.EnableQueue(); err != nil {
+			log.Fatal().Err(err).Msg("could not enable scan queue")
+		}
 
-		bind := "http://127.0.0.0:8080"
+		addressOpt := viper.GetString("address")
+		portOpt := viper.GetInt("port")
+		bind, err := getHttpBind(addressOpt, portOpt)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to create HTTP bind")
+		}
+
 		uri, err := url.Parse(bind)
 		if err != nil {
 			log.Fatal().Err(err).Str("binding", bind).Msg("failed to parse binding")
@@ -139,4 +141,9 @@ func bindHTTP(mux http.Handler, uri *url.URL) error {
 	<-done
 	log.Info().Msg("shutdown server successfully")
 	return nil
+}
+
+func getHttpBind(address string, port int) (string, error) {
+	// For now support only http
+	return fmt.Sprintf("%s://%s:%s", "http", address, strconv.Itoa(port)), nil
 }
