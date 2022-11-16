@@ -19,7 +19,7 @@ type diskQueueConfig struct {
 }
 
 var defaultDqueConfig = diskQueueConfig{
-	dir:         "/tmp/mondoo-queue", // TODO: consider configurable path
+	dir:         "/tmp/cnspec-queue", // TODO: consider configurable path
 	filename:    "disk-queue",
 	segmentSize: 500,
 	sync:        false,
