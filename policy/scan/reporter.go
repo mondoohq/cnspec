@@ -26,19 +26,9 @@ type AggregateReporter struct {
 	resolvedPolicies map[string]*policy.ResolvedPolicy
 }
 
-func NewAggregateReporter(assetList []*asset.Asset) *AggregateReporter {
-	assets := make(map[string]*policy.Asset, len(assetList))
-	for i := range assetList {
-		cur := assetList[i]
-		assets[cur.Mrn] = &policy.Asset{
-			Mrn:  cur.Mrn,
-			Name: cur.Name,
-			Url:  cur.Url,
-		}
-	}
-
+func NewAggregateReporter() *AggregateReporter {
 	return &AggregateReporter{
-		assets:           assets,
+		assets:           make(map[string]*policy.Asset),
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
@@ -46,6 +36,11 @@ func NewAggregateReporter(assetList []*asset.Asset) *AggregateReporter {
 }
 
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+	r.assets[asset.Mrn] = &policy.Asset{
+		Mrn:  asset.Mrn,
+		Name: asset.Name,
+		Url:  asset.Url,
+	}
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
 
