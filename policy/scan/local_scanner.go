@@ -204,20 +204,30 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	log.Info().Msgf("connecting to asset %s", job.Asset.HumanName())
 
+	var upstream *policy.Services
+	var err error
+	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
+		log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
+		upstream, err = policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins)
+		if err != nil {
+			log.Error().Err(err).Msg("could not connect to upstream")
+		}
+	}
+
 	// run over all connections
 	connections, err := resolver.OpenAssetConnections(job.Ctx, job.Asset, job.GetCredential, job.DoRecord)
 	if err != nil {
 		job.Reporter.AddScanError(job.Asset, err)
-		return
-	}
-
-	var upstream *policy.Services
-	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
-		log.Debug().Msg("using API endpoint " + s.apiEndpoint)
-		upstream, err = policy.NewRemoteServices(s.apiEndpoint, s.plugins)
-		if err != nil {
-			log.Error().Err(err).Msg("could not connect to upstream")
+		if upstream != nil {
+			_, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
+				SpaceMrn: job.UpstreamConfig.SpaceMrn,
+				List:     []*asset.Asset{job.Asset},
+			})
+			if err != nil {
+				log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+			}
 		}
+		return
 	}
 
 	for c := range connections {
@@ -248,7 +258,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 
 			if upstream != nil {
 				resp, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
-					SpaceMrn: s.spaceMrn,
+					SpaceMrn: job.UpstreamConfig.SpaceMrn,
 					List:     []*asset.Asset{job.Asset},
 				})
 				if err != nil {
