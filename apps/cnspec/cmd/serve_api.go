@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
+	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
@@ -37,11 +38,14 @@ var serveApiCmd = &cobra.Command{
 		viper.BindPFlag("port", cmd.Flags().Lookup("port"))
 		viper.BindPFlag("address", cmd.Flags().Lookup("address"))
 
+		logger.StandardZerologLogger()
+
 		// TODO: will be added later
 		// viper.BindPFlag("token", cmd.Flags().Lookup("token"))
 		// viper.BindPFlag("token-file-path", cmd.Flags().Lookup("token-file-path"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		log.Warn().Msg("this is an experimental feature, use at your own risk")
 		opts, optsErr := cnspec_config.ReadConfig()
 		if optsErr != nil {
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
