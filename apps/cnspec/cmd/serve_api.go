@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/logger"
@@ -27,6 +28,7 @@ import (
 func init() {
 	serveApiCmd.Flags().String("address", "127.0.0.1", "address to listen on")
 	serveApiCmd.Flags().Uint("port", 8080, "port to listen on")
+	serveApiCmd.Flags().Bool("no-upstream", false, "dont connect to upstream")
 	rootCmd.AddCommand(serveApiCmd)
 }
 
@@ -37,6 +39,7 @@ var serveApiCmd = &cobra.Command{
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("port", cmd.Flags().Lookup("port"))
 		viper.BindPFlag("address", cmd.Flags().Lookup("address"))
+		viper.BindPFlag("no-upstream", cmd.Flags().Lookup("no-upstream"))
 
 		logger.StandardZerologLogger()
 
@@ -46,33 +49,44 @@ var serveApiCmd = &cobra.Command{
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Warn().Msg("this is an experimental feature, use at your own risk")
-		opts, optsErr := cnspec_config.ReadConfig()
-		if optsErr != nil {
-			log.Fatal().Err(optsErr).Msg("could not load configuration")
-		}
-		config.DisplayUsedConfig()
 
-		serviceAccount := opts.GetServiceCredential()
-		if serviceAccount == nil {
-			log.Fatal().Msg("no service account configured")
-		}
-
-		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-		plugins := []ranger.ClientPlugin{certAuth}
+		noUpstream := viper.GetBool("no-upstream")
+		scanOpts := []scan.ScannerOption{}
+		scanOpts = append(scanOpts, scan.DisableProgressBar())
+		plugins := []ranger.ClientPlugin{}
 		// determine information about the client
 		sysInfo, err := sysinfo.GatherSystemInfo()
 		if err != nil {
 			log.Warn().Err(err).Msg("could not gather client information")
 		}
-		plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
-		log.Info().Msg("using service account credentials")
-		upstreamConfig := resources.UpstreamConfig{
-			SpaceMrn:    opts.GetParentMrn(),
-			ApiEndpoint: opts.UpstreamApiEndpoint(),
-			Plugins:     plugins,
-		}
+		if noUpstream {
+			plugins = append(plugins, defaultRangerPlugins(sysInfo, cnquery.DefaultFeatures)...)
+			log.Warn().Msg("no service account configured. each job requires a SA.")
+		} else {
+			opts, optsErr := cnspec_config.ReadConfig()
+			if optsErr != nil {
+				log.Fatal().Err(optsErr).Msg("could not load configuration")
+			}
+			config.DisplayUsedConfig()
 
-		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn, upstreamConfig.Plugins), scan.DisableProgressBar())
+			plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
+			serviceAccount := opts.GetServiceCredential()
+			if serviceAccount == nil {
+				log.Fatal().Msg("no service account configured")
+			}
+
+			certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+			plugins = append(plugins, certAuth)
+			log.Info().Msg("using service account credentials")
+			upstreamConfig := resources.UpstreamConfig{
+				SpaceMrn:    opts.GetParentMrn(),
+				ApiEndpoint: opts.UpstreamApiEndpoint(),
+				Plugins:     plugins,
+			}
+			scanOpts = append(scanOpts, scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn))
+		}
+		scanOpts = append(scanOpts, scan.WithPlugins(plugins))
+		scanner := scan.NewLocalScanner(scanOpts...)
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
 		}

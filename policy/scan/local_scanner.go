@@ -25,6 +25,7 @@ import (
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/resources/packs/all"
+	upstream "go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
@@ -49,11 +50,16 @@ type LocalScanner struct {
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) ScannerOption {
+func WithUpstream(apiEndpoint string, spaceMrn string) ScannerOption {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
-		s.plugins = plugins
 		s.spaceMrn = spaceMrn
+	}
+}
+
+func WithPlugins(plugins []ranger.ClientPlugin) ScannerOption {
+	return func(s *LocalScanner) {
+		s.plugins = plugins
 	}
 }
 
@@ -82,6 +88,7 @@ func (s *LocalScanner) EnableQueue() error {
 	s.queue, err = newDqueClient(defaultDqueConfig, func(job *Job) {
 		// this is the handler for jobs, when they are picked up
 		ctx := cnquery.SetFeatures(s.ctx, cnquery.DefaultFeatures)
+
 		_, err := s.Run(ctx, job)
 		if err != nil {
 			log.Error().Err(err).Msg("could not complete the scan")
@@ -118,11 +125,21 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 
 	dctx := discovery.InitCtx(ctx)
 
+	plugins := s.plugins
+	endpoint := s.apiEndpoint
+	spaceMrn := s.spaceMrn
+	if job.Creds != nil {
+		certAuth, _ := upstream.NewServiceAccountRangerPlugin(job.Creds)
+		plugins = append(plugins, certAuth)
+		endpoint = job.Creds.GetApiEndpoint()
+		spaceMrn = job.Creds.GetParentMrn()
+	}
+
 	upstreamConfig := resources.UpstreamConfig{
-		SpaceMrn:    s.spaceMrn,
-		ApiEndpoint: s.apiEndpoint,
+		SpaceMrn:    spaceMrn,
+		ApiEndpoint: endpoint,
 		Incognito:   false,
-		Plugins:     s.plugins,
+		Plugins:     plugins,
 	}
 
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
@@ -183,12 +200,12 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	// sync assets
 	if upstreamConfig.ApiEndpoint != "" && !upstreamConfig.Incognito {
 		log.Info().Msg("syncing assets")
-		upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+		upstream, err := policy.NewRemoteServices(upstreamConfig.ApiEndpoint, upstreamConfig.Plugins)
 		if err != nil {
 			return nil, false, err
 		}
 		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: s.spaceMrn,
+			SpaceMrn: upstreamConfig.SpaceMrn,
 			List:     assetList,
 		})
 		if err != nil {
@@ -329,7 +346,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + s.apiEndpoint)
-			upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+			upstream, err := policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins)
 			if err != nil {
 				return err
 			}
