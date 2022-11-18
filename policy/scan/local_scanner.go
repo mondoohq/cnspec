@@ -157,12 +157,12 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	// sync assets
 	if upstreamConfig.ApiEndpoint != "" && !upstreamConfig.Incognito {
 		log.Info().Msg("syncing assets")
-		upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+		upstream, err := policy.NewRemoteServices(upstreamConfig.ApiEndpoint, upstreamConfig.Plugins)
 		if err != nil {
 			return nil, false, err
 		}
 		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: s.spaceMrn,
+			SpaceMrn: upstreamConfig.SpaceMrn,
 			List:     assetList,
 		})
 		if err != nil {
@@ -286,8 +286,8 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
-			log.Debug().Msg("using API endpoint " + s.apiEndpoint)
-			upstream, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
+			upstream, err := policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins)
 			if err != nil {
 				return err
 			}
