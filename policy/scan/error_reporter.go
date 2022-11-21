@@ -15,27 +15,23 @@ type ErrorReporter struct {
 	errors map[string]string
 }
 
-func NewErrorReporter(assetList []*asset.Asset) Reporter {
-	assets := make(map[string]*policy.Asset, len(assetList))
-	for i := range assetList {
-		cur := assetList[i]
-		assets[cur.Mrn] = &policy.Asset{
-			Mrn:  cur.Mrn,
-			Name: cur.Name,
-			Url:  cur.Url,
-		}
-	}
-	return &ErrorReporter{assets: assets, errors: make(map[string]string)}
+func NewErrorReporter() Reporter {
+	return &ErrorReporter{assets: make(map[string]*policy.Asset), errors: make(map[string]string)}
 }
 
 func (r *ErrorReporter) AddReport(asset *asset.Asset, results *AssetReport) {}
 
-func (c *ErrorReporter) AddScanError(assetObj *asset.Asset, err error) {
+func (c *ErrorReporter) AddScanError(asset *asset.Asset, err error) {
 	if c.errors == nil {
 		c.errors = make(map[string]string)
 	}
-	name := findNameForAsset(assetObj)
-	errMsg := assetScanErrToString(assetObj, err)
+	name := findNameForAsset(asset)
+	errMsg := assetScanErrToString(asset, err)
+	c.assets[asset.Mrn] = &policy.Asset{
+		Mrn:  asset.Mrn,
+		Name: asset.Name,
+		Url:  asset.Url,
+	}
 	c.errors[name] = errMsg
 }
 

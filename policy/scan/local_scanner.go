@@ -199,11 +199,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	var reporter Reporter
 	switch job.ReportType {
 	case ReportType_FULL:
-		reporter = NewAggregateReporter(assetList)
+		reporter = NewAggregateReporter()
 	case ReportType_ERROR:
-		reporter = NewErrorReporter(assetList)
+		reporter = NewErrorReporter()
 	case ReportType_NONE:
-		reporter = NewNoOpReporter(assetList)
+		reporter = NewNoOpReporter()
 	default:
 		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
 	}
