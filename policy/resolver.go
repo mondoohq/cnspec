@@ -228,7 +228,7 @@ func (s *LocalServices) SynchronizeAssets(ctx context.Context, req *SynchronizeA
 }
 
 // DeleteAssets is not require for local services
-func (s *LocalServices) DeleteAssets(context.Context, *DeleteAssetsRequest) (*DeleteAssetsConfirmation, error) {
+func (s *LocalServices) PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error) {
 	return nil, nil
 }
 

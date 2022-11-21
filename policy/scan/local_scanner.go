@@ -422,7 +422,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		return nil, errors.Wrap(err, "could not initialize asset synchronization")
 	}
 
-	dar := &policy.DeleteAssetsRequest{
+	dar := &policy.PurgeAssetsRequest{
 		SpaceMrn:        s.spaceMrn,
 		ManagedBy:       garbageCollectOpts.ManagedBy,
 		PlatformRuntime: garbageCollectOpts.PlatformRuntime,
@@ -443,7 +443,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		}
 	}
 
-	_, err = pClient.DeleteAssets(ctx, dar)
+	_, err = pClient.PurgeAssets(ctx, dar)
 	if err != nil {
 		log.Error().Err(err).Msg("error while trying to garbage collect assets")
 	}
