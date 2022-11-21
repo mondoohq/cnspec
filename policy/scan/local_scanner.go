@@ -424,7 +424,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 
 	dar := &policy.DeleteAssetsRequest{
 		SpaceMrn:        s.spaceMrn,
-		ManagedBy:       garbageCollectOpts.MangagedBy,
+		ManagedBy:       garbageCollectOpts.ManagedBy,
 		PlatformRuntime: garbageCollectOpts.PlatformRuntime,
 	}
 
