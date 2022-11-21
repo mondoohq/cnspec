@@ -342,7 +342,7 @@ type PolicyResolver interface {
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
-	DeleteAssets(context.Context, *DeleteAssetsRequest) (*DeleteAssetsConfirmation, error)
+	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
 }
 
 // client implementation
@@ -421,9 +421,9 @@ func (c *PolicyResolverClient) SynchronizeAssets(ctx context.Context, in *Synchr
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SynchronizeAssets"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) DeleteAssets(ctx context.Context, in *DeleteAssetsRequest) (*DeleteAssetsConfirmation, error) {
-	out := new(DeleteAssetsConfirmation)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeleteAssets"}, ""), in, out)
+func (c *PolicyResolverClient) PurgeAssets(ctx context.Context, in *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error) {
+	out := new(PurgeAssetsConfirmation)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/PurgeAssets"}, ""), in, out)
 	return out, err
 }
 
@@ -459,7 +459,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetReport":            srv.GetReport,
 			"GetScore":             srv.GetScore,
 			"SynchronizeAssets":    srv.SynchronizeAssets,
-			"DeleteAssets":         srv.DeleteAssets,
+			"PurgeAssets":          srv.PurgeAssets,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -710,8 +710,8 @@ func (p *PolicyResolverServer) SynchronizeAssets(ctx context.Context, reqBytes *
 	}
 	return p.handler.SynchronizeAssets(ctx, &req)
 }
-func (p *PolicyResolverServer) DeleteAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req DeleteAssetsRequest
+func (p *PolicyResolverServer) PurgeAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req PurgeAssetsRequest
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -732,5 +732,5 @@ func (p *PolicyResolverServer) DeleteAssets(ctx context.Context, reqBytes *[]byt
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.DeleteAssets(ctx, &req)
+	return p.handler.PurgeAssets(ctx, &req)
 }
