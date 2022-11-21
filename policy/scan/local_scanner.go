@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"strings"
 	"time"
@@ -11,12 +12,15 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery"
+	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	"go.mondoo.com/cnquery/motor/inventory"
+	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
+	providers "go.mondoo.com/cnquery/motor/providers"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
@@ -37,14 +41,15 @@ type LocalScanner struct {
 	fetcher             *fetcher
 
 	// for remote connectivity
-	apiEndpoint string
-	spaceMrn    string
-	plugins     []ranger.ClientPlugin
+	apiEndpoint        string
+	spaceMrn           string
+	plugins            []ranger.ClientPlugin
+	disableProgressBar bool
 }
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) func(s *LocalScanner) {
+func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) ScannerOption {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
 		s.plugins = plugins
@@ -52,10 +57,17 @@ func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPl
 	}
 }
 
+func DisableProgressBar() ScannerOption {
+	return func(s *LocalScanner) {
+		s.disableProgressBar = true
+	}
+}
+
 func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
 		fetcher:             newFetcher(),
+		ctx:                 context.Background(),
 	}
 
 	for i := range opts {
@@ -78,7 +90,20 @@ func (s *LocalScanner) EnableQueue() error {
 	return err
 }
 
-func (s *LocalScanner) Run(ctx context.Context, job *Job) (*policy.ReportCollection, error) {
+func (s *LocalScanner) Schedule(ctx context.Context, job *Job) (*Empty, error) {
+	if job == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
+	}
+
+	if s.queue == nil {
+		return nil, status.Errorf(codes.Unavailable, "job queue is not available")
+	}
+
+	s.queue.Channel() <- *job
+	return &Empty{}, nil
+}
+
+func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -108,7 +133,7 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*policy.ReportCollect
 	return reports, nil
 }
 
-func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.ReportCollection, error) {
+func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult, error) {
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -135,7 +160,7 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*policy.Repo
 	return reports, nil
 }
 
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig resources.UpstreamConfig) (*policy.ReportCollection, bool, error) {
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig resources.UpstreamConfig) (*ScanResult, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	im, err := inventory.New(inventory.WithInventory(job.Inventory))
 	if err != nil {
@@ -171,7 +196,17 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	}
 
 	// plan scan jobs
-	reporter := NewAggregateReporter()
+	var reporter Reporter
+	switch job.ReportType {
+	case ReportType_FULL:
+		reporter = NewAggregateReporter()
+	case ReportType_ERROR:
+		reporter = NewErrorReporter()
+	case ReportType_NONE:
+		reporter = NewNoOpReporter()
+	default:
+		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
+	}
 	job.Bundle.FilterPolicies(job.PolicyFilters)
 
 	for i := range assetList {
@@ -284,6 +319,12 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.Reporter.AddReport(job.Asset, results)
 		}(connections[c])
 	}
+
+	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
+	// such that it is visible from the logs.
+	if s.disableProgressBar {
+		log.Info().Msgf("scan for asset %s completed", job.Asset.HumanName())
+	}
 }
 
 func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
@@ -306,7 +347,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		runtime.UpstreamConfig = &job.UpstreamConfig
 
 		var progressListener progress.Progress
-		if isatty.IsTerminal(os.Stdout.Fd()) {
+		if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar {
 			progressListener = progress.New(job.Asset.Mrn, job.Asset.Name)
 		} else {
 			progressListener = progress.Noop{}
@@ -330,6 +371,83 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	}
 
 	return res, policyErr
+}
+
+func (s *LocalScanner) RunAdmissionReview(ctx context.Context, job *AdmissionReviewJob) (*ScanResult, error) {
+	opts := job.Options
+	if opts == nil {
+		opts = make(map[string]string)
+	}
+	data, err := job.Data.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	opts["k8s-admission-review"] = base64.StdEncoding.EncodeToString(data)
+
+	// construct the inventory to scan the admission review
+	inv := &v1.Inventory{
+		Spec: &v1.InventorySpec{
+			Assets: []*asset.Asset{
+				{
+					Connections: []*providers.Config{
+						{
+							Backend:  providers.ProviderType_K8S,
+							Options:  opts,
+							Discover: job.Discovery,
+						},
+					},
+					Labels:   job.Labels,
+					Category: asset.AssetCategory_CATEGORY_CICD,
+				},
+			},
+		},
+	}
+
+	runtimeEnv := execruntime.Detect()
+	if runtimeEnv != nil {
+		runtimeLabels := runtimeEnv.Labels()
+		inv.ApplyLabels(runtimeLabels)
+	}
+
+	return s.Run(ctx, &Job{Inventory: inv, ReportType: job.ReportType})
+}
+
+func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectOpts *GarbageCollectOptions) (*Empty, error) {
+	if garbageCollectOpts == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing garbage collection options")
+	}
+
+	pClient, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+	if err != nil {
+		return nil, errors.Wrap(err, "could not initialize asset synchronization")
+	}
+
+	dar := &policy.DeleteAssetsRequest{
+		SpaceMrn:        s.spaceMrn,
+		ManagedBy:       garbageCollectOpts.ManagedBy,
+		PlatformRuntime: garbageCollectOpts.PlatformRuntime,
+	}
+
+	if garbageCollectOpts.OlderThan != "" {
+		timestamp, err := time.Parse(time.RFC3339, garbageCollectOpts.OlderThan)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed converting timestamp from RFC3339 format")
+		}
+
+		dar.DateFilter = &policy.DateFilter{
+			Timestamp: timestamp.Format(time.RFC3339),
+			// LESS_THAN b/c we want assets with a lastUpdated timestamp older
+			// (ie timewise considered less) than the timestamp provided
+			Comparison: policy.Comparison_LESS_THAN,
+			Field:      policy.DateFilterField_FILTER_LAST_UPDATED,
+		}
+	}
+
+	_, err = pClient.DeleteAssets(ctx, dar)
+	if err != nil {
+		log.Error().Err(err).Msg("error while trying to garbage collect assets")
+	}
+	return &Empty{}, err
 }
 
 type localAssetScanner struct {

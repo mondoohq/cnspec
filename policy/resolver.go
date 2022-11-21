@@ -227,6 +227,11 @@ func (s *LocalServices) SynchronizeAssets(ctx context.Context, req *SynchronizeA
 	return nil, nil
 }
 
+// DeleteAssets is not require for local services
+func (s *LocalServices) DeleteAssets(context.Context, *DeleteAssetsRequest) (*DeleteAssetsConfirmation, error) {
+	return nil, nil
+}
+
 // HELPER METHODS
 // =================
 
