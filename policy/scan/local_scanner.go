@@ -14,6 +14,7 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	"go.mondoo.com/cnquery/motor/inventory"
 	"go.mondoo.com/cnquery/motor/providers/resolver"
@@ -154,37 +155,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		return nil, false, errors.New("could not find an asset that we can connect to")
 	}
 
-	// sync assets
-	if upstreamConfig.ApiEndpoint != "" && !upstreamConfig.Incognito {
-		log.Info().Msg("syncing assets")
-		upstream, err := policy.NewRemoteServices(upstreamConfig.ApiEndpoint, upstreamConfig.Plugins)
-		if err != nil {
-			return nil, false, err
-		}
-		resp, err := upstream.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: upstreamConfig.SpaceMrn,
-			List:     assetList,
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
-		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
-		for i := range resp.Details {
-			log.Debug().Str("platform-mrn", i).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
-			platformAssetMapping[i] = resp.Details[i]
-		}
-
-		// attach the asset details to the assets list
-		for i := range assetList {
-			log.Debug().Str("asset", assetList[i].Name).Strs("platform-ids", assetList[i].PlatformIds).Msg("update asset")
-			platformId := assetList[i].PlatformIds[0]
-			assetList[i].Mrn = platformAssetMapping[platformId].AssetMrn
-			assetList[i].Url = platformAssetMapping[platformId].Url
-			// only needed for CI/CD, can be removed when fleet and CI/CD have the same platform MRN
-			assetList[i].PlatformIds = []string{platformAssetMapping[platformId].PlatformMrn}
-		}
-	} else {
+	if upstreamConfig.ApiEndpoint == "" || upstreamConfig.Incognito {
 		// ensure we have non-empty asset MRNs
 		for i := range assetList {
 			cur := assetList[i]
@@ -200,7 +171,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	}
 
 	// plan scan jobs
-	reporter := NewAggregateReporter(assetList)
+	reporter := NewAggregateReporter()
 	job.Bundle.FilterPolicies(job.PolicyFilters)
 
 	for i := range assetList {
@@ -233,10 +204,29 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	log.Info().Msgf("connecting to asset %s", job.Asset.HumanName())
 
+	var upstream *policy.Services
+	var err error
+	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
+		log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
+		upstream, err = policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins)
+		if err != nil {
+			log.Error().Err(err).Msg("could not connect to upstream")
+		}
+	}
+
 	// run over all connections
 	connections, err := resolver.OpenAssetConnections(job.Ctx, job.Asset, job.GetCredential, job.DoRecord)
 	if err != nil {
 		job.Reporter.AddScanError(job.Asset, err)
+		if upstream != nil {
+			_, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
+				SpaceMrn: job.UpstreamConfig.SpaceMrn,
+				List:     []*asset.Asset{job.Asset},
+			})
+			if err != nil {
+				log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+			}
+		}
 		return
 	}
 
@@ -263,8 +253,24 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 					log.Warn().Err(err).Msg("failed to query platform information")
 				} else {
 					job.Asset.Platform = p
-					// resyncAssets = append(resyncAssets, assetEntry)
 				}
+			}
+
+			if upstream != nil {
+				resp, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
+					SpaceMrn: job.UpstreamConfig.SpaceMrn,
+					List:     []*asset.Asset{job.Asset},
+				})
+				if err != nil {
+					log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+				}
+
+				log.Debug().Str("asset", job.Asset.Name).Strs("platform-ids", job.Asset.PlatformIds).Msg("update asset")
+				platformId := job.Asset.PlatformIds[0]
+				job.Asset.Mrn = resp.Details[platformId].AssetMrn
+				job.Asset.Url = resp.Details[platformId].Url
+				// only needed for CI/CD, can be removed when fleet and CI/CD have the same platform MRN
+				job.Asset.PlatformIds = []string{resp.Details[platformId].PlatformMrn}
 			}
 
 			job.connection = m
