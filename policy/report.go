@@ -93,3 +93,18 @@ func (p *ReportCollection) ToJSON() ([]byte, error) {
 	// pretty print json
 	return json.MarshalIndent(p, "", "  ")
 }
+
+func (r *ReportCollection) GetWorstScore() uint32 {
+	worstScore := uint32(100) // pass
+	for _, r := range r.Reports {
+		if r == nil || r.Score == nil {
+			continue
+		}
+
+		if r.Score.Value < worstScore {
+			worstScore = r.Score.Value
+		}
+	}
+
+	return worstScore
+}
