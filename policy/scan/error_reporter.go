@@ -11,15 +11,20 @@ import (
 )
 
 type ErrorReporter struct {
-	assets map[string]*policy.Asset
-	errors map[string]string
+	assets     map[string]*policy.Asset
+	errors     map[string]string
+	worstScore *policy.Score
 }
 
 func NewErrorReporter() Reporter {
 	return &ErrorReporter{assets: make(map[string]*policy.Asset), errors: make(map[string]string)}
 }
 
-func (r *ErrorReporter) AddReport(asset *asset.Asset, results *AssetReport) {}
+func (r *ErrorReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
+		r.worstScore = results.Report.Score
+	}
+}
 
 func (c *ErrorReporter) AddScanError(asset *asset.Asset, err error) {
 	if c.errors == nil {
@@ -37,7 +42,9 @@ func (c *ErrorReporter) AddScanError(asset *asset.Asset, err error) {
 
 func (r *ErrorReporter) Reports() *ScanResult {
 	return &ScanResult{
-		Result: &ScanResult_Errors{Errors: &ErrorCollection{Errors: r.errors}},
+		Ok:         len(r.errors) == 0,
+		WorstScore: r.worstScore,
+		Result:     &ScanResult_Errors{Errors: &ErrorCollection{Errors: r.errors}},
 	}
 }
 
