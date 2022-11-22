@@ -25,6 +25,7 @@ import (
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/resources/packs/all"
+	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
@@ -448,6 +449,17 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		log.Error().Err(err).Msg("error while trying to garbage collect assets")
 	}
 	return &Empty{}, err
+}
+
+func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
+	// check the server overall health status.
+	return &HealthCheckResponse{
+		Status:     HealthCheckResponse_SERVING,
+		Time:       time.Now().Format(time.RFC3339),
+		ApiVersion: "v1",
+		Build:      cnspec.GetBuild(),
+		Version:    cnspec.GetVersion(),
+	}, nil
 }
 
 type localAssetScanner struct {

@@ -24,6 +24,7 @@ type Scan interface {
 	Schedule(context.Context, *Job) (*Empty, error)
 	RunAdmissionReview(context.Context, *AdmissionReviewJob) (*ScanResult, error)
 	GarbageCollectAssets(context.Context, *GarbageCollectOptions) (*Empty, error)
+	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
 }
 
 // client implementation
@@ -77,6 +78,11 @@ func (c *ScanClient) GarbageCollectAssets(ctx context.Context, in *GarbageCollec
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GarbageCollectAssets"}, ""), in, out)
 	return out, err
 }
+func (c *ScanClient) HealthCheck(ctx context.Context, in *HealthCheckRequest) (*HealthCheckResponse, error) {
+	out := new(HealthCheckResponse)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/HealthCheck"}, ""), in, out)
+	return out, err
+}
 
 // server implementation
 
@@ -105,6 +111,7 @@ func NewScanServer(handler Scan, opts ...ScanServerOption) http.Handler {
 			"Schedule":             srv.Schedule,
 			"RunAdmissionReview":   srv.RunAdmissionReview,
 			"GarbageCollectAssets": srv.GarbageCollectAssets,
+			"HealthCheck":          srv.HealthCheck,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -234,4 +241,28 @@ func (p *ScanServer) GarbageCollectAssets(ctx context.Context, reqBytes *[]byte)
 		return nil, err
 	}
 	return p.handler.GarbageCollectAssets(ctx, &req)
+}
+func (p *ScanServer) HealthCheck(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req HealthCheckRequest
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.HealthCheck(ctx, &req)
 }
