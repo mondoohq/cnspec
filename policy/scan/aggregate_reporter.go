@@ -12,6 +12,7 @@ type AggregateReporter struct {
 	assetErrors      map[string]error
 	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
+	worstScore       *policy.Score
 }
 
 func NewAggregateReporter() *AggregateReporter {
@@ -33,6 +34,9 @@ func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) 
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
 
 	r.bundle = results.Bundle
+	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
+		r.worstScore = results.Report.Score
+	}
 }
 
 func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
@@ -51,6 +55,8 @@ func (r *AggregateReporter) Reports() *ScanResult {
 	}
 
 	return &ScanResult{
+		Ok:         len(errors) == 0,
+		WorstScore: r.worstScore,
 		Result: &ScanResult_Full{
 			Full: &policy.ReportCollection{
 				Assets:           r.assets,
