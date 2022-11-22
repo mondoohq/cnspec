@@ -350,26 +350,11 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 		printReports(report, conf, cmd)
 
-		if getWorstScore(report) < uint32(conf.ScoreThreshold) {
+		if report.GetWorstScore() < uint32(conf.ScoreThreshold) {
 			os.Exit(1)
 		}
 	},
 })
-
-func getWorstScore(report *policy.ReportCollection) uint32 {
-	worstScore := uint32(100)
-	for _, r := range report.Reports {
-		if r == nil || r.Score == nil {
-			continue
-		}
-
-		if r.Score.Value < worstScore {
-			worstScore = r.Score.Value
-		}
-	}
-
-	return worstScore
-}
 
 // helper method to retrieve the list of policies for the policy flag
 func getPoliciesForCompletion() []string {
