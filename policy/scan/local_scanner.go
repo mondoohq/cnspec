@@ -43,7 +43,7 @@ type LocalScanner struct {
 	fetcher             *fetcher
 
 	// allows setting the upstream credentials from a job
-	useJobCredentials bool
+	allowJobCredentials bool
 	// for remote connectivity
 	apiEndpoint        string
 	spaceMrn           string
@@ -66,9 +66,9 @@ func WithPlugins(plugins []ranger.ClientPlugin) ScannerOption {
 	}
 }
 
-func EnableJobCredentials() ScannerOption {
+func AllowJobCredentials() ScannerOption {
 	return func(s *LocalScanner) {
-		s.useJobCredentials = true
+		s.allowJobCredentials = true
 	}
 }
 
@@ -476,9 +476,9 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) resources.Ups
 	plugins := s.plugins
 	endpoint := s.apiEndpoint
 	spaceMrn := s.spaceMrn
-	jobCredentials := job.Inventory.Spec.UpstreamCredentals
 
-	if s.useJobCredentials && jobCredentials != nil {
+	jobCredentials := job.Inventory.Spec.UpstreamCredentals
+	if s.allowJobCredentials && jobCredentials != nil {
 		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
 		plugins = append(plugins, certAuth)
 		endpoint = jobCredentials.GetApiEndpoint()
