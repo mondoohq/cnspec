@@ -275,6 +275,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().Bool("ask-pass", false, "ask for connection password")
 		cmd.Flags().StringP("identity-file", "i", "", "selects a file from which the identity (private key) for public key authentication is read")
 		cmd.Flags().String("id-detector", "", "user-override for platform id detection mechanism, supported are "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
+		cmd.Flags().String("asset-name", "", "user-override for the asset name")
 
 		cmd.Flags().String("path", "", "path to a local file or directory that the connection should use")
 		cmd.Flags().StringToString("option", nil, "addition connection options, multiple options can be passed in via --option key=value")
