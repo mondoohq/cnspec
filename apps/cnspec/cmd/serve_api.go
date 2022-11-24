@@ -72,7 +72,7 @@ var serveApiCmd = &cobra.Command{
 			Plugins:     plugins,
 		}
 
-		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn, upstreamConfig.Plugins), scan.DisableProgressBar())
+		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn), scan.WithPlugins(plugins), scan.DisableProgressBar())
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
 		}

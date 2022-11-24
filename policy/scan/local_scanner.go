@@ -25,6 +25,7 @@ import (
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/resources/packs/all"
+	"go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
@@ -41,6 +42,8 @@ type LocalScanner struct {
 	ctx                 context.Context
 	fetcher             *fetcher
 
+	// allows setting the upstream credentials from a job
+	useJobCredentials bool
 	// for remote connectivity
 	apiEndpoint        string
 	spaceMrn           string
@@ -50,11 +53,22 @@ type LocalScanner struct {
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) ScannerOption {
+func WithUpstream(apiEndpoint string, spaceMrn string) ScannerOption {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
-		s.plugins = plugins
 		s.spaceMrn = spaceMrn
+	}
+}
+
+func WithPlugins(plugins []ranger.ClientPlugin) ScannerOption {
+	return func(s *LocalScanner) {
+		s.plugins = plugins
+	}
+}
+
+func EnableJobCredentials() ScannerOption {
+	return func(s *LocalScanner) {
+		s.useJobCredentials = true
 	}
 }
 
@@ -118,13 +132,7 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 	}
 
 	dctx := discovery.InitCtx(ctx)
-
-	upstreamConfig := resources.UpstreamConfig{
-		SpaceMrn:    s.spaceMrn,
-		ApiEndpoint: s.apiEndpoint,
-		Incognito:   false,
-		Plugins:     s.plugins,
-	}
+	upstreamConfig := s.getUpstreamConfig(false, job)
 
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
 	if err != nil {
@@ -149,9 +157,7 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult,
 
 	dctx := discovery.InitCtx(ctx)
 
-	upstreamConfig := resources.UpstreamConfig{
-		Incognito: true,
-	}
+	upstreamConfig := s.getUpstreamConfig(true, job)
 
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
 	if err != nil {
@@ -460,6 +466,31 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 		Build:      cnspec.GetBuild(),
 		Version:    cnspec.GetVersion(),
 	}, nil
+}
+
+func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) resources.UpstreamConfig {
+	if incognito {
+		return resources.UpstreamConfig{Incognito: true}
+	}
+
+	plugins := s.plugins
+	endpoint := s.apiEndpoint
+	spaceMrn := s.spaceMrn
+	jobCredentials := job.Inventory.Spec.UpstreamCredentals
+
+	if s.useJobCredentials && jobCredentials != nil {
+		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
+		plugins = append(plugins, certAuth)
+		endpoint = jobCredentials.GetApiEndpoint()
+		spaceMrn = jobCredentials.GetParentMrn()
+	}
+
+	return resources.UpstreamConfig{
+		SpaceMrn:    spaceMrn,
+		ApiEndpoint: endpoint,
+		Incognito:   false,
+		Plugins:     plugins,
+	}
 }
 
 type localAssetScanner struct {
