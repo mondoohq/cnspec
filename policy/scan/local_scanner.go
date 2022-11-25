@@ -47,7 +47,7 @@ type LocalScanner struct {
 	// for remote connectivity
 	apiEndpoint        string
 	spaceMrn           string
-	plugins            []ranger.ClientPlugin
+	pluginsMap         map[string]ranger.ClientPlugin
 	disableProgressBar bool
 }
 
@@ -62,7 +62,9 @@ func WithUpstream(apiEndpoint string, spaceMrn string) ScannerOption {
 
 func WithPlugins(plugins []ranger.ClientPlugin) ScannerOption {
 	return func(s *LocalScanner) {
-		s.plugins = plugins
+		for _, p := range plugins {
+			s.pluginsMap[p.GetName()] = p
+		}
 	}
 }
 
@@ -83,6 +85,7 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
 		fetcher:             newFetcher(),
 		ctx:                 context.Background(),
+		pluginsMap:          map[string]ranger.ClientPlugin{},
 	}
 
 	for i := range opts {
@@ -424,7 +427,11 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		return nil, status.Errorf(codes.InvalidArgument, "missing garbage collection options")
 	}
 
-	pClient, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+	plugins := []ranger.ClientPlugin{}
+	for _, p := range s.pluginsMap {
+		plugins = append(plugins, p)
+	}
+	pClient, err := policy.NewRemoteServices(s.apiEndpoint, plugins)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not initialize asset synchronization")
 	}
@@ -473,18 +480,22 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) resources.Ups
 		return resources.UpstreamConfig{Incognito: true}
 	}
 
-	plugins := s.plugins
+	pluginsMap := s.pluginsMap
 	endpoint := s.apiEndpoint
 	spaceMrn := s.spaceMrn
 
 	jobCredentials := job.Inventory.Spec.UpstreamCredentals
 	if s.allowJobCredentials && jobCredentials != nil {
 		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
-		plugins = append(plugins, certAuth)
+		pluginsMap[certAuth.GetName()] = certAuth
 		endpoint = jobCredentials.GetApiEndpoint()
 		spaceMrn = jobCredentials.GetParentMrn()
 	}
 
+	plugins := []ranger.ClientPlugin{}
+	for _, p := range pluginsMap {
+		plugins = append(plugins, p)
+	}
 	return resources.UpstreamConfig{
 		SpaceMrn:    spaceMrn,
 		ApiEndpoint: endpoint,
