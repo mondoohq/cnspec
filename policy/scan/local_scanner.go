@@ -135,8 +135,10 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 	}
 
 	dctx := discovery.InitCtx(ctx)
-	upstreamConfig := s.getUpstreamConfig(false, job)
-
+	upstreamConfig, err := s.getUpstreamConfig(false, job)
+	if err != nil {
+		return nil, err
+	}
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
 	if err != nil {
 		return nil, err
@@ -160,8 +162,10 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult,
 
 	dctx := discovery.InitCtx(ctx)
 
-	upstreamConfig := s.getUpstreamConfig(true, job)
-
+	upstreamConfig, err := s.getUpstreamConfig(true, job)
+	if err != nil {
+		return nil, err
+	}
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
 	if err != nil {
 		return nil, err
@@ -475,16 +479,16 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 	}, nil
 }
 
-func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) resources.UpstreamConfig {
+func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.UpstreamConfig, error) {
 	if incognito {
-		return resources.UpstreamConfig{Incognito: true}
+		return resources.UpstreamConfig{Incognito: true}, nil
 	}
 
 	pluginsMap := s.pluginsMap
 	endpoint := s.apiEndpoint
 	spaceMrn := s.spaceMrn
 
-	jobCredentials := job.Inventory.Spec.UpstreamCredentals
+	jobCredentials := job.Inventory.Spec.UpstreamCredentials
 	if s.allowJobCredentials && jobCredentials != nil {
 		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
 		pluginsMap[certAuth.GetName()] = certAuth
@@ -496,12 +500,20 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) resources.Ups
 	for _, p := range pluginsMap {
 		plugins = append(plugins, p)
 	}
+
+	if endpoint == "" {
+		return resources.UpstreamConfig{}, errors.New("missing upstream endpoint")
+	}
+	if spaceMrn == "" {
+		return resources.UpstreamConfig{}, errors.New("missing space mrn")
+	}
+
 	return resources.UpstreamConfig{
 		SpaceMrn:    spaceMrn,
 		ApiEndpoint: endpoint,
 		Incognito:   false,
 		Plugins:     plugins,
-	}
+	}, nil
 }
 
 type localAssetScanner struct {
