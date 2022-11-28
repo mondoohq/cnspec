@@ -25,6 +25,7 @@ import (
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/resources/packs/all"
+	"go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
@@ -41,20 +42,35 @@ type LocalScanner struct {
 	ctx                 context.Context
 	fetcher             *fetcher
 
+	// allows setting the upstream credentials from a job
+	allowJobCredentials bool
 	// for remote connectivity
 	apiEndpoint        string
 	spaceMrn           string
-	plugins            []ranger.ClientPlugin
+	pluginsMap         map[string]ranger.ClientPlugin
 	disableProgressBar bool
 }
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string, plugins []ranger.ClientPlugin) ScannerOption {
+func WithUpstream(apiEndpoint string, spaceMrn string) ScannerOption {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
-		s.plugins = plugins
 		s.spaceMrn = spaceMrn
+	}
+}
+
+func WithPlugins(plugins []ranger.ClientPlugin) ScannerOption {
+	return func(s *LocalScanner) {
+		for _, p := range plugins {
+			s.pluginsMap[p.GetName()] = p
+		}
+	}
+}
+
+func AllowJobCredentials() ScannerOption {
+	return func(s *LocalScanner) {
+		s.allowJobCredentials = true
 	}
 }
 
@@ -69,6 +85,7 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
 		fetcher:             newFetcher(),
 		ctx:                 context.Background(),
+		pluginsMap:          map[string]ranger.ClientPlugin{},
 	}
 
 	for i := range opts {
@@ -118,14 +135,10 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 	}
 
 	dctx := discovery.InitCtx(ctx)
-
-	upstreamConfig := resources.UpstreamConfig{
-		SpaceMrn:    s.spaceMrn,
-		ApiEndpoint: s.apiEndpoint,
-		Incognito:   false,
-		Plugins:     s.plugins,
+	upstreamConfig, err := s.getUpstreamConfig(false, job)
+	if err != nil {
+		return nil, err
 	}
-
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
 	if err != nil {
 		return nil, err
@@ -149,10 +162,10 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult,
 
 	dctx := discovery.InitCtx(ctx)
 
-	upstreamConfig := resources.UpstreamConfig{
-		Incognito: true,
+	upstreamConfig, err := s.getUpstreamConfig(true, job)
+	if err != nil {
+		return nil, err
 	}
-
 	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
 	if err != nil {
 		return nil, err
@@ -418,7 +431,11 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		return nil, status.Errorf(codes.InvalidArgument, "missing garbage collection options")
 	}
 
-	pClient, err := policy.NewRemoteServices(s.apiEndpoint, s.plugins)
+	plugins := []ranger.ClientPlugin{}
+	for _, p := range s.pluginsMap {
+		plugins = append(plugins, p)
+	}
+	pClient, err := policy.NewRemoteServices(s.apiEndpoint, plugins)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not initialize asset synchronization")
 	}
@@ -459,6 +476,47 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 		ApiVersion: "v1",
 		Build:      cnspec.GetBuild(),
 		Version:    cnspec.GetVersion(),
+	}, nil
+}
+
+func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.UpstreamConfig, error) {
+	if incognito {
+		return resources.UpstreamConfig{Incognito: true}, nil
+	}
+
+	// Make a copy here, we do not want to add to the original plugins map if we're connecting upstream with credentials from a job.
+	pluginsCopyMap := map[string]ranger.ClientPlugin{}
+	for k, v := range s.pluginsMap {
+		pluginsCopyMap[k] = v
+	}
+	endpoint := s.apiEndpoint
+	spaceMrn := s.spaceMrn
+
+	jobCredentials := job.Inventory.Spec.UpstreamCredentials
+	if s.allowJobCredentials && jobCredentials != nil {
+		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
+		pluginsCopyMap[certAuth.GetName()] = certAuth
+		endpoint = jobCredentials.GetApiEndpoint()
+		spaceMrn = jobCredentials.GetParentMrn()
+	}
+
+	plugins := []ranger.ClientPlugin{}
+	for _, p := range pluginsCopyMap {
+		plugins = append(plugins, p)
+	}
+
+	if endpoint == "" {
+		return resources.UpstreamConfig{}, errors.New("missing upstream endpoint")
+	}
+	if spaceMrn == "" {
+		return resources.UpstreamConfig{}, errors.New("missing space mrn")
+	}
+
+	return resources.UpstreamConfig{
+		SpaceMrn:    spaceMrn,
+		ApiEndpoint: endpoint,
+		Incognito:   false,
+		Plugins:     plugins,
 	}, nil
 }
 
