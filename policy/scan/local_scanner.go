@@ -484,20 +484,24 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 		return resources.UpstreamConfig{Incognito: true}, nil
 	}
 
-	pluginsMap := s.pluginsMap
+	// Make a copy here, we do not want to add to the original plugins map if we're connecting upstream with credentials from a job.
+	pluginsCopyMap := map[string]ranger.ClientPlugin{}
+	for k, v := range s.pluginsMap {
+		pluginsCopyMap[k] = v
+	}
 	endpoint := s.apiEndpoint
 	spaceMrn := s.spaceMrn
 
 	jobCredentials := job.Inventory.Spec.UpstreamCredentials
 	if s.allowJobCredentials && jobCredentials != nil {
 		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
-		pluginsMap[certAuth.GetName()] = certAuth
+		pluginsCopyMap[certAuth.GetName()] = certAuth
 		endpoint = jobCredentials.GetApiEndpoint()
 		spaceMrn = jobCredentials.GetParentMrn()
 	}
 
 	plugins := []ranger.ClientPlugin{}
-	for _, p := range pluginsMap {
+	for _, p := range pluginsCopyMap {
 		plugins = append(plugins, p)
 	}
 
