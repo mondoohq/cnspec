@@ -82,9 +82,9 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 		res.WriteString(mircoScoreCard.Render(score))
 		res.WriteString(" ")
 		res.WriteString(policies[k])
-		res.WriteString("\n")
+		res.WriteString(NewLineCharacter)
 	}
-	res.WriteString("\n")
+	res.WriteString(NewLineCharacter)
 
 	return res.String()
 }

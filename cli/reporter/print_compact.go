@@ -66,7 +66,7 @@ func (r *defaultReporter) print() error {
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	summaryHeader := fmt.Sprintf("Summary (%d assets)", len(r.data.Assets))
 	summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
-	r.out.Write([]byte(termenv.String(summaryHeader + "\n" + summaryDivider + "\n").Foreground(r.Colors.Secondary).String()))
+	r.out.Write([]byte(termenv.String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Secondary).String()))
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
 		asset := r.data.Assets[assetMrn]
@@ -74,7 +74,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	}
 
 	if r.isCompact {
-		r.out.Write([]byte("\nTo get more information, please run this scan with \"-o full\".\n"))
+		r.out.Write([]byte(NewLineCharacter + "To get more information, please run this scan with \"-o full\"." + NewLineCharacter))
 	}
 }
 
@@ -129,7 +129,7 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		target = assetMrn
 	}
 
-	r.out.Write([]byte(termenv.String(fmt.Sprintf("\nTarget:     %s\n", target)).Foreground(r.Colors.Primary).String()))
+	r.out.Write([]byte(termenv.String(fmt.Sprintf("%sTarget:     %s%s", NewLineCharacter, target, NewLineCharacter)).Foreground(r.Colors.Primary).String()))
 
 	report, ok := r.data.Reports[assetMrn]
 	if !ok {
@@ -144,7 +144,7 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 				target,
 			)))
 		}
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 		return
 	}
 	if report == nil {
@@ -165,7 +165,7 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 	report.ComputeStats(resolved)
 
 	if report.Stats == nil || report.Stats.Total == 0 {
-		r.out.Write([]byte(fmt.Sprintf("Datapoints: %d\n", len(report.Data))))
+		r.out.Write([]byte(fmt.Sprintf("Datapoints: %d%s", len(report.Data), NewLineCharacter)))
 	} else {
 		passCnt := report.Stats.Passed.Total
 		passPct := float32(passCnt) / float32(report.Stats.Total) * 100
@@ -176,52 +176,52 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		skipCnt := report.Stats.Skipped + report.Stats.Unknown
 		skipPct := float32(skipCnt) / float32(report.Stats.Total) * 100
 
-		r.out.Write([]byte(r.scoreColored(report.Score.Rating(), fmt.Sprintf("Score:      %s\n", score))))
+		r.out.Write([]byte(r.scoreColored(report.Score.Rating(), fmt.Sprintf("Score:      %s%s", score, NewLineCharacter))))
 		r.out.Write([]byte(
-			termenv.String(fmt.Sprintf("✓ Passed:   %s%.0f%% (%d)\n",
-				addSpace(components.Hbar(15, passPct)), passPct, passCnt),
+			termenv.String(fmt.Sprintf("✓ Passed:   %s%.0f%% (%d)%s",
+				addSpace(components.Hbar(15, passPct)), passPct, passCnt, NewLineCharacter),
 			).Foreground(r.Colors.Success).String()))
 		r.out.Write([]byte(
 			termenv.String("✕ Failed:   ").Foreground(r.Colors.Critical).String() +
 				addSpace(failureHbar(report.Stats)) +
-				termenv.String(fmt.Sprintf("%.0f%% (%d)\n", failPct, failCnt)).Foreground(r.Colors.Critical).String(),
+				termenv.String(fmt.Sprintf("%.0f%% (%d)%s", failPct, failCnt, NewLineCharacter)).Foreground(r.Colors.Critical).String(),
 		))
 		r.out.Write([]byte(
-			termenv.String(fmt.Sprintf("! Errors:   %s%.0f%% (%d)\n",
-				addSpace(components.Hbar(15, errPct)), errPct, errCnt),
+			termenv.String(fmt.Sprintf("! Errors:   %s%.0f%% (%d)%s",
+				addSpace(components.Hbar(15, errPct)), errPct, errCnt, NewLineCharacter),
 			).Foreground(r.Colors.Error).String()))
 		r.out.Write([]byte(
-			termenv.String(fmt.Sprintf("» Skipped:  %s%.0f%% (%d)\n",
-				addSpace(components.Hbar(15, skipPct)), skipPct, skipCnt),
+			termenv.String(fmt.Sprintf("» Skipped:  %s%.0f%% (%d)%s",
+				addSpace(components.Hbar(15, skipPct)), skipPct, skipCnt, NewLineCharacter),
 			).Foreground(r.Colors.Disabled).String()))
 
 	}
 
-	r.out.Write([]byte("\nPolicies:\n"))
+	r.out.Write([]byte(NewLineCharacter + "Policies:" + NewLineCharacter))
 	scores := policyScores(report, r.bundle)
 	for i := range scores {
 		x := scores[i]
 		switch x.score.Type {
 		case policy.ScoreType_Error:
 			r.out.Write([]byte(termenv.String("E  EE  " + x.title).Foreground(r.Colors.Error).String()))
-			r.out.Write([]byte{'\n'})
+			r.out.Write([]byte(NewLineCharacter))
 		case policy.ScoreType_Unknown, policy.ScoreType_Unscored, policy.ScoreType_Skip:
 			r.out.Write([]byte(".  ..  " + x.title))
-			r.out.Write([]byte{'\n'})
+			r.out.Write([]byte(NewLineCharacter))
 		case policy.ScoreType_Result:
 			rating := x.score.Rating()
 			line := fmt.Sprintf(
-				"%s %3d  %s\n",
-				rating.Letter(), x.score.Value, x.title,
+				"%s %3d  %s%s",
+				rating.Letter(), x.score.Value, x.title, NewLineCharacter,
 			)
 			r.out.Write([]byte(r.scoreColored(rating, line)))
 		default:
 			r.out.Write([]byte("?  ..  " + x.title))
-			r.out.Write([]byte{'\n'})
+			r.out.Write([]byte(NewLineCharacter))
 		}
 	}
 	if len(scores) > 0 {
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 	}
 
 	if !r.IsIncognito && report.Url != "" || asset.Url != "" {
@@ -231,12 +231,12 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 			url = asset.Url
 		}
 		r.out.Write([]byte(url))
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 	}
 }
 
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
-	r.out.Write([]byte{'\n', '\n'})
+	r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
 	queries := r.bundle.QueryMap()
 
 	for _, assetMrnName := range orderedAssets {
@@ -259,9 +259,9 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		assetString := fmt.Sprintf("Asset: %s", target)
 		assetDivider := strings.Repeat("=", utf8.RuneCountInString(assetString))
 		r.out.Write([]byte(termenv.String("Asset: ").Foreground(r.Colors.Secondary).String()))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s\n", target)).Foreground(r.Colors.Primary).String()))
+		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s%s", target, NewLineCharacter)).Foreground(r.Colors.Primary).String()))
 		r.out.Write([]byte(termenv.String(assetDivider).Foreground(r.Colors.Secondary).String()))
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 
 		resolved, ok := r.data.ResolvedPolicies[assetMrn]
 		if !ok {
@@ -270,12 +270,12 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		}
 
 		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 		// TODO: we should re-use the report results
 		r.printVulns(resolved, report, report.RawResults())
 
 	}
-	r.out.Write([]byte{'\n'})
+	r.out.Write([]byte(NewLineCharacter))
 }
 
 // TODO: this should be done during the execution, as queries come in, not at the end!
@@ -295,16 +295,16 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		if r.isCompact {
 			result = stringx.MaxLines(10, result)
 		}
-		dataQueriesOutput += result + "\n"
+		dataQueriesOutput += result + NewLineCharacter
 	})
 
 	if len(dataQueriesOutput) > 0 {
-		r.out.Write([]byte("Data queries:\n"))
+		r.out.Write([]byte("Data queries:" + NewLineCharacter))
 		r.out.Write([]byte(dataQueriesOutput))
-		r.out.Write([]byte("\n"))
+		r.out.Write([]byte(NewLineCharacter))
 	}
 
-	r.out.Write([]byte("Controls:\n"))
+	r.out.Write([]byte("Controls:" + NewLineCharacter))
 	for id, score := range report.Scores {
 		_, ok := resolved.CollectorJob.ReportingQueries[id]
 		if !ok {
@@ -347,7 +347,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *p
 		).Foreground(color).String()
 	}
 
-	return passfail + scoreIndicator + title + "\n"
+	return passfail + scoreIndicator + title + NewLineCharacter
 }
 
 func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery, asset *policy.Asset, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
@@ -360,34 +360,34 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 	case policy.ScoreType_Error:
 		r.out.Write([]byte(termenv.String("! Error: ").Foreground(r.Colors.Error).String()))
 		r.out.Write([]byte(title))
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 		if !r.isCompact {
 			r.out.Write([]byte(termenv.String("  Message: " + score.Message).Foreground(r.Colors.Error).String()))
-			r.out.Write([]byte{'\n'})
+			r.out.Write([]byte(NewLineCharacter))
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
 		r.out.Write([]byte(termenv.String(". Unknown: ").Foreground(r.Colors.Disabled).String()))
 		r.out.Write([]byte(title))
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 
 	case policy.ScoreType_Skip:
 		r.out.Write([]byte(termenv.String(". Skipped: ").Foreground(r.Colors.Disabled).String()))
 		r.out.Write([]byte(title))
-		r.out.Write([]byte{'\n'})
+		r.out.Write([]byte(NewLineCharacter))
 
 	case policy.ScoreType_Result:
 		r.out.Write([]byte(r.printScore(title, score, query)))
 
 		// additional information about the failed query
 		if !r.isCompact && score.Value != 100 {
-			r.out.Write([]byte("  Query:\n" + stringx.Indent(4, query.Query)))
-			r.out.Write([]byte{'\n'})
+			r.out.Write([]byte("  Query:" + NewLineCharacter + stringx.Indent(4, query.Query)))
+			r.out.Write([]byte(NewLineCharacter))
 
 			codeBundle := resolved.GetCodeBundle(query)
 			if codeBundle == nil {
 				r.out.Write([]byte(r.Reporter.Printer.Error("failed to find code bundle for query '" + query.Mrn + "' in bundle")))
 			} else {
-				r.out.Write([]byte("  Result:\n"))
+				r.out.Write([]byte("  Result:" + NewLineCharacter))
 				assessment := policy.Query2Assessment(codeBundle, report)
 				if assessment != nil {
 					r.out.Write([]byte(stringx.Indent(4, r.Printer.Assessment(codeBundle, assessment))))
@@ -397,10 +397,10 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 					r.out.Write([]byte(stringx.Indent(4, result)))
 				}
 			}
-			r.out.Write([]byte{'\n'})
+			r.out.Write([]byte(NewLineCharacter))
 		}
 	default:
-		r.out.Write([]byte("unknown result for " + title + "\n"))
+		r.out.Write([]byte("unknown result for " + title + NewLineCharacter))
 	}
 }
 
@@ -414,14 +414,14 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 		return
 	}
 
-	r.out.Write([]byte(print.Primary("Vulnerabilities:\n")))
+	r.out.Write([]byte(print.Primary("Vulnerabilities:" + NewLineCharacter)))
 
 	if value == nil || value.Data == nil {
-		r.out.Write([]byte(print.Error("Could not find the vulnerability report.") + "\n"))
+		r.out.Write([]byte(print.Error("Could not find the vulnerability report.") + NewLineCharacter))
 		return
 	}
 	if value.Data.Error != nil {
-		r.out.Write([]byte(print.Error("Could not load the vulnerability report: "+value.Data.Error.Error()) + "\n"))
+		r.out.Write([]byte(print.Error("Could not load the vulnerability report: "+value.Data.Error.Error()) + NewLineCharacter))
 		return
 	}
 
@@ -439,7 +439,7 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 	decoder, _ := mapstructure.NewDecoder(cfg)
 	err := decoder.Decode(rawData)
 	if err != nil {
-		r.out.Write([]byte(print.Error("could not decode advisory report\n\n")))
+		r.out.Write([]byte(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter)))
 		return
 	}
 
@@ -454,7 +454,7 @@ func (r *defaultReporter) printVulnList(report *mvd.VulnReport) {
 		title := "No advisories found"
 		state := "(passed)"
 		r.out.Write([]byte(termenv.String(string(indicatorChar), title, state).Foreground(color).String()))
-		r.out.Write([]byte("\n\n"))
+		r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
 		return
 	}
 	r.out.Write([]byte(RenderVulnReport(report)))
@@ -475,5 +475,5 @@ func (r *defaultReporter) printVulnSummary(report *mvd.VulnReport) {
 		DataCompletion:  100,
 	}
 
-	r.out.Write([]byte(r.scoreColored(vulnScore.Rating(), fmt.Sprintf("Overall CVSS score: %.1f\n\n", cvss))))
+	r.out.Write([]byte(r.scoreColored(vulnScore.Rating(), fmt.Sprintf("Overall CVSS score: %.1f%s%s", cvss, NewLineCharacter, NewLineCharacter))))
 }

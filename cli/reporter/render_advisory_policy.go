@@ -29,17 +29,17 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	results := report.Data
 	value, ok := results[vulnReportDatapointChecksum]
 	if !ok {
-		b.WriteString(print.Error("could not find advisory report\n\n"))
+		b.WriteString(print.Error("could not find advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
 
 	if value == nil || value.Data == nil {
-		b.WriteString(print.Error("could not load advisory report\n\n"))
+		b.WriteString(print.Error("could not load advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
 
 	if value.Error != "" {
-		b.WriteString(print.Error("could not load advisory report: " + value.Error + "\n\n"))
+		b.WriteString(print.Error("could not load advisory report: " + value.Error + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
 
@@ -53,7 +53,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	decoder, _ := mapstructure.NewDecoder(cfg)
 	err := decoder.Decode(rawData)
 	if err != nil {
-		b.WriteString(print.Error("could not decode advisory report\n\n"))
+		b.WriteString(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
 
@@ -65,7 +65,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 
 	// render policy headline
 	box1 := components.NewMiniScoreCard().Render(score)
-	box2 := "\n" + stringx.Indent(2, print.Primary("Policy:  ")+policyObj.Name+"\n"+print.Primary("Version: ")+policyObj.Version+"\n"+print.Primary("Score:   ")+score.HumanStatus()+"\n"+cvssScore)
+	box2 := NewLineCharacter + stringx.Indent(2, print.Primary("Policy:  ")+policyObj.Name+NewLineCharacter+print.Primary("Version: ")+policyObj.Version+NewLineCharacter+print.Primary("Score:   ")+score.HumanStatus()+NewLineCharacter+cvssScore)
 	b.WriteString(stringx.MergeSideBySide(
 		box1,
 		box2,
@@ -81,7 +81,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	kernelDataValue, ok := results[kernelListDatapointChecksum]
 	if ok && kernelDataValue.Data != nil {
 		if kernelDataValue.Error != "" {
-			b.WriteString(print.Error(kernelDataValue.Error + "\n"))
+			b.WriteString(print.Error(kernelDataValue.Error + NewLineCharacter))
 		} else {
 			rawData := kernelDataValue.Data.RawData().Value
 
@@ -95,9 +95,9 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 			decoder, _ := mapstructure.NewDecoder(cfg)
 			err := decoder.Decode(rawData)
 			if err != nil {
-				b.WriteString(print.Error("could not decode kernel versions\n"))
+				b.WriteString(print.Error("could not decode kernel versions" + NewLineCharacter))
 			} else {
-				b.WriteString("Installed Kernel Versions:\n")
+				b.WriteString("Installed Kernel Versions:" + NewLineCharacter)
 
 				// sort the kernel version
 				// NOTE: this is poor man's version since the versions can vary a lot and comparison is more complicated
@@ -113,15 +113,15 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 					} else {
 						b.WriteString(print.Disabled(" * " + kv.Version + " (not running)"))
 					}
-					b.WriteString("\n")
+					b.WriteString(NewLineCharacter)
 				}
 			}
 		}
-		b.WriteString("\n")
+		b.WriteString(NewLineCharacter)
 	}
 
 	// TODO: iterate over all other scoring queries that are not covered within the screen above
-	b.WriteString("Additional Checks:\n")
+	b.WriteString("Additional Checks:" + NewLineCharacter)
 	scoreQueries := map[string]*policy.ScoringSpec{}
 	for i := range policyObj.Specs {
 		spec := policyObj.Specs[i]
@@ -162,11 +162,11 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 			severity := scoreRating(score)
 			color := components.DefaultRatingColors.Color(severity)
 			b.WriteString(termenv.String(" " + q.Title + " " + state).Foreground(color).String())
-			b.WriteString("\n")
+			b.WriteString(NewLineCharacter)
 		}
 	}
 
-	b.WriteString("\n")
+	b.WriteString(NewLineCharacter)
 	return b.String()
 }
 
@@ -219,7 +219,7 @@ func RenderVulnerabilityStats(vulnReport *mvd.VulnReport) string {
 			components.WithBarChartLabelFunc(components.BarChartPercentageLabelFunc),
 		)
 		b.WriteString(advisoriesBarChart.Render(datapoints, colorMap, labels))
-		b.WriteString("\n")
+		b.WriteString(NewLineCharacter)
 	}
 
 	// only render if we have packages scanned, not the case for vmware ESXi
@@ -264,7 +264,7 @@ func RenderVulnerabilityStats(vulnReport *mvd.VulnReport) string {
 			}),
 		)
 		b.WriteString(packagesBarChart.Render(pkgDatapoints, pkgColorMap, pkgLabels))
-		b.WriteString("\n")
+		b.WriteString(NewLineCharacter)
 	}
 
 	return b.String()
@@ -279,7 +279,7 @@ func RenderVulnReport(vulnReport *mvd.VulnReport) string {
 		state := "(passed)"
 		b.WriteString(termenv.String(string(indicatorChar)).Foreground(color).String())
 		b.WriteString(termenv.String(" " + title + " " + state).Foreground(color).String())
-		b.WriteString("\n\n")
+		b.WriteString(NewLineCharacter + NewLineCharacter)
 	} else {
 		// render advisory table
 		renderer := components.NewAdvisoryResultTable()
@@ -288,7 +288,7 @@ func RenderVulnReport(vulnReport *mvd.VulnReport) string {
 			return err.Error()
 		}
 		b.WriteString(output)
-		b.WriteString("\n")
+		b.WriteString(NewLineCharacter)
 	}
 
 	return b.String()
