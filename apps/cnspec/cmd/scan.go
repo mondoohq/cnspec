@@ -478,7 +478,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	}
 
 	if serviceAccount == nil && !conf.IsIncognito {
-		log.Warn().Msg("No credentials provided. Switching to --incogito mode.")
+		log.Warn().Msg("No credentials provided. Switching to --incognito mode.")
 		conf.IsIncognito = true
 	}
 
