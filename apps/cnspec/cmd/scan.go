@@ -351,6 +351,12 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 		printReports(report, conf, cmd)
 
+		// if we had asset errors, we return a non-zero exit code
+		// asset errors are only connection issues
+		if len(report.Errors) > 0 {
+			os.Exit(1)
+		}
+
 		if report.GetWorstScore() < uint32(conf.ScoreThreshold) {
 			os.Exit(1)
 		}
