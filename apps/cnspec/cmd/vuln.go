@@ -335,7 +335,7 @@ func filterAssetByPlatformID(assetList []*asset.Asset, selectionID string) (*ass
 	}
 
 	if foundAsset == nil {
-		return nil, errors.New("could not find an asset with the provided identifer: " + selectionID)
+		return nil, errors.New("could not find an asset with the provided identifier: " + selectionID)
 	}
 	return foundAsset, nil
 }

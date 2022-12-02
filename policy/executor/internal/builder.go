@@ -415,7 +415,7 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 	if isQuery {
 		// The specs of the reporting job doesn't contain the query
 		// Not all rj.QrIds are represented in the graph, only those
-		// that corresond to actual queries. For example, a QrId that
+		// that correspond to actual queries. For example, a QrId that
 		// is a policy is not represented as a node directly in the graph.
 		// So, this is special handling to make sure the reporting job
 		// knows that a reporting query is going to send it information

@@ -414,7 +414,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		// Properties
 		for name, target := range policy.Props {
 			if target != "" {
-				return nil, errors.New("overwriting properties not yet supported - sorryyyy")
+				return nil, errors.New("overwriting properties not yet supported - sorry")
 			}
 
 			q, ok := propQueries[name]

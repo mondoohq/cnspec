@@ -40,7 +40,7 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 	}
 
 	// this sorts the list of policies by name but ensures all unrated policies are following below
-	// TODO: we need to improve that for data policies, will be solved once we caan distingush between
+	// TODO: we need to improve that for data policies, will be solved once we can distingush between
 	// not applicable and unrated
 	sort.Slice(policyList, func(i, j int) bool {
 		// check for asset overview policy

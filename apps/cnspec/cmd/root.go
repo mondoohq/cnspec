@@ -142,7 +142,7 @@ func GenerateMarkdown(dir string) error {
 	}
 
 	// we need to remove the first headline, since it is doubled with the
-	// headline from the ID. Really annyoing, all this needs a rewrite.
+	// headline from the ID. Really annoying, all this needs a rewrite.
 	for i := range files {
 		file := files[i]
 		raw, err := os.ReadFile(file)

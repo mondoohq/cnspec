@@ -127,7 +127,7 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context, getPolicy func(ctx con
 	for i := range p.Specs {
 		spec := p.Specs[i]
 
-		// add asset filter of embeded policies
+		// add asset filter of embedded policies
 		if spec.AssetFilter != nil {
 			filter := spec.AssetFilter
 			filters[filter.Mrn] = filter
@@ -283,7 +283,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 	// Note: this relies on the fact that the bundle was compiled before
 	// We include the hash for scoring queries and data queries here since changes in the
-	// queries are otherwise not reflected in the polciy checksum. While the policy checksum
+	// queries are otherwise not reflected in the policy checksum. While the policy checksum
 	// tracks all changes within the policy object itself (like spec and assigned queries),
 	// it does not track changes in the assigned queries itself.
 	//

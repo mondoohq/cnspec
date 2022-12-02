@@ -116,7 +116,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	// in that case we don't want to recalculate the graph and use it instead
 	// Note 1: It relies on the fact that the compile step clears out the checksums
 	// to make sure users don't override them
-	// Note 2: We don't need to cmpute the checksum since the GraphChecksum depends
+	// Note 2: We don't need to compute the checksum since the GraphChecksum depends
 	// on it and will force it in case it is missing (no graph checksum => no checksum)
 
 	// NOTE: its important to update the checksum AFTER the queries have been changed,

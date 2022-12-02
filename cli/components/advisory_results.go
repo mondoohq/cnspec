@@ -230,7 +230,7 @@ func (c *CliTableWriter) Write(row advisories.ReportFindingRow) error {
 		}
 	} else {
 		// only the very first entry should reach here
-		// we do not render the entry immediatly to determine the row indicator
+		// we do not render the entry immediately to determine the row indicator
 		c.pkgCount = 1
 		c.lastEntry = &row
 	}

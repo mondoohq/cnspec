@@ -493,10 +493,10 @@ func (nodeData *ReportingJobNodeData) recalculate() *envelope {
 }
 
 func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
-	finsihedDatapoints := 0
+	finishedDatapoints := 0
 	for _, datapointRes := range nodeData.datapoints {
 		if datapointRes.res != nil {
-			finsihedDatapoints++
+			finishedDatapoints++
 		}
 	}
 
@@ -523,7 +523,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		// datapoint reported
 		if totalDatapoints := len(nodeData.datapoints); totalDatapoints > 0 {
 			s.DataTotal = uint32(totalDatapoints)
-			s.DataCompletion = uint32((100 * finsihedDatapoints) / totalDatapoints)
+			s.DataCompletion = uint32((100 * finishedDatapoints) / totalDatapoints)
 		}
 
 		return s, nil
@@ -542,7 +542,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.scoringSpec)
 	}
 
-	policy.AddDataScore(calculator, len(nodeData.datapoints), finsihedDatapoints)
+	policy.AddDataScore(calculator, len(nodeData.datapoints), finishedDatapoints)
 
 	s := calculator.Calculate()
 	s.QrId = nodeData.queryID
@@ -566,7 +566,7 @@ func (nodeData *CollectionFinisherNodeData) initialize() {
 	}
 }
 
-// consume marks the received dataponts as finished
+// consume marks the received datapoints as finished
 func (nodeData *CollectionFinisherNodeData) consume(from NodeID, data *envelope) {
 	if len(nodeData.remainingDatapoints) == 0 {
 		return

@@ -1052,7 +1052,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 				datapointID := executionQuery.Datapoints[dp]
 				datapointInfo, ok := collectorJob.Datapoints[datapointID]
 				if !ok {
-					return nil, nil, errors.New("failed to identiy datapoint in collectorjob")
+					return nil, nil, errors.New("failed to identity datapoint in collectorjob")
 				}
 
 				datapointInfo.Notify = append(datapointInfo.Notify, rj.Uuid)
@@ -1073,7 +1073,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 				datapointID := executionQuery.Datapoints[dp]
 				datapointInfo, ok := collectorJob.Datapoints[datapointID]
 				if !ok {
-					return nil, nil, errors.New("failed to identiy datapoint in collectorjob")
+					return nil, nil, errors.New("failed to identity datapoint in collectorjob")
 				}
 
 				datapointInfo.Notify = append(datapointInfo.Notify, parentJob.Uuid)

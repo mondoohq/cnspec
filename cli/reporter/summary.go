@@ -28,7 +28,7 @@ func policyScores(report *policy.Report, bundle *policy.PolicyBundleMap) []polic
 			continue
 		}
 
-		// We only keep queries and policies in printing. Normal queries will tpically
+		// We only keep queries and policies in printing. Normal queries will typically
 		// not be a MRN. Everything except for policies and queries can be skipped
 		if m, err := mrn.NewMRN(id); err == nil {
 			rid, _ := m.ResourceID(policy.MRN_RESOURCE_POLICY)

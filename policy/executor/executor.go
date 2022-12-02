@@ -56,7 +56,7 @@ func (c *RawResults) Range(f func(k string, v *llx.RawResult) bool) {
 	})
 }
 
-// ScoreResults is a thread-safe map of true/fals results for queries
+// ScoreResults is a thread-safe map of true/false results for queries
 type ScoreResults struct{ sync.Map }
 
 // Store sets the value for a key.
@@ -240,7 +240,7 @@ func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props map[string]*l
 		e.incrementWaitGroup(codeBundle)
 
 		// we extract a closure-based copy of the waitgroup. if we run into timeouts
-		// the llx callback may happen after the waitgroup has been decomissioned
+		// the llx callback may happen after the waitgroup has been decommissioned
 		// in that case due to the closure it will reference the old waitgroup
 		waitGroup := e.waitGroup
 		results := e.Results
@@ -272,7 +272,7 @@ func isRunSafe(codeBundle *llx.CodeBundle) (bool, error) {
 		requiredVer := codeBundle.MinMondooVersion
 		currentVer := cnspec.GetCoreVersion()
 		if currentVer == "unstable" {
-			// Probably running locally since ldflags didnt config version
+			// Probably running locally since ldflags didn't config version
 			// Entering yolo mode (its probably safe!)
 			return true, nil
 		}
@@ -382,7 +382,7 @@ func (e *Executor) tryUpdateBundles(codeID string) {
 func (e *Executor) updateBundle(bundleID string) {
 	bundle, _ := e.RunningCode.Load(bundleID)
 	if bundle == nil {
-		log.Error().Str("bundle", bundleID).Msg("executor> bundle is already decomissioned")
+		log.Error().Str("bundle", bundleID).Msg("executor> bundle is already decommissioned")
 		return
 	}
 
