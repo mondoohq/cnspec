@@ -27,7 +27,7 @@ func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *poli
 	}
 
 	box1 := components.NewMiniScoreCard().Render(score)
-	box2 := "\n" + stringx.Indent(2, print.Primary("Policy:  ")+policyObj.Name+"\n"+print.Primary("Version: ")+policyObj.Version+"\n"+print.Primary("Mrn:     ")+policyObj.Mrn+"\n"+print.Primary("Score:   ")+humanScore)
+	box2 := NewLineCharacter + stringx.Indent(2, print.Primary("Policy:  ")+policyObj.Name+NewLineCharacter+print.Primary("Version: ")+policyObj.Version+NewLineCharacter+print.Primary("Mrn:     ")+policyObj.Mrn+NewLineCharacter+print.Primary("Score:   ")+humanScore)
 	res.WriteString(stringx.MergeSideBySide(
 		box1,
 		box2,
@@ -35,7 +35,7 @@ func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *poli
 
 	// print scoring queries
 	renderScoringQueries(print, policyObj, report, bundle, resolvedPolicy, scoringData, &res)
-	res.WriteString("\n")
+	res.WriteString(NewLineCharacter)
 
 	// print data queries
 	renderDataQueries(print, policyObj, report, bundle, resolvedPolicy, &res)
@@ -55,7 +55,7 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 	// TODO: this highlights an internal issue when Results are converted to RawResults
 	results := report.RawResults()
 	if len(dataQueries) > 0 {
-		res.WriteString(print.Primary("Data Queries:\n\n"))
+		res.WriteString(print.Primary("Data Queries:" + NewLineCharacter + NewLineCharacter))
 	}
 
 	// iterate over queries and render them properly
@@ -63,23 +63,25 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 	for qid := range dataQueries {
 		query := bundleMap.Queries[qid]
 		if query == nil {
-			res.WriteString("\n" + print.Error("failed to find query '"+qid+"' in bundle"))
+			res.WriteString(NewLineCharacter + print.Error("failed to find query '"+qid+"' in bundle"))
 			continue
 		}
 
 		codeBundle := resolvedPolicy.GetCodeBundle(query)
 		if codeBundle == nil {
-			res.WriteString("\n" + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
+			res.WriteString(NewLineCharacter + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
 			continue
 		}
 
 		res.WriteString("■ Title: ")
 		res.WriteString(query.Title)
-		res.WriteString("\n")
+		res.WriteString(NewLineCharacter)
 		res.WriteString("  ID:    ")
 		res.WriteString(query.Mrn)
-		res.WriteString("\n")
-		writeQueryCompact(res, "  Query: ", print.Disabled(query.Query))
+		res.WriteString(NewLineCharacter)
+		queryString := print.Disabled(query.Query)
+		queryString = strings.ReplaceAll(queryString, "\n", NewLineCharacter)
+		writeQueryCompact(res, "  Query: ", queryString)
 
 		// print data results
 		// copy all contents where we have labels
@@ -94,9 +96,10 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 		}
 
 		result := print.Results(codeBundle, filteredResults)
+		result = strings.ReplaceAll(result, "\n", NewLineCharacter)
 		writeQueryCompact(res, "  Result:", result)
 
-		res.WriteString("\n")
+		res.WriteString(NewLineCharacter)
 	}
 }
 
@@ -104,22 +107,23 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 func writeQueryCompact(res *bytes.Buffer, title string, value string) {
 	res.WriteString(title)
 	if strings.Contains(value, "\n") {
-		res.WriteString("\n")
-		res.WriteString(stringx.Indent(4, value))
+		res.WriteString(NewLineCharacter)
+		valueString := strings.ReplaceAll(value, "\n", NewLineCharacter)
+		res.WriteString(valueString)
 	} else {
 		res.WriteString(value)
-		res.WriteString("\n")
+		res.WriteString(NewLineCharacter)
 	}
 }
 
 func renderScoringQueries(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, data []reportRow, res *bytes.Buffer) {
 	// return if we do not have any queries to render for this policy
 	if len(data) == 0 {
-		res.WriteString(print.Disabled("\nno scored queries\n"))
+		res.WriteString(print.Disabled(NewLineCharacter + "no scored queries" + NewLineCharacter))
 		return
 	}
 
-	res.WriteString(print.Primary("Scoring Queries:\n"))
+	res.WriteString(print.Primary("Scoring Queries:" + NewLineCharacter))
 
 	// print summary
 	renderPolicySummary(res, data)
@@ -179,7 +183,7 @@ func renderPolicySummary(res *bytes.Buffer, data []reportRow) {
 
 func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, res *bytes.Buffer, data []reportRow) {
 	results := report.RawResults()
-	res.WriteRune('\n')
+	res.WriteString(NewLineCharacter)
 	for i := range data {
 		row := data[i]
 
@@ -196,7 +200,7 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 		res.WriteString(" Title:  ")
 		res.WriteString(colorizeRow(row, row.Query.Title))
 		res.WriteString(" " + action)
-		res.WriteRune('\n')
+		res.WriteString(NewLineCharacter)
 
 		// passed scores do not need to print details
 		if row.Score != nil && row.Score.Value == 100 {
@@ -216,26 +220,28 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 			res.WriteString("  Error: ")
 			// Print out original errorMsg so we get nice newline formatting
 			res.WriteString(print.Failed(row.Score.Message))
-			res.WriteRune('\n')
+			res.WriteString(NewLineCharacter)
 		} else if row.Score == nil || row.Score.Value != 100 {
 			// print more details if the test failed
 			if row.Query != nil {
 				if row.Assessment != nil {
-					res.WriteString("  Assessment:\n")
-					res.WriteString(stringx.Indent(2, print.Assessment(row.Bundle, row.Assessment)))
+					res.WriteString("  Assessment:" + NewLineCharacter)
+					assessmentString := stringx.Indent(2, print.Assessment(row.Bundle, row.Assessment))
+					assessmentString = strings.ReplaceAll(assessmentString, "\n", NewLineCharacter)
+					res.WriteString(assessmentString)
 				} else {
 					// If we don't have an assessment, print as result so we can display something
 					// useful
 					qid := row.Query.Mrn
 					query := bundle.Queries[qid]
 					if query == nil {
-						res.WriteString("\n" + print.Error("failed to find query '"+qid+"' in bundle"))
+						res.WriteString(NewLineCharacter + print.Error("failed to find query '"+qid+"' in bundle"))
 						continue
 					}
 
 					codeBundle := resolvedPolicy.GetCodeBundle(query)
 					if codeBundle == nil {
-						res.WriteString("\n" + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
+						res.WriteString(NewLineCharacter + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
 						continue
 					}
 
@@ -246,7 +252,7 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 				}
 			}
 		}
-		res.WriteRune('\n')
+		res.WriteString(NewLineCharacter)
 
 	}
 }

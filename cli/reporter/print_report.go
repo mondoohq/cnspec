@@ -56,15 +56,16 @@ func (r *reportRenderer) print() error {
 
 	// print errors
 	if len(r.data.Errors) > 0 {
-		res.WriteString(r.printer.Primary("Scan Failures\n\n"))
+		res.WriteString(r.printer.Primary("Scan Failures" + NewLineCharacter + NewLineCharacter))
 
 		for name, errMsg := range r.data.Errors {
 			// TODO: most likely we need to fetch the asset name here
-			assetLine := termenv.String(fmt.Sprintf("■ Asset: %s\n", name)).
+			assetLine := termenv.String(fmt.Sprintf("■ Asset: %s%s", name, NewLineCharacter)).
 				Foreground(colors.DefaultColorTheme.Critical).String()
 			res.WriteString(assetLine)
-			errLine := termenv.String(stringx.Indent(2, fmt.Sprintf("Error: %s\n", errMsg))).
+			errLine := termenv.String(stringx.Indent(2, fmt.Sprintf("Error: %s%s", errMsg, NewLineCharacter))).
 				Foreground(colors.DefaultColorTheme.Critical).String()
+			errLine = strings.ReplaceAll(errLine, "\n", NewLineCharacter)
 			res.WriteString(errLine)
 		}
 	}
@@ -75,7 +76,7 @@ func (r *reportRenderer) print() error {
 			log.Error().Err(err).Send()
 		}
 		// we print the summary again to make it visible after the pager is closed of the page
-		fmt.Fprintln(r.out, "\n"+scanSummary)
+		fmt.Fprintln(r.out, NewLineCharacter+scanSummary)
 	} else {
 		fmt.Fprintln(r.out, res.String())
 	}
@@ -122,13 +123,13 @@ func (r *reportRenderer) assetSummary(assetObj *policy.Asset, score *policy.Scor
 		return res.String()
 	}
 
-	res.WriteString("\n")
+	res.WriteString(NewLineCharacter)
 
 	// header with asset name
 	res.WriteString(r.printer.H1(assetObj.Name))
 	res.WriteString(components.NewScoreCard().Render(score))
 
-	res.WriteString("\n")
+	res.WriteString(NewLineCharacter)
 	return res.String()
 }
 

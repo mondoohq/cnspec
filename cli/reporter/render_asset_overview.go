@@ -86,7 +86,7 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 
 			codeBundle := resolvedPolicy.GetCodeBundle(query)
 			if codeBundle == nil {
-				res.WriteString("\n" + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
+				res.WriteString(NewLineCharacter + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
 				continue
 			}
 
@@ -115,7 +115,7 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 			return table[i].Title < table[j].Title
 		})
 
-		res.WriteString(print.Primary(category) + ":\n")
+		res.WriteString(print.Primary(category) + ":" + NewLineCharacter)
 		for i := range table {
 			row := table[i]
 			whitespace := maxKeyWidth - len(row.Title)
@@ -123,14 +123,15 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 			res.WriteString(strings.Repeat(" ", whitespace+1))
 
 			if strings.Contains(row.Value, "\n") {
-				res.WriteString("\n")
-				res.WriteString(stringx.Indent(2, row.Value))
+				res.WriteString(NewLineCharacter)
+				rowValue := strings.ReplaceAll(stringx.Indent(2, row.Value), "\n", NewLineCharacter)
+				res.WriteString(rowValue)
 			} else {
 				res.WriteString(row.Value)
-				res.WriteString("\n")
+				res.WriteString(NewLineCharacter)
 			}
 		}
-		res.WriteString("\n")
+		res.WriteString(NewLineCharacter)
 	}
 
 	return res.String()
