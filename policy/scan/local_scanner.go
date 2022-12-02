@@ -312,6 +312,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				})
 				if err != nil {
 					log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+					job.Reporter.AddScanError(job.Asset, err)
+					return
 				}
 
 				log.Debug().Str("asset", job.Asset.Name).Strs("platform-ids", job.Asset.PlatformIds).Msg("update asset")
