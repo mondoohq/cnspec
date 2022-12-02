@@ -362,7 +362,8 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 		r.out.Write([]byte(title))
 		r.out.Write([]byte(NewLineCharacter))
 		if !r.isCompact {
-			r.out.Write([]byte(termenv.String("  Message: " + score.Message).Foreground(r.Colors.Error).String()))
+			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
+			r.out.Write([]byte(termenv.String("  Message: " + errorMessage).Foreground(r.Colors.Error).String()))
 			r.out.Write([]byte(NewLineCharacter))
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
@@ -380,7 +381,8 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 
 		// additional information about the failed query
 		if !r.isCompact && score.Value != 100 {
-			r.out.Write([]byte("  Query:" + NewLineCharacter + stringx.Indent(4, query.Query)))
+			queryString := strings.ReplaceAll(stringx.Indent(4, query.Query), "\n", NewLineCharacter)
+			r.out.Write([]byte("  Query:" + NewLineCharacter + queryString))
 			r.out.Write([]byte(NewLineCharacter))
 
 			codeBundle := resolved.GetCodeBundle(query)
@@ -390,11 +392,14 @@ func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery
 				r.out.Write([]byte("  Result:" + NewLineCharacter))
 				assessment := policy.Query2Assessment(codeBundle, report)
 				if assessment != nil {
-					r.out.Write([]byte(stringx.Indent(4, r.Printer.Assessment(codeBundle, assessment))))
+					assessmentString := stringx.Indent(4, r.Printer.Assessment(codeBundle, assessment))
+					assessmentString = strings.ReplaceAll(assessmentString, "\n", NewLineCharacter)
+					r.out.Write([]byte(assessmentString))
 				} else {
 					data := codeBundle.FilterResults(results)
-					result := r.Reporter.Printer.Results(codeBundle, data)
-					r.out.Write([]byte(stringx.Indent(4, result)))
+					result := stringx.Indent(4, r.Reporter.Printer.Results(codeBundle, data))
+					result = strings.ReplaceAll(result, "\n", NewLineCharacter)
+					r.out.Write([]byte(result))
 				}
 			}
 			r.out.Write([]byte(NewLineCharacter))

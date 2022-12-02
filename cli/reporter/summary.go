@@ -130,7 +130,7 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 
 	// render asset stats
 	res.WriteString(s.print.Primary("Asset Overview"))
-	res.WriteString("\n\n")
+	res.WriteString(NewLineCharacter + NewLineCharacter)
 
 	// render policy list
 	mircoScoreCard := components.NewMicroScoreCard()
@@ -140,13 +140,13 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 		res.WriteString(mircoScoreCard.Render(score))
 		res.WriteString(" ")
 		res.WriteString(summaryStats.assetNames[k])
-		res.WriteString("\n")
+		res.WriteString(NewLineCharacter)
 	}
-	res.WriteString("\n")
+	res.WriteString(NewLineCharacter)
 
 	// render policy stats
 	res.WriteString(s.print.Primary("Aggregated Policy Overview"))
-	res.WriteString("\n\n")
+	res.WriteString(NewLineCharacter + NewLineCharacter)
 	data := components.StackBarData{
 		Title: "Stacked Data",
 		Color: []termenv.Color{

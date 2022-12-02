@@ -79,7 +79,9 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 		res.WriteString("  ID:    ")
 		res.WriteString(query.Mrn)
 		res.WriteString(NewLineCharacter)
-		writeQueryCompact(res, "  Query: ", print.Disabled(query.Query))
+		queryString := print.Disabled(query.Query)
+		queryString = strings.ReplaceAll(queryString, "\n", NewLineCharacter)
+		writeQueryCompact(res, "  Query: ", queryString)
 
 		// print data results
 		// copy all contents where we have labels
@@ -94,6 +96,7 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 		}
 
 		result := print.Results(codeBundle, filteredResults)
+		result = strings.ReplaceAll(result, "\n", NewLineCharacter)
 		writeQueryCompact(res, "  Result:", result)
 
 		res.WriteString(NewLineCharacter)
@@ -103,9 +106,10 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 // if we have a multi-line query, place the query in newline
 func writeQueryCompact(res *bytes.Buffer, title string, value string) {
 	res.WriteString(title)
-	if strings.Contains(value, NewLineCharacter) {
+	if strings.Contains(value, "\n") {
 		res.WriteString(NewLineCharacter)
-		res.WriteString(stringx.Indent(4, value))
+		valueString := strings.ReplaceAll(value, "\n", NewLineCharacter)
+		res.WriteString(valueString)
 	} else {
 		res.WriteString(value)
 		res.WriteString(NewLineCharacter)
@@ -222,7 +226,9 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 			if row.Query != nil {
 				if row.Assessment != nil {
 					res.WriteString("  Assessment:" + NewLineCharacter)
-					res.WriteString(stringx.Indent(2, print.Assessment(row.Bundle, row.Assessment)))
+					assessmentString := stringx.Indent(2, print.Assessment(row.Bundle, row.Assessment))
+					assessmentString = strings.ReplaceAll(assessmentString, "\n", NewLineCharacter)
+					res.WriteString(assessmentString)
 				} else {
 					// If we don't have an assessment, print as result so we can display something
 					// useful

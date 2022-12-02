@@ -65,6 +65,7 @@ func (r *reportRenderer) print() error {
 			res.WriteString(assetLine)
 			errLine := termenv.String(stringx.Indent(2, fmt.Sprintf("Error: %s%s", errMsg, NewLineCharacter))).
 				Foreground(colors.DefaultColorTheme.Critical).String()
+			errLine = strings.ReplaceAll(errLine, "\n", NewLineCharacter)
 			res.WriteString(errLine)
 		}
 	}

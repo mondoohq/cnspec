@@ -124,7 +124,8 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 
 			if strings.Contains(row.Value, "\n") {
 				res.WriteString(NewLineCharacter)
-				res.WriteString(stringx.Indent(2, row.Value))
+				rowValue := strings.ReplaceAll(stringx.Indent(2, row.Value), "\n", NewLineCharacter)
+				res.WriteString(rowValue)
 			} else {
 				res.WriteString(row.Value)
 				res.WriteString(NewLineCharacter)
