@@ -202,8 +202,6 @@ policies:
           mondoo-linux-security-baseline-root-group-is-empty: null
           mondoo-linux-security-baseline-system-accounts-are-non-login: null
           mondoo-linux-security-baseline-access-to-the-su-command-is-restricted: null
-    docs:
-      desc: "## Overview\n\nThe Linux Security by Mondoo provides guidance for establishing a secure baseline configuration for Linux systems running on x86 and x64 platforms.\n\nThis policy includes queries to help harden Linux systems by:\n  - Identifying problematic services that may be running\n  - Identifying loose permissions on sensitive system configuration files\n  - Ensuring logging and auditing services are properly configured and running\n  - Hardening SSH configurations\n  - Ensure users and groups are securely configured\n  - Identifying misconfigured Kernel networking configurations\n\nThis policy has been developed for Red Hat (RHEL), Debian, Ubuntu, and SUSE (SLES) derivative distributions running on x86 and x64 architectures. \nSome queries may be skipped depending on your particular distribution, installation type, or underlying infrastructure. \nThe overall guidance within this policy broadly assumes that operations are being performed as the root user. \nOperations performed using sudo instead of the root user may produce unexpected results or fail to make the intended changes to the system. \nNon-root users may not be able to access certain areas of the system, especially after remediation has been performed. It is advisable to verify \nroot users path integrity and the integrity of any programs being run prior to execution of commands and scripts included in this benchmark. \n\n### Intended Audience\n\nThis benchmark is intended for system and application administrators, security specialists, auditors, help desk, and platform deployment personnel \nwho plan to develop, deploy, assess, or secure solutions that incorporate Linux on x86 or x64 platforms.\n\n## Local scan\n\nLocal scan refer to scans of files and operating systems where `cnspec` is installed.\n\nTo scan the `localhost` against this policy: \n\n```bash\ncnspec scan local \n```\n\n## Remote scan\n\nRemote scans use native transports in `cnspec` to provide on demand scan results without the need to install any agents, or integration. \n\nFor a complete list of native transports run: \n\n```bash\ncnspec scan --help\n```\n\n### Prerequisites\n\nRemote scans of Linux hosts requires authentication such as SSH keys.\n\n### Scan a remote Linux host (SSH authentication)\n\n```bash\ncnspec scan ssh <user>@<IP_ADDRESS> -i /path/to/ssh_key \n```\n\n### Scan AWS EC2 instance (AWS SSM)\n\n```bash\ncnspec scan ssh <user>@<IP_ADDRESS> -i /path/to/ssh_key \n```        \n\n## Join the community!\n\nOur goal is to build policies that are simple to deploy, accurate, and actionable. \n\nIf you have any suggestions on how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions."
 props:
   - uid: MondooKexAlgos
     title: Define the hardened key exchange algorithms for all SSH configurations
@@ -1144,16 +1142,16 @@ queries:
         ```
     query: |
       if( file("/boot/grub2/grub.cfg" ).exists) {
-        file("/boot/grub2/grub.cfg").content.contains("audit=1")
+        file("/boot/grub2/grub.cfg").content.lines.where( _ == /^[^#]/ ).contains("audit\=(\s+)?1")
       }
       if( file("/boot/grub/grub.cfg").exists ) {
-        file("/boot/grub/grub.cfg").content.contains("audit=1")
+        file("/boot/grub/grub.cfg").content.lines.where( _ == /^[^#]/ ).contains("audit\=(\s+)?1")
       }
       if( file("/boot/grub/grub.conf").exists ) {
-        file("/boot/grub/grub.conf").content.contains("audit=1")
+        file("/boot/grub/grub.conf").content.lines.where( _ == /^[^#]/ ).contains("audit\=(\s+)?1")
       }
       if( file('/etc/secboot/config.json').exists ) {
-        parse.json('/etc/secboot/config.json').params['kernel-params'].contains('audit=1')
+        parse.json('/etc/secboot/config.json').params['kernel-params'].contains('audit\=(\s+)?1')
       }
   - uid: mondoo-linux-security-baseline-audit-log-storage-size-is-configured
     title: Ensure audit log storage size is configured
@@ -1237,11 +1235,25 @@ queries:
 
         -w /etc/sudoers.d -p wa -k scope
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-w /etc/sudoers -p wa -k scope")
-        stdout.contains("-w /etc/sudoers.d -p wa -k scope")
-      }
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/sudoers\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/)
+          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/sudoers\.d\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/)
+        }
   - uid: mondoo-linux-security-baseline-login-and-logout-events-are-collected
     title: Ensure login and logout events are collected
     severity: 80
@@ -1275,19 +1287,30 @@ queries:
         ```
         -w /var/run/faillock -p wa -k logins
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      if( platform.family.contains('debian') ) {
-        command("auditctl -l") {
-          stdout.contains("-w /var/log/faillog -p wa -k logins")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        if( platform.family.contains('debian') ) {
+          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/faillog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
+        } else {
+          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/run\/faillock\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
         }
-      } else {
-        command("auditctl -l") {
-          stdout.contains("-w /var/run/faillock -p wa -k logins")
-        }
-      }
-      command("auditctl -l") {
-        stdout.contains("-w /var/log/lastlog -p wa -k logins")
-        stdout.contains("-w /var/log/tallylog -p wa -k logins")
+      file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/lastlog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
+      file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/tallylog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-session-initiation-information-is-collected
     title: Ensure session initiation information is collected
@@ -1309,11 +1332,26 @@ queries:
 
         -w /var/log/btmp -p wa -k logins
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-w /var/run/utmp -p wa -k session")
-        stdout.contains("-w /var/log/wtmp -p wa -k logins")
-        stdout.contains("-w /var/log/btmp -p wa -k logins")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/run\/utmp\s+\-p\s+wa\s+\-k\s+session(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-events-that-modify-date-and-time-information-are-collected
     title: Ensure events that modify date and time information are collected
@@ -1360,13 +1398,32 @@ queries:
 
         -w /etc/localtime -p wa -k time-change
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change") || stdout.contains('-a always,exit -F arch=b64 -S adjtimex,settimeofday -F key=time-change')
-        stdout.contains("-a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change") || stdout.contains('-a always,exit -F arch=b32 -S stime,settimeofday,adjtimex -F key=time-change')
-        stdout.contains("-a always,exit -F arch=b64 -S clock_settime -k time-change") || stdout.contains('-a always,exit -F arch=b64 -S clock_settime -F key=time-change')
-        stdout.contains("-a always,exit -F arch=b32 -S clock_settime -k time-change") || stdout.contains('-a always,exit -F arch=b32 -S clock_settime -F key=time-change')
-        stdout.contains("-w /etc/localtime -p wa -k time-change")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+adjtimex\s+\-S\s+settimeofday\s+\-k\s+time\-change(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+adjtimex\,settimeofday\s+\-F\s+key\=time\-change(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+adjtimex\s+\-S\s+settimeofday\s+\-S\s+stime\s+\-k\s+time\-change(\s+)?$/)
+          ||file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+stime\,settimeofday\,adjtimex\s+\-F\s+key\=time\-change(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+clock\_settime\s+\-k\s+time\-change(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+clock\_settime\s+\-F\s+key\=time\-change(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+clock\_settime\s+\-k\s+time\-change(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+clock\_settime\s+\-F\s+key\=time\-change(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/localtime\s+\-p\s+wa\s+\-k\s+time\-change/)
       }
   - uid: mondoo-linux-security-baseline-events-that-modify-the-systems-mandatory-access-controls-are-collected
     title: Ensure events that modify the system's Mandatory Access Controls are collected
@@ -1386,10 +1443,25 @@ queries:
 
         -w /usr/share/selinux/ -p wa -k MAC-policy
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-w /etc/selinux -p wa -k MAC-policy")
-        stdout.contains("-w /usr/share/selinux -p wa -k MAC-policy")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/selinux\s+\-p\s+\wa\s+\-k\s+MAC\-policy(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/usr\/share\/selinux\s+\-p\s+\wa\s+\-k\s+MAC\-policy(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-events-that-modify-the-systems-network-environment-are-collected
     title: Ensure events that modify the system's network environment are collected
@@ -1454,14 +1526,33 @@ queries:
         ```
         -w /etc/network -p wa -k system-locale
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale") || stdout.contains('-a always,exit -F arch=b64 -S sethostname,setdomainname -F key=system-locale')
-        stdout.contains("-a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale") || stdout.contains('-a always,exit -F arch=b32 -S sethostname,setdomainname -F key=system-locale')
-        stdout.contains("-w /etc/issue -p wa -k system-locale")
-        stdout.contains("-w /etc/issue.net -p wa -k system-locale")
-        stdout.contains("-w /etc/hosts -p wa -k system-locale")
-        stdout.contains("-w /etc/sysconfig/network -p wa -k system-locale") || stdout.contains("-w /etc/netctl -p wa -k system-locale") || stdout.contains("-w /etc/network -p wa -k system-locale")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system\-locale(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\,setdomainname\s+\-F\s+key\=system\-locale(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system\-locale(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\,setdomainname\s+\-F\s+key\=system\-locale(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/issue\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/issue\.net\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/hosts\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/sysconfig\/network\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/netctl\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/network\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-discretionary-access-control-permission-modification-events-are-collected
     title: Ensure discretionary access control permission modification events are collected
@@ -1503,14 +1594,35 @@ queries:
 
         -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod") || stdout.contains('-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat -F auid>=1000 -F auid!=-1 -F key=perm_mod')
-        stdout.contains("-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod") || stdout.contains('-a always,exit -F arch=b32 -S chmod,fchmod,fchmodat -F auid>=1000 -F auid!=-1 -F key=perm_mod')
-        stdout.contains("-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod") || stdout.contains('-a always,exit -F arch=b64 -S chown,fchown,lchown,fchownat -F auid>=1000 -F auid!=-1 -F key=perm_mod')
-        stdout.contains("-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod") || stdout.contains('-a always,exit -F arch=b32 -S lchown,fchown,chown,fchownat -F auid>=1000 -F auid!=-1 -F key=perm_mod')
-        stdout.contains("-a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod") || stdout.contains('-a always,exit -F arch=b64 -S setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -F auid>=1000 -F auid!=-1 -F key=perm_mod')
-        stdout.contains("-a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod") || stdout.contains('-a always,exit -F arch=b32 -S setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -F auid>=1000 -F auid!=-1 -F key=perm_mod')
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chmod\s+\-S\s+fchmod\s+\-S\s+fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chmod\,fchmod\,fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chmod\s+\-S\s+fchmod\s+\-S\s+fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chmod\,fchmod\,fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chown\s+\-S\s+fchown\s+\-S\s+fchownat\s+\-S\s+lchown\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chown\,fchown\,lchown\,fchownat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chown\s+\-S\s+fchown\s+\-S\s+fchownat\s+\-S\s+lchown\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+lchown\,fchown\,chown\,fchownat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+setxattr\s+\-S\s+lsetxattr\s+\-S\s+fsetxattr\s+\-S\s+removexattr\s+\-S\s+lremovexattr\s+\-S\s+fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+setxattr\,lsetxattr\,fsetxattr\,removexattr\,lremovexattr\,fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+setxattr\s+\-S\s+lsetxattr\s+\-S\s+fsetxattr\s+\-S\s+removexattr\s+\-S\s+lremovexattr\s+\-S\s+fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+setxattr\,lsetxattr\,fsetxattr\,removexattr\,lremovexattr\,fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
       }
   - uid: mondoo-linux-security-baseline-unsuccessful-unauthorized-file-access-attempts-are-collected
     title: Ensure unsuccessful unauthorized file access attempts are collected
@@ -1547,12 +1659,31 @@ queries:
 
         -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access") || stdout.contains('-a always,exit -F arch=b64 -S open,truncate,ftruncate,creat,openat -F exit=-EACCES -F auid>=1000 -F auid!=-1 -F key=access')
-        stdout.contains("-a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access") || stdout.contains('-a always,exit -F arch=b32 -S open,creat,truncate,ftruncate,openat -F exit=-EACCES -F auid>=1000 -F auid!=-1 -F key=access')
-        stdout.contains("-a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access") || stdout.contains('-a always,exit -F arch=b64 -S open,truncate,ftruncate,creat,openat -F exit=-EPERM -F auid>=1000 -F auid!=-1 -F key=access')
-        stdout.contains("-a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access") || stdout.contains('-a always,exit -F arch=b32 -S open,creat,truncate,ftruncate,openat -F exit=-EPERM -F auid>=1000 -F auid!=-1 -F key=access')
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+open\,truncate\,ftruncate\,creat\,openat\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=access(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+open\,creat\,truncate\,ftruncate\,openat\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=access(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+open\,truncate\,ftruncate\,creat\,openat\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=-1\s+\-F\s+key\=access(\s+)?$/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+open\,creat\,truncate\,ftruncate\,openat\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=-1\s+\-F\s+key\=access(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-events-that-modify-usergroup-information-are-collected
     title: Ensure events that modify user/group information are collected
@@ -1577,13 +1708,28 @@ queries:
 
         -w /etc/security/opasswd -p wa -k identity
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-w /etc/group -p wa -k identity")
-        stdout.contains("-w /etc/passwd -p wa -k identity")
-        stdout.contains("-w /etc/gshadow -p wa -k identity")
-        stdout.contains("-w /etc/shadow -p wa -k identity")
-        stdout.contains("-w /etc/security/opasswd -p wa -k identity")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/group\s+\-p\s+wa\s+\-k\s+identity/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/passwd\s+\-p\s+wa\s+\-k\s+identity/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/gshadow\s+\-p\s+wa\s+\-k\s+identity/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/shadow\s+\-p\s+wa\s+\-k\s+identity/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/security\/opasswd\s+\-p\s+wa\s+\-k\s+identity/)
       }
   - uid: mondoo-linux-security-baseline-successful-file-system-mounts-are-collected
     title: Ensure successful file system mounts are collected
@@ -1616,10 +1762,27 @@ queries:
 
         -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts") || stdout.contains("-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=-1 -F key=mounts")
-        stdout.contains("-a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts") || stdout.contains("-a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=-1 -F key=mounts")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+mounts/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=mounts/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+mounts/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=mounts/)
       }
   - uid: mondoo-linux-security-baseline-file-deletion-events-by-users-are-collected
     title: Ensure file deletion events by users are collected
@@ -1659,10 +1822,27 @@ queries:
 
         -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete") || stdout.contains('-a always,exit -F arch=b64 -S rename,unlink,unlinkat,renameat -F auid>=1000 -F auid!=-1 -F key=delete')
-        stdout.contains("-a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete") || stdout.contains('-a always,exit -F arch=b32 -S unlink,rename,unlinkat,renameat -F auid>=1000 -F auid!=-1 -F key=delete')
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.where( _ == /^[^#]/ ).contains(/\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+delete/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+rename\,unlink\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=delete/)
+        file('/etc/audit/audit.rules').content.lines.where( _ == /^[^#]/ ).contains(/\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+delete/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+unlink\,rename\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=delete/)
       }
   - uid: mondoo-linux-security-baseline-kernel-module-loading-and-unloading-is-collected
     title: Ensure kernel module loading and unloading is collected
@@ -1707,12 +1887,30 @@ queries:
 
         -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-w /sbin/insmod -p x -k modules")
-        stdout.contains("-w /sbin/rmmod -p x -k modules")
-        stdout.contains("-w /sbin/modprobe -p x -k modules")
-        stdout.contains("-a always,exit -F arch=b64 -S init_module -S delete_module -k modules") || stdout.contains('-a always,exit -F arch=b64 -S init_module,delete_module -F key=modules') || stdout.contains("-a always,exit -F arch=b32 -S init_module -S delete_module -k modules") || stdout.contains('-a always,exit -F arch=b32 -S init_module,delete_module -F key=modules')
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/sbin\/insmod\s+\-p\s+x\s+\-k\s+modules/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/sbin\/rmmod\s+\-p\s+x\s+\-k\s+modules/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/sbin\/modprobe\s+\-p\s+x\s+\-k\s+modules/)
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\,delete\_module\s+\-F\s+key\=modules/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules/)
+          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\,delete\_module\s+\-F\s+key\=modules/)
       }
   - uid: mondoo-linux-security-baseline-system-administrator-actions-sudolog-are-collected
     title: Ensure system administrator actions (sudolog) are collected
@@ -1738,9 +1936,24 @@ queries:
         ```
         -w /var/log/sudo.log -p wa -k actions
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("auditctl -l") {
-        stdout.contains("-w /var/log/sudo.log -p wa -k actions")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/sudo\.log\s+\-p\s+wa\s+\-k\s+actions(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-the-audit-configuration-is-immutable
     title: Ensure the audit configuration is immutable
@@ -1755,9 +1968,24 @@ queries:
         ```
         -e 2
         ```
+
+        To load the newly added rules into the running configuration:
+
+        ```
+        augenrules --load
+        ```
+        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+
+
+        Check if a reboot is required, in case the running configuration is set to be immutable:
+
+        ```
+        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        ```
     query: |
-      command("grep '^\s*[^#]' /etc/audit/audit.rules | tail -1") {
-        stdout.contains("-e 2")
+      file('/etc/audit/audit.rules').exists
+      if (file('/etc/audit/audit.rules').exists) {
+        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-e\s+2(\s+)?$/)
       }
   - uid: mondoo-linux-security-baseline-sudo-logging-is-enabled
     title: Ensure sudo logging is enabled
@@ -1771,7 +1999,7 @@ queries:
         Defaults log_host, log_year, logfile="/var/log/sudo.log"
         ```
     query: |
-      file('/etc/sudoers').content.contains('logfile="/var/log/sudo.log"')
+      file('/etc/sudoers').content.lines.where( _ == /^[^#]/ ).contains(/logfile\=\"\/var\/log\/sudo\.log\"/)
   - uid: mondoo-linux-security-baseline-permissions-on-etcsshsshd-config-are-configured
     title: Ensure secure permissions on /etc/ssh/sshd_config are set
     severity: 100
