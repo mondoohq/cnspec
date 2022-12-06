@@ -235,7 +235,7 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 
 	// we are passing all actions that are not handled here through to the childs
 	// - Add is handled directly within this policy, no need to pass through
-	// - Remove is passed-throguh to the first child that adds or readds a query
+	// - Remove is passed-through to the first child that adds or readds a query
 	// - Modify is not-handled yet but would work similar to Remove
 	actionsForChilds := policyModActions{}
 
@@ -261,7 +261,7 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 		modifiedAction, isActionModified := parentQueryActions[qid]
 		if isActionModified {
 			action = modifiedAction
-			// modififies parent actions so
+			// modifies parent actions so
 			delete(parentQueryActions, qid)
 		}
 

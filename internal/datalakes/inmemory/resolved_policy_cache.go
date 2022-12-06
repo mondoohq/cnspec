@@ -90,7 +90,7 @@ func (c *ResolvedPolicyCache) Set(key string, resolvedPolicy *policy.ResolvedPol
 }
 
 // freeSpace deletes expired entries and entries starting from the oldest one until the cache has sufficient space
-// to accomodate a new entry with the given size. The function doesn't solve thread safety so the caller needs to
+// to accommodate a new entry with the given size. The function doesn't solve thread safety so the caller needs to
 // handle that.
 func (c *ResolvedPolicyCache) freeSpace(size int64) {
 	if len(c.data) == 0 {

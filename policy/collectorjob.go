@@ -3,23 +3,23 @@ package policy
 import "github.com/rs/zerolog"
 
 type InvalidCollectorJobError struct {
-	InvalidSpecsByReprtingJob     map[string][]string
-	InvalidNotifiersByReprtingJob map[string][]string
+	InvalidSpecsByReportingJob     map[string][]string
+	InvalidNotifiersByReportingJob map[string][]string
 }
 
 func newInvalidCollectorJobError() *InvalidCollectorJobError {
 	return &InvalidCollectorJobError{
-		InvalidSpecsByReprtingJob:     make(map[string][]string),
-		InvalidNotifiersByReprtingJob: make(map[string][]string),
+		InvalidSpecsByReportingJob:     make(map[string][]string),
+		InvalidNotifiersByReportingJob: make(map[string][]string),
 	}
 }
 
 func (e *InvalidCollectorJobError) addInvalidSpec(jobUUID string, specRef string) {
-	e.InvalidSpecsByReprtingJob[jobUUID] = append(e.InvalidSpecsByReprtingJob[jobUUID], specRef)
+	e.InvalidSpecsByReportingJob[jobUUID] = append(e.InvalidSpecsByReportingJob[jobUUID], specRef)
 }
 
 func (e *InvalidCollectorJobError) addInvalidNotifier(jobUUID string, jobRef string) {
-	e.InvalidNotifiersByReprtingJob[jobUUID] = append(e.InvalidNotifiersByReprtingJob[jobUUID], jobRef)
+	e.InvalidNotifiersByReportingJob[jobUUID] = append(e.InvalidNotifiersByReportingJob[jobUUID], jobRef)
 }
 
 func (e *InvalidCollectorJobError) Error() string {
@@ -28,13 +28,13 @@ func (e *InvalidCollectorJobError) Error() string {
 
 func (e *InvalidCollectorJobError) MarshalZerologObject(ev *zerolog.Event) {
 	specsByJob := zerolog.Dict()
-	for rjUUID, specRefs := range e.InvalidSpecsByReprtingJob {
+	for rjUUID, specRefs := range e.InvalidSpecsByReportingJob {
 		specsByJob.Strs(rjUUID, specRefs)
 	}
 	ev.Dict("specs-by-job", specsByJob)
 
 	notifiersByJob := zerolog.Dict()
-	for rjUUID, notifierRef := range e.InvalidNotifiersByReprtingJob {
+	for rjUUID, notifierRef := range e.InvalidNotifiersByReportingJob {
 		notifiersByJob.Strs(rjUUID, notifierRef)
 	}
 	ev.Dict("notifiers-by-job", notifiersByJob)

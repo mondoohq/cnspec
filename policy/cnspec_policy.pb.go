@@ -2474,7 +2474,7 @@ func (x *CvssStats) GetWorst() uint32 {
 	return 0
 }
 
-// Scores are numeric values with weith that provide a summary about the asset
+// Scores are numeric values with weight that provide a summary about the asset
 type Score struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

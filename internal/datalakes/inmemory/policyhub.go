@@ -10,7 +10,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 )
 
-// this section lists internal datastrcutures that map additional metadata
+// this section lists internal data structures that map additional metadata
 // with their proto counterparts
 
 type wrapQuery struct {

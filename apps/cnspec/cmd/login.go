@@ -37,7 +37,7 @@ https://console.mondoo.com -> Space -> Settings -> Registration Token. Copy the 
 as the '--token' argument.
 
 Every client remains logged in until you explicitly log out. You can
-log out by using 'lgoout' subcommand.
+log out by using 'logout' subcommand.
 	`,
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("api_endpoint", cmd.Flags().Lookup("api-endpoint"))
