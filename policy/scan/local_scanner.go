@@ -273,7 +273,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				List:     []*asset.Asset{job.Asset},
 			})
 			if err != nil {
-				log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+				log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
 			}
 		}
 		return
@@ -311,7 +311,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 					List:     []*asset.Asset{job.Asset},
 				})
 				if err != nil {
-					log.Error().Err(err).Msgf("failed to synchronize asset %s", job.Asset.Mrn)
+					log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
 					job.Reporter.AddScanError(job.Asset, err)
 					return
 				}
