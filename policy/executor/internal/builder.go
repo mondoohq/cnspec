@@ -8,10 +8,10 @@ import (
 
 	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec"
-	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
 )
 

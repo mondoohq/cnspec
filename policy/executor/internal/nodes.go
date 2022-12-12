@@ -4,10 +4,10 @@ import (
 	"errors"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/types"
-	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
 	"google.golang.org/protobuf/proto"
 )
