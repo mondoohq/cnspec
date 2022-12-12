@@ -9,6 +9,7 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/termenv"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/stringx"
@@ -35,11 +36,15 @@ type defaultReporter struct {
 
 func (r *defaultReporter) print() error {
 	// catch case where the scan was not successful and no bundle was fetched from server
-	if r.data == nil || r.data.Bundle == nil {
+	if r.data == nil {
+		log.Debug().Msg("report does not contain any data")
 		return nil
 	}
 
-	r.bundle = r.data.Bundle.ToMap()
+	// this case can happen when we have only assets with errors, eg. where no valid policy was found
+	if r.data.Bundle != nil {
+		r.bundle = r.data.Bundle.ToMap()
+	}
 
 	// sort assets by name, to make it more intuitive
 	i := 0
@@ -55,6 +60,7 @@ func (r *defaultReporter) print() error {
 		return orderedAssets[i].Name < orderedAssets[j].Name
 	})
 
+	r.out.Write([]byte(NewLineCharacter))
 	if !r.isSummary {
 		r.printAssetSections(orderedAssets)
 	}
@@ -135,8 +141,9 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 	if !ok {
 		// If scanning the asset has failed, there will be no report, we should first look if there's an error for that target.
 		if err, ok := r.data.Errors[assetMrn]; ok {
+			errorMessage := strings.ReplaceAll(err, "\n", NewLineCharacter)
 			r.out.Write([]byte(termenv.String(fmt.Sprintf(
-				`✕ Errors:   %s`, err,
+				`✕ Errors:   %s`, errorMessage,
 			)).Foreground(r.Colors.Error).String()))
 		} else {
 			r.out.Write([]byte(fmt.Sprintf(
@@ -147,7 +154,7 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 		r.out.Write([]byte(NewLineCharacter))
 		return
 	}
-	if report == nil {
+	if report == nil || r.bundle == nil {
 		// the asset didn't match any policy, so no report was generated
 		return
 	}
@@ -236,8 +243,16 @@ func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset
 }
 
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
-	r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
-	queries := r.bundle.QueryMap()
+	if len(orderedAssets) == 0 || len(r.data.Errors) == len(orderedAssets) {
+		return
+	}
+
+	r.out.Write([]byte(NewLineCharacter))
+
+	var queries map[string]*policy.Mquery
+	if r.bundle != nil {
+		queries = r.bundle.QueryMap()
+	}
 
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn

@@ -221,7 +221,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	default:
 		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
 	}
-	job.Bundle.FilterPolicies(job.PolicyFilters)
 
 	for i := range assetList {
 		asset := assetList[i]
@@ -247,6 +246,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		})
 	}
 
+	log.Debug().Msg("completed scanning all assets")
 	return reporter.Reports(), true, nil
 }
 
@@ -327,7 +327,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.connection = m
 			results, err := s.runMotorizedAsset(job)
 			if err != nil {
-				log.Warn().Err(err).Str("asset", job.Asset.Name).Msg("could not scan asset")
+				log.Error().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 				job.Reporter.AddScanError(job.Asset, err)
 				return
 			}
@@ -379,6 +379,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			Runtime:  runtime,
 			Progress: progressListener,
 		}
+		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
 		return policyErr
 	})
@@ -568,6 +569,34 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	return ar, nil
 }
 
+func noPolicyErr(availablePolicies []string, filter []string) error {
+	var sb strings.Builder
+	sb.WriteString("bundle doesn't contain any policies\n")
+	sb.WriteString("\n")
+
+	if len(availablePolicies) > 0 {
+		sb.WriteString("The following policies are available:\n")
+		for i := range availablePolicies {
+			policyMrn := availablePolicies[i]
+			sb.WriteString("- " + policyMrn)
+		}
+		sb.WriteString("\n\n")
+	} else {
+		sb.WriteString("The policy bundle for the asset does not contain any policies\n\n")
+	}
+
+	if len(filter) > 0 {
+		sb.WriteString("User selected policies that are allowed to run:\n")
+		for i := range filter {
+			policyMrn := filter[i]
+			sb.WriteString("- " + policyMrn)
+		}
+		sb.WriteString("\n")
+	}
+
+	return errors.New(sb.String())
+}
+
 func (s *localAssetScanner) prepareAsset() error {
 	var hub policy.PolicyHub = s.services
 
@@ -584,8 +613,14 @@ func (s *localAssetScanner) prepareAsset() error {
 		return errors.New("no bundle provided to run")
 	}
 
+	availablePolicies := s.job.Bundle.PolicyMRNs()
+
+	// filter bundle by user-provided policy filter
+	s.job.Bundle.FilterPolicies(s.job.PolicyFilters)
+
+	// if no policies are left, return an error
 	if len(s.job.Bundle.Policies) == 0 {
-		return errors.New("bundle doesn't contain any policies")
+		return noPolicyErr(availablePolicies, s.job.PolicyFilters)
 	}
 
 	// FIXME: we do not currently respect policy filters!
