@@ -578,9 +578,9 @@ func noPolicyErr(availablePolicies []string, filter []string) error {
 		sb.WriteString("The following policies are available:\n")
 		for i := range availablePolicies {
 			policyMrn := availablePolicies[i]
-			sb.WriteString("- " + policyMrn)
+			sb.WriteString("- " + policyMrn + "\n")
 		}
-		sb.WriteString("\n\n")
+		sb.WriteString("\n")
 	} else {
 		sb.WriteString("The policy bundle for the asset does not contain any policies\n\n")
 	}
@@ -589,7 +589,7 @@ func noPolicyErr(availablePolicies []string, filter []string) error {
 		sb.WriteString("User selected policies that are allowed to run:\n")
 		for i := range filter {
 			policyMrn := filter[i]
-			sb.WriteString("- " + policyMrn)
+			sb.WriteString("- " + policyMrn + "\n")
 		}
 		sb.WriteString("\n")
 	}
