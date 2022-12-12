@@ -4,10 +4,10 @@ import (
 	"time"
 
 	"go.mondoo.com/cnquery"
+	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/resources"
-	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor/internal"
 )
