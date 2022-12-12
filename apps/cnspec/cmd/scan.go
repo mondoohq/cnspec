@@ -517,6 +517,14 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 		opts = append(opts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn), scan.WithPlugins(config.UpstreamConfig.Plugins))
 	}
 
+	// show warning to the user of the policy filter container a bundle file name
+	for i := range config.PolicyNames {
+		entry := config.PolicyNames[i]
+		if strings.HasSuffix(entry, ".mql.yaml") || strings.HasSuffix(entry, ".mql.yml") {
+			log.Warn().Msg("you are using a bundle file as policy. Do you mean `--policy-bundle " + entry + "`")
+		}
+	}
+
 	scanner := scan.NewLocalScanner(opts...)
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 

@@ -2,6 +2,7 @@ package scan
 
 import (
 	"github.com/hashicorp/go-multierror"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -25,6 +26,7 @@ func NewAggregateReporter() *AggregateReporter {
 }
 
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
 	r.assets[asset.Mrn] = &policy.Asset{
 		Mrn:  asset.Mrn,
 		Name: asset.Name,
@@ -40,6 +42,7 @@ func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) 
 }
 
 func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
+	log.Debug().Str("asset", asset.Name).Msg("add scan error to report")
 	r.assets[asset.Mrn] = &policy.Asset{
 		Mrn:  asset.Mrn,
 		Name: asset.Name,

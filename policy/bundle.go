@@ -208,10 +208,11 @@ func (p *Bundle) ToMap() *PolicyBundleMap {
 // If the list of IDs is empty this function doesn't do anything.
 // This function does not remove orphaned queries from the bundle.
 func (p *Bundle) FilterPolicies(IDs []string) {
-	if len(IDs) == 0 {
+	if p == nil || len(IDs) == 0 {
 		return
 	}
 
+	log.Debug().Msg("filter policies for asset")
 	valid := make(map[string]struct{}, len(IDs))
 	for i := range IDs {
 		valid[IDs[i]] = struct{}{}
@@ -231,15 +232,19 @@ func (p *Bundle) FilterPolicies(IDs []string) {
 			uid, _ := mrn.GetResource(cur.Mrn, MRN_RESOURCE_POLICY)
 			if _, ok := valid[uid]; ok {
 				res = append(res, cur)
+				continue
 			}
 
+			log.Debug().Str("policy", cur.Mrn).Msg("policy does not match user-provided filter")
 			// if we have a MRN we do not check the UID
 			continue
 		}
 
 		if _, ok := valid[cur.Uid]; ok {
 			res = append(res, cur)
+			continue
 		}
+		log.Debug().Str("policy", cur.Uid).Msg("policy does not match user-provided filter")
 	}
 
 	p.Policies = res
