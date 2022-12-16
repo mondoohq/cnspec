@@ -473,12 +473,10 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	}
 
 	if len(conf.PolicyPaths) > 0 && !conf.IsIncognito {
-		log.Warn().Msg("Scanning with local policy bundles will switch into --incognito mode by default. Your results will not be sent upstream.")
 		conf.IsIncognito = true
 	}
 
 	if serviceAccount == nil && !conf.IsIncognito {
-		log.Warn().Msg("No credentials provided. Switching to --incognito mode.")
 		conf.IsIncognito = true
 	}
 
