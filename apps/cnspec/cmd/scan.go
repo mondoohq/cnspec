@@ -37,7 +37,7 @@ func init() {
 
 var policyScanCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "scan",
-	Short: "Scan assets with one or more polices",
+	Short: "Scan assets with one or more policies",
 	Long: `
 This command triggers a new policy scan for an asset. By default, the local
 system is scanned with its pre-configured policies:
