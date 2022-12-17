@@ -188,8 +188,8 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 
 	// render sub-policies
 	for i := range policies {
-		// NOTE: do not pass the filtered asset filter, eg. a space policy may not include a filter but its childs
-		// if we pass-through the filtered queryes, childs polices matching the original asset filter are not rendered
+		// NOTE: do not pass the filtered asset filter, eg. a space policy may not include a filter but its child's
+		// if we pass-through the filtered queries, child's policies matching the original asset filter are not rendered
 		x, err := r.renderPolicyReport(policies[i], report, bundle, resolved, queryActionsForChildren.Clone())
 		if err != nil {
 			return "", err
