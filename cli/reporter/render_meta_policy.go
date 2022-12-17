@@ -51,7 +51,7 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 			return false
 		}
 
-		// sort unscored polices at the end
+		// sort unscored policies at the end
 		scoreI := report.Scores[policyList[i]]
 		scoreJ := report.Scores[policyList[j]]
 

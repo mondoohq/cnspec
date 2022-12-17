@@ -736,7 +736,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	var resolver policy.PolicyResolver = s.services
 
-	// TODO: we do not needs this anymore since we recieve updates already
+	// TODO: we do not needs this anymore since we receive updates already
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
 	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
 	s.Progress.Close()

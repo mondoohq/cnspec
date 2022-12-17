@@ -28,7 +28,7 @@ const (
 // Assign a policy to an asset
 //
 // We need to handle multiple cases:
-// 1. all local, polices and assets are available locally
+// 1. all local, policies and assets are available locally
 // 2. asset is local (via incognito mode) but policy is upstream
 // 3. asset and policy are upstream
 func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment) (*Empty, error) {
