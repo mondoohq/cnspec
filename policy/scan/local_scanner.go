@@ -320,8 +320,6 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				platformId := job.Asset.PlatformIds[0]
 				job.Asset.Mrn = resp.Details[platformId].AssetMrn
 				job.Asset.Url = resp.Details[platformId].Url
-				// only needed for CI/CD, can be removed when fleet and CI/CD have the same platform MRN
-				job.Asset.PlatformIds = []string{resp.Details[platformId].PlatformMrn}
 			}
 
 			job.connection = m
