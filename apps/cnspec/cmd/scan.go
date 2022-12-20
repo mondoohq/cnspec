@@ -39,31 +39,31 @@ var policyScanCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "scan",
 	Short: "Scan assets with one or more policies",
 	Long: `
-This command triggers a new policy scan for an asset. By default, the local
-system is scanned with its pre-configured policies:
+This command triggers a new policy scan for an asset. By default, cnspec scans the local
+system with its pre-configured policies:
 
     $ cnspec scan local
 
-Users can also manually select a local policy to execute and run it without
+You can also manually select a local policy to execute and run it without
 storing results in the server:
 
     $ cnspec scan local --policy-bundle policyfile.yaml --incognito
 
-In addition, mondoo can scan assets remotely via ssh. By default, the operating system
-ssh agent and ssh config configuration is used to retrieve the credentials:
+In addition, cnspec can scan assets remotely via SSH. By default, cnspec uses the operating system
+SSH agent and SSH config to retrieve the credentials:
 
     $ cnspec scan ssh ec2-user@52.51.185.215
     $ cnspec scan ssh ec2-user@52.51.185.215:2222
 
-Mondoo supports scanning AWS, Azure, and GCP accounts and instances.
+cnspec supports scanning AWS, Azure, and GCP accounts and instances.
 Find out more in each sub-commands help menu. Here are a few examples:
 
     $ cnspec scan aws --region us-east-1
     $ cnspec scan azure --subscription ID --group NAME
     $ cnspec scan gcp --project ID
 
-You can also access docker containers and images. This supports both local containers
-and images as well as images in docker registries:
+You can also access Docker containers and images. cnspec supports local containers
+and images as well as images in Docker registries:
 
     $ cnspec scan docker container b62b276baab6
     $ cnspec scan docker image ubuntu:latest
@@ -73,7 +73,7 @@ Additionally, you can quickly scan a container registry:
     $ cnspec scan container registry harbor.lunalectric.com
     $ cnspec scan container registry 123456789.dkr.ecr.us-east-1.amazonaws.com/repository
 
-Mondoo also support GCP's container registry, GCR:
+cnspec also supports GCP's container registry, GCR:
 
     $ cnspec scan gcp gcr PROJECT_ID
 
@@ -81,24 +81,24 @@ Vagrant is supported as well:
    
     $ cnspec scan vagrant HOST
 
-You can also leverage an inventory file:
+You can also use an inventory file:
 
     $ cnspec scan --inventory-file inventory.yml
 
-You can also leverage your existing ansible inventory:
+This scan uses an existing Ansible inventory:
 
     $ ansible-inventory -i hosts.ini --list | cnspec scan --inventory-ansible
 
-Further documentation is available at https://mondoo.com/docs/
+To learn more, read https://mondoo.com/docs/.
 	`,
 	Docs: builder.CommandsDocs{
 		Entries: map[string]builder.CommandDocsEntry{
 			"local": {
-				Short: "Scan your local system",
+				Short: "Scan your local system.",
 			},
 			"mock": {
-				Short: "Scan a mock target (a simulated asset)",
-				Long: `Scan a mock target, i.e. a simulated asset, whose data was recorded beforehand.
+				Short: "Scan a mock target (a simulated asset).",
+				Long: `Scan a mock target. This scans a simulated asset. We recorded the asset's data beforehand.
 Provide the recording with mock data as an argument:
 
     cnspec scan container ubuntu:latest --record
@@ -106,21 +106,21 @@ Provide the recording with mock data as an argument:
 `,
 			},
 			"vagrant": {
-				Short: "Scan a Vagrant host",
+				Short: "Scan a Vagrant host.",
 			},
 			"terraform": {
-				Short: "Scan all Terraform files in a path (.tf files)",
+				Short: "Scan all Terraform files in a path (.tf files).",
 			},
 			"ssh": {
-				Short: "Scan a SSH target",
+				Short: "Scan an SSH target.",
 			},
 			"winrm": {
-				Short: "Scan a WinRM target",
+				Short: "Scan a WinRM target.",
 			},
 			"container": {
-				Short: "Scan a container, an image, or a registry",
-				Long: `Scan a container, a container image, or a container registry. By default
-we will try to auto-detect the container or image from the provided ID, even
+				Short: "Scan a container, image, or registry.",
+				Long: `Scan a container, container image, or container registry. By default
+cnspec tries to auto-detect the container or image from the provided ID, even
 if it's not the full ID:
 
     cnspec scan container b62b276baab6
@@ -134,10 +134,10 @@ You can also explicitly request the scan of an image or a container registry:
 `,
 			},
 			"container-image": {
-				Short: "Scan a container image",
+				Short: "Scan a container image.",
 			},
 			"container-registry": {
-				Short: "Scan a container registry",
+				Short: "Scan a container registry.",
 				Long: `Scan a container registry. Supports more parameters for different registries:
 
     cnspec scan container registry harbor.lunalectric.com/project/repository
@@ -146,7 +146,7 @@ You can also explicitly request the scan of an image or a container registry:
 `,
 			},
 			"docker": {
-				Short: "Scan a Docker container or image",
+				Short: "Scan a Docker container or image.",
 				Long: `Scan a Docker container or image by automatically detecting the provided ID.
 You can also specify a subcommand to narrow the scan to containers or images.
 
@@ -157,91 +157,89 @@ You can also specify a subcommand to narrow the scan to containers or images.
 `,
 			},
 			"docker-container": {
-				Short: "Scan a Docker container",
-				Long: `Scan a Docker container. Can be specified as the container ID (e.g. b62b276baab6)
-or container name (e.g. elated_poincare).`,
+				Short: "Scan a Docker container.",
+				Long: `Scan a Docker container. You can specify the container ID (such as b62b276baab6)
+or container name (such as elated_poincare).`,
 			},
 			"docker-image": {
-				Short: "Scan a Docker image",
-				Long: `Scan a Docker image. Can be specified as the image ID (e.g. b6f507652425)
-or the image name (e.g. ubuntu:latest).`,
+				Short: "Scan a Docker image.",
+				Long: `Scan a Docker image. You can specify the image ID (such as b6f507652425)
+or the image name (such as ubuntu:latest).`,
 			},
 			"kubernetes": {
-				Short: "Scan a Kubernetes cluster or local manifest file(s)",
+				Short: "Scan a Kubernetes cluster or local manifest file(s).",
 			},
 			"aws": {
-				Short: "Scan an AWS account or instance",
-				Long: `Scan an AWS account or EC2 instance. It will use your local AWS configuration
+				Short: "Scan an AWS account or instance.",
+				Long: `Scan an AWS account or EC2 instance. cnspec uses your local AWS configuration
 for the account scan. See the subcommands to scan EC2 instances.`,
 			},
 			"aws-ec2": {
-				Short: "Scan an AWS instance using one of the available connectors",
+				Short: "Scan an AWS instance using one of the available connectors.",
 			},
 			"aws-ec2-connect": {
-				Short: "Scan an AWS instance using EC2 Instance Connect",
+				Short: "Scan an AWS instance using EC2 Instance Connect.",
 			},
 			"aws-ec2-ebs-instance": {
-				Short: "Scan an AWS instance using an EBS volume scan (requires AWS host)",
+				Short: "Scan an AWS instance using an EBS volume scan. This requires an AWS host.",
 				Long: `Scan an AWS instance using an EBS volume scan. This requires that the
-scan be executed on an instance that is running inside of AWS.`,
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-volume": {
-				Short: "Scan a specific AWS volume using the EBS volume scan functionality (requires AWS host)",
-				Long: `Scan a specific AWS volume using an EBS volume scan. This requires that the
-scan be executed on an instance that is running inside of AWS.`,
+				Short: "Scan a specific AWS volume using an EBS volume scan. This requires an AWS host.",
+				Long: `Scan a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-snapshot": {
-				Short: "Scan a specific AWS snapshot using the EBS volume scan functionality (requires AWS host)",
-				Long: `Scan a specific AWS snapshot using an EBS volume scan. This requires that the
-scan be executed on an instance that is running inside of AWS.`,
+				Short: "Scan a specific AWS snapshot using an EBS volume scan. This requires an AWS host.",
+				Long: `Scan a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ssm": {
-				Short: "Scan an AWS instance using the AWS Systems Manager to connect",
+				Short: "Scan an AWS instance using the AWS Systems Manager to connect.",
 			},
 			"azure": {
-				Short: "Scan a Microsoft Azure subscription or virtual machine",
-				Long: `Scan a Microsoft Azure subscription or virtual machine. It will use your local Azure
-configuration for the account scan. To scan Azure virtual machines, you will need to
-configure your Azure credentials and have SSH access to your virtual machines.`,
+				Short: "Scan a Microsoft Azure subscription or virtual machine.",
+				Long: `Scan a Microsoft Azure subscription or virtual machine. cnspec uses your local Azure
+configuration for the account scan. To scan Azure virtual machines, you must
+configure your Azure credentials and have SSH access to the virtual machines.`,
 			},
 			"gcp": {
-				Short: "Scan a Google Cloud Platform (GCP) organization or project",
+				Short: "Scan a Google Cloud Platform (GCP) organization or project.",
 			},
 			"gcp-gcr": {
-				Short: "Scan a Google Container Registry (GCR)",
+				Short: "Scan a Google Container Registry (GCR).",
 			},
 			"vsphere": {
-				Short: "Scan a VMware vSphere API endpoint",
+				Short: "Scan a VMware vSphere API endpoint.",
 			},
 			"vsphere-vm": {
-				Short: "Scan a VMware vSphere VM",
+				Short: "Scan a VMware vSphere VM.",
 			},
 			"vcd": {
-				Short: "Scan a VMware Virtual Cloud Director organization",
+				Short: "Scan a VMware Virtual Cloud Director organization.",
 			},
 			"github": {
-				Short: "Scan a GitHub organization or repository",
+				Short: "Scan a GitHub organization or repository.",
 			},
 			"okta": {
-				Short: "Scan an Okta organization",
+				Short: "Scan an Okta organization.",
 			},
 			"googleworkspace": {
-				Short: "Scan a Google Workspace organization",
+				Short: "Scan a Google Workspace organization.",
 			},
 			"slack": {
-				Short: "Scan a Slack team",
+				Short: "Scan a Slack team.",
 			},
 			"github-org": {
-				Short: "Scan a GitHub organization",
+				Short: "Scan a GitHub organization.",
 			},
 			"github-repo": {
-				Short: "Scan a GitHub repository",
+				Short: "Scan a GitHub repository.",
 			},
 			"gitlab": {
-				Short: "Scan a GitLab group",
+				Short: "Scan a GitLab group.",
 			},
 			"ms365": {
-				Short: "Scan a Microsoft 365 tenant",
+				Short: "Scan a Microsoft 365 tenant.",
 				Long: `
 This command triggers a new policy scan for Microsoft 365:
 
@@ -254,10 +252,10 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 `,
 			},
 			"host": {
-				Short: "Scan a host endpoint (domain name)",
+				Short: "Scan a host endpoint (domain name).",
 			},
 			"arista": {
-				Short: "Scan an Arista endpoint",
+				Short: "Scan an Arista endpoint.",
 			},
 		},
 	},
@@ -269,49 +267,49 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 	},
 	CommonFlags: func(cmd *cobra.Command) {
 		// inventories for multi-asset scan
-		cmd.Flags().String("inventory-file", "", "Set the path to inventory file")
-		cmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
-		cmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
+		cmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
+		cmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible".)
+		cmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
 
 		// policies & incognito mode
 		cmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to the Mondoo platform.")
-		cmd.Flags().StringSlice("policy", nil, "list of policies to be executed (requires incognito mode), multiple policies can be passed in via --policy POLICY")
-		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "path to local policy bundle file")
+		cmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires incognito mode. You can pass multiple policies using --policy POLICY")
+		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy bundle file.")
 		// flag completion command
 		cmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
 		})
 
 		// individual asset flags
-		cmd.Flags().StringP("password", "p", "", "Password e.g. for ssh/winrm")
-		cmd.Flags().Bool("ask-pass", false, "Ask for connection password")
-		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which the identity (private key) for public key authentication is read")
-		cmd.Flags().String("id-detector", "", "User-override for platform id detection mechanism, supported are "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
-		cmd.Flags().String("asset-name", "", "User-override for the asset name")
+		cmd.Flags().StringP("password", "p", "", "Password, such as for SSH/WinRM.")
+		cmd.Flags().Bool("ask-pass", false, "Ask for connection password.")
+		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which to read the identity (private key) for public key authentication.")
+		cmd.Flags().String("id-detector", "", "User override for platform ID detection mechanism. Supported: "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
+		cmd.Flags().String("asset-name", "", "User override for the asset name.")
 
-		cmd.Flags().String("path", "", "Path to a local file or directory that the connection should use")
-		cmd.Flags().StringToString("option", nil, "Additional connection options, multiple options can be passed in via --option key=value")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported are 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
-		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery")
-		cmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset") // user-added, editable
+		cmd.Flags().String("path", "", "Path to a local file or directory for the connection to use.")
+		cmd.Flags().StringToString("option", nil, "Additional connection options. You can pass multiple options using `--option key=value`.")
+		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported: 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery.")
+		cmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
 
 		// global asset flags
-		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config")
-		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo")
-		cmd.Flags().Int("score-threshold", 0, "if any score falls below the threshold, exit 1")
-		cmd.Flags().Bool("record", false, "Record all backend calls")
+		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config.")
+		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo.")
+		cmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
+		cmd.Flags().Bool("record", false, "Record all backend calls.")
 		cmd.Flags().MarkHidden("record")
 
 		// v6 should make detect-cicd and category flag public, default for "detect-cicd" should switch to true
-		cmd.Flags().Bool("detect-cicd", true, "Attempt to detect CI/CD environments and sets the asset category to 'cicd' if detected")
-		cmd.Flags().String("category", "fleet", "Sets the category for the assets 'fleet|cicd'")
+		cmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments and, if successful, set the asset category to 'cicd'.")
+		cmd.Flags().String("category", "fleet", "Sets the category for the assets to 'fleet|cicd'.")
 		cmd.Flags().MarkHidden("category")
 
 		// output rendering
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
-		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand)")
-		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination")
-		cmd.Flags().String("pager", "", "Enable scan output pagination with custom pagination command (default 'less -R')")
+		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
+		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination.")
+		cmd.Flags().String("pager", "", "Enable scan output pagination with custom pagination command. The default is 'less -R'.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping
@@ -531,7 +529,7 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 	for i := range config.PolicyNames {
 		entry := config.PolicyNames[i]
 		if strings.HasSuffix(entry, ".mql.yaml") || strings.HasSuffix(entry, ".mql.yml") {
-			log.Warn().Msg("you are using a bundle file as policy. Do you mean `--policy-bundle " + entry + "`")
+			log.Warn().Msg("You're using a bundle file as a policy. Do you mean `--policy-bundle " + entry + "`?")
 		}
 	}
 

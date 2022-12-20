@@ -38,51 +38,51 @@ func init() {
 
 var vulnCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "vuln",
-	Short: "Scans a target for Vulnerabilities",
+	Short: "Scans a target for Vulnerabilities.",
 	CommonFlags: func(cmd *cobra.Command) {
 		// inventories for multi-asset scan
-		cmd.Flags().String("inventory-file", "", "path to inventory file")
-		cmd.Flags().Bool("inventory-ansible", false, "set inventory format to ansible")
-		cmd.Flags().Bool("inventory-domainlist", false, "set inventory format to domain list")
+		cmd.Flags().String("inventory-file", "", "Path to inventory file.")
+		cmd.Flags().Bool("inventory-ansible", false, "Set inventory format to Ansible.")
+		cmd.Flags().Bool("inventory-domainlist", false, "Set inventory format to domain list.")
 
 		// policies & incognito mode
-		cmd.Flags().Bool("incognito", false, "incognito mode. do not report scan results to the Mondoo platform.")
-		cmd.Flags().StringSlice("policy", nil, "list of policies to be executed (requires incognito mode), multiple policies can be passed in via --policy POLICY")
-		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "path to local policy bundle file")
+		cmd.Flags().Bool("incognito", false, "Incognito mode. Do not report scan results to the Mondoo platform.")
+		cmd.Flags().StringSlice("policy", nil, "List policies to execute. This requires incognito mode. To scan multiple policies, pass `--policy POLICY`")
+		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy bundle file.")
 		// flag completion command
 		cmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
 		})
 
 		// individual asset flags
-		cmd.Flags().StringP("password", "p", "", "password e.g. for ssh/winrm")
-		cmd.Flags().Bool("ask-pass", false, "ask for connection password")
-		cmd.Flags().StringP("identity-file", "i", "", "selects a file from which the identity (private key) for public key authentication is read")
-		cmd.Flags().String("id-detector", "", "user-override for platform id detection mechanism, supported are "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
+		cmd.Flags().StringP("password", "p", "", "Password, such as for SSH/WinRM.")
+		cmd.Flags().Bool("ask-pass", false, "Ask for connection password".)
+		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which too read the identity (private key) for public key authentication.")
+		cmd.Flags().String("id-detector", "", "User override for platform ID detection mechanism. Supported: "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
 
-		cmd.Flags().String("path", "", "path to a local file or directory that the connection should use")
-		cmd.Flags().StringToString("option", nil, "addition connection options, multiple options can be passed in via --option key=value")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "enable the discovery of nested assets. Supported are 'all|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
-		cmd.Flags().StringToString("discover-filter", nil, "additional filter for asset discovery")
-		cmd.Flags().StringToString("annotation", nil, "add an annotation to the asset") // user-added, editable
+		cmd.Flags().String("path", "", "Path to a local file or directory for the connection to use")
+		cmd.Flags().StringToString("option", nil, "Additional connection options. You can pass multiple options using `--option key=value`")
+		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported: 'all|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery.")
+		cmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
 
 		// global asset flags
-		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config")
-		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo")
-		cmd.Flags().Int("score-threshold", 0, "if any score falls below the threshold, exit 1")
-		cmd.Flags().Bool("record", false, "Record backend calls")
+		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config.")
+		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo.")
+		cmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
+		cmd.Flags().Bool("record", false, "Record backend calls.")
 		cmd.Flags().MarkHidden("record")
 
 		// v6 should make detect-cicd and category flag public, default for "detect-cicd" should switch to true
-		cmd.Flags().Bool("detect-cicd", true, "attempt to detect CI/CD environments and sets the asset category to 'cicd' if detected")
-		cmd.Flags().String("category", "fleet", "sets the category for the assets 'fleet|cicd'")
+		cmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If successful, sets the asset category to 'cicd'.")
+		cmd.Flags().String("category", "fleet", "Set the category for the assets to 'fleet|cicd'.")
 		cmd.Flags().MarkHidden("category")
 
 		// output rendering
-		cmd.Flags().StringP("output", "o", "compact", "set output format: "+reporter.AllFormats())
-		cmd.Flags().BoolP("json", "j", false, "set output to JSON (shorthand)")
-		cmd.Flags().Bool("no-pager", false, "disable interactive scan output pagination")
-		cmd.Flags().String("pager", "", "enable scan output pagination with custom pagination command. default is 'less -R'")
+		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
+		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
+		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination.")
+		cmd.Flags().String("pager", "", "Enable scan output pagination with custom pagination command. The default is 'less -R'.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets
@@ -99,21 +99,20 @@ var vulnCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Docs: builder.CommandsDocs{
 		Entries: map[string]builder.CommandDocsEntry{
 			"local": {
-				Short: "Scan your local system",
+				Short: "Scan your local system.",
 			},
 			"vagrant": {
-				Short: "Scan a Vagrant host",
+				Short: "Scan a Vagrant host.",
 			},
 			"ssh": {
-				Short: "Scan a SSH target",
+				Short: "Scan a SSH target.",
 			},
 			"winrm": {
-				Short: "Scan a WinRM target",
+				Short: "Scan a WinRM target.",
 			},
 			"container": {
-				Short: "Connect to a container, an image, or a registry",
-				Long: `Connect to a container, a container image, or a container registry. By default
-we will try to auto-detect the container or image from the provided ID, even
+				Short: "Connect to a container, image, or registry.",
+				Long: `Connect to a container, container image, or container registry. By default cnspec tries to auto-detect the container or image from the provided ID, even
 if it's not the full ID:
 
     cnspec vuln container b62b276baab6
@@ -127,10 +126,10 @@ You can also explicitly connect to an image or a container registry:
 `,
 			},
 			"container-image": {
-				Short: "Connect to a container image",
+				Short: "Connect to a container image.",
 			},
 			"container-registry": {
-				Short: "Connect to a container registry",
+				Short: "Connect to a container registry.",
 				Long: `Connect to a container registry. Supports more parameters for different registries:
 
     cnspec vuln container registry harbor.lunalectric.com/project/repository
@@ -139,7 +138,7 @@ You can also explicitly connect to an image or a container registry:
 `,
 			},
 			"docker": {
-				Short: "Connect to a Docker container or image",
+				Short: "Connect to a Docker container or image.",
 				Long: `Connect to a Docker container or image by automatically detecting the provided ID.
 You can also specify a subcommand to narrow the scan to containers or images.
 
@@ -150,67 +149,67 @@ You can also specify a subcommand to narrow the scan to containers or images.
 `,
 			},
 			"docker-container": {
-				Short: "Connect to a Docker container",
-				Long: `Connect to a Docker container. Can be specified as the container ID (e.g. b62b276baab6)
-or container name (e.g. elated_poincare).`,
+				Short: "Connect to a Docker container.",
+				Long: `Connect to a Docker container. Can be specified as the container ID (such as b62b276baab6)
+or container name (such as elated_poincare).`,
 			},
 			"docker-image": {
-				Short: "Connect to a Docker image",
-				Long: `Connect to a Docker image. Can be specified as the image ID (e.g. b6f507652425)
-or the image name (e.g. ubuntu:latest).`,
+				Short: "Connect to a Docker image.",
+				Long: `Connect to a Docker image. Can be specified as the image ID (such as b6f507652425)
+or the image name (such as ubuntu:latest).`,
 			},
 			"kubernetes": {
-				Short: "Connect to a Kubernetes cluster or local manifest files(s)",
+				Short: "Connect to a Kubernetes cluster or local manifest files(s).",
 			},
 			"aws": {
-				Short: "Connect to an AWS account or instance",
-				Long: `Connect to an AWS account or EC2 instance. It will use your local AWS configuration
+				Short: "Connect to an AWS account or instance.",
+				Long: `Connect to an AWS account or EC2 instance. cnspec uses your local AWS configuration
 for the account scan. See the subcommands to scan EC2 instances.`,
 			},
 			"aws-ec2": {
-				Short: "Connect to an AWS instance using one of the available connectors",
+				Short: "Connect to an AWS instance using one of the available connectors.",
 			},
 			"aws-ec2-connect": {
-				Short: "Connect to an AWS instance using EC2 Instance Connect",
+				Short: "Connect to an AWS instance using EC2 Instance Connect.",
 			},
 			"aws-ec2-ebs-instance": {
-				Short: "Connect to an AWS instance using an EBS volume scan (requires AWS host)",
+				Short: "Connect to an AWS instance using an EBS volume scan. This requires an AWS host.",
 				Long: `Connect to an AWS instance using an EBS volume scan. This requires that the
-scan be executed on an instance that is running inside of AWS.`,
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-volume": {
-				Short: "Connect to a specific AWS volume using the EBS volume scan functionality (requires AWS host)",
+				Short: "Connect to a specific AWS volume using an EBS volume scan. This requires an AWS host.",
 				Long: `Connect to a specific AWS volume using an EBS volume scan. This requires that the
-scan be executed on an instance that is running inside of AWS.`,
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-snapshot": {
-				Short: "Connect to a specific AWS snapshot using the EBS volume scan functionality (requires AWS host)",
+				Short: "Connect to a specific AWS snapshot using an EBS volume scan. This requires an AWS host.",
 				Long: `Connect to a specific AWS snapshot using an EBS volume scan. This requires that the
-scan be executed on an instance that is running inside of AWS.`,
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ssm": {
-				Short: "Connect to an AWS instance using the AWS Systems Manager to connect",
+				Short: "Connect to an AWS instance using the AWS Systems Manager to connect.",
 			},
 			"azure": {
-				Short: "Connect to a Microsoft Azure subscription or virtual machines",
-				Long: `Connect to a Microsoft Azure subscriptions or virtual machines. It will use your local Azure
-configuration for the account scan. To scan your Azure compute, you need to
+				Short: "Connect to a Microsoft Azure subscription or virtual machines.",
+				Long: `Connect to a Microsoft Azure subscriptions or virtual machines. cnspec uses your local Azure
+configuration for the account scan. To scan your Azure compute, you must
 configure your Azure credentials and have SSH access to your virtual machines.`,
 			},
 			"gcp": {
-				Short: "Connect to a Google Cloud Platform (GCP) project",
+				Short: "Connect to a Google Cloud Platform (GCP) project.",
 			},
 			"gcp-gcr": {
-				Short: "Connect to a Google Container Registry (GCR)",
+				Short: "Connect to a Google Container Registry (GCR).",
 			},
 			"vsphere": {
-				Short: "Connect to a VMware vSphere API endpoint",
+				Short: "Connect to a VMware vSphere API endpoint.",
 			},
 			"vsphere-vm": {
-				Short: "Connect to a VMware vSphere VM",
+				Short: "Connect to a VMware vSphere VM.",
 			},
 			"host": {
-				Short: "Connect to a host endpoint",
+				Short: "Connect to a host endpoint.",
 			},
 		},
 	},
