@@ -56,7 +56,7 @@ var vulnCmd = builder.NewProviderCommand(builder.CommandOpts{
 
 		// individual asset flags
 		cmd.Flags().StringP("password", "p", "", "Password, such as for SSH/WinRM.")
-		cmd.Flags().Bool("ask-pass", false, "Ask for connection password".)
+		cmd.Flags().Bool("ask-pass", false, "Ask for connection password.")
 		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which too read the identity (private key) for public key authentication.")
 		cmd.Flags().String("id-detector", "", "User override for platform ID detection mechanism. Supported: "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
 
