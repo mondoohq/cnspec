@@ -33,7 +33,7 @@ func init() {
 	policyBundlesCmd.AddCommand(policyFmtCmd)
 
 	// bundle add
-	policyUploadCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle")
+	policyUploadCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
 	policyBundlesCmd.AddCommand(policyUploadCmd)
 
 	rootCmd.AddCommand(policyBundlesCmd)
@@ -49,7 +49,7 @@ var embedPolicyTemplate []byte
 
 var policyInitCmd = &cobra.Command{
 	Use:   "init [path]",
-	Short: "Create an example policy bundle that can be used as a starting point. If no filename is provided, `example-policy.mql.yml` is used",
+	Short: "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := "example-policy.mql.yaml"
@@ -79,7 +79,7 @@ func validate(policyBundle *policy.Bundle) []string {
 		policyId := strconv.Itoa(i)
 
 		if policy.Uid == "" {
-			errors = append(errors, fmt.Sprintf("policy %s does not define a uid", policyId))
+			errors = append(errors, fmt.Sprintf("policy %s does not define a UID", policyId))
 		} else {
 			policyId = policy.Uid
 		}
@@ -93,7 +93,7 @@ func validate(policyBundle *policy.Bundle) []string {
 		query := policyBundle.Queries[j]
 		queryId := strconv.Itoa(j)
 		if query.Uid == "" {
-			errors = append(errors, fmt.Sprintf("query %s does not define a uid", queryId))
+			errors = append(errors, fmt.Sprintf("query %s does not define a UID", queryId))
 		} else {
 			queryId = query.Uid
 		}
@@ -200,7 +200,7 @@ func formatFile(filename string) error {
 var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
-	Short:   "Apply style formatting to policy bundles",
+	Short:   "Apply style formatting to policy bundles.",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		for _, path := range args {
@@ -217,7 +217,7 @@ var policyFmtCmd = &cobra.Command{
 
 var policyUploadCmd = &cobra.Command{
 	Use:   "upload [path]",
-	Short: "Adds a user-owned policy to Mondoo's Query Hub",
+	Short: "Add a user-owned policy to Mondoo Query Hub.",
 	Args:  cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))

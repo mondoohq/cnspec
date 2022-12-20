@@ -10,7 +10,7 @@ import (
 // versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Display the cnspec version",
+	Short: "Display the cnspec version.",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println(cnspec.Info())
 	},
