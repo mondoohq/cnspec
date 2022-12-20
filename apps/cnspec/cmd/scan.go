@@ -94,7 +94,7 @@ Further documentation is available at https://mondoo.com/docs/
 	Docs: builder.CommandsDocs{
 		Entries: map[string]builder.CommandDocsEntry{
 			"local": {
-				Short: "Scan a local target",
+				Short: "Scan your local system",
 			},
 			"mock": {
 				Short: "Scan a mock target (a simulated asset)",
@@ -167,7 +167,7 @@ or container name (e.g. elated_poincare).`,
 or the image name (e.g. ubuntu:latest).`,
 			},
 			"kubernetes": {
-				Short: "Scan a Kubernetes cluster",
+				Short: "Scan a Kubernetes cluster or local manifest file(s)",
 			},
 			"aws": {
 				Short: "Scan an AWS account or instance",
@@ -199,13 +199,13 @@ scan be executed on an instance that is running inside of AWS.`,
 				Short: "Scan an AWS instance using the AWS Systems Manager to connect",
 			},
 			"azure": {
-				Short: "Scan a Microsoft Azure account or instance",
-				Long: `Scan a Microsoft Azure account or instance. It will use your local Azure
-configuration for the account scan. To scan your Azure compute, you need to
-configure your Azure credentials and have SSH access to your instances.`,
+				Short: "Scan a Microsoft Azure subscription or virtual machine",
+				Long: `Scan a Microsoft Azure subscription or virtual machine. It will use your local Azure
+configuration for the account scan. To scan Azure virtual machines, you will need to
+configure your Azure credentials and have SSH access to your virtual machines.`,
 			},
 			"gcp": {
-				Short: "Scan a Google Cloud Platform (GCP) account",
+				Short: "Scan a Google Cloud Platform (GCP) organization or project",
 			},
 			"gcp-gcr": {
 				Short: "Scan a Google Container Registry (GCR)",
@@ -216,8 +216,20 @@ configure your Azure credentials and have SSH access to your instances.`,
 			"vsphere-vm": {
 				Short: "Scan a VMware vSphere VM",
 			},
+			"vcd": {
+				Short: "Scan a VMware Virtual Cloud Director organization",
+			},
 			"github": {
 				Short: "Scan a GitHub organization or repository",
+			},
+			"okta": {
+				Short: "Scan an Okta organization",
+			},
+			"googleworkspace": {
+				Short: "Scan a Google Workspace organization",
+			},
+			"slack": {
+				Short: "Scan a Slack team",
 			},
 			"github-org": {
 				Short: "Scan a GitHub organization",
@@ -229,7 +241,7 @@ configure your Azure credentials and have SSH access to your instances.`,
 				Short: "Scan a GitLab group",
 			},
 			"ms365": {
-				Short: "Scan a Microsoft 365 endpoint",
+				Short: "Scan a Microsoft 365 tenant",
 				Long: `
 This command triggers a new policy scan for Microsoft 365:
 
@@ -242,7 +254,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 `,
 			},
 			"host": {
-				Short: "Scan a host endpoint",
+				Short: "Scan a host endpoint (domain name)",
 			},
 			"arista": {
 				Short: "Scan an Arista endpoint",
@@ -257,12 +269,12 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 	},
 	CommonFlags: func(cmd *cobra.Command) {
 		// inventories for multi-asset scan
-		cmd.Flags().String("inventory-file", "", "path to inventory file")
-		cmd.Flags().Bool("inventory-ansible", false, "set inventory format to ansible")
-		cmd.Flags().Bool("inventory-domainlist", false, "set inventory format to domain list")
+		cmd.Flags().String("inventory-file", "", "Set the path to inventory file")
+		cmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
+		cmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
 
 		// policies & incognito mode
-		cmd.Flags().Bool("incognito", false, "incognito mode. do not report scan results to the Mondoo platform.")
+		cmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to the Mondoo platform.")
 		cmd.Flags().StringSlice("policy", nil, "list of policies to be executed (requires incognito mode), multiple policies can be passed in via --policy POLICY")
 		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "path to local policy bundle file")
 		// flag completion command
@@ -271,35 +283,35 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		})
 
 		// individual asset flags
-		cmd.Flags().StringP("password", "p", "", "password e.g. for ssh/winrm")
-		cmd.Flags().Bool("ask-pass", false, "ask for connection password")
-		cmd.Flags().StringP("identity-file", "i", "", "selects a file from which the identity (private key) for public key authentication is read")
-		cmd.Flags().String("id-detector", "", "user-override for platform id detection mechanism, supported are "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
-		cmd.Flags().String("asset-name", "", "user-override for the asset name")
+		cmd.Flags().StringP("password", "p", "", "Password e.g. for ssh/winrm")
+		cmd.Flags().Bool("ask-pass", false, "Ask for connection password")
+		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which the identity (private key) for public key authentication is read")
+		cmd.Flags().String("id-detector", "", "User-override for platform id detection mechanism, supported are "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
+		cmd.Flags().String("asset-name", "", "User-override for the asset name")
 
-		cmd.Flags().String("path", "", "path to a local file or directory that the connection should use")
-		cmd.Flags().StringToString("option", nil, "addition connection options, multiple options can be passed in via --option key=value")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "enable the discovery of nested assets. Supported are 'all|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
-		cmd.Flags().StringToString("discover-filter", nil, "additional filter for asset discovery")
-		cmd.Flags().StringToString("annotation", nil, "add an annotation to the asset") // user-added, editable
+		cmd.Flags().String("path", "", "Path to a local file or directory that the connection should use")
+		cmd.Flags().StringToString("option", nil, "Additional connection options, multiple options can be passed in via --option key=value")
+		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported are 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery")
+		cmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset") // user-added, editable
 
 		// global asset flags
 		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config")
 		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo")
 		cmd.Flags().Int("score-threshold", 0, "if any score falls below the threshold, exit 1")
-		cmd.Flags().Bool("record", false, "Record backend calls")
+		cmd.Flags().Bool("record", false, "Record all backend calls")
 		cmd.Flags().MarkHidden("record")
 
 		// v6 should make detect-cicd and category flag public, default for "detect-cicd" should switch to true
-		cmd.Flags().Bool("detect-cicd", true, "attempt to detect CI/CD environments and sets the asset category to 'cicd' if detected")
-		cmd.Flags().String("category", "fleet", "sets the category for the assets 'fleet|cicd'")
+		cmd.Flags().Bool("detect-cicd", true, "Attempt to detect CI/CD environments and sets the asset category to 'cicd' if detected")
+		cmd.Flags().String("category", "fleet", "Sets the category for the assets 'fleet|cicd'")
 		cmd.Flags().MarkHidden("category")
 
 		// output rendering
-		cmd.Flags().StringP("output", "o", "compact", "set output format: "+reporter.AllFormats())
-		cmd.Flags().BoolP("json", "j", false, "set output to JSON (shorthand)")
-		cmd.Flags().Bool("no-pager", false, "disable interactive scan output pagination")
-		cmd.Flags().String("pager", "", "enable scan output pagination with custom pagination command. default is 'less -R'")
+		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
+		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand)")
+		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination")
+		cmd.Flags().String("pager", "", "Enable scan output pagination with custom pagination command (default 'less -R')")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping

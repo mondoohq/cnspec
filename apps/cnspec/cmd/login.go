@@ -147,7 +147,7 @@ func register(token string) {
 
 		if opts.AgentMrn != "" {
 			// already authenticated
-			log.Info().Msg("client is already logged in, skip")
+			log.Info().Msg("client is already logged in, skipping")
 			credential = opts.GetServiceCredential()
 		} else {
 			credential = opts.GetServiceCredential()
