@@ -141,15 +141,15 @@ You can also specify a subcommand to narrow the scan to containers or images.
 			},
 			"aws-ec2-ebs-instance": {
 				Short: "Connect to an AWS instance using an EBS volume scan. This requires an AWS host.",
-				Long: `Connect to an AWS instance using an EBS volume scan. using an EBS volume scan. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long:  `Connect to an AWS instance using an EBS volume scan. using an EBS volume scan. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-volume": {
 				Short: "Connect to a specific AWS volume using an EBS volume scan. This requires an AWS host.",
-				Long: `Connect to a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long:  `Connect to a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-snapshot": {
 				Short: "Connect to a specific AWS snapshot using an EBS volume scan. This requires an AWS host.",
-				Long: `Connect a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long:  `Connect a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ssm": {
 				Short: "Connect to an AWS instance using the AWS Systems Manager.",

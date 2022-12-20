@@ -187,11 +187,11 @@ scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-volume": {
 				Short: "Scan a specific AWS volume using an EBS volume scan. This requires an AWS host.",
-				Long: `Scan a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long:  `Scan a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-snapshot": {
 				Short: "Scan a specific AWS snapshot using an EBS volume scan. This requires an AWS host.",
-				Long: `Scan a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long:  `Scan a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ssm": {
 				Short: "Scan an AWS instance using the AWS Systems Manager to connect.",
