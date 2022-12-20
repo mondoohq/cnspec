@@ -61,8 +61,8 @@ var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 				Long: `Connect to a mock target, i.e. a simulated asset, whose data was recorded beforehand.
 Provide the recording with mock data as an argument:
 
-    mondoo shell container ubuntu:latest --record
-    mondoo shell mock recording-20220519173543.toml
+    cnspec shell container ubuntu:latest --record
+    cnspec shell mock recording-20220519173543.toml
 `,
 			},
 			"vagrant": {

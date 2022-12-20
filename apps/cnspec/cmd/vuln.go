@@ -270,7 +270,7 @@ scan be executed on an instance that is running inside of AWS.`,
 
 		sh, err := shell.New(backend, shellOptions...)
 		if err != nil {
-			log.Error().Err(err).Msg("failed to initialize Mondoo Shell")
+			log.Error().Err(err).Msg("failed to initialize cnspec shell")
 		}
 
 		vulnReportQuery := "platform.vulnerabilityReport"
