@@ -99,7 +99,7 @@ var vulnCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Docs: builder.CommandsDocs{
 		Entries: map[string]builder.CommandDocsEntry{
 			"local": {
-				Short: "Connect to a local machine",
+				Short: "Scan your local system",
 			},
 			"vagrant": {
 				Short: "Scan a Vagrant host",
@@ -160,7 +160,12 @@ or container name (e.g. elated_poincare).`,
 or the image name (e.g. ubuntu:latest).`,
 			},
 			"kubernetes": {
-				Short: "Connect to a Kubernetes cluster or manifest",
+				Short: "Connect to a Kubernetes cluster or local manifest files(s)",
+			},
+			"aws": {
+				Short: "Connect to an AWS account or instance",
+				Long: `Connect to an AWS account or EC2 instance. It will use your local AWS configuration
+for the account scan. See the subcommands to scan EC2 instances.`,
 			},
 			"aws-ec2": {
 				Short: "Connect to an AWS instance using one of the available connectors",
@@ -186,11 +191,26 @@ scan be executed on an instance that is running inside of AWS.`,
 			"aws-ec2-ssm": {
 				Short: "Connect to an AWS instance using the AWS Systems Manager to connect",
 			},
+			"azure": {
+				Short: "Connect to a Microsoft Azure subscription or virtual machines",
+				Long: `Connect to a Microsoft Azure subscriptions or virtual machines. It will use your local Azure
+configuration for the account scan. To scan your Azure compute, you need to
+configure your Azure credentials and have SSH access to your virtual machines.`,
+			},
+			"gcp": {
+				Short: "Connect to a Google Cloud Platform (GCP) project",
+			},
 			"gcp-gcr": {
 				Short: "Connect to a Google Container Registry (GCR)",
 			},
 			"vsphere": {
 				Short: "Connect to a VMware vSphere API endpoint",
+			},
+			"vsphere-vm": {
+				Short: "Connect to a VMware vSphere VM",
+			},
+			"host": {
+				Short: "Connect to a host endpoint",
 			},
 		},
 	},

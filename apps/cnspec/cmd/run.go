@@ -27,25 +27,25 @@ var execCmd = builder.NewProviderCommand(builder.CommandOpts{
 		cmd.Flags().MarkHidden("query")
 		cmd.Flags().StringP("command", "c", "", "MQL query to be executed")
 
-		cmd.Flags().StringP("password", "p", "", "connection password e.g. for ssh/winrm")
-		cmd.Flags().Bool("ask-pass", false, "ask for connection password")
-		cmd.Flags().StringP("identity-file", "i", "", "Selects a file from which the identity (private key) for public key authentication is read.")
-		cmd.Flags().Bool("insecure", false, "disables TLS/SSL checks or SSH hostkey config")
-		cmd.Flags().Bool("sudo", false, "runs with sudo")
-		cmd.Flags().String("platform-id", "", "select an specific asset by providing the platform id for the target")
-		cmd.Flags().Bool("instances", false, "also scan instances (only applies to api targets like aws, azure or gcp)")
-		cmd.Flags().Bool("host-machines", false, "also scan host machines like ESXi server")
+		cmd.Flags().StringP("password", "p", "", "Connection password e.g. for ssh/winrm")
+		cmd.Flags().Bool("ask-pass", false, "Prompt for connection password")
+		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which the identity (private key) for public key authentication is read.")
+		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config")
+		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo")
+		cmd.Flags().String("platform-id", "", "Select an specific asset by providing the platform id for the target")
+		cmd.Flags().Bool("instances", false, "Also scan instances (only applies to api targets like aws, azure or gcp)")
+		cmd.Flags().Bool("host-machines", false, "Also scan host machines like ESXi server")
 
-		cmd.Flags().Bool("record", false, "records provider calls (only works for operating system providers)")
+		cmd.Flags().Bool("record", false, "Record provider calls (only works for operating system providers)")
 		cmd.Flags().MarkHidden("record")
 
-		cmd.Flags().String("record-file", "", "file path to for the recorded provider calls (only works for operating system providers)")
+		cmd.Flags().String("record-file", "", "File path to for the recorded provider calls (only works for operating system providers)")
 		cmd.Flags().MarkHidden("record-file")
 
-		cmd.Flags().String("path", "", "path to a local file or directory that the connection should use")
-		cmd.Flags().StringToString("option", nil, "addition connection options, multiple options can be passed in via --option key=value")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "enables the discovery of nested assets. Supported are 'all|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
-		cmd.Flags().StringToString("discover-filter", nil, "additional filter for asset discovery")
+		cmd.Flags().String("path", "", "Path to a local file or directory that the connection should use")
+		cmd.Flags().StringToString("option", nil, "Additional connection options, multiple options can be passed in via --option key=value")
+		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported are 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets

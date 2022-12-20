@@ -18,26 +18,26 @@ func init() {
 
 var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "shell",
-	Short: "Interactive shell for MQL",
+	Short: "Interactive query shell for MQL",
 	Long:  `Allows for the interactive exploration of MQL queries`,
 	CommonFlags: func(cmd *cobra.Command) {
-		cmd.Flags().StringP("password", "p", "", "connection password e.g. for ssh/winrm")
-		cmd.Flags().Bool("ask-pass", false, "ask for connection password")
+		cmd.Flags().StringP("password", "p", "", "Set the connection password e.g. for ssh/winrm")
+		cmd.Flags().Bool("ask-pass", false, "Prompt for connection password")
 
-		cmd.Flags().StringP("command", "c", "", "a command to run in the shell")
-		cmd.Flags().StringP("identity-file", "i", "", "Selects a file from which the identity (private key) for public key authentication is read.")
-		cmd.Flags().Bool("insecure", false, "disables TLS/SSL checks or SSH hostkey config")
-		cmd.Flags().Bool("sudo", false, "runs with sudo")
-		cmd.Flags().String("platform-id", "", "select an specific asset by providing the platform id for the target")
-		cmd.Flags().Bool("instances", false, "also scan instances (only applies to api targets like aws, azure or gcp)")
-		cmd.Flags().Bool("host-machines", false, "also scan host machines like ESXi server")
-		cmd.Flags().Bool("record", false, "records backend calls")
+		cmd.Flags().StringP("command", "c", "", "MQL query to be executed in the shell")
+		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which the identity (private key) for public key authentication is read.")
+		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config")
+		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo")
+		cmd.Flags().String("platform-id", "", "Select an specific asset by providing the platform id for the target")
+		cmd.Flags().Bool("instances", false, "Also scan instances (only applies to api targets like aws, azure or gcp)")
+		cmd.Flags().Bool("host-machines", false, "Also scan host machines like ESXi server")
+		cmd.Flags().Bool("record", false, "Record all backend calls")
 		cmd.Flags().MarkHidden("record")
 
-		cmd.Flags().String("path", "", "path to a local file or directory that the connection should use")
-		cmd.Flags().StringToString("option", nil, "addition connection options, multiple options can be passed in via --option key=value")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "enables the discovery of nested assets. Supported are 'all|instances|host-instances|host-machines|container|container-images'")
-		cmd.Flags().StringToString("discover-filter", nil, "additional filter for asset discovery")
+		cmd.Flags().String("path", "", "Path to a local file or directory that the connection should use")
+		cmd.Flags().StringToString("option", nil, "Additional connection options, multiple options can be passed in via --option key=value")
+		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported are 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets
@@ -54,7 +54,7 @@ var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Docs: builder.CommandsDocs{
 		Entries: map[string]builder.CommandDocsEntry{
 			"local": {
-				Short: "Connect to a local machine",
+				Short: "Connect to your local system",
 			},
 			"mock": {
 				Short: "Connect to mock target (a simulated asset)",
@@ -66,16 +66,16 @@ Provide the recording with mock data as an argument:
 `,
 			},
 			"vagrant": {
-				Short: "Scan a Vagrant host",
+				Short: "Connect to a Vagrant host",
 			},
 			"terraform": {
-				Short: "Scan all Terraform files in a path (.tf files)",
+				Short: "Connect to all Terraform files in a path (.tf files)",
 			},
 			"ssh": {
-				Short: "Scan a SSH target",
+				Short: "Connect to a SSH target",
 			},
 			"winrm": {
-				Short: "Scan a WinRM target",
+				Short: "Connect to a WinRM target",
 			},
 			"container": {
 				Short: "Connect to a container, an image, or a registry",
@@ -127,7 +127,7 @@ or container name (e.g. elated_poincare).`,
 or the image name (e.g. ubuntu:latest).`,
 			},
 			"kubernetes": {
-				Short: "Connect to a Kubernetes cluster or manifest",
+				Short: "Connect to a Kubernetes cluster or local manifest files(s)",
 			},
 			"aws": {
 				Short: "Connect to an AWS account or instance",
@@ -159,13 +159,13 @@ scan be executed on an instance that is running inside of AWS.`,
 				Short: "Connect to an AWS instance using the AWS Systems Manager to connect",
 			},
 			"azure": {
-				Short: "Connect to a Microsoft Azure account or instance",
-				Long: `Connect to a Microsoft Azure account or instance. It will use your local Azure
-configuration for the account scan. To scan your Azure compute, you need to
-configure your Azure credentials and have SSH access to your instances.`,
+				Short: "Connect to a Microsoft Azure subscription or virtual machines",
+				Long: `Connect to a Microsoft Azure subscriptions or virtual machines. It will use your local Azure
+configuration for the account scan. To scan Azure virtual machines, you will need to
+configure your Azure credentials and have SSH access to your virtual machines.`,
 			},
 			"gcp": {
-				Short: "Connect to a Google Cloud Platform (GCP) account",
+				Short: "Connect to a Google Cloud Platform (GCP) project",
 			},
 			"gcp-gcr": {
 				Short: "Connect to a Google Container Registry (GCR)",
@@ -176,8 +176,20 @@ configure your Azure credentials and have SSH access to your instances.`,
 			"vsphere-vm": {
 				Short: "Connect to a VMware vSphere VM",
 			},
+			"vcd": {
+				Short: "Connect to a VMware Virtual Cloud Director organization",
+			},
 			"github": {
 				Short: "Connect to a GitHub organization or repository",
+			},
+			"okta": {
+				Short: "Connect to an Okta organization",
+			},
+			"googleworkspace": {
+				Short: "Connect to a Google Workspace organization",
+			},
+			"slack": {
+				Short: "Connect to a Slack team",
 			},
 			"github-org": {
 				Short: "Connect to a GitHub organization",
