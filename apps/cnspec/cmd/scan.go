@@ -268,7 +268,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 	CommonFlags: func(cmd *cobra.Command) {
 		// inventories for multi-asset scan
 		cmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
-		cmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible".)
+		cmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
 		cmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
 
 		// policies & incognito mode
