@@ -27,7 +27,7 @@ const (
 // was split into multiple files into a single PolicyBundle struct
 func BundleFromPaths(paths ...string) (*Bundle, error) {
 	// load all the source files
-	resolvedFilenames, err := walkPolicyBundleFiles(paths)
+	resolvedFilenames, err := WalkPolicyBundleFiles(paths...)
 	if err != nil {
 		log.Error().Err(err).Msg("could not resolve bundle files")
 		return nil, err
@@ -36,7 +36,7 @@ func BundleFromPaths(paths ...string) (*Bundle, error) {
 	// aggregate all files into a single policy bundle
 	aggregatedBundle, err := aggregateFilesToBundle(resolvedFilenames)
 	if err != nil {
-		log.Error().Err(err).Msg("could merge bundle files")
+		log.Debug().Err(err).Msg("could merge bundle files")
 		return nil, err
 	}
 
@@ -44,10 +44,10 @@ func BundleFromPaths(paths ...string) (*Bundle, error) {
 	return aggregatedBundle, nil
 }
 
-// walkPolicyBundleFiles iterates over all provided filenames and
+// WalkPolicyBundleFiles iterates over all provided filenames and
 // checks if the name is a file or a directory. If the filename
 // is a directory, it walks the directory recursively
-func walkPolicyBundleFiles(filenames []string) ([]string, error) {
+func WalkPolicyBundleFiles(filenames ...string) ([]string, error) {
 	// resolve file names
 	resolvedFilenames := []string{}
 	for i := range filenames {
@@ -68,7 +68,7 @@ func walkPolicyBundleFiles(filenames []string) ([]string, error) {
 				}
 
 				// only consider .yaml|.yml files
-				if strings.HasSuffix(d.Name(), ".yaml") || strings.HasSuffix(d.Name(), ".yml") {
+				if strings.HasSuffix(d.Name(), ".mql.yaml") || strings.HasSuffix(d.Name(), ".mql.yml") {
 					resolvedFilenames = append(resolvedFilenames, path)
 				}
 
@@ -370,7 +370,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	uid2mrn := map[string]string{}
 	bundles := map[string]*llx.CodeBundle{}
 
-	// Index properties
+	// StoreBundle properties
 	propQueries := map[string]*Mquery{}
 	props := map[string]*llx.Primitive{}
 	for i := range p.Props {
@@ -397,7 +397,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		bundles[query.Mrn] = bundle
 	}
 
-	// Index policies + update MRNs and checksums, link properties via MRNs
+	// StoreBundle policies + update MRNs and checksums, link properties via MRNs
 	for i := range p.Policies {
 		policy := p.Policies[i]
 
@@ -435,7 +435,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 	}
 
-	// Index queries + update MRNs and checksums
+	// StoreBundle queries + update MRNs and checksums
 	for i := range p.Queries {
 		query := p.Queries[i]
 		if query == nil {
@@ -457,7 +457,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		// recalculate the checksums
 		bundle, err := query.RefreshChecksumAndType(props)
 		if err != nil {
-			log.Error().Err(err).Msg("could not compile the query")
+			log.Debug().Err(err).Msg("could not compile the query")
 			warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
 		}
 
