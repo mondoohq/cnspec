@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	"github.com/muesli/termenv"
+	zlog "github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnquery/shared/proto"
 )
@@ -41,6 +42,7 @@ func RunQuery(conf *proto.RunQueryConfig) error {
 	})
 
 	pluginCmd := exec.Command(cnqueryLocation(), "run_as_plugin")
+	zlog.Debug().Msgf("running cnquery from: '%s'", pluginCmd.Path)
 
 	addColorConfig(pluginCmd)
 
@@ -49,7 +51,8 @@ func RunQuery(conf *proto.RunQueryConfig) error {
 		Plugins:         shared.PluginMap,
 		Cmd:             pluginCmd,
 		AllowedProtocols: []plugin.Protocol{
-			plugin.ProtocolNetRPC, plugin.ProtocolGRPC},
+			plugin.ProtocolNetRPC, plugin.ProtocolGRPC,
+		},
 		Logger: pluginLogger,
 	})
 	defer client.Kill()
