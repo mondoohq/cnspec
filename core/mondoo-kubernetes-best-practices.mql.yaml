@@ -129,6 +129,10 @@ policies:
       # mondoo-kubernetes-best-practices-gather-statefulset-container:
       # mondoo-kubernetes-best-practices-gather-job-container:
       # mondoo-kubernetes-best-practices-gather-cronjob-container:
+  - asset_filter:
+      query: platform.name == "k8s-ingress"
+    scoring_queries:
+      mondoo-kubernetes-best-practices-ingress-cert-expiration:
 queries:
 - uid: mondoo-kubernetes-best-practices-pod-no-owner
   title: Pods should have an owner
@@ -1975,6 +1979,29 @@ queries:
       _['containers'] {
         _['name']
         _['ports'] == null || _['ports'].all(_['hostPort'] == null)
+      }
+    }
+- uid: mondoo-kubernetes-best-practices-ingress-cert-expiration
+  title: Ingress certificates less than 15 days from expiration
+  severity: 40
+  docs:
+    desc: |
+      If Ingress resources have TLS certificate Secrets, update the certificates updated before they expire.
+    audit: |
+      Check to ensure no Ingress Secrets contain TLS certificates near expiration:
+
+      Display all Ingress resources with TLS Secret data:
+      ```kubectl get ingress -A -o json | jq -r '.items[] | select(.spec.tls != null) | .metadata.namespace + "/" + .metadata.name'```
+
+      For each Ingress resource, check the certificate expiration dates in the Secrets (under `.spec.tls[].secretName`). Ensure that the expiration dates don't expire soon:
+      ```kubectl get secret --namespace NAMESPACE_OF_INGRESS NAME_OF_SECRET -o json | jq -r '.data["tls.crt"]' | base64 -d | openssl x509 -noout -text | grep "Not After"```
+
+    remediation: |
+      For all Secrets with expired or soon-to-expire certificates, update the Secret data with refreshed certificates.
+  query: |
+    k8s.ingress.tls{
+      certificates {
+        expiresIn.days > 15
       }
     }
 # Data Queries
