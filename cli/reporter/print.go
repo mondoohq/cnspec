@@ -1,6 +1,7 @@
 package reporter
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/muesli/termenv"
@@ -44,6 +45,7 @@ func AllFormats() string {
 			res = append(res, k)
 		}
 	}
+	sort.Strings(res)
 	return strings.Join(res, ", ")
 }
 
