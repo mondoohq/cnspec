@@ -158,11 +158,25 @@ To clear the terminal, type `clear`.
 
 To exit, either hit CTRL + D or type `exit`.
 
-## Scale cnspec across your fleet
+## Scale cnspec across your fleet with the Mondoo Platform
 
-The easiest way to scale `cnspec` across your fleet is to have all of your infrastructure pull policies from a central location. A simple approach is to sign up for a free account on Mondoo Platform. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, all assets can report on policies and you can define custom exceptions for your fleet.
+The easiest way to scale `cnspec` across your fleet is to sign up for a free Mondoo Platform account. With the Mondoo Platform, you can:
 
-To use `cnspec` with the Mondoo Platform, run:
+* Aggregate and share reports
+* Perform vulnerability scans
+* Store and distribute policies from a central location
+* Set custom policy exceptions
+* Explore the relationships between the different assets in your infrastructure
+
+Mondoo's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, all assets can report on policies and you can define custom exceptions for your fleet.
+
+Go to [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup) to sign up.
+
+To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs) or visit [mondoo.com](https://www.mondoo.com).
+
+### Register cnspec with the Mondoo Platform
+
+To use `cnspec` with the Mondoo Platform, generate a token with the Mondoo platform, then run:
 
 ```bash
 cnspec login --token TOKEN
