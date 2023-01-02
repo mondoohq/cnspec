@@ -67,8 +67,9 @@ cnspec scan aws
 # scan an EC2 instance with EC2 Instance Connect
 cnspec scan aws ec2 instance-connect root@i-1234567890abcdef0
 
-# to scan a Kubernetes cluster via your local kubectl config or a local machine file
+# to scan a Kubernetes cluster via your local kubectl config or a local manifest file
 cnspec scan k8s
+cnspec scan k8s manifest.yaml
 
 # to scan a GitHub repository
 export GITHUB_TOKEN=<personal_access_token>
