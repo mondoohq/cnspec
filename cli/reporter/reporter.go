@@ -1,6 +1,7 @@
 package reporter
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor"
+	"sigs.k8s.io/yaml"
 )
 
 var (
@@ -78,11 +80,25 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 			data:     data,
 		}
 		return rr.print()
-	// case YAML:
-	// 	res, err = data.ToYAML()
+
+	case YAML:
+		raw := bytes.Buffer{}
+		writer := shared.IOWriter{Writer: &raw}
+		err := ReportCollectionToJSON(data, &writer)
+		if err != nil {
+			return err
+		}
+
+		json, err := yaml.JSONToYAML(raw.Bytes())
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(json)
+		return err
+
 	case JSON:
-		w := shared.IOWriter{Writer: out}
-		return ReportCollectionToJSON(data, &w)
+		writer := shared.IOWriter{Writer: out}
+		return ReportCollectionToJSON(data, &writer)
 	// case JUnit:
 	// 	res, err = data.ToJunit()
 	// case CSV:
