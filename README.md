@@ -10,7 +10,7 @@
 
 **Open source, cloud-native security and policy project**
 
-`cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers and endpoints, SaaS products, infrastructure as code, APIs, and more.
+`cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers, and endpoints, SaaS products, infrastructure as code, APIs, and more.
 
 `cnspec` is a powerful Policy as Code engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
@@ -131,7 +131,7 @@ cnspec vuln local
 
 ## cnspec interactive shell
 
-`cnspec` also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It’s also a great way to interact with both local and remote targets on the fly.
+`cnspec` also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It's also a great way to interact with both local and remote targets on the fly.
 
 ### Local system shell
 
@@ -162,11 +162,11 @@ To exit, either hit CTRL + D or type `exit`.
 
 The easiest way to scale `cnspec` across your fleet is to sign up for a free Mondoo Platform account. With the Mondoo Platform, you can:
 
-* Aggregate and share reports
-* Perform vulnerability scans
-* Store and distribute policies from a central location
-* Set custom policy exceptions
-* Explore the relationships between the different assets in your infrastructure
+- Aggregate and share reports
+- Perform vulnerability scans
+- Store and distribute policies from a central location
+- Set custom policy exceptions
+- Explore the relationships between the different assets in your infrastructure
 
 Mondoo's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, all assets can report on policies and you can define custom exceptions for your fleet.
 
@@ -242,7 +242,7 @@ If you're interested in writing your own policies or contributing policies back 
 | VMware vSphere                   | `vsphere`                  | `cnspec scan vsphere user@domain@host --ask-pass`                                                                                                     |
 | Windows hosts                    | `local`, `ssh`, `winrm`    | `cnspec scan local`,<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass` or<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
 
-## What’s next?
+## What's next?
 
 There are so many things `cnspec` can do, from testing your entire fleet for vulnerabilities to gathering information and creating reports for auditors. With its custom policies, `cnspec` can scan any component you care about!
 
@@ -258,7 +258,7 @@ Explore our:
 
 ## Join the community!
 
-Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of `cnspec`, join our [community](https://github.com/orgs/mondoohq/discussions) today and let’s grow it together!
+Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of `cnspec`, join our [community](https://github.com/orgs/mondoohq/discussions) today and let's grow it together!
 
 ## Development
 
@@ -266,6 +266,6 @@ See our [Development Documentation](docs/development.md) for information on buil
 
 ## Legal
 
-- **Copyright:** 2018-2022, Mondoo, Inc.
+- **Copyright:** 2018-2023, Mondoo, Inc.
 - **License:** MPLv2
 - **Authors:** Christoph Hartmann, Dominik Richter
