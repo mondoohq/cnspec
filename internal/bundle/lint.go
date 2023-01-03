@@ -85,7 +85,7 @@ var rules = []Rule{
 	},
 	{
 		ID:          policyWrongVersion,
-		Name:        "Policy version is wrong",
+		Name:        "Policy version is not valid",
 		Description: "Policy versions must follow the semver pattern",
 	},
 	{
@@ -105,7 +105,7 @@ var rules = []Rule{
 	},
 	{
 		ID:          queryUnassigned,
-		Name:        "Unassigned Query",
+		Name:        "Unassigned query",
 		Description: "The query is not assigned to any policy",
 	},
 }
