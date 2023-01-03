@@ -540,7 +540,7 @@ func (p *Policy) DependentPolicyMrns() map[string]struct{} {
 func (p *Policy) RefreshMRN(ownerMRN string) error {
 	nu, err := RefreshMRN(ownerMRN, p.Mrn, "policies", p.Uid)
 	if err != nil {
-		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", p.Uid).Msg("failed to refresh mrn")
+		log.Debug().Err(err).Str("owner", ownerMRN).Str("uid", p.Uid).Msg("failed to refresh mrn")
 		return errors.Wrap(err, "failed to refresh mrn for query "+p.Name)
 	}
 

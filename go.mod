@@ -3,6 +3,7 @@ module go.mondoo.com/cnspec
 go 1.19
 
 require (
+	github.com/Masterminds/semver v1.5.0
 	github.com/cockroachdb/errors v1.9.0
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/go-hclog v1.3.1
@@ -15,6 +16,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.13.0
 	github.com/olekukonko/tablewriter v0.0.5
+	github.com/owenrumney/go-sarif/v2 v2.1.2
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
 	github.com/segmentio/fasthash v1.0.3
@@ -80,7 +82,6 @@ require (
 	github.com/ChrisTrenkamp/goxpath v0.0.0-20210404020558-97928f7e12b6 // indirect
 	github.com/Djarvur/go-err113 v0.0.0-20210108212216-aea10b59be24 // indirect
 	github.com/GaijinEntertainment/go-exhaustruct/v2 v2.3.0 // indirect
-	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/OpenPeeDeeP/depguard v1.1.0 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect

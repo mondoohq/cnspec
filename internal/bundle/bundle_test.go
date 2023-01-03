@@ -1,4 +1,4 @@
-package fmtbundle
+package bundle
 
 import (
 	"testing"
