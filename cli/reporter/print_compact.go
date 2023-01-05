@@ -70,17 +70,108 @@ func (r *defaultReporter) print() error {
 }
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
-	summaryHeader := fmt.Sprintf("Summary (%d assets)", len(r.data.Assets))
-	summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
-	r.out.Write([]byte(termenv.String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Secondary).String()))
+	assetsByPlatform := make(map[string][]*policy.Asset)
+	assetsByScore := make(map[string]int)
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
 		asset := r.data.Assets[assetMrn]
-		r.printAssetSummary(assetMrn, asset)
+		assetsByPlatform[asset.PlatformName] = append(assetsByPlatform[asset.PlatformName], asset)
+		assetScore := r.data.Reports[assetMrn].Score.Rating().Letter()
+		assetsByScore[assetScore]++
 	}
 
+	header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))
+	r.out.Write([]byte(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String()))
+
+	// print assets by platform
+	r.printAssetsByPlatform(assetsByPlatform)
+
+	// print distributions
+	if len(orderedAssets) > 1 {
+		summaryHeader := fmt.Sprintf("Summary")
+		summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
+		r.out.Write([]byte(termenv.String(NewLineCharacter + summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Primary).String()))
+		r.printScoreDistribution(assetsByScore)
+		r.printAssetDistribution(assetsByPlatform)
+	}
+
+	if len(orderedAssets) > 1 && strings.Contains(r.data.Assets[orderedAssets[0].Mrn].PlatformName, "Kubernetes") {
+		r.out.Write([]byte(NewLineCharacter + "To scan an individual asset run `mondoo scan k8s --resource KIND:NAMESPACE:NAME`"))
+	}
 	if r.isCompact {
-		r.out.Write([]byte(NewLineCharacter + "To get more information, please run this scan with \"-o full\"." + NewLineCharacter))
+		r.out.Write([]byte(NewLineCharacter + "To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
+		if !r.IsIncognito {
+			r.out.Write([]byte("Detailed information is already available via the web UI." + NewLineCharacter))
+		}
+	}
+}
+
+func (r *defaultReporter) printScoreDistribution(assetsByScore map[string]int) {
+	scoreHeader := "Score Distribution"
+	scoreDivider := strings.Repeat("-", utf8.RuneCountInString(scoreHeader))
+	r.out.Write([]byte(NewLineCharacter + scoreHeader + NewLineCharacter + scoreDivider + NewLineCharacter))
+
+	for _, score := range []string{"A", "B", "C", "D", "F", "U", "X"} {
+		scoreColor := r.Colors.Unknown
+		switch score {
+		case "A":
+			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_a)
+		case "B":
+			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_b)
+		case "C":
+			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_c)
+		case "D":
+			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_d)
+		case "F":
+			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_failed)
+		case "X":
+			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_error)
+		}
+		output := fmt.Sprintf(" %s %3d assets", termenv.String(score).Foreground(scoreColor).String(), assetsByScore[score])
+		if score == "X" {
+			if _, ok := assetsByScore[score]; !ok {
+				output = ""
+			}
+		}
+		r.out.Write([]byte(output + NewLineCharacter))
+	}
+}
+
+func (r *defaultReporter) printAssetDistribution(assetsByPlatform map[string][]*policy.Asset) {
+	assetHeader := "Asset Distribution"
+	assetDivider := strings.Repeat("-", utf8.RuneCountInString(assetHeader))
+	r.out.Write([]byte(assetHeader + NewLineCharacter + assetDivider + NewLineCharacter))
+
+	maxPlatformLength := 0
+	for platform := range assetsByPlatform {
+		if len(platform) > maxPlatformLength {
+			maxPlatformLength = len(platform)
+		}
+	}
+
+	for platform := range assetsByPlatform {
+		spacing := strings.Repeat(" ", maxPlatformLength-len(platform))
+		output := fmt.Sprintf(" %s %s%3d", platform, spacing, len(assetsByPlatform[platform]))
+		r.out.Write([]byte(output + NewLineCharacter))
+	}
+}
+
+func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*policy.Asset) {
+	availablePlatforms := make([]string, 0, len(assetsByPlatform))
+	for k := range assetsByPlatform {
+		availablePlatforms = append(availablePlatforms, k)
+	}
+	sort.Strings(availablePlatforms)
+
+	for _, platform := range availablePlatforms {
+		r.out.Write([]byte(NewLineCharacter + platform + NewLineCharacter))
+		for i := range assetsByPlatform[platform] {
+			assetScoreRating := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score.Rating()
+			assetScore := assetScoreRating.Letter()
+			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
+			output := fmt.Sprintf("    %s %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
+			r.out.Write([]byte(output + NewLineCharacter))
+		}
 	}
 }
 

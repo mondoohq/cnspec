@@ -28,9 +28,10 @@ func NewAggregateReporter() *AggregateReporter {
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
 	r.assets[asset.Mrn] = &policy.Asset{
-		Mrn:  asset.Mrn,
-		Name: asset.Name,
-		Url:  asset.Url,
+		Mrn:          asset.Mrn,
+		Name:         asset.Name,
+		PlatformName: asset.Platform.Title,
+		Url:          asset.Url,
 	}
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
