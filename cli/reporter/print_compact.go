@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
@@ -95,14 +96,59 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	if len(orderedAssets) > 1 {
 		summaryHeader := fmt.Sprintf("Summary")
 		summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
-		r.out.Write([]byte(termenv.String(NewLineCharacter + summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Primary).String()))
-		r.printScoreDistribution(assetsByScore)
-		r.printAssetDistribution(assetsByPlatform)
+		r.out.Write([]byte(NewLineCharacter))
+		r.out.Write([]byte(termenv.String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Primary).String()))
+		r.out.Write([]byte(NewLineCharacter))
+
+		scoreHeader := "Score Distribution"
+		assetHeader := "Asset Distribution"
+		header := scoreHeader + "\t\t" + assetHeader
+		headerDivider := strings.Repeat("-", utf8.RuneCountInString(scoreHeader)) + "\t\t" + strings.Repeat("-", utf8.RuneCountInString(assetHeader))
+
+		r.out.Write([]byte(header + NewLineCharacter))
+		r.out.Write([]byte(headerDivider + NewLineCharacter))
+
+		scores := r.getScoreDistribution(assetsByScore)
+		assets := r.getAssetDistribution(assetsByPlatform)
+
+		maxIndex := 0
+		if len(scores) > len(assets) {
+			maxIndex = len(scores)
+		} else {
+			maxIndex = len(assets)
+		}
+		// I also gave the tablewriter a try, but it didn't generate a nice output
+		for i := 0; i < maxIndex; i++ {
+			row := ""
+			addedScore := false
+			if i < len(scores) {
+				row = scores[i]
+				addedScore = true
+			}
+			if i < len(assets) {
+				if !addedScore {
+					row += strings.Repeat(" ", utf8.RuneCountInString(scoreHeader))
+				} else {
+					// otherwise, the magic number would be 13
+					visibleScoreWidth := text.RuneWidthWithoutEscSequences(scores[i])
+					spacing := utf8.RuneCountInString(scoreHeader) - visibleScoreWidth
+					row += strings.Repeat(" ", spacing)
+				}
+				row += "\t\t"
+				row += assets[i]
+			}
+			row += NewLineCharacter
+			r.out.Write([]byte(row))
+		}
 	}
 
+	// we do not have a space url, so we extract it form the asset url
+	// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
+	// an individual asset url wouldn't make sense here
 	spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
 	m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
 	spaceUrl := m[1] + m[2]
+
 	if len(orderedAssets) > 1 && strings.Contains(r.data.Assets[orderedAssets[0].Mrn].PlatformName, "Kubernetes") {
 		r.out.Write([]byte(NewLineCharacter))
 		r.out.Write([]byte("To scan an individual asset run `mondoo scan k8s --resource KIND:NAMESPACE:NAME`" + NewLineCharacter))
@@ -117,11 +163,8 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	}
 }
 
-func (r *defaultReporter) printScoreDistribution(assetsByScore map[string]int) {
-	scoreHeader := "Score Distribution"
-	scoreDivider := strings.Repeat("-", utf8.RuneCountInString(scoreHeader))
-	r.out.Write([]byte(NewLineCharacter + scoreHeader + NewLineCharacter + scoreDivider + NewLineCharacter))
-
+func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []string {
+	scores := []string{}
 	for _, score := range []string{"A", "B", "C", "D", "F", "U", "X"} {
 		scoreColor := r.Colors.Unknown
 		switch score {
@@ -138,20 +181,20 @@ func (r *defaultReporter) printScoreDistribution(assetsByScore map[string]int) {
 		case "X":
 			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_error)
 		}
-		output := fmt.Sprintf(" %s %3d assets", termenv.String(score).Foreground(scoreColor).String(), assetsByScore[score])
+		coloredScore := termenv.String(score).Foreground(scoreColor).String()
+		output := fmt.Sprintf(" %s %3d assets", coloredScore, assetsByScore[score])
 		if score == "X" {
 			if _, ok := assetsByScore[score]; !ok {
-				output = ""
+				continue
 			}
 		}
-		r.out.Write([]byte(output + NewLineCharacter))
+		scores = append(scores, output)
 	}
+	return scores
 }
 
-func (r *defaultReporter) printAssetDistribution(assetsByPlatform map[string][]*policy.Asset) {
-	assetHeader := "Asset Distribution"
-	assetDivider := strings.Repeat("-", utf8.RuneCountInString(assetHeader))
-	r.out.Write([]byte(assetHeader + NewLineCharacter + assetDivider + NewLineCharacter))
+func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*policy.Asset) []string {
+	assets := []string{}
 
 	maxPlatformLength := 0
 	for platform := range assetsByPlatform {
@@ -163,8 +206,10 @@ func (r *defaultReporter) printAssetDistribution(assetsByPlatform map[string][]*
 	for platform := range assetsByPlatform {
 		spacing := strings.Repeat(" ", maxPlatformLength-len(platform))
 		output := fmt.Sprintf(" %s %s%3d", platform, spacing, len(assetsByPlatform[platform]))
-		r.out.Write([]byte(output + NewLineCharacter))
+		assets = append(assets, output)
 	}
+
+	return assets
 }
 
 func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*policy.Asset) {
