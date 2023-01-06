@@ -72,7 +72,7 @@ var rules = []Rule{
 	{
 		ID:          policyMissingAssetFilter,
 		Name:        "Policy Spec is missing an asset filter",
-		Description: "Policy Spec has no asset filter defined",
+		Description: "Policy Spec doesn't define an asset filter.",
 	},
 	{
 		ID:          policyMissingChecks,
