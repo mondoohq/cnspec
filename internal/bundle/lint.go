@@ -355,7 +355,7 @@ func lintFile(file string) (*Results, error) {
 
 				res.Entries = append(res.Entries, Entry{
 					RuleID:   policyMissingAssetFilter,
-					Message:  "Policy " + policy.Uid + " is missing asset filter",
+					Message:  "Policy " + policy.Uid + " doesn't define an asset filter.",
 					Level:    levelError,
 					Location: []Location{location},
 				})
