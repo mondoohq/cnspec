@@ -3,6 +3,7 @@ package reporter
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -70,11 +71,15 @@ func (r *defaultReporter) print() error {
 }
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
+	assetUrl := ""
 	assetsByPlatform := make(map[string][]*policy.Asset)
 	assetsByScore := make(map[string]int)
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
 		asset := r.data.Assets[assetMrn]
+		if asset.Url != "" {
+			assetUrl = asset.Url
+		}
 		assetsByPlatform[asset.PlatformName] = append(assetsByPlatform[asset.PlatformName], asset)
 		assetScore := r.data.Reports[assetMrn].Score.Rating().Letter()
 		assetsByScore[assetScore]++
@@ -95,14 +100,20 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		r.printAssetDistribution(assetsByPlatform)
 	}
 
+	spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
+	m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
+	spaceUrl := m[1] + m[2]
 	if len(orderedAssets) > 1 && strings.Contains(r.data.Assets[orderedAssets[0].Mrn].PlatformName, "Kubernetes") {
-		r.out.Write([]byte(NewLineCharacter + "To scan an individual asset run `mondoo scan k8s --resource KIND:NAMESPACE:NAME`"))
+		r.out.Write([]byte(NewLineCharacter))
+		r.out.Write([]byte("To scan an individual asset run `mondoo scan k8s --resource KIND:NAMESPACE:NAME`" + NewLineCharacter))
 	}
 	if r.isCompact {
-		r.out.Write([]byte(NewLineCharacter + "To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
+		r.out.Write([]byte(NewLineCharacter))
 		if !r.IsIncognito {
-			r.out.Write([]byte("Detailed information is already available via the web UI." + NewLineCharacter))
+			r.out.Write([]byte("Detailed information is already available via the web UI: "))
+			r.out.Write([]byte(spaceUrl + NewLineCharacter))
 		}
+		r.out.Write([]byte("To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
 	}
 }
 
@@ -218,119 +229,6 @@ func addSpace(s string) string {
 		return s
 	}
 	return s + " "
-}
-
-func (r *defaultReporter) printAssetSummary(assetMrn string, asset *policy.Asset) {
-	target := asset.Name
-	if target == "" {
-		target = assetMrn
-	}
-
-	r.out.Write([]byte(termenv.String(fmt.Sprintf("%sTarget:     %s%s", NewLineCharacter, target, NewLineCharacter)).Foreground(r.Colors.Primary).String()))
-
-	report, ok := r.data.Reports[assetMrn]
-	if !ok {
-		// If scanning the asset has failed, there will be no report, we should first look if there's an error for that target.
-		if err, ok := r.data.Errors[assetMrn]; ok {
-			errorMessage := strings.ReplaceAll(err, "\n", NewLineCharacter)
-			r.out.Write([]byte(termenv.String(fmt.Sprintf(
-				`✕ Errors:   %s`, errorMessage,
-			)).Foreground(r.Colors.Error).String()))
-		} else {
-			r.out.Write([]byte(fmt.Sprintf(
-				`✕ Could not find asset %s`,
-				target,
-			)))
-		}
-		r.out.Write([]byte(NewLineCharacter))
-		return
-	}
-	if report == nil || r.bundle == nil {
-		// the asset didn't match any policy, so no report was generated
-		return
-	}
-
-	resolved, ok := r.data.ResolvedPolicies[assetMrn]
-	if !ok {
-		r.out.Write([]byte(fmt.Sprintf(
-			`✕ Could not find resolved policy for asset %s`,
-			target,
-		)))
-		return
-	}
-
-	score := printCompactScoreSummary(report.Score)
-	report.ComputeStats(resolved)
-
-	if report.Stats == nil || report.Stats.Total == 0 {
-		r.out.Write([]byte(fmt.Sprintf("Datapoints: %d%s", len(report.Data), NewLineCharacter)))
-	} else {
-		passCnt := report.Stats.Passed.Total
-		passPct := float32(passCnt) / float32(report.Stats.Total) * 100
-		failCnt := report.Stats.Failed.Total
-		failPct := float32(failCnt) / float32(report.Stats.Total) * 100
-		errCnt := report.Stats.Errors.Total
-		errPct := float32(errCnt) / float32(report.Stats.Total) * 100
-		skipCnt := report.Stats.Skipped + report.Stats.Unknown
-		skipPct := float32(skipCnt) / float32(report.Stats.Total) * 100
-
-		r.out.Write([]byte(r.scoreColored(report.Score.Rating(), fmt.Sprintf("Score:      %s%s", score, NewLineCharacter))))
-		r.out.Write([]byte(
-			termenv.String(fmt.Sprintf("✓ Passed:   %s%.0f%% (%d)%s",
-				addSpace(components.Hbar(15, passPct)), passPct, passCnt, NewLineCharacter),
-			).Foreground(r.Colors.Success).String()))
-		r.out.Write([]byte(
-			termenv.String("✕ Failed:   ").Foreground(r.Colors.Critical).String() +
-				addSpace(failureHbar(report.Stats)) +
-				termenv.String(fmt.Sprintf("%.0f%% (%d)%s", failPct, failCnt, NewLineCharacter)).Foreground(r.Colors.Critical).String(),
-		))
-		r.out.Write([]byte(
-			termenv.String(fmt.Sprintf("! Errors:   %s%.0f%% (%d)%s",
-				addSpace(components.Hbar(15, errPct)), errPct, errCnt, NewLineCharacter),
-			).Foreground(r.Colors.Error).String()))
-		r.out.Write([]byte(
-			termenv.String(fmt.Sprintf("» Skipped:  %s%.0f%% (%d)%s",
-				addSpace(components.Hbar(15, skipPct)), skipPct, skipCnt, NewLineCharacter),
-			).Foreground(r.Colors.Disabled).String()))
-
-	}
-
-	r.out.Write([]byte(NewLineCharacter + "Policies:" + NewLineCharacter))
-	scores := policyScores(report, r.bundle)
-	for i := range scores {
-		x := scores[i]
-		switch x.score.Type {
-		case policy.ScoreType_Error:
-			r.out.Write([]byte(termenv.String("E  EE  " + x.title).Foreground(r.Colors.Error).String()))
-			r.out.Write([]byte(NewLineCharacter))
-		case policy.ScoreType_Unknown, policy.ScoreType_Unscored, policy.ScoreType_Skip:
-			r.out.Write([]byte(".  ..  " + x.title))
-			r.out.Write([]byte(NewLineCharacter))
-		case policy.ScoreType_Result:
-			rating := x.score.Rating()
-			line := fmt.Sprintf(
-				"%s %3d  %s%s",
-				rating.Letter(), x.score.Value, x.title, NewLineCharacter,
-			)
-			r.out.Write([]byte(r.scoreColored(rating, line)))
-		default:
-			r.out.Write([]byte("?  ..  " + x.title))
-			r.out.Write([]byte(NewLineCharacter))
-		}
-	}
-	if len(scores) > 0 {
-		r.out.Write([]byte(NewLineCharacter))
-	}
-
-	if !r.IsIncognito && report.Url != "" || asset.Url != "" {
-		r.out.Write([]byte("Report URL: "))
-		url := report.Url
-		if url == "" {
-			url = asset.Url
-		}
-		r.out.Write([]byte(url))
-		r.out.Write([]byte(NewLineCharacter))
-	}
 }
 
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
