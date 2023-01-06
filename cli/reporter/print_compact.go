@@ -182,7 +182,7 @@ func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []s
 			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_error)
 		}
 		coloredScore := termenv.String(score).Foreground(scoreColor).String()
-		output := fmt.Sprintf(" %s %3d assets", coloredScore, assetsByScore[score])
+		output := fmt.Sprintf("%s %3d assets", coloredScore, assetsByScore[score])
 		if score == "X" {
 			if _, ok := assetsByScore[score]; !ok {
 				continue
@@ -205,7 +205,7 @@ func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*po
 
 	for platform := range assetsByPlatform {
 		spacing := strings.Repeat(" ", maxPlatformLength-len(platform))
-		output := fmt.Sprintf(" %s %s%3d", platform, spacing, len(assetsByPlatform[platform]))
+		output := fmt.Sprintf("%s %s%3d", platform, spacing, len(assetsByPlatform[platform]))
 		assets = append(assets, output)
 	}
 
