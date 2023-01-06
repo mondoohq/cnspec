@@ -67,7 +67,7 @@ var rules = []Rule{
 	{
 		ID:          policyUidUnique,
 		Name:        "No unique policy UID",
-		Description: "Every policy uid must not be used twice in the same bundle and namespace",
+		Description: "Every policy UID must not be used twice in the same bundle and namespace",
 	},
 	{
 		ID:          policyMissingAssetFilter,
