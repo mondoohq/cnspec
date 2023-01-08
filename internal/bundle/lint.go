@@ -21,6 +21,7 @@ const (
 	policyUid                  = "policy-uid"
 	policyName                 = "policy-name"
 	policyUidUnique            = "policy-uid-unique"
+	policyMissingAssetFilter   = "policy-missing-asset-filter"
 	policyMissingAssignedQuery = "policy-missing-assigned-query"
 	policyMissingChecks        = "policy-missing-checks"
 	policyMissingVersion       = "policy-missing-version"
@@ -66,7 +67,12 @@ var rules = []Rule{
 	{
 		ID:          policyUidUnique,
 		Name:        "No unique policy UID",
-		Description: "Every policy uid must not be used twice in the same bundle and namespace",
+		Description: "Every policy UID must not be used twice in the same bundle and namespace",
+	},
+	{
+		ID:          policyMissingAssetFilter,
+		Name:        "Policy Spec is missing an asset filter",
+		Description: "Policy Spec doesn't define an asset filter.",
 	},
 	{
 		ID:          policyMissingChecks,
@@ -331,6 +337,29 @@ func lintFile(file string) (*Results, error) {
 		// check that all assigned queries actually exist as queries
 		for j := range policy.Specs {
 			spec := policy.Specs[j]
+
+			if spec.AssetFilter == nil || spec.AssetFilter.Query == "" {
+				location := Location{
+					File:   file,
+					Line:   spec.FileContext.Line,
+					Column: spec.FileContext.Column,
+				}
+
+				if spec.AssetFilter != nil {
+					location = Location{
+						File:   file,
+						Line:   spec.AssetFilter.FileContext.Line,
+						Column: spec.AssetFilter.FileContext.Column,
+					}
+				}
+
+				res.Entries = append(res.Entries, Entry{
+					RuleID:   policyMissingAssetFilter,
+					Message:  "Policy " + policy.Uid + " doesn't define an asset filter.",
+					Level:    levelError,
+					Location: []Location{location},
+				})
+			}
 
 			// issue warning if no check is assigned
 			if len(spec.ScoringQueries) == 0 {
