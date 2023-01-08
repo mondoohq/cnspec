@@ -361,8 +361,8 @@ func lintFile(file string) (*Results, error) {
 				})
 			}
 
-			// issue warning if no check is assigned
-			if len(spec.ScoringQueries) == 0 {
+			// issue warning if no checks or data queries are assigned
+			if len(spec.ScoringQueries) == 0 && len(spec.DataQueries) == 0 {
 				res.Entries = append(res.Entries, Entry{
 					RuleID:  policyMissingChecks,
 					Message: "Policy " + policy.Uid + " is missing checks",
