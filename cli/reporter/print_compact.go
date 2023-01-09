@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/mitchellh/mapstructure"
+	"github.com/muesli/ansi"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/components"
@@ -129,7 +129,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				if !addedScore {
 					row += strings.Repeat(" ", utf8.RuneCountInString(scoreHeader))
 				} else {
-					visibleScoreWidth := text.RuneWidthWithoutEscSequences(scores[i])
+					visibleScoreWidth := ansi.PrintableRuneWidth(scores[i])
 					spacing := utf8.RuneCountInString(scoreHeader) - visibleScoreWidth
 					row += strings.Repeat(" ", spacing)
 				}
