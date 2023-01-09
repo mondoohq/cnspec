@@ -129,7 +129,6 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				if !addedScore {
 					row += strings.Repeat(" ", utf8.RuneCountInString(scoreHeader))
 				} else {
-					// otherwise, the magic number would be 13
 					visibleScoreWidth := text.RuneWidthWithoutEscSequences(scores[i])
 					spacing := utf8.RuneCountInString(scoreHeader) - visibleScoreWidth
 					row += strings.Repeat(" ", spacing)
@@ -183,7 +182,7 @@ func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []s
 		}
 		coloredScore := termenv.String(score).Foreground(scoreColor).String()
 		output := fmt.Sprintf("%s %3d assets", coloredScore, assetsByScore[score])
-		if score == "X" {
+		if score == "X" || score == "U" {
 			if _, ok := assetsByScore[score]; !ok {
 				continue
 			}
