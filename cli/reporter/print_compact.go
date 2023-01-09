@@ -142,10 +142,6 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		}
 	}
 
-	if len(orderedAssets) > 1 && strings.Contains(r.data.Assets[orderedAssets[0].Mrn].PlatformName, "Kubernetes") {
-		r.out.Write([]byte(NewLineCharacter))
-		r.out.Write([]byte("To scan an individual asset run `mondoo scan k8s --resource KIND:NAMESPACE:NAME`" + NewLineCharacter))
-	}
 	if r.isCompact {
 		r.out.Write([]byte(NewLineCharacter))
 		if !r.IsIncognito && assetUrl != "" {
