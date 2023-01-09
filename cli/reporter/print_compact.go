@@ -142,20 +142,20 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		}
 	}
 
-	// we do not have a space url, so we extract it form the asset url
-	// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
-	// an individual asset url wouldn't make sense here
-	spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
-	m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
-	spaceUrl := m[1] + m[2]
-
 	if len(orderedAssets) > 1 && strings.Contains(r.data.Assets[orderedAssets[0].Mrn].PlatformName, "Kubernetes") {
 		r.out.Write([]byte(NewLineCharacter))
 		r.out.Write([]byte("To scan an individual asset run `mondoo scan k8s --resource KIND:NAMESPACE:NAME`" + NewLineCharacter))
 	}
 	if r.isCompact {
 		r.out.Write([]byte(NewLineCharacter))
-		if !r.IsIncognito {
+		if !r.IsIncognito && assetUrl != "" {
+			// we do not have a space url, so we extract it form the asset url
+			// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
+			// an individual asset url wouldn't make sense here
+			spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
+			m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
+			spaceUrl := m[1] + m[2]
+
 			r.out.Write([]byte("Detailed information is already available via the web UI: "))
 			r.out.Write([]byte(spaceUrl + NewLineCharacter))
 		}
