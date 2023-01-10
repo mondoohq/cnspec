@@ -162,7 +162,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				url = assetUrl
 			}
 
-			r.out.Write([]byte("Detailed information is already available via the web UI: "))
+			r.out.Write([]byte("See detailed report information in the Mondoo Console: "))
 			r.out.Write([]byte(url + NewLineCharacter))
 		}
 		if len(assetsByScore) > 0 {
