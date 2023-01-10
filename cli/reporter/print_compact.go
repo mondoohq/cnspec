@@ -150,15 +150,20 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	if r.isCompact {
 		r.out.Write([]byte(NewLineCharacter))
 		if !r.IsIncognito && assetUrl != "" {
-			// we do not have a space url, so we extract it form the asset url
-			// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
-			// an individual asset url wouldn't make sense here
-			spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
-			m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
-			spaceUrl := m[1] + m[2]
+			url := ""
+			if len(orderedAssets) > 1 {
+				// we do not have a space url, so we extract it form the asset url
+				// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
+				// an individual asset url wouldn't make sense here
+				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
+				m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
+				url = m[1] + m[2]
+			} else {
+				url = assetUrl
+			}
 
 			r.out.Write([]byte("Detailed information is already available via the web UI: "))
-			r.out.Write([]byte(spaceUrl + NewLineCharacter))
+			r.out.Write([]byte(url + NewLineCharacter))
 		}
 		if len(assetsByScore) > 0 {
 			r.out.Write([]byte("To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
