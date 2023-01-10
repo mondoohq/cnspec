@@ -149,6 +149,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 
 	if r.isCompact {
 		r.out.Write([]byte(NewLineCharacter))
+		if len(assetsByScore) > 0 {
+			r.out.Write([]byte("To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter + "\n"))
+		}
 		if !r.IsIncognito && assetUrl != "" {
 			url := ""
 			if len(orderedAssets) > 1 {
@@ -164,9 +167,6 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 
 			r.out.Write([]byte("See detailed report information in the Mondoo Console: "))
 			r.out.Write([]byte(url + NewLineCharacter))
-		}
-		if len(assetsByScore) > 0 {
-			r.out.Write([]byte("To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
 		}
 	}
 }
