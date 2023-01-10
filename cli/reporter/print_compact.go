@@ -81,13 +81,19 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		if asset.Url != "" {
 			assetUrl = asset.Url
 		}
-		assetsByPlatform[asset.PlatformName] = append(assetsByPlatform[asset.PlatformName], asset)
-		assetScore := r.data.Reports[assetMrn].Score.Rating().Letter()
-		assetsByScore[assetScore]++
+		if asset.PlatformName != "" {
+			assetsByPlatform[asset.PlatformName] = append(assetsByPlatform[asset.PlatformName], asset)
+		}
+		if _, ok := r.data.Reports[assetMrn]; ok {
+			assetScore := r.data.Reports[assetMrn].Score.Rating().Letter()
+			assetsByScore[assetScore]++
+		}
 	}
 
-	header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))
-	r.out.Write([]byte(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String()))
+	if len(assetsByScore) > 0 {
+		header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))
+		r.out.Write([]byte(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String()))
+	}
 
 	// print assets by platform
 	r.printAssetsByPlatform(assetsByPlatform)
@@ -154,7 +160,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			r.out.Write([]byte("Detailed information is already available via the web UI: "))
 			r.out.Write([]byte(spaceUrl + NewLineCharacter))
 		}
-		r.out.Write([]byte("To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
+		if len(assetsByScore) > 0 {
+			r.out.Write([]byte("To get more information on the CLI, please run this scan with \"-o full\"." + NewLineCharacter))
+		}
 	}
 }
 
