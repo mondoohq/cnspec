@@ -56,6 +56,15 @@ func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
 		Name: asset.Name,
 		Url:  asset.Url,
 	}
+	if asset.Platform != nil {
+		platformName := ""
+		if asset.Platform.Title == "" {
+			platformName = asset.Platform.Name
+		} else {
+			platformName = asset.Platform.Title
+		}
+		r.assets[asset.Mrn].PlatformName = platformName
+	}
 	r.assetErrors[asset.Mrn] = err
 }
 
