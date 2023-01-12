@@ -44,7 +44,7 @@ type GraphBuilder struct {
 	datapointType map[string]string
 	// progressReporter is a configured interface to receive progress
 	// updates
-	progressReporter progress.Progress
+	progressReporter progress.Program
 	// mondooVersion is the version of mondoo. This is generally sourced
 	// from the binary, but is configurable to make testing easier
 	mondooVersion string
@@ -62,7 +62,7 @@ func NewBuilder() *GraphBuilder {
 		collectDatapointChecksums: []string{},
 		collectScoreQrIDs:         []string{},
 		datapointType:             map[string]string{},
-		progressReporter:          progress.Noop{},
+		progressReporter:          progress.NoopProgram{},
 		mondooVersion:             cnspec.GetCoreVersion(),
 		queryTimeout:              5 * time.Minute,
 	}
@@ -117,7 +117,7 @@ func (b *GraphBuilder) AddDatapointCollector(c DatapointCollector) {
 }
 
 // WithProgressReporter sets the interface which will receive progress updates
-func (b *GraphBuilder) WithProgressReporter(r progress.Progress) {
+func (b *GraphBuilder) WithProgressReporter(r progress.Program) {
 	b.progressReporter = r
 }
 
@@ -131,7 +131,7 @@ func (b *GraphBuilder) WithQueryTimeout(timeout time.Duration) {
 	b.queryTimeout = timeout
 }
 
-func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtime, assetMrn string) (*GraphExecutor, error) {
+func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtime, assetMrn string, assetName string) (*GraphExecutor, error) {
 	resultChan := make(chan *llx.RawResult, 128)
 
 	queries := make(map[string]query, len(b.queries))
@@ -213,7 +213,7 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 
 	ge.handleUnrunnableQueries(unrunnableQueries)
 
-	ge.createFinisherNode(b.progressReporter)
+	ge.createFinisherNode(assetMrn, b.progressReporter)
 
 	for nodeID := range ge.nodes {
 		prioritizeNode(ge.nodes, ge.edges, ge.priorityMap, nodeID)
@@ -257,12 +257,13 @@ func (ge *GraphExecutor) addEdge(from NodeID, to NodeID) {
 	ge.edges[from] = insertSorted(ge.edges[from], to)
 }
 
-func (ge *GraphExecutor) createFinisherNode(r progress.Progress) {
+func (ge *GraphExecutor) createFinisherNode(assetMrn string, r progress.Program) {
 	nodeID := CollectionFinisherID
 	nodeData := &CollectionFinisherNodeData{
 		remainingDatapoints: make(map[string]struct{}, len(ge.nodes)),
 		doneChan:            ge.doneChan,
 		progressReporter:    r,
+		assetMrn:            assetMrn,
 	}
 
 	for datapointNodeID, n := range ge.nodes {

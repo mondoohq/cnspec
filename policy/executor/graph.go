@@ -16,8 +16,8 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
-	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressFn progress.Progress,
+func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string, assetName string,
+	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progress progress.Program,
 ) error {
 	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
 	defer collector.FlushAndStop()
@@ -25,11 +25,11 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
-	if progressFn != nil {
-		builder.WithProgressReporter(progressFn)
+	if progress != nil {
+		builder.WithProgressReporter(progress)
 	}
 
-	ge, err := builder.Build(schema, runtime, assetMrn)
+	ge, err := builder.Build(schema, runtime, assetMrn, assetName)
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
 
-	ge, err := builder.Build(schema, runtime, "")
+	ge, err := builder.Build(schema, runtime, "", "")
 	if err != nil {
 		errs = append(errs, err)
 		return nil, errs
@@ -123,7 +123,7 @@ func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBund
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
 
-	ge, err := builder.Build(schema, runtime, "")
+	ge, err := builder.Build(schema, runtime, "", "")
 	if err != nil {
 		return nil, nil, err
 	}

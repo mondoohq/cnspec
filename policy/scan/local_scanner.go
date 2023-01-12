@@ -3,17 +3,21 @@ package scan
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"github.com/muesli/termenv"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/progress"
+	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
@@ -222,36 +226,74 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
 	}
 
+	progressBarElements := map[string]string{}
 	for i := range assetList {
-		asset := assetList[i]
-
-		// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
-		// we need to solve this at a different level.
-		select {
-		case <-ctx.Done():
-			log.Warn().Msg("request context has been canceled")
-			return reporter.Reports(), false, nil
-		default:
-		}
-
-		s.RunAssetJob(&AssetJob{
-			DoRecord:       job.DoRecord,
-			UpstreamConfig: upstreamConfig,
-			Asset:          asset,
-			Bundle:         job.Bundle,
-			PolicyFilters:  job.PolicyFilters,
-			Ctx:            ctx,
-			GetCredential:  im.GetCredential,
-			Reporter:       reporter,
-		})
+		progressBarElements[assetList[i].Mrn] = assetList[i].Name
+	}
+	var progressProgram progress.Program
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		progressProgram = progress.NewMultiProgressProgram(progressBarElements)
+	} else {
+		progressProgram = progress.NoopProgram{}
 	}
 
+	scanGroup := sync.WaitGroup{}
+	scanGroup.Add(1)
+
+	finished := false
+	go func() {
+		defer scanGroup.Done()
+		// this is a noop, when the tea programm isn't running
+		defer progressProgram.Quit()
+		for i := range assetList {
+			asset := assetList[i]
+
+			// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
+			// we need to solve this at a different level.
+			select {
+			case <-ctx.Done():
+				log.Warn().Msg("request context has been canceled")
+				return
+			default:
+			}
+
+			s.RunAssetJob(&AssetJob{
+				DoRecord:       job.DoRecord,
+				UpstreamConfig: upstreamConfig,
+				Asset:          asset,
+				Bundle:         job.Bundle,
+				PolicyFilters:  job.PolicyFilters,
+				Ctx:            ctx,
+				GetCredential:  im.GetCredential,
+				Reporter:       reporter,
+				Progress:       progressProgram,
+			})
+		}
+		finished = true
+	}()
+
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		(logger.LogOutputWriter.(*logger.BufferedWriter)).Pause()
+		defer (logger.LogOutputWriter.(*logger.BufferedWriter)).Resume()
+	}
+	if _, err := progressProgram.Run(); err != nil {
+		fmt.Println(err.Error())
+		panic(err)
+	}
+	defer progressProgram.Quit()
+	scanGroup.Wait()
+
 	log.Debug().Msg("completed scanning all assets")
-	return reporter.Reports(), true, nil
+	reports := reporter.Reports()
+	if !reports.Ok {
+		fmt.Println(termenv.String("Errors during scan:").Foreground(colors.DefaultColorTheme.Primary))
+	}
+
+	return reports, finished, nil
 }
 
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
-	log.Info().Msgf("connecting to asset %s", job.Asset.HumanName())
+	log.Debug().Msgf("connecting to asset %s", job.Asset.HumanName())
 
 	var upstream *policy.Services
 	var err error
@@ -330,6 +372,10 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				return
 			}
 
+			job.Progress.Send(progress.MsgScore{
+				Index: job.Asset.Mrn,
+				Score: results.Report.Score.Rating().Letter(),
+			})
 			job.Reporter.AddReport(job.Asset, results)
 		}(connections[c])
 	}
@@ -360,13 +406,6 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		runtime := resources.NewRuntime(registry, job.connection)
 		runtime.UpstreamConfig = &job.UpstreamConfig
 
-		var progressListener progress.Progress
-		if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar {
-			progressListener = progress.New(job.Asset.Mrn, job.Asset.Name)
-		} else {
-			progressListener = progress.Noop{}
-		}
-
 		scanner := &localAssetScanner{
 			db:       db,
 			services: services,
@@ -375,7 +414,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			Registry: registry,
 			Schema:   schema,
 			Runtime:  runtime,
-			Progress: progressListener,
+			Progress: job.Progress,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
@@ -530,18 +569,13 @@ type localAssetScanner struct {
 	Registry *resources.Registry
 	Schema   *resources.Schema
 	Runtime  *resources.Runtime
-	Progress progress.Progress
+	Progress progress.Program
 }
 
 // run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
 // case of an error, the results may contain partial results. The error is only returned if the scan failed to run not
 // when individual policies failed.
 func (s *localAssetScanner) run() (*AssetReport, error) {
-	s.Progress.Open()
-
-	// fallback to always close the progressbar if we error before getting the report
-	defer s.Progress.Close()
-
 	if err := s.prepareAsset(); err != nil {
 		return nil, err
 	}
@@ -723,7 +757,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.Progress)
+	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, s.job.Asset.Name, resolvedPolicy, features, s.Progress)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -737,7 +771,6 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	// TODO: we do not needs this anymore since we receive updates already
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
 	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
-	s.Progress.Close()
 	// handle error
 	if err != nil {
 		return &policy.Report{
