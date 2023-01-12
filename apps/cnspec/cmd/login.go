@@ -158,8 +158,9 @@ func register(token string) {
 			certAuth, err := upstream.NewServiceAccountRangerPlugin(credential)
 			if err != nil {
 				log.Warn().Err(err).Msg("could not initialize certificate authentication")
+			} else {
+				plugins = append(plugins, certAuth)
 			}
-			plugins = append(plugins, certAuth)
 
 			client, err := upstream.NewAgentManagerClient(apiEndpoint, ranger.DefaultHttpClient(), plugins...)
 			if err != nil {
