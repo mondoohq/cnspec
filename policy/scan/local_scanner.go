@@ -230,11 +230,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	for i := range assetList {
 		progressBarElements[assetList[i].Mrn] = assetList[i].Name
 	}
-	var progressProgram progress.Program
+	var progressProg progress.Program
 	if isatty.IsTerminal(os.Stdout.Fd()) {
-		progressProgram = progress.NewMultiProgressProgram(progressBarElements)
+		progressProg = progress.NewMultiProgressProgram(progressBarElements)
 	} else {
-		progressProgram = progress.NoopProgram{}
+		progressProg = progress.NoopProgram{}
 	}
 
 	scanGroup := sync.WaitGroup{}
@@ -244,7 +244,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	go func() {
 		defer scanGroup.Done()
 		// this is a noop, when the tea programm isn't running
-		defer progressProgram.Quit()
+		defer progressProg.Quit()
 		for i := range assetList {
 			asset := assetList[i]
 
@@ -266,7 +266,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 				Ctx:            ctx,
 				GetCredential:  im.GetCredential,
 				Reporter:       reporter,
-				Progress:       progressProgram,
+				ProgressProg:   progressProg,
 			})
 		}
 		finished = true
@@ -276,11 +276,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		(logger.LogOutputWriter.(*logger.BufferedWriter)).Pause()
 		defer (logger.LogOutputWriter.(*logger.BufferedWriter)).Resume()
 	}
-	if _, err := progressProgram.Run(); err != nil {
+	if _, err := progressProg.Run(); err != nil {
 		fmt.Println(err.Error())
 		panic(err)
 	}
-	defer progressProgram.Quit()
+	defer progressProg.Quit()
 	scanGroup.Wait()
 
 	log.Debug().Msg("completed scanning all assets")
@@ -372,7 +372,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				return
 			}
 
-			job.Progress.Send(progress.MsgScore{
+			job.ProgressProg.Send(progress.MsgScore{
 				Index: job.Asset.Mrn,
 				Score: results.Report.Score.Rating().Letter(),
 			})
@@ -407,14 +407,14 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		runtime.UpstreamConfig = &job.UpstreamConfig
 
 		scanner := &localAssetScanner{
-			db:       db,
-			services: services,
-			job:      job,
-			fetcher:  s.fetcher,
-			Registry: registry,
-			Schema:   schema,
-			Runtime:  runtime,
-			Progress: job.Progress,
+			db:           db,
+			services:     services,
+			job:          job,
+			fetcher:      s.fetcher,
+			Registry:     registry,
+			Schema:       schema,
+			Runtime:      runtime,
+			ProgressProg: job.ProgressProg,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
@@ -566,10 +566,10 @@ type localAssetScanner struct {
 	job      *AssetJob
 	fetcher  *fetcher
 
-	Registry *resources.Registry
-	Schema   *resources.Schema
-	Runtime  *resources.Runtime
-	Progress progress.Program
+	Registry     *resources.Registry
+	Schema       *resources.Schema
+	Runtime      *resources.Runtime
+	ProgressProg progress.Program
 }
 
 // run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
@@ -757,7 +757,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, s.job.Asset.Name, resolvedPolicy, features, s.Progress)
+	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, s.job.Asset.Name, resolvedPolicy, features, s.ProgressProg)
 	if err != nil {
 		return nil, nil, err
 	}

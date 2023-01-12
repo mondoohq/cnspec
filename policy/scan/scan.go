@@ -35,5 +35,5 @@ type AssetJob struct {
 	GetCredential  func(cred *vault.Credential) (*vault.Credential, error)
 	Reporter       Reporter
 	connection     *motor.Motor
-	Progress       progress.Program
+	ProgressProg   progress.Program
 }

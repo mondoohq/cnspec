@@ -17,7 +17,7 @@ type GraphExecutor interface {
 }
 
 func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string, assetName string,
-	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progress progress.Program,
+	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressProg progress.Program,
 ) error {
 	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
 	defer collector.FlushAndStop()
@@ -25,8 +25,8 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
-	if progress != nil {
-		builder.WithProgressReporter(progress)
+	if progressProg != nil {
+		builder.WithProgressReporter(progressProg)
 	}
 
 	ge, err := builder.Build(schema, runtime, assetMrn, assetName)
