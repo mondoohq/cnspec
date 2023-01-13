@@ -558,7 +558,7 @@ type CollectionFinisherNodeData struct {
 	remainingDatapoints map[NodeID]struct{}
 	doneChan            chan struct{}
 	invalidated         bool
-	assetMrn            string
+	assetPlatformId     string
 }
 
 func (nodeData *CollectionFinisherNodeData) initialize() {
@@ -582,9 +582,9 @@ func (nodeData *CollectionFinisherNodeData) recalculate() *envelope {
 	if !nodeData.invalidated {
 		return nil
 	}
-	if nodeData.progressReporter != nil && nodeData.assetMrn != "" {
+	if nodeData.progressReporter != nil && nodeData.assetPlatformId != "" {
 		nodeData.progressReporter.Send(progress.MsgProgress{
-			Index:   nodeData.assetMrn,
+			Index:   nodeData.assetPlatformId,
 			Percent: float64(nodeData.totalDatapoints-len(nodeData.remainingDatapoints)) / float64(nodeData.totalDatapoints),
 		})
 	}

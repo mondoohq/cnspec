@@ -228,7 +228,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 
 	progressBarElements := map[string]string{}
 	for i := range assetList {
-		progressBarElements[assetList[i].Mrn] = assetList[i].Name
+		progressBarElements[assetList[i].PlatformIds[0]] = assetList[i].Name
 	}
 	var progressProg progress.Program
 	if isatty.IsTerminal(os.Stdout.Fd()) {
@@ -373,7 +373,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			}
 
 			job.ProgressProg.Send(progress.MsgScore{
-				Index: job.Asset.Mrn,
+				Index: job.Asset.PlatformIds[0],
 				Score: results.Report.Score.Rating().Letter(),
 			})
 			job.Reporter.AddReport(job.Asset, results)
@@ -757,7 +757,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, s.job.Asset.Name, resolvedPolicy, features, s.ProgressProg)
+	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset, resolvedPolicy, features, s.ProgressProg)
 	if err != nil {
 		return nil, nil, err
 	}

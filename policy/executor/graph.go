@@ -6,6 +6,7 @@ import (
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec/policy"
@@ -16,10 +17,10 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string, assetName string,
+func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, asset *asset.Asset,
 	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressProg progress.Program,
 ) error {
-	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
+	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(asset.Mrn, collectorSvc))
 	defer collector.FlushAndStop()
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)
@@ -29,7 +30,7 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 		builder.WithProgressReporter(progressProg)
 	}
 
-	ge, err := builder.Build(schema, runtime, assetMrn, assetName)
+	ge, err := builder.Build(schema, runtime, asset)
 	if err != nil {
 		return err
 	}
@@ -72,7 +73,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
 
-	ge, err := builder.Build(schema, runtime, "", "")
+	ge, err := builder.Build(schema, runtime, nil)
 	if err != nil {
 		errs = append(errs, err)
 		return nil, errs
@@ -123,7 +124,7 @@ func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBund
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
 
-	ge, err := builder.Build(schema, runtime, "", "")
+	ge, err := builder.Build(schema, runtime, nil)
 	if err != nil {
 		return nil, nil, err
 	}
