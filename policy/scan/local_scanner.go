@@ -232,7 +232,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	}
 	var progressProg progress.Program
 	if isatty.IsTerminal(os.Stdout.Fd()) {
-		progressProg = progress.NewMultiProgressProgram(progressBarElements)
+		progressProg = progress.NewMultiProgressProgram(progressBarElements, int(job.ProgressNumAssets))
 	} else {
 		progressProg = progress.NoopProgram{}
 	}

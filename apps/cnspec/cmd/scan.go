@@ -307,6 +307,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().MarkHidden("category")
 
 		// output rendering
+		cmd.Flags().Int("num-assets", 30, "Set number of assets for which progress is displayed. (0 will show all assets)")
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
 		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination.")
@@ -404,6 +405,8 @@ type scanConfig struct {
 	DoRecord       bool
 
 	UpstreamConfig *resources.UpstreamConfig
+
+	ProgressNumAssets int
 }
 
 func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) (*scanConfig, error) {
@@ -418,13 +421,20 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		log.Info().Strs("features", opts.Features).Msg("user activated features")
 	}
 
+	progressNumAssets, err := cmd.Flags().GetInt("num-assets")
+	if err != nil {
+		fmt.Printf("Wrong value for num-assets: %v\n", err)
+		os.Exit(1)
+	}
+
 	conf := scanConfig{
-		Features:       opts.GetFeatures(),
-		IsIncognito:    viper.GetBool("incognito"),
-		DoRecord:       viper.GetBool("record"),
-		PolicyPaths:    viper.GetStringSlice("policy-bundle"),
-		PolicyNames:    viper.GetStringSlice("policies"),
-		ScoreThreshold: viper.GetInt("score-threshold"),
+		Features:          opts.GetFeatures(),
+		IsIncognito:       viper.GetBool("incognito"),
+		DoRecord:          viper.GetBool("record"),
+		PolicyPaths:       viper.GetStringSlice("policy-bundle"),
+		PolicyNames:       viper.GetStringSlice("policies"),
+		ScoreThreshold:    viper.GetInt("score-threshold"),
+		ProgressNumAssets: progressNumAssets,
 	}
 
 	// if users want to get more information on available output options,
@@ -553,11 +563,12 @@ func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportColl
 		res, err := scanner.RunIncognito(
 			ctx,
 			&scan.Job{
-				DoRecord:      config.DoRecord,
-				Inventory:     config.Inventory,
-				Bundle:        config.Bundle,
-				PolicyFilters: config.PolicyNames,
-				ReportType:    config.ReportType,
+				DoRecord:          config.DoRecord,
+				Inventory:         config.Inventory,
+				Bundle:            config.Bundle,
+				PolicyFilters:     config.PolicyNames,
+				ReportType:        config.ReportType,
+				ProgressNumAssets: int32(config.ProgressNumAssets),
 			})
 		if err != nil {
 			return nil, err
@@ -568,11 +579,12 @@ func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportColl
 	res, err := scanner.Run(
 		ctx,
 		&scan.Job{
-			DoRecord:      config.DoRecord,
-			Inventory:     config.Inventory,
-			Bundle:        config.Bundle,
-			PolicyFilters: config.PolicyNames,
-			ReportType:    config.ReportType,
+			DoRecord:          config.DoRecord,
+			Inventory:         config.Inventory,
+			Bundle:            config.Bundle,
+			PolicyFilters:     config.PolicyNames,
+			ReportType:        config.ReportType,
+			ProgressNumAssets: int32(config.ProgressNumAssets),
 		})
 	if err != nil {
 		return nil, err
