@@ -372,10 +372,6 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				return
 			}
 
-			job.ProgressProg.Send(progress.MsgScore{
-				Index: job.Asset.PlatformIds[0],
-				Score: results.Report.Score.Rating().Letter(),
-			})
 			job.Reporter.AddReport(job.Asset, results)
 		}(connections[c])
 	}
@@ -595,6 +591,10 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	if err != nil {
 		return ar, err
 	}
+	s.ProgressProg.Send(progress.MsgScore{
+		Index: s.job.Asset.PlatformIds[0],
+		Score: report.Score.Rating().Letter(),
+	})
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
