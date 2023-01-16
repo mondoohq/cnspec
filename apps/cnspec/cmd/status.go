@@ -94,7 +94,10 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 				s.Client.Mrn = "no managed client"
 			}
 
-			certAuth, _ := upstream.NewServiceAccountRangerPlugin(credentials)
+			certAuth, err := upstream.NewServiceAccountRangerPlugin(credentials)
+			if err != nil {
+				log.Fatal().Err(err).Msg("could not load service account credentials")
+			}
 			plugins = append(plugins, certAuth)
 
 			// try to ping the server
