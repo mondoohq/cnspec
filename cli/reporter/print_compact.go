@@ -90,6 +90,8 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		}
 	}
 
+	assetsByScore["X"] += len(r.data.Errors)
+
 	if len(assetsByScore) > 0 {
 		header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))
 		r.out.Write([]byte(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String()))
@@ -230,8 +232,15 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*p
 	for _, platform := range availablePlatforms {
 		r.out.Write([]byte(NewLineCharacter + platform + NewLineCharacter))
 		for i := range assetsByPlatform[platform] {
-			assetScoreRating := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score.Rating()
-			assetScore := assetScoreRating.Letter()
+			assetScore := "U"
+			assetScoreRating := policy.ScoreRating_unrated
+			if r.data.Reports[assetsByPlatform[platform][i].Mrn] != nil {
+				assetScoreRating = r.data.Reports[assetsByPlatform[platform][i].Mrn].Score.Rating()
+				assetScore = assetScoreRating.Letter()
+			} else {
+				assetScoreRating = policy.ScoreRating_error
+				assetScore = "X"
+			}
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
 			output := fmt.Sprintf("    %s %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
 			r.out.Write([]byte(output + NewLineCharacter))
