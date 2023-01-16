@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/cli/config"
@@ -466,7 +467,11 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount != nil {
-		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg("could not initialize client authentication")
+			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+		}
 		plugins := []ranger.ClientPlugin{certAuth}
 		// determine information about the client
 		sysInfo, err := sysinfo.GatherSystemInfo()

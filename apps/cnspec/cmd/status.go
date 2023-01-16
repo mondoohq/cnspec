@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
@@ -96,7 +97,8 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 
 			certAuth, err := upstream.NewServiceAccountRangerPlugin(credentials)
 			if err != nil {
-				log.Fatal().Err(err).Msg("could not load service account credentials")
+				log.Error().Err(err).Msg("could not initialize client authentication")
+				os.Exit(cnquery_cmd.ConfigurationErrorCode)
 			}
 			plugins = append(plugins, certAuth)
 
