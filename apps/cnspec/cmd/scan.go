@@ -386,9 +386,15 @@ func getPoliciesForCompletion() []string {
 }
 
 type scanConfig struct {
-	Features    cnquery.Features
-	Inventory   *v1.Inventory
-	Output      string
+	Features  cnquery.Features
+	Inventory *v1.Inventory
+
+	// report type, indicates if the service how much data needs to be collected
+	ReportType scan.ReportType
+
+	// output format for the rendering
+	Output string
+
 	PolicyPaths []string
 	PolicyNames []string
 	Bundle      *policy.Bundle
@@ -524,10 +530,12 @@ func (c *scanConfig) loadPolicies() error {
 	return nil
 }
 
-func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
-	opts := []scan.ScannerOption{}
+func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportCollection, error) {
+	scannerOpts := []scan.ScannerOption{}
+	scannerOpts = append(scannerOpts, opts...)
+
 	if config.UpstreamConfig != nil {
-		opts = append(opts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn), scan.WithPlugins(config.UpstreamConfig.Plugins))
+		scannerOpts = append(scannerOpts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn), scan.WithPlugins(config.UpstreamConfig.Plugins))
 	}
 
 	// show warning to the user of the policy filter container a bundle file name
@@ -538,7 +546,7 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 		}
 	}
 
-	scanner := scan.NewLocalScanner(opts...)
+	scanner := scan.NewLocalScanner(scannerOpts...)
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 
 	if config.IsIncognito {
@@ -549,7 +557,7 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 				Inventory:     config.Inventory,
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
-				ReportType:    scan.ReportType_FULL,
+				ReportType:    config.ReportType,
 			})
 		if err != nil {
 			return nil, err
@@ -564,7 +572,7 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 			Inventory:     config.Inventory,
 			Bundle:        config.Bundle,
 			PolicyFilters: config.PolicyNames,
-			ReportType:    scan.ReportType_FULL,
+			ReportType:    config.ReportType,
 		})
 	if err != nil {
 		return nil, err
