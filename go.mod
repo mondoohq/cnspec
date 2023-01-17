@@ -25,7 +25,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.14.0
 	github.com/stretchr/testify v1.8.1
-	go.mondoo.com/cnquery v0.0.0-20230112143917-2934d0ee356e
+	go.mondoo.com/cnquery v0.0.0-20230117103244-e2c720ebe0d6
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.11.1
 	golang.org/x/sync v0.1.0
@@ -36,14 +36,18 @@ require (
 )
 
 require (
+	cloud.google.com/go/functions v1.9.0 // indirect
+	cloud.google.com/go/run v0.5.0 // indirect
 	cloud.google.com/go/storage v1.27.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.0.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2 v2.0.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/mysql/armmysqlflexibleservers v1.0.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/security/armsecurity v0.9.0 // indirect
 	github.com/GoogleCloudPlatform/berglas v1.0.1 // indirect
+	github.com/ProtonMail/go-crypto v0.0.0-20230113180642-068501e20d67 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.22.0 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20221221165957-55f4180e6214 // indirect
+	github.com/cloudflare/circl v1.1.0 // indirect
 	github.com/sethvargo/go-retry v0.2.3 // indirect
 )
 
@@ -455,7 +459,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.103.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/grpc v1.50.1 // indirect
+	google.golang.org/grpc v1.51.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
