@@ -27,10 +27,10 @@ func Serve(timer time.Duration, handler JobRunner) {
 		log.Logger = log.Output(w)
 
 		// run service
-		runService(SvcName, false, timer, handler)
+		runService(false, timer, handler)
 		return
 	}
-	runService(SvcName, true, timer, handler)
+	runService(true, timer, handler)
 }
 
 type windowsService struct {
@@ -94,21 +94,21 @@ loop:
 	return
 }
 
-func runService(name string, isDebug bool, timer time.Duration, handler JobRunner) {
+func runService(isDebug bool, timer time.Duration, handler JobRunner) {
 	var err error
 
-	log.Info().Msgf("starting %s service", name)
+	log.Info().Msgf("starting %s service", SvcName)
 	run := svc.Run
 	if isDebug {
 		run = debug.Run
 	}
-	err = run(name, &windowsService{
+	err = run(SvcName, &windowsService{
 		Handler: handler,
 		Timer:   timer,
 	})
 	if err != nil {
-		log.Info().Msgf("%s service failed: %v", name, err)
+		log.Info().Msgf("%s service failed: %v", SvcName, err)
 		return
 	}
-	log.Info().Msgf("%s service stopped", name)
+	log.Info().Msgf("%s service stopped", SvcName)
 }
