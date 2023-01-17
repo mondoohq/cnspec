@@ -19,6 +19,7 @@ import (
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/inventoryloader"
 	"go.mondoo.com/cnquery/cli/sysinfo"
+	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery/common"
 	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
@@ -360,6 +361,8 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to run scan")
 		}
+
+		logger.DebugDumpJSON("report", report)
 		printReports(report, conf, cmd)
 
 		// if we had asset errors, we return a non-zero exit code
