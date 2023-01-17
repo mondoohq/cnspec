@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/inventoryloader"
@@ -59,7 +61,9 @@ var serveCmd = &cobra.Command{
 		// determine the scan config from pipe or args
 		conf, err := getServeConfig()
 		if err != nil {
-			log.Fatal().Err(err).Msg("failed to prepare config")
+			log.Error().Err(err).Msg("could not load configuration")
+			// we return the specific error code to prevent systemd from restarting
+			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
 
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
@@ -130,7 +134,10 @@ func getServeConfig() (*scanConfig, error) {
 
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount != nil {
-		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			return nil, errors.Wrap(err, errorMessageServiceAccount)
+		}
 		plugins := []ranger.ClientPlugin{certAuth}
 		// determine information about the client
 		sysInfo, err := sysinfo.GatherSystemInfo()
