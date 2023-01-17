@@ -73,7 +73,11 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 		}
 
 		// check server health and clock skew
-		s.Upstream = health.CheckApiHealth(opts.UpstreamApiEndpoint())
+		upstreamStatus, err := health.CheckApiHealth(opts.UpstreamApiEndpoint())
+		if err != nil {
+			log.Error().Err(err).Msg("could not check upstream health")
+		}
+		s.Upstream = upstreamStatus
 
 		// check valid agent authentication
 		plugins := []ranger.ClientPlugin{}
