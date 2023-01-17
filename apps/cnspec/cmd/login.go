@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
@@ -155,10 +157,10 @@ func register(token string) {
 			plugins = append(plugins, defaultPlugins...)
 			certAuth, err := upstream.NewServiceAccountRangerPlugin(credential)
 			if err != nil {
-				log.Warn().Err(err).Msg("could not initialize certificate authentication")
-			} else {
-				plugins = append(plugins, certAuth)
+				log.Error().Err(err).Msg(errorMessageServiceAccount)
+				os.Exit(cnquery_cmd.ConfigurationErrorCode)
 			}
+			plugins = append(plugins, certAuth)
 
 			client, err := upstream.NewAgentManagerClient(apiEndpoint, ranger.DefaultHttpClient(), plugins...)
 			if err != nil {
@@ -205,7 +207,8 @@ func register(token string) {
 	plugins = append(plugins, defaultPlugins...)
 	certAuth, err := upstream.NewServiceAccountRangerPlugin(credential)
 	if err != nil {
-		log.Warn().Err(err).Msg("could not initialize certificate authentication")
+		log.Error().Err(err).Msg(errorMessageServiceAccount)
+		os.Exit(cnquery_cmd.ConfigurationErrorCode)
 	}
 	plugins = append(plugins, certAuth)
 	client, err := upstream.NewAgentManagerClient(apiEndpoint, ranger.DefaultHttpClient(), plugins...)

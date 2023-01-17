@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
@@ -94,7 +95,11 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 				s.Client.Mrn = "no managed client"
 			}
 
-			certAuth, _ := upstream.NewServiceAccountRangerPlugin(credentials)
+			certAuth, err := upstream.NewServiceAccountRangerPlugin(credentials)
+			if err != nil {
+				log.Error().Err(err).Msg(errorMessageServiceAccount)
+				os.Exit(cnquery_cmd.ConfigurationErrorCode)
+			}
 			plugins = append(plugins, certAuth)
 
 			// try to ping the server

@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/upstream"
@@ -191,7 +192,11 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Msg("cnquery has no credentials. Log in with `cnquery login`")
 		}
 
-		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+		}
 		queryHubServices, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), ranger.DefaultHttpClient(), certAuth)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not connect to policy hub")

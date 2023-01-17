@@ -34,6 +34,10 @@ const cnspecLogo = "  ___ _ __  ___ _ __   ___  ___ \n" +
 	" \\___|_| |_|___/ .__/ \\___|\\___|\n" +
 	"   mondoo™     |_|              "
 
+const (
+	errorMessageServiceAccount = "invalid service account configuration"
+)
+
 func init() {
 	theme.DefaultTheme.Landing = landing()
 	theme.DefaultTheme.Welcome = welcome()

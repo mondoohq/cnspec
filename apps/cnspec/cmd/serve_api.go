@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/logger"
@@ -57,7 +58,11 @@ var serveApiCmd = &cobra.Command{
 			log.Fatal().Msg("no service account configured")
 		}
 
-		certAuth, _ := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+		}
 		plugins := []ranger.ClientPlugin{certAuth}
 		// determine information about the client
 		sysInfo, err := sysinfo.GatherSystemInfo()
