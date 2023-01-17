@@ -157,7 +157,7 @@ func register(token string) {
 			plugins = append(plugins, defaultPlugins...)
 			certAuth, err := upstream.NewServiceAccountRangerPlugin(credential)
 			if err != nil {
-				log.Error().Err(err).Msg("could not initialize client authentication")
+				log.Error().Err(err).Msg(errorMessageServiceAccount)
 				os.Exit(cnquery_cmd.ConfigurationErrorCode)
 			}
 			plugins = append(plugins, certAuth)
@@ -207,7 +207,7 @@ func register(token string) {
 	plugins = append(plugins, defaultPlugins...)
 	certAuth, err := upstream.NewServiceAccountRangerPlugin(credential)
 	if err != nil {
-		log.Error().Err(err).Msg("could not initialize client authentication")
+		log.Error().Err(err).Msg(errorMessageServiceAccount)
 		os.Exit(cnquery_cmd.ConfigurationErrorCode)
 	}
 	plugins = append(plugins, certAuth)

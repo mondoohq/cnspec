@@ -469,7 +469,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	if serviceAccount != nil {
 		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
 		if err != nil {
-			log.Error().Err(err).Msg("could not initialize client authentication")
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
 		plugins := []ranger.ClientPlugin{certAuth}

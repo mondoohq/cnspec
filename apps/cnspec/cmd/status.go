@@ -97,7 +97,7 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 
 			certAuth, err := upstream.NewServiceAccountRangerPlugin(credentials)
 			if err != nil {
-				log.Error().Err(err).Msg("could not initialize client authentication")
+				log.Error().Err(err).Msg(errorMessageServiceAccount)
 				os.Exit(cnquery_cmd.ConfigurationErrorCode)
 			}
 			plugins = append(plugins, certAuth)

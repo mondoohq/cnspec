@@ -53,21 +53,21 @@ the credentials cannot be used in future anymore.
 		// check valid client authentication
 		serviceAccount := opts.GetServiceCredential()
 		if serviceAccount == nil {
-			log.Error().Err(err).Msg("could not initialize client authentication")
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
 
 		plugins := defaultRangerPlugins(sysInfo, opts.GetFeatures())
 		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
 		if err != nil {
-			log.Error().Err(err).Msg("could not initialize client authentication")
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
 		plugins = append(plugins, certAuth)
 
 		client, err := upstream.NewAgentManagerClient(opts.UpstreamApiEndpoint(), ranger.DefaultHttpClient(), plugins...)
 		if err != nil {
-			log.Error().Err(err).Msg("could not initialize client authentication")
+			log.Error().Err(err).Msg("could not initialize connection to Mondoo Platform")
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
 
