@@ -25,7 +25,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.14.0
 	github.com/stretchr/testify v1.8.1
-	go.mondoo.com/cnquery v0.0.0-20230117103244-e2c720ebe0d6
+	go.mondoo.com/cnquery v0.0.0-20230117185211-87da1d530727
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.11.1
 	golang.org/x/sync v0.1.0
@@ -37,6 +37,7 @@ require (
 
 require (
 	cloud.google.com/go/functions v1.9.0 // indirect
+	cloud.google.com/go/logging v1.6.1 // indirect
 	cloud.google.com/go/run v0.5.0 // indirect
 	cloud.google.com/go/storage v1.27.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.0.1 // indirect
