@@ -90,7 +90,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		}
 	}
 
-	assetsByScore["X"] += len(r.data.Errors)
+	if len(r.data.Errors) > 0 {
+		assetsByScore["X"] += len(r.data.Errors)
+	}
 
 	if len(assetsByScore) > 0 {
 		header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))

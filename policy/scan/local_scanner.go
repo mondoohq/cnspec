@@ -227,12 +227,17 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	}
 
 	progressBarElements := map[string]string{}
+	orderedKeys := []string{}
 	for i := range assetList {
 		progressBarElements[assetList[i].PlatformIds[0]] = assetList[i].Name
+		orderedKeys = append(orderedKeys, assetList[i].PlatformIds[0])
 	}
 	var progressProg progress.Program
 	if isatty.IsTerminal(os.Stdout.Fd()) {
-		progressProg = progress.NewMultiProgressProgram(progressBarElements, int(job.ProgressNumAssets))
+		progressProg, err = progress.NewMultiProgressProgram(progressBarElements, orderedKeys, int(job.ProgressNumAssets))
+		if err != nil {
+			return nil, false, errors.Wrap(err, "could not create progress bar")
+		}
 	} else {
 		progressProg = progress.NoopProgram{}
 	}
@@ -369,6 +374,11 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			if err != nil {
 				log.Error().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 				job.Reporter.AddScanError(job.Asset, err)
+				job.ProgressProg.Send(progress.MsgErrored{Index: job.Asset.PlatformIds[0]})
+				job.ProgressProg.Send(progress.MsgScore{
+					Index: job.Asset.PlatformIds[0],
+					Score: "X",
+				})
 				return
 			}
 
