@@ -234,7 +234,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	}
 	var progressProg progress.Program
 	if isatty.IsTerminal(os.Stdout.Fd()) {
-		progressProg, err = progress.NewMultiProgressProgram(progressBarElements, orderedKeys, int(job.ProgressNumAssets))
+		progressProg, err = progress.NewMultiProgressProgram(progressBarElements, orderedKeys)
 		if err != nil {
 			return nil, false, errors.Wrap(err, "could not create progress bar")
 		}
