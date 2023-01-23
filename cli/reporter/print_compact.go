@@ -62,7 +62,6 @@ func (r *defaultReporter) print() error {
 		return orderedAssets[i].Name < orderedAssets[j].Name
 	})
 
-	r.out.Write([]byte(NewLineCharacter))
 	if !r.isSummary {
 		r.printAssetSections(orderedAssets)
 	}
@@ -299,8 +298,6 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 	if len(orderedAssets) == 0 || len(r.data.Errors) == len(orderedAssets) {
 		return
 	}
-
-	r.out.Write([]byte(NewLineCharacter))
 
 	var queries map[string]*policy.Mquery
 	if r.bundle != nil {
