@@ -10,14 +10,12 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
-	"github.com/muesli/termenv"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/progress"
-	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
@@ -287,12 +285,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	scanGroup.Wait()
 
 	log.Debug().Msg("completed scanning all assets")
-	reports := reporter.Reports()
-	if !reports.Ok {
-		fmt.Println(termenv.String("Errors during scan:").Foreground(colors.DefaultColorTheme.Primary))
-	}
-
-	return reports, finished, nil
+	return reporter.Reports(), finished, nil
 }
 
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
@@ -370,7 +363,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.connection = m
 			results, err := s.runMotorizedAsset(job)
 			if err != nil {
-				log.Error().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
+				log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 				job.Reporter.AddScanError(job.Asset, err)
 				job.ProgressProg.Send(progress.MsgErrored{Index: job.Asset.PlatformIds[0]})
 				job.ProgressProg.Send(progress.MsgScore{
