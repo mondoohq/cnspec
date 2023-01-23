@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -166,7 +167,11 @@ func TestBuilder(t *testing.T) {
 
 	b.WithMondooVersion("100.0.0")
 
-	ge, err := b.Build(nil, nil, "assetMrn")
+	asset := &asset.Asset{
+		Mrn:         "assetMrn",
+		PlatformIds: []string{"platformId"},
+	}
+	ge, err := b.Build(nil, nil, asset)
 	require.NoError(t, err)
 
 	hasNode(t, ge, "execution_query/propertyquery", ExecutionQueryNodeType)

@@ -583,9 +583,13 @@ func (nodeData *CollectionFinisherNodeData) recalculate() *envelope {
 		return nil
 	}
 	if nodeData.progressReporter != nil && nodeData.assetPlatformId != "" {
+		percent := 0.0
+		if nodeData.totalDatapoints > 0 {
+			percent = float64(nodeData.totalDatapoints-len(nodeData.remainingDatapoints)) / float64(nodeData.totalDatapoints)
+		}
 		nodeData.progressReporter.Send(progress.MsgProgress{
 			Index:   nodeData.assetPlatformId,
-			Percent: float64(nodeData.totalDatapoints-len(nodeData.remainingDatapoints)) / float64(nodeData.totalDatapoints),
+			Percent: percent,
 		})
 	}
 	nodeData.invalidated = false
