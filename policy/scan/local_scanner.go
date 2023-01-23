@@ -248,7 +248,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	finished := false
 	go func() {
 		defer scanGroup.Done()
-		// this is a noop, when the tea programm isn't running
 		defer progressProg.Quit()
 		for i := range assetList {
 			asset := assetList[i]
@@ -285,7 +284,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		fmt.Println(err.Error())
 		panic(err)
 	}
-	defer progressProg.Quit()
 	scanGroup.Wait()
 
 	log.Debug().Msg("completed scanning all assets")
