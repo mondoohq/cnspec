@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/components"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/stringx"
 	"go.mondoo.com/cnquery/upstream/mvd"
@@ -299,7 +300,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		return
 	}
 
-	var queries map[string]*policy.Mquery
+	var queries map[string]*explorer.Mquery
 	if r.bundle != nil {
 		queries = r.bundle.QueryMap()
 	}
@@ -350,7 +351,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 // Remove all this code and migrate it to tap or something
 // ============================= vv ============================================
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*policy.Mquery, assetMrn string, asset *policy.Asset) {
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *policy.Asset) {
 	results := report.RawResults()
 
 	dataQueriesOutput := ""
@@ -390,10 +391,10 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 }
 
 // only works with type == policy.ScoreType_Result
-func (r *defaultReporter) printScore(title string, score *policy.Score, query *policy.Mquery) string {
+func (r *defaultReporter) printScore(title string, score *policy.Score, query *explorer.Mquery) string {
 	// FIXME: this is only a workaround for a deeper bug with the score value
-	if query.Severity != nil {
-		floor := 100 - uint32(query.Severity.Value)
+	if query.Impact != nil && query.Impact.Value != -1 {
+		floor := 100 - uint32(query.Impact.Value)
 		if floor > score.Value {
 			score.Value = floor
 		}
@@ -409,7 +410,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *p
 	}
 
 	var scoreIndicator string
-	if query.Severity != nil && score.Value != 100 {
+	if query.Impact != nil && score.Value != 100 {
 		scoreIndicator = termenv.String(
 			fmt.Sprintf("%s %3d  ", rating.Letter(), score.Value),
 		).Foreground(color).String()
@@ -418,7 +419,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *p
 	return passfail + scoreIndicator + title + NewLineCharacter
 }
 
-func (r *defaultReporter) printControl(score *policy.Score, query *policy.Mquery, asset *policy.Asset, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+func (r *defaultReporter) printControl(score *policy.Score, query *explorer.Mquery, asset *policy.Asset, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	title := query.Title
 	if title == "" {
 		title = query.Mrn

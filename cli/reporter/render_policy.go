@@ -8,6 +8,7 @@ import (
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/stringx"
 	"go.mondoo.com/cnspec/cli/components"
@@ -44,11 +45,12 @@ func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *poli
 }
 
 func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundleMap *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, res *bytes.Buffer) {
-	dataQueries := map[string]policy.QueryAction{}
+	dataQueries := map[string]explorer.Mquery_Action{}
 	for i := range policyObj.Specs {
 		spec := policyObj.Specs[i]
-		for qid, queryAction := range spec.DataQueries {
-			dataQueries[qid] = queryAction
+		for j := range spec.Queries {
+			query := spec.Queries[j]
+			dataQueries[query.Mrn] = query.Action
 		}
 	}
 
@@ -143,9 +145,9 @@ func renderPolicySummary(res *bytes.Buffer, data []reportRow) {
 		row := data[i]
 
 		ps.Total++
-		if row.Action == policy.QueryAction_DEACTIVATE {
+		if row.Action == explorer.Mquery_DELETE {
 			ps.Skipped++
-		} else if row.Action == policy.QueryAction_MODIFY && row.ActionSpec != nil && row.ActionSpec.Weight == 0 {
+		} else if row.Action == explorer.Mquery_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			ps.Skipped++
 		} else if row.Score != nil && row.Score.Type == policy.ScoreType_Error {
 			ps.Errors.Total++
@@ -188,9 +190,9 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 		row := data[i]
 
 		action := ""
-		if row.Action == policy.QueryAction_DEACTIVATE {
+		if row.Action == explorer.Mquery_DELETE {
 			action = "// removed by user"
-		} else if row.Action == policy.QueryAction_MODIFY && (row.ActionSpec == nil || row.ActionSpec.Weight == 0) {
+		} else if row.Action == explorer.Mquery_MODIFY && (row.Impact == nil || row.Impact.Weight == 0) {
 			action = "// ignored by user"
 		} else if row.Score != nil && row.Score.Type == policy.ScoreType_Skip {
 			action = "// skipped by query condition"

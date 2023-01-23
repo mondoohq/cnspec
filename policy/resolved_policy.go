@@ -2,6 +2,7 @@ package policy
 
 import (
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 )
 
@@ -18,7 +19,7 @@ func (x *ResolvedPolicy) WithDataQueries(f func(id string, query *ExecutionQuery
 }
 
 // TODO: attach to ResolvedPolicy
-func (r *ResolvedPolicy) GetCodeBundle(query *Mquery) *llx.CodeBundle {
+func (r *ResolvedPolicy) GetCodeBundle(query *explorer.Mquery) *llx.CodeBundle {
 	executionQuery := r.ExecutionJob.Queries[query.CodeId]
 	return executionQuery.GetCode()
 }

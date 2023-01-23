@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"time"
 
-	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/vault"
@@ -31,6 +30,7 @@ type AssetJob struct {
 	Asset            *asset.Asset
 	Bundle           *policy.Bundle
 	PolicyFilters    []string
+	Props          map[string]string
 	Ctx              context.Context
 	GetCredential    func(cred *vault.Credential) (*vault.Credential, error)
 	Reporter         Reporter

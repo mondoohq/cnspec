@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/explorer"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -36,7 +37,7 @@ func (c *averageScoreCalculator) Init() {
 	c.allErrored = true
 }
 
-func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, spec *ScoringSpec) {
+func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, spec *explorer.Impact) {
 	if !found {
 		calculator.Add(&Score{
 			ScoreCompletion: 0,
@@ -46,45 +47,47 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, spec *Scori
 	}
 
 	score := proto.Clone(s).(*Score)
-	if spec.GetSeverity() != nil {
-		floor := 100 - uint32(spec.Severity.Value)
+	if spec != nil {
+		floor := 100 - uint32(spec.Value)
 		if floor > score.Value {
 			score.Value = floor
 		}
 	}
 
 	// we ignore the UNSPECIFIED specs
-	if spec == nil || spec.Action == QueryAction_UNSPECIFIED {
+	if spec == nil {
 		calculator.Add(score)
 		return
 	}
 
-	if spec.Action == QueryAction_ACTIVATE || spec.Action == QueryAction_MODIFY {
+	// everything else is modify or activate
 
-		if spec.Weight == 0 {
-			calculator.Add(&Score{
-				// We override the type because:
-				// 1. If it is set to Result, its value will be added to the total
-				// calculation in most calculators despite its weight.
-				// 2. We don't want to set it to unscored, because technically we
-				// just ignore the score.
-				// Thus we set the score to unknown for the sake of the calculator,
-				// thus it knows it is handling a scored result, but also knows not
-				// to count it.
-				Type:            ScoreType_Unknown,
-				Value:           score.Value,
-				Weight:          0,
-				ScoreCompletion: score.ScoreCompletion,
-				DataCompletion:  score.DataCompletion,
-				DataTotal:       score.DataTotal,
-			})
-			return
-		}
-
-		score.Weight = spec.Weight
-		calculator.Add(score)
+	if spec.Weight == 0 {
+		calculator.Add(&Score{
+			// We override the type because:
+			// 1. If it is set to Result, its value will be added to the total
+			// calculation in most calculators despite its weight.
+			// 2. We don't want to set it to unscored, because technically we
+			// just ignore the score.
+			// Thus we set the score to unknown for the sake of the calculator,
+			// thus it knows it is handling a scored result, but also knows not
+			// to count it.
+			Type:            ScoreType_Unknown,
+			Value:           score.Value,
+			Weight:          0,
+			ScoreCompletion: score.ScoreCompletion,
+			DataCompletion:  score.DataCompletion,
+			DataTotal:       score.DataTotal,
+		})
 		return
 	}
+
+	if spec.Weight != -1 {
+		score.Weight = uint32(spec.Weight)
+	}
+
+	calculator.Add(score)
+	return
 }
 
 func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {

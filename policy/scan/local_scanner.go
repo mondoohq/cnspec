@@ -15,6 +15,7 @@ import (
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/progress"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor"
@@ -266,6 +267,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 				Asset:            asset,
 				Bundle:           job.Bundle,
 				PolicyFilters:    job.PolicyFilters,
+				Props:            job.Props,
 				Ctx:              ctx,
 				GetCredential:    im.GetCredential,
 				Reporter:         reporter,
@@ -670,7 +672,31 @@ func (s *localAssetScanner) prepareAsset() error {
 		AssetMrn:   s.job.Asset.Mrn,
 		PolicyMrns: policyMrns,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	if len(s.job.Props) != 0 {
+		propsReq := explorer.PropsReq{
+			EntityMrn: s.job.Asset.Mrn,
+			Props:     make([]*explorer.Property, len(s.job.Props)),
+		}
+		i := 0
+		for k, v := range s.job.Props {
+			propsReq.Props[i] = &explorer.Property{
+				Uid: k,
+				Mql: v,
+			}
+			i++
+		}
+
+		_, err = resolver.SetProps(s.job.Ctx, &propsReq)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 var assetDetectBundle = executor.MustCompile("asset { kind platform runtime version family }")
@@ -738,7 +764,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got policy filters")
 	logger.TraceJSON(rawFilters)
 
-	filters, err := s.UpdateFilters(rawFilters, 5*time.Second)
+	filters, err := s.UpdateFilters(&explorer.Mqueries{Items: rawFilters.Items}, 5*time.Second)
 	if err != nil {
 		return s.job.Bundle, nil, err
 	}
@@ -795,13 +821,13 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 }
 
 // FilterQueries returns all queries whose result is truthy
-func (s *localAssetScanner) FilterQueries(queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+func (s *localAssetScanner) FilterQueries(queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
 	return executor.ExecuteFilterQueries(s.Schema, s.Runtime, queries, timeout)
 }
 
 // UpdateFilters takes a list of test filters and runs them against the backend
 // to return the matching ones
-func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time.Duration) ([]*policy.Mquery, error) {
+func (s *localAssetScanner) UpdateFilters(filters *explorer.Mqueries, timeout time.Duration) ([]*explorer.Mquery, error) {
 	queries, errs := s.FilterQueries(filters.Items, timeout)
 
 	var err error

@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/mrn"
@@ -258,8 +259,10 @@ func (p *Bundle) RemoveOrphaned() {
 func (p *Bundle) Clean() *Bundle {
 	for i := range p.Policies {
 		policy := p.Policies[i]
-		if policy.AssetFilters == nil {
-			policy.AssetFilters = map[string]*Mquery{}
+		if policy.Filters == nil {
+			policy.Filters = &explorer.Filters{
+				Items: map[string]*explorer.Mquery{},
+			}
 		}
 	}
 
@@ -351,12 +354,52 @@ func (p *Bundle) SortContents() {
 	})
 }
 
+func (p *Bundle) compileProp(prop *explorer.Property, ownerMrn string, lookupProp map[string]explorer.PropertyRef, uid2mrn map[string]string, bundles map[string]*llx.CodeBundle) error {
+	var name string
+
+	if prop.Mrn == "" {
+		uid := prop.Uid
+		if err := prop.RefreshMRN(ownerMrn); err != nil {
+			return err
+		}
+		if uid != "" {
+			uid2mrn[uid] = prop.Mrn
+		}
+
+		// TODO: uid's can be namespaced, extract the name
+		name = uid
+	} else {
+		m, err := mrn.NewMRN(prop.Mrn)
+		if err != nil {
+			return errors.Wrap(err, "failed to compile prop, invalid mrn: "+prop.Mrn)
+		}
+
+		name = m.Basename()
+	}
+
+	code, err := prop.RefreshChecksumAndType()
+	if err != nil {
+		return err
+	}
+
+	lookupProp[prop.Mrn] = explorer.PropertyRef{
+		Property: prop,
+		Name:     name,
+	}
+
+	bundles[prop.Mrn] = code
+
+	return nil
+}
+
 // Compile PolicyBundle into a PolicyBundleMap
 // Does 4 things:
 // 1. turns policy bundle into a map for easier access
 // 2. compile all queries. store code in the bundle map
 // 3. validation of all contents
 // 4. generate MRNs for all policies, queries, and properties and updates referencing local fields
+// 5. snapshot all queries into the packs
+// 6. make queries public that are only embedded
 func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap, error) {
 	ownerMrn := p.OwnerMrn
 	if ownerMrn == "" {
@@ -370,34 +413,54 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	uid2mrn := map[string]string{}
 	bundles := map[string]*llx.CodeBundle{}
 
-	// StoreBundle properties
-	propQueries := map[string]*Mquery{}
-	props := map[string]*llx.Primitive{}
-	for i := range p.Props {
-		query := p.Props[i]
+	// Index properties
+	lookupProp := map[string]explorer.PropertyRef{}
+	lookupQuery := map[string]*explorer.Mquery{}
 
-		err = query.RefreshMRN(ownerMrn)
-		if err != nil {
-			return nil, errors.New("failed to refresh property: " + err.Error())
+	for i := range p.Props {
+		if err = p.compileProp(p.Props[i], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+			return nil, err
+		}
+	}
+
+	// Index queries + update MRNs and checksums
+	for i := range p.Queries {
+		query := p.Queries[i]
+		if query == nil {
+			return nil, errors.New("received null query")
+		}
+
+		// remove leading and trailing whitespace of docs, refs and tags
+		query.Sanitize()
+
+		// ensure the correct mrn is set
+		uid := query.Uid
+		if err = query.RefreshMRN(ownerMrn); err != nil {
+			return nil, err
+		}
+		if uid != "" {
+			uid2mrn[uid] = query.Mrn
+		}
+		lookupQuery[query.Mrn] = query
+
+		// ensure MRNs for properties
+		for i := range query.Props {
+			if err = p.compileProp(query.Props[i], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+				return nil, err
+			}
 		}
 
 		// recalculate the checksums
-		bundle, err := query.RefreshChecksumAndType(props)
+		bundle, err := query.RefreshChecksumAndType(lookupProp)
 		if err != nil {
-			return nil, errors.New("failed to validate property '" + query.Mrn + "': " + err.Error())
+			log.Error().Err(err).Msg("could not compile the query")
+			warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
 		}
 
-		name, err := mrn.GetResource(query.Mrn, MRN_RESOURCE_QUERY)
-		if err != nil {
-			return nil, errors.New("failed to compile, could not read property name from query mrn: " + query.Mrn)
-		}
-		propQueries[name] = query
-		propQueries[query.Mrn] = query
-		props[name] = &llx.Primitive{Type: query.Type} // placeholder
 		bundles[query.Mrn] = bundle
 	}
 
-	// StoreBundle policies + update MRNs and checksums, link properties via MRNs
+	// Index policies + update MRNs and checksums, link properties via MRNs
 	for i := range p.Policies {
 		policy := p.Policies[i]
 
@@ -417,51 +480,104 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 
 		// Properties
-		for name, target := range policy.Props {
-			if target != "" {
-				return nil, errors.New("overwriting properties not yet supported - sorry")
-			}
-
-			q, ok := propQueries[name]
-			if !ok {
-				return nil, errors.New("cannot find property '" + name + "' in policy '" + policy.Name + "'")
-			}
-
-			// turn UID/name references into MRN references
-			if name != q.Mrn {
-				delete(policy.Props, name)
-				policy.Props[q.Mrn] = target
+		for i := range policy.Props {
+			if err = p.compileProp(policy.Props[i], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+				return nil, err
 			}
 		}
-	}
 
-	// StoreBundle queries + update MRNs and checksums
-	for i := range p.Queries {
-		query := p.Queries[i]
-		if query == nil {
-			return nil, errors.New("received null query")
+		// Queries
+		for i := range policy.Specs {
+			spec := policy.Specs[i]
+
+			// When filters are initially added they haven't been compiled, i.e. we don't have MRNs
+			// Time to do both
+			if spec.Filter != nil {
+				filters := make(map[string]*explorer.Mquery, len(spec.Filter.Items))
+				for j := range spec.Filter.Items {
+					filter := spec.Filter.Items[j]
+					if _, err := filter.RefreshAsFilter(ownerMrn); err != nil {
+						return nil, err
+					}
+					filters[filter.CodeId] = filter
+				}
+				spec.Filter.Items = filters
+			}
+
+			for j := range spec.Queries {
+				query := spec.Queries[j]
+
+				// remove leading and trailing whitespace of docs, refs and tags
+				query.Sanitize()
+
+				// ensure the correct mrn is set
+				if err = query.RefreshMRN(ownerMrn); err != nil {
+					return nil, err
+				}
+
+				for k := range query.Props {
+					if err = p.compileProp(query.Props[k], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+						return nil, err
+					}
+				}
+
+				existing, ok := lookupQuery[query.Mrn]
+				if ok {
+					query.Merge(existing)
+					query.RefreshChecksumAndType(lookupProp)
+					continue
+				}
+
+				// recalculate the checksums
+				_, err := query.RefreshChecksumAndType(lookupProp)
+				if err != nil {
+					log.Error().Err(err).Msg("could not compile the query")
+					warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
+				}
+
+				lookupQuery[query.Mrn] = query
+
+				// we may have embed-only queries, that we externalize and make available
+				p.Queries = append(p.Queries, query)
+			}
+
+			for j := range spec.Checks {
+				check := spec.Checks[j]
+
+				// remove leading and trailing whitespace of docs, refs and tags
+				check.Sanitize()
+
+				// ensure the correct mrn is set
+				if err = check.RefreshMRN(ownerMrn); err != nil {
+					return nil, err
+				}
+
+				for k := range check.Props {
+					if err = p.compileProp(check.Props[k], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+						return nil, err
+					}
+				}
+
+				existing, ok := lookupQuery[check.Mrn]
+				if ok {
+					check.Merge(existing)
+					check.RefreshChecksumAndType(lookupProp)
+					continue
+				}
+
+				// recalculate the checksums
+				_, err := check.RefreshChecksumAndType(lookupProp)
+				if err != nil {
+					log.Error().Err(err).Msg("could not compile the query")
+					warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+check.Mrn+"'"))
+				}
+
+				lookupQuery[check.Mrn] = check
+
+				// we may have embed-only queries, that we externalize and make available
+				p.Queries = append(p.Queries, check)
+			}
 		}
-
-		// remove leading and trailing whitespace of docs, refs and tags
-		query.Sanitize()
-
-		// ensure the correct mrn is set
-		uid := query.Uid
-		if err = query.RefreshMRN(ownerMrn); err != nil {
-			return nil, err
-		}
-		if uid != "" {
-			uid2mrn[uid] = query.Mrn
-		}
-
-		// recalculate the checksums
-		bundle, err := query.RefreshChecksumAndType(props)
-		if err != nil {
-			log.Debug().Err(err).Msg("could not compile the query")
-			warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
-		}
-
-		bundles[query.Mrn] = bundle
 	}
 
 	// cannot be done before all policies and queries have their MRNs set
@@ -504,50 +620,30 @@ func translateSpecUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]st
 	for i := range policyObj.Specs {
 		spec := policyObj.Specs[i]
 
-		if len(spec.DataQueries) > 0 {
-			datamap := map[string]QueryAction{}
-			for k, v := range spec.DataQueries {
-				nuID, ok := uid2mrn[k]
-				if !ok {
-					datamap[k] = v
-				} else {
-					datamap[nuID] = v
-				}
+		for i := range spec.Queries {
+			query := spec.Queries[i]
+			if mrn, ok := uid2mrn[query.Uid]; ok {
+				query.Mrn = mrn
+				query.Uid = ""
 			}
-			spec.DataQueries = datamap
 		}
 
-		if len(spec.ScoringQueries) > 0 {
-			scorings := map[string]*ScoringSpec{}
-			for k, v := range spec.ScoringQueries {
-				nuID, ok := uid2mrn[k]
-				if !ok {
-					scorings[k] = v
-				} else {
-					scorings[nuID] = v
-				}
+		for i := range spec.Checks {
+			check := spec.Checks[i]
+			if mrn, ok := uid2mrn[check.Uid]; ok {
+				check.Mrn = mrn
+				check.Uid = ""
 			}
-			spec.ScoringQueries = scorings
 		}
 
-		if len(spec.Policies) > 0 {
-			policies := map[string]*ScoringSpec{}
-			for k, v := range spec.Policies {
-				nuID, ok := uid2mrn[k]
-				if ok {
-					policies[nuID] = v
-					continue
-				}
-
-				if mrn.IsValid(k) {
-					policies[k] = v
-					continue
-				}
-
-				return errors.New("found a policy reference which is neither an MRN nor in this bundle: " + k)
+		for i := range spec.Policies {
+			policy := spec.Policies[i]
+			if mrn, ok := uid2mrn[policy.Uid]; ok {
+				policy.Mrn = mrn
+				policy.Uid = ""
 			}
-			spec.Policies = policies
 		}
+
 	}
 
 	return nil

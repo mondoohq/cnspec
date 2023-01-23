@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
@@ -32,10 +33,17 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 	spec := policyw.Policy.Specs[0]
 	changed := false
 
+	// prepare a map for easier processing
+	policies := map[string]*policy.PolicyRef{}
+	for i := range spec.Policies {
+		cur := spec.Policies[i]
+		policies[cur.Mrn] = cur
+	}
+
 	for policyMrn, delta := range mutation.PolicyDeltas {
 		switch delta.Action {
 		case policy.PolicyDelta_ADD:
-			if _, ok := spec.Policies[policyMrn]; ok {
+			if _, ok := policies[policyMrn]; ok {
 				continue
 			}
 
@@ -47,7 +55,9 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 			}
 			childw := x.(wrapPolicy)
 
-			spec.Policies[policyMrn] = nil
+			policies[policyMrn] = &policy.PolicyRef{
+				Mrn: policyMrn,
+			}
 			policyw.children[policyMrn] = struct{}{}
 			childw.parents[targetMRN] = struct{}{}
 			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
@@ -63,7 +73,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 			}
 			childw := x.(wrapPolicy)
 
-			delete(spec.Policies, policyMrn)
+			delete(policies, policyMrn)
 			delete(policyw.children, policyMrn)
 			delete(childw.parents, targetMRN)
 			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
@@ -81,6 +91,14 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 		return policyw.Policy, nil
 	}
 
+	// since the map was only used for faster create/delete, we now have to translate it back
+	spec.Policies = make([]*policy.PolicyRef, len(policies))
+	i := 0
+	for _, v := range policies {
+		spec.Policies[i] = v
+		i++
+	}
+
 	err = db.refreshAssetFilters(ctx, &policyw)
 	if err != nil {
 		return nil, err
@@ -89,7 +107,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 	policyw.Policy.InvalidateExecutionChecksums()
 	err = policyw.Policy.UpdateChecksums(ctx,
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
 	)
 	if err != nil {
@@ -138,10 +156,12 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 		return errors.New("failed to compute asset filters: " + err.Error())
 	}
 
-	policyObj.AssetFilters = map[string]*policy.Mquery{}
+	policyObj.Filters = &explorer.Filters{
+		Items: map[string]*explorer.Mquery{},
+	}
 	for i := range filters {
 		filter := filters[i]
-		policyObj.AssetFilters[filter.CodeId] = filter
+		policyObj.Filters.Items[filter.CodeId] = filter
 	}
 
 	depMrns := policyObj.DependentPolicyMrns()
@@ -151,8 +171,12 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 			return errors.New("failed to get dependent policy '" + mrn + "': " + err.Error())
 		}
 
-		for k, v := range dep.AssetFilters {
-			policyObj.AssetFilters[k] = v
+		if dep.Filters == nil {
+			continue
+		}
+
+		for k, v := range dep.Filters.Items {
+			policyObj.Filters.Items[k] = v
 		}
 	}
 
@@ -185,7 +209,7 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 			policyw.Policy.InvalidateGraphChecksums()
 			err = policyw.Policy.UpdateChecksums(ctx,
 				func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-				func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
+				func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 				nil,
 			)
 			if err != nil {
@@ -366,7 +390,7 @@ func (db *Db) CachedResolvedPolicy(ctx context.Context, policyMrn string, assetF
 }
 
 // ResolveQuery looks up a given query and caches it for later access (optional)
-func (db *Db) ResolveQuery(ctx context.Context, mrn string, cache map[string]interface{}) (*policy.Mquery, error) {
+func (db *Db) ResolveQuery(ctx context.Context, mrn string) (*explorer.Mquery, error) {
 	x, ok := db.cache.Get(dbIDQuery + mrn)
 	if !ok {
 		return nil, errors.New("failed to get query '" + mrn + "'")
@@ -635,4 +659,46 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 		Str("error_msg", score.Message).
 		Msg("resolver.db> update score")
 	return true, nil
+}
+
+// SetProps will override properties for a given entity (asset, space, org)
+func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
+	policyw, err := db.ensurePolicy(ctx, req.EntityMrn, false)
+	if err != nil {
+		return err
+	}
+
+	propsIdx := make(map[string]*explorer.Property, len(policyw.Props))
+	for i := range policyw.Props {
+		cur := policyw.Props[i]
+		if cur.Mrn != "" {
+			propsIdx[cur.Mrn] = cur
+		}
+		if cur.Uid != "" {
+			propsIdx[cur.Uid] = cur
+		}
+	}
+
+	for i := range req.Props {
+		cur := req.Props[i]
+		id := cur.Mrn
+		if id == "" {
+			id = cur.Uid
+		}
+		if id == "" {
+			return errors.New("cannot set property without MRN: " + cur.Mql)
+		}
+
+		if x, ok := propsIdx[id]; ok {
+			x.Mql = cur.Mql
+			continue
+		}
+
+		policyw.Props = append(policyw.Props, cur)
+		propsIdx[id] = cur
+	}
+
+	// since weonly altered an existing policy, we don't need to set it again
+
+	return nil
 }

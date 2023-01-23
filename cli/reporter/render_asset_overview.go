@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/printer"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/stringx"
 	"go.mondoo.com/cnspec/policy"
@@ -21,13 +22,16 @@ var mqlQueryNames = map[string]string{
 	"platform.name == \"arista-eos\"":     "Arista",
 }
 
-func hasAssetFilter(assetFilters []*policy.Mquery, filter *policy.Mquery) bool {
-	if assetFilters == nil || filter == nil {
+func hasAssetFilter(supported []*explorer.Mquery, filters *explorer.Filters) bool {
+	if len(supported) == 0 || filters == nil || len(filters.Items) == 0 {
 		return false
 	}
-	for i := range assetFilters {
-		if assetFilters[i].Query == filter.Query {
-			return true
+
+	for _, query := range filters.Items {
+		for j := range supported {
+			if supported[j].Mql == query.Mql {
+				return true
+			}
 		}
 	}
 	return false
@@ -64,21 +68,28 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 		spec := policyObj.Specs[i]
 
 		// filter by asset filter that do not match
-		if !hasAssetFilter(resolvedPolicy.Filters, spec.AssetFilter) {
+		if !hasAssetFilter(resolvedPolicy.Filters, spec.Filter) {
 			continue
 		}
 
 		// FIXME: use spec name from bundle if available
-		category, ok := mqlQueryNames[spec.AssetFilter.Query]
-		if !ok {
-			category = "General"
+		// FIXME: while transitioning to v2 policy this code now really needs cleanup
+		category := "General"
+		if spec.Filter != nil {
+			for i := range spec.Filter.Items {
+				f := spec.Filter.Items[i]
+				if c, ok := mqlQueryNames[f.Mql]; ok {
+					category = c
+					break
+				}
+			}
 		}
 
 		table := []row{}
 		maxKeyWidth := 0
 
-		for qid := range spec.DataQueries {
-			query := bundle.Queries[qid]
+		for j := range spec.Queries {
+			query := spec.Queries[j]
 
 			if len(query.Title) > maxKeyWidth {
 				maxKeyWidth = len(query.Title)
@@ -86,7 +97,7 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 
 			codeBundle := resolvedPolicy.GetCodeBundle(query)
 			if codeBundle == nil {
-				res.WriteString(NewLineCharacter + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
+				res.WriteString(NewLineCharacter + print.Error("failed to find code bundle for query '"+query.Mrn+"' in bundle"))
 				continue
 			}
 

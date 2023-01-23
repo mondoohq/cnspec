@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 
+	"go.mondoo.com/cnquery/explorer"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/metadata"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -334,6 +335,7 @@ func (p *PolicyHubServer) DefaultPolicies(ctx context.Context, reqBytes *[]byte)
 type PolicyResolver interface {
 	Assign(context.Context, *PolicyAssignment) (*Empty, error)
 	Unassign(context.Context, *PolicyAssignment) (*Empty, error)
+	SetProps(context.Context, *explorer.PropsReq) (*Empty, error)
 	Resolve(context.Context, *ResolveReq) (*ResolvedPolicy, error)
 	UpdateAssetJobs(context.Context, *UpdateAssetJobsReq) (*Empty, error)
 	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
@@ -379,6 +381,11 @@ func (c *PolicyResolverClient) Assign(ctx context.Context, in *PolicyAssignment)
 func (c *PolicyResolverClient) Unassign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Unassign"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) SetProps(ctx context.Context, in *explorer.PropsReq) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetProps"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyResolverClient) Resolve(ctx context.Context, in *ResolveReq) (*ResolvedPolicy, error) {
@@ -451,6 +458,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 		Methods: map[string]ranger.Method{
 			"Assign":               srv.Assign,
 			"Unassign":             srv.Unassign,
+			"SetProps":             srv.SetProps,
 			"Resolve":              srv.Resolve,
 			"UpdateAssetJobs":      srv.UpdateAssetJobs,
 			"ResolveAndUpdateJobs": srv.ResolveAndUpdateJobs,
@@ -517,6 +525,30 @@ func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (
 		return nil, err
 	}
 	return p.handler.Unassign(ctx, &req)
+}
+func (p *PolicyResolverServer) SetProps(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req explorer.PropsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.SetProps(ctx, &req)
 }
 func (p *PolicyResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req ResolveReq

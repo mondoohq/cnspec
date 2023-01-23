@@ -5,6 +5,7 @@ option go_package = "go.mondoo.com/cnspec/policy";
 
 import "llx/llx.proto";
 import "motor/asset/asset.proto";
+import "explorer/cnquery_explorer.proto";
 
 /*
   PolicySpec specifies and overrides a policy and all its queries and referenced policies.
@@ -14,6 +15,28 @@ import "motor/asset/asset.proto";
   - PolicySpecs can be limited to a subset of assets
 */
 message PolicySpec {
+  repeated PolicyRef policies = 1;
+  repeated cnquery.explorer.Mquery checks = 2;
+  repeated cnquery.explorer.Mquery queries = 3;
+
+  // filter for the assets this applies to
+  cnquery.explorer.Filters filter = 20;
+
+  // the timeline during which this scoring spec is active and reminders will be sent
+  int64 start_date = 21;
+  int64 end_date = 22;
+  int64 reminder_date = 23;
+
+  // metadata
+  string title = 24;
+  PolicySpecDocs docs = 25;
+
+  int64 created = 32;
+  int64 modified = 33;
+}
+
+// FIXME: DEPRECATED, remove in v9.0 vv
+message DeprecatedV6_PolicySpec {
   map<string,ScoringSpec> policies = 1;
   map<string,ScoringSpec> scoring_queries = 2;
   map<string,QueryAction> data_queries = 3;
@@ -33,6 +56,28 @@ message PolicySpec {
   int64 created = 32;
   int64 modified = 33;
 }
+// ^^
+
+message PolicyRef {
+  enum Action {
+    UNKNOWN = 0;
+    ADD = 1;
+    DISABLE = 2;
+    MODIFY = 3;
+  }
+
+  string mrn = 1;
+  string uid = 2;
+
+  repeated cnquery.explorer.Property props = 35;
+  cnquery.explorer.Filters filters = 43;
+  cnquery.explorer.Impact.ScoringSystem scoring_system = 10;
+  // Action is used for all policy overrides
+  Action action = 41;
+
+  string graph_content_checksum = 38;
+  string graph_execution_checksum = 40;
+}
 
 /*
   Policy definition, re-usable or assigned to the user's environment
@@ -40,9 +85,31 @@ message PolicySpec {
   - Can limit to what it supports
 */
 message Policy {
+  // FIXME: DEPRECATED, remove in v9.0 vv
+  // This is replaced by the field "filters"
+  map<string,Mquery> v1_asset_filters = 7; // key == checksum, internal
+  repeated DeprecatedV6_PolicySpec v1_specs = 6;
+  // ^^
+
   string mrn = 1; // will be filled from UID on upload
+  string uid = 36; // uid is only used initially, to generate the MRN
   string name = 2;
   string version = 3;
+  string owner_mrn = 8;
+
+  repeated PolicySpec specs = 11;
+
+  bool is_public = 9;
+  string license = 21;
+  PolicyDocs docs = 41;
+
+  ScoringSystem scoring_system = 10;
+
+  repeated Author authors = 30;
+  int64 created = 32;
+  int64 modified = 33;
+  map<string,string> tags = 34;
+  repeated cnquery.explorer.Property props = 35;
 
   // checksums are grouped into:
   // local... meaning this policy, not policy dependencies
@@ -54,23 +121,8 @@ message Policy {
   string local_execution_checksum = 39;
   string graph_execution_checksum = 40;
 
-  repeated PolicySpec specs = 6;
-  map<string,Mquery> asset_filters = 7; // key == checksum
-
-  string owner_mrn = 8;
-  bool is_public = 9;
-
-  ScoringSystem scoring_system = 10;
-
-  repeated Author authors = 30;
-  int64 created = 32;
-  int64 modified = 33;
-  map<string,string> tags = 34;
-  // mapping query ref => target; target may be empty if not overwriting
-  map<string,string> props = 35;
-  // user-defined uid, which is used to generate the MRN
-  string uid = 36;
-  PolicyDocs docs = 41;
+  // aggregation of all filters applicable to this policy. auto-generated
+  cnquery.explorer.Filters filters = 43;
 
   QueryCounts query_counts = 42;
 }
@@ -97,6 +149,7 @@ enum QueryAction {
   ACTIVATE = 3;
 }
 
+// FIXME: DEPRECATED, remove in v9.0 vv
 /*
   ScoringSpec defines how a query or policy will be scored
 */
@@ -115,6 +168,7 @@ message ScoringSpec {
 
   SeverityValue severity = 7;
 }
+// ^
 
 message Author {
   string name = 1;
@@ -130,9 +184,14 @@ message QueryCounts {
 message Bundle {
   string owner_mrn = 1;
   repeated Policy policies = 2;
-  repeated Mquery props = 3;
-  repeated Mquery queries = 4;
+  repeated cnquery.explorer.Property props = 3;
+  repeated cnquery.explorer.Mquery queries = 6;
   PolicyDocs docs = 5;
+
+  // FIXME: DEPRECATED, remove in v9.0 vv
+  // This is replaced by queries using cnquery structures
+  repeated Mquery v1_queries = 4;
+  // ^^
 }
 
 message PolicySpecDocs {
@@ -143,16 +202,15 @@ message PolicyDocs {
   string desc = 1;
 }
 
-/*
-  Mqueries are Mondoo queries.
-*/
+// FIXME: DEPRECATED, remove in v9.0 vv
+// This is moving entirely to cnquery's Mquery object.
 message Mquery {
   string query = 1;
   string code_id = 2;
   string checksum = 3;
   string mrn = 4;
   // UID is only needed on Mquery upload, when the MRN is computed.
-  // It will not be persisted.
+  // It is not be persisted.
   string uid = 5;
   string type = 6;
   SeverityValue severity = 19;
@@ -161,11 +219,17 @@ message Mquery {
   repeated MqueryRef refs = 22;
   map<string,string> tags = 34;
 }
+// ^^
 
+// FIXME: DEPRECATED, remove in v9.0 vv
+// This is moved to cnquery and the impact ImpactValue
 message SeverityValue {
   int64 value = 1;
 }
+// ^^
 
+// FIXME: DEPRECATED, remove in v9.0 vv
+// also moves to cnquery
 message MqueryDocs {
   string desc = 1;
   string audit = 2;
@@ -176,6 +240,7 @@ message MqueryRef {
   string title = 1;
   string url = 2;
 }
+// ^^
 
 // **********  Resolution / Execution **************
 
@@ -193,9 +258,14 @@ message Asset {
   for fast retrieval.
 */
 message ResolvedPolicy {
+  // FIXME: DEPRECATED, remove in v9.0 vv
+  // Replaced by the new Mquery version
+  repeated Mquery v6_filters = 4;
+  // ^^
+
   ExecutionJob execution_job = 2;
   CollectorJob collector_job = 3;
-  repeated Mquery filters = 4;
+  repeated cnquery.explorer.Mquery filters = 1;
   string graph_execution_checksum = 7;
   string filters_checksum = 20;
   string reporting_job_uuid = 21;
@@ -220,7 +290,7 @@ message ExecutionJob {
 message ExecutionQuery {
   string query = 1;
   string checksum = 2;
-  // mapping from name => checksum, which is in the execution job
+  // mapping from name => datapoint checksum, which is in the execution job
   map<string,string> properties = 3;
   // list of checksums that we collect as data points
   repeated string datapoints = 4;
@@ -264,14 +334,19 @@ message DataQueryInfo {
   - spec has all the other results that need to be pulled and their scorings
 */
 message ReportingJob {
+  // FIXME: DEPRECATED, remove in v9.0 vv
+  // This is replaced by the new spec, which now references cnquery
+  map<string,ScoringSpec> v6_spec = 4;
+  // ^^
+
   string checksum = 1;
   string qr_id = 2;
   string uuid = 3;
-  map<string,ScoringSpec> spec = 4;
   repeated string notify = 5;
   ScoringSystem scoring_system = 6;
   map<string,bool> datapoints = 7;
   bool is_data = 8;
+  map<string,cnquery.explorer.Impact> spec = 9;
 }
 
 // **********       Reporting         **************
@@ -390,7 +465,12 @@ message Mrn {
 }
 
 message Mqueries {
-  repeated Mquery items = 1;
+  // FIXME: DEPRECATED, remove in v9.0 vv
+  // just uses the old datatype and moved to the new one below
+  repeated Mquery v1_items = 1;
+  // ^
+
+  repeated cnquery.explorer.Mquery items = 2;
 }
 
 message ListReq {
@@ -416,6 +496,7 @@ message URLs {
 service PolicyResolver {
   rpc Assign(PolicyAssignment) returns (Empty) {}
   rpc Unassign(PolicyAssignment) returns (Empty) {}
+  rpc SetProps(cnquery.explorer.PropsReq) returns (Empty) {}
 
   rpc Resolve(ResolveReq) returns (ResolvedPolicy) {}
   // UpdateAssetJobs is used to update the resolved policy of an asset
@@ -455,12 +536,12 @@ message PolicyDelta {
 
 message ResolveReq {
   string policy_mrn = 1;
-  repeated Mquery asset_filters = 2;
+  repeated cnquery.explorer.Mquery asset_filters = 2;
 }
 
 message UpdateAssetJobsReq {
   string asset_mrn = 1;
-  repeated Mquery asset_filters = 2;
+  repeated cnquery.explorer.Mquery asset_filters = 2;
 }
 
 message StoreResultsReq {

@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/fasthash/fnv1a"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/mrn"
@@ -99,6 +100,20 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 		PolicyDeltas: deltas,
 	}, true)
 	return globalEmpty, err
+}
+
+func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*Empty, error) {
+	// validate that the queries compile and fill in checksums
+	for i := range req.Props {
+		prop := req.Props[i]
+		code, err := prop.RefreshChecksumAndType()
+		if err != nil {
+			return nil, err
+		}
+		prop.CodeId = code.CodeV2.Id
+	}
+
+	return globalEmpty, s.DataLake.SetProps(ctx, req)
 }
 
 // Resolve a given policy for a set of asset filters
@@ -237,8 +252,6 @@ func (s *LocalServices) PurgeAssets(context.Context, *PurgeAssetsRequest) (*Purg
 
 // CreatePolicyObject creates a policy object without saving it and returns it
 func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *Policy {
-	policyScoringSpec := map[string]*ScoringSpec{}
-
 	// TODO: this should be handled better and I'm not sure yet how...
 	// we need to ensure a good owner MRN exists for all objects, including orgs and spaces
 	// this is the case when we are in incognito mode
@@ -257,10 +270,12 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 		Name:    name, // placeholder
 		Version: "",   // no version, semver otherwise
 		Specs: []*PolicySpec{{
-			Policies:       policyScoringSpec,
-			ScoringQueries: map[string]*ScoringSpec{},
-			DataQueries:    map[string]QueryAction{},
+			Policies: []*PolicyRef{},
+			Checks:   []*explorer.Mquery{},
+			Queries:  []*explorer.Mquery{},
+			Filter:   &explorer.Filters{},
 		}},
+		Filters:  &explorer.Filters{},
 		OwnerMrn: ownerMrn,
 		IsPublic: false,
 	}
@@ -291,16 +306,16 @@ type resolverCache struct {
 	assetFilters           map[string]struct{}
 
 	// assigned queries, listed by their UUID (i.e. policy context)
-	executionQueries map[string]*ExecutionQuery
-	dataQueries      map[string]struct{}
-	propQueries      map[string]struct{}
-	queries          map[string]interface{}
+	executionQueries  map[string]*ExecutionQuery
+	dataQueries       map[string]struct{}
+	queriesByChecksum map[string]*explorer.Mquery
+	propsCache        explorer.PropsCache
 
-	reportingJobsByQrID map[string]*ReportingJob
-	reportingJobsByUUID map[string]*ReportingJob
-	reportingJobsActive map[string]bool
-	errors              []*policyResolutionError
-	bundleMap           *PolicyBundleMap
+	reportingJobsByChecksum map[string]*ReportingJob
+	reportingJobsByUUID     map[string]*ReportingJob
+	reportingJobsActive     map[string]bool
+	errors                  []*policyResolutionError
+	bundleMap               *PolicyBundleMap
 }
 
 type policyResolverCache struct {
@@ -362,7 +377,7 @@ func (p *policyResolverCache) addChildren(other *policyResolverCache) {
 	}
 }
 
-func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
+func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
 	for i := 0; i < maxResolveRetry; i++ {
 		resolvedPolicy, err := s.tryResolve(ctx, policyMrn, assetFilters)
@@ -383,7 +398,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 	return nil, errors.New("concurrent policy resolve")
 }
 
-func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
+func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
 
 	// phase 1: resolve asset filters and see if we can find a cached policy
@@ -446,17 +461,17 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		Msg("resolver> phase 1: no cached result, resolve the policy now")
 
 	cache := &resolverCache{
-		graphExecutionChecksum: policyObj.GraphExecutionChecksum,
-		assetFiltersChecksum:   assetFiltersChecksum,
-		assetFilters:           assetFiltersMap,
-		executionQueries:       map[string]*ExecutionQuery{},
-		dataQueries:            map[string]struct{}{},
-		propQueries:            map[string]struct{}{},
-		queries:                map[string]interface{}{},
-		reportingJobsByQrID:    map[string]*ReportingJob{},
-		reportingJobsByUUID:    map[string]*ReportingJob{},
-		reportingJobsActive:    map[string]bool{},
-		bundleMap:              bundleMap,
+		graphExecutionChecksum:  policyObj.GraphExecutionChecksum,
+		assetFiltersChecksum:    assetFiltersChecksum,
+		assetFilters:            assetFiltersMap,
+		executionQueries:        map[string]*ExecutionQuery{},
+		dataQueries:             map[string]struct{}{},
+		propsCache:              explorer.NewPropsCache(),
+		queriesByChecksum:       map[string]*explorer.Mquery{},
+		reportingJobsByChecksum: map[string]*ReportingJob{},
+		reportingJobsByUUID:     map[string]*ReportingJob{},
+		reportingJobsActive:     map[string]bool{},
+		bundleMap:               bundleMap,
 	}
 
 	rjUUID := cache.relativeChecksum(policyObj.GraphExecutionChecksum)
@@ -464,12 +479,12 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	reportingJob := &ReportingJob{
 		Uuid:       rjUUID,
 		QrId:       "root",
-		Spec:       map[string]*ScoringSpec{},
+		Spec:       map[string]*explorer.Impact{},
 		Datapoints: map[string]bool{},
 	}
 
 	cache.reportingJobsByUUID[reportingJob.Uuid] = reportingJob
-	cache.reportingJobsByQrID[reportingJob.QrId] = reportingJob
+	cache.reportingJobsByChecksum[reportingJob.QrId] = reportingJob
 
 	// phase 2: optimizations for assets
 	// assets are always connected to a space, so figure out if a space policy exists
@@ -536,7 +551,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	return &resolvedPolicy, nil
 }
 
-func NewPolicyAssetMatchError(assetFilters []*Mquery, p *Policy) error {
+func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error {
 	if len(assetFilters) == 0 {
 		// send a proto error with details, so that the agent can render it properly
 		msg := "asset does not match any of the activated policies"
@@ -557,8 +572,10 @@ func NewPolicyAssetMatchError(assetFilters []*Mquery, p *Policy) error {
 	}
 
 	policyFilter := []string{}
-	for k := range p.AssetFilters {
-		policyFilter = append(policyFilter, strings.TrimSpace(k))
+	if p.Filters != nil {
+		for k := range p.Filters.Items {
+			policyFilter = append(policyFilter, strings.TrimSpace(k))
+		}
 	}
 
 	filters := make([]string, len(assetFilters))
@@ -655,48 +672,46 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	cache.parentPolicies[policyMrn] = struct{}{}
 
 	// properties to execution queries cache
-	for k, v := range policyObj.Props {
-		if v != "" {
-			return errors.New("Cannot support property overwrites in resolver yet")
-		}
-
-		// we set it to nil here, as we don't know the mquery yet, it will be added in a later step
-		cache.global.executionQueries[k] = nil
-		cache.global.propQueries[k] = struct{}{}
-	}
+	parentCache.global.propsCache.Add(policyObj.Props...)
 
 	// get a list of matching specs
 	matchingSpecs := []*PolicySpec{}
 	for i := range policyObj.Specs {
 		spec := policyObj.Specs[i]
 
-		if spec.AssetFilter == nil {
+		if spec.Filter == nil || len(spec.Filter.Items) == 0 {
 			matchingSpecs = append(matchingSpecs, spec)
 			continue
 		}
 
-		checksum := spec.AssetFilter.CodeId
-		if _, ok := cache.global.assetFilters[checksum]; ok {
-			matchingSpecs = append(matchingSpecs, spec)
+		for j := range spec.Filter.Items {
+			filter := spec.Filter.Items[j]
+			if _, ok := cache.global.assetFilters[filter.CodeId]; ok {
+				matchingSpecs = append(matchingSpecs, spec)
+				break
+			}
 		}
 	}
 
 	// aggregate all removed policies and queries
 	for i := range matchingSpecs {
 		spec := matchingSpecs[i]
-		for mrn, scoring := range spec.Policies {
-			if scoring != nil && scoring.Action == QueryAction_DEACTIVATE {
-				cache.removedPolicies[mrn] = struct{}{}
+		for i := range spec.Policies {
+			policy := spec.Policies[i]
+			if policy.Action == PolicyRef_DISABLE {
+				cache.removedPolicies[policy.Mrn] = struct{}{}
 			}
 		}
-		for mrn, scoring := range spec.ScoringQueries {
-			if scoring != nil && scoring.Action == QueryAction_DEACTIVATE {
-				cache.removedQueries[mrn] = struct{}{}
+		for i := range spec.Checks {
+			check := spec.Checks[i]
+			if check.Action == explorer.Mquery_DELETE {
+				cache.removedQueries[check.Mrn] = struct{}{}
 			}
 		}
-		for mrn, action := range spec.DataQueries {
-			if action == QueryAction_DEACTIVATE {
-				cache.removedQueries[mrn] = struct{}{}
+		for i := range spec.Queries {
+			query := spec.Checks[i]
+			if query.Action == explorer.Mquery_DELETE {
+				cache.removedQueries[query.Mrn] = struct{}{}
 			}
 		}
 	}
@@ -705,7 +720,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	var err error
 	for i := range matchingSpecs {
 		spec := matchingSpecs[i]
-		if err = s.policyspecToJobs(ctx, policyMrn, spec, ownerJob, cache); err != nil {
+		if err = s.policyspecToJobs(ctx, spec, ownerJob, cache); err != nil {
 			log.Error().Err(err).Msg("resolver> policyToJobs error")
 			return err
 		}
@@ -717,32 +732,37 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	return nil
 }
 
-func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, spec *PolicySpec, ownerJob *ReportingJob, cache *policyResolverCache) error {
+func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, ownerJob *ReportingJob, cache *policyResolverCache) error {
 	ctx, span := tracer.Start(ctx, "resolver/policyspecToJobs")
 	defer span.End()
 
 	// include referenced policies
-	for mrn, scoring := range spec.Policies {
+	for i := range spec.Policies {
+		policy := spec.Policies[i]
+
+		scoringSpec := &explorer.Impact{
+			Scoring: policy.ScoringSystem,
+		}
 
 		// ADD
-		if scoring == nil || scoring.Action == QueryAction_ACTIVATE {
-			if _, ok := cache.parentPolicies[mrn]; ok {
-				return errors.New("trying to resolve policy spec twice, it is cyclical for MRN: " + mrn)
+		if policy.Action == PolicyRef_UNKNOWN || policy.Action == PolicyRef_ADD {
+			if _, ok := cache.parentPolicies[policy.Mrn]; ok {
+				return errors.New("trying to resolve policy spec twice, it is cyclical for MRN: " + policy.Mrn)
 			}
 
-			if _, ok := cache.removedPolicies[mrn]; ok {
+			if _, ok := cache.removedPolicies[policy.Mrn]; ok {
 				continue
 			}
 
 			// before adding any reporting job, make sure this policy actually works for
 			// this set of asset filters
-			policyObj, ok := cache.global.bundleMap.Policies[mrn]
+			policyObj, ok := cache.global.bundleMap.Policies[policy.Mrn]
 			if !ok || policyObj == nil {
-				return errors.New("cannot find policy '" + policyMrn + "' while resolving")
+				return errors.New("cannot find policy '" + policy.Mrn + "' while resolving")
 			}
 
 			var found bool
-			for checksum := range policyObj.AssetFilters {
+			for checksum := range policyObj.Filters.Items {
 				if _, ok := cache.global.assetFilters[checksum]; ok {
 					found = true
 					break
@@ -753,25 +773,25 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, 
 			}
 
 			// the job itself is global to the resolution
-			policyJob := cache.global.reportingJobsByQrID[mrn]
+			policyJob := cache.global.reportingJobsByChecksum[policy.Mrn]
 			if policyJob == nil {
 				policyJob = &ReportingJob{
-					QrId:          mrn,
-					Uuid:          cache.global.relativeChecksum(mrn),
-					Spec:          map[string]*ScoringSpec{},
+					QrId:          policy.Mrn,
+					Uuid:          cache.global.relativeChecksum(policy.Mrn),
+					Spec:          map[string]*explorer.Impact{},
 					Datapoints:    map[string]bool{},
 					ScoringSystem: policyObj.ScoringSystem,
 				}
-				cache.global.reportingJobsByQrID[mrn] = policyJob
+				cache.global.reportingJobsByChecksum[policy.Mrn] = policyJob
 				cache.global.reportingJobsByUUID[policyJob.Uuid] = policyJob
 			}
 
 			// local aspects for the resolved policy
 			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
-			ownerJob.Spec[policyJob.Uuid] = scoring
-			cache.childPolicies[mrn] = struct{}{}
+			ownerJob.Spec[policyJob.Uuid] = scoringSpec
+			cache.childPolicies[policy.Mrn] = struct{}{}
 
-			if err := s.policyToJobs(ctx, mrn, policyJob, cache); err != nil {
+			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache); err != nil {
 				return err
 			}
 
@@ -779,103 +799,117 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, 
 		}
 
 		// MODIFY
-		if scoring.Action == QueryAction_MODIFY {
-			_, ok := cache.childPolicies[mrn]
+		if policy.Action == PolicyRef_MODIFY {
+			_, ok := cache.childPolicies[policy.Mrn]
 			if !ok {
 				cache.global.errors = append(cache.global.errors, &policyResolutionError{
-					ID:       mrn,
+					ID:       policy.Mrn,
 					IsPolicy: true,
 					Error:    "cannot modify policy, it doesn't exist",
 				})
 				continue
 			}
 
-			policyJob := cache.global.reportingJobsByQrID[mrn]
+			policyJob := cache.global.reportingJobsByChecksum[policy.Mrn]
 			for _, id := range policyJob.Notify {
 				parentJob := cache.global.reportingJobsByUUID[id]
 				if parentJob != nil {
-					parentJob.Spec[policyJob.Uuid] = scoring
+					parentJob.Spec[policyJob.Uuid] = scoringSpec
 				}
 			}
 		}
 	}
 
 	// handle scoring queries
-	for mrn, scoring := range spec.ScoringQueries {
+	for i := range spec.Checks {
+		check := spec.Checks[i]
+
+		scoringSpec := check.Impact
+
+		cache.global.propsCache.Add(check.Props...)
 
 		// ADD
-		if scoring == nil || scoring.Action == QueryAction_ACTIVATE {
-			if _, ok := cache.removedQueries[mrn]; ok {
+		if check.Action == explorer.Mquery_UNKNOWN || check.Action == explorer.Mquery_ADD {
+			if _, ok := cache.removedQueries[check.Mrn]; ok {
 				continue
 			}
 
 			// the job itself is global to the resolution
-			queryJob := cache.global.reportingJobsByQrID[mrn]
+			queryJob := cache.global.reportingJobsByChecksum[check.Checksum]
 			if queryJob == nil {
 				queryJob = &ReportingJob{
-					Uuid:       cache.global.relativeChecksum(mrn),
-					QrId:       mrn,
-					Spec:       map[string]*ScoringSpec{},
+					Uuid:       cache.global.relativeChecksum(check.Checksum),
+					QrId:       check.Mrn,
+					Spec:       map[string]*explorer.Impact{},
 					Datapoints: map[string]bool{},
 				}
-				cache.global.reportingJobsByQrID[mrn] = queryJob
+				cache.global.reportingJobsByChecksum[check.Checksum] = queryJob
 				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
 			}
 
 			// local aspects for the resolved policy
 			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
 
-			ownerJob.Spec[queryJob.Uuid] = scoring
-			cache.childQueries[mrn] = struct{}{}
+			ownerJob.Spec[queryJob.Uuid] = scoringSpec
+			cache.childQueries[check.Mrn] = struct{}{}
 
-			// we set it to nil here, as we don't know the mquery yet, it will be added in a later step
-			cache.global.executionQueries[mrn] = nil
+			// we set a placeholder for the execution query, just to indicate it will be added
+			cache.global.executionQueries[check.Checksum] = nil
+			cache.global.queriesByChecksum[check.Checksum] = check
 
 			continue
 		}
 
 		// MODIFY
-		if scoring.Action == QueryAction_MODIFY {
-			_, ok := cache.childQueries[mrn]
+		if check.Action == explorer.Mquery_MODIFY {
+			_, ok := cache.childQueries[check.Mrn]
 			if !ok {
 				cache.global.errors = append(cache.global.errors, &policyResolutionError{
-					ID:       mrn,
+					ID:       check.Mrn,
 					IsPolicy: true,
 					Error:    "cannot modify query, it doesn't exist",
 				})
 				continue
 			}
 
-			queryJob := cache.global.reportingJobsByQrID[mrn]
+			queryJob := cache.global.reportingJobsByChecksum[check.Checksum]
 			for _, id := range queryJob.Notify {
 				parentJob := cache.global.reportingJobsByUUID[id]
 				if parentJob != nil {
-					parentJob.Spec[queryJob.Uuid] = scoring
+					parentJob.Spec[queryJob.Uuid] = scoringSpec
 				}
 			}
+
+			cache.global.queriesByChecksum[check.Checksum] = check
 		}
 	}
 
 	// handle data queries
-	for mrn, action := range spec.DataQueries {
+	for i := range spec.Queries {
+		query := spec.Queries[i]
+
+		// Dom: Note: we do not carry over the impact from data queries yet
+
+		cache.global.propsCache.Add(query.Props...)
+
 		// ADD
-		if action == QueryAction_ACTIVATE {
-			if _, ok := cache.removedQueries[mrn]; ok {
+		if query.Action == explorer.Mquery_UNKNOWN || query.Action == explorer.Mquery_ADD {
+			if _, ok := cache.removedQueries[query.Mrn]; ok {
 				continue
 			}
 
 			// the job itself is global to the resolution
 			// note: the ReportingJob is only a placeholder and is replaced by individual query LLX checksum ReportingJobs
-			queryJob := cache.global.reportingJobsByQrID[mrn]
+			queryJob := cache.global.reportingJobsByChecksum[query.Checksum]
 			if queryJob == nil {
 				queryJob = &ReportingJob{
-					Uuid:       cache.global.relativeChecksum(mrn),
-					QrId:       mrn,
-					Spec:       map[string]*ScoringSpec{},
+					Uuid:       cache.global.relativeChecksum(query.Checksum),
+					QrId:       query.Mrn,
+					Spec:       map[string]*explorer.Impact{},
 					Datapoints: map[string]bool{},
 					IsData:     true,
 				}
-				cache.global.reportingJobsByQrID[mrn] = queryJob
+				cache.global.reportingJobsByChecksum[query.Checksum] = queryJob
 				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
 			}
 
@@ -883,11 +917,12 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, 
 			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
 
 			ownerJob.Datapoints[queryJob.Uuid] = true
-			cache.childQueries[mrn] = struct{}{}
+			cache.childQueries[query.Mrn] = struct{}{}
 
-			// we set it to nil here, as we don't know the mquery yet, it will be added in a later step
-			cache.global.executionQueries[mrn] = nil
-			cache.global.dataQueries[mrn] = struct{}{}
+			// we set a placeholder for the execution query, just to indicate it will be added
+			cache.global.executionQueries[query.Checksum] = nil
+			cache.global.dataQueries[query.Checksum] = struct{}{}
+			cache.global.queriesByChecksum[query.Checksum] = query
 
 			continue
 		}
@@ -895,6 +930,13 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, policyMrn string, 
 
 	return nil
 }
+
+// type propInfo struct {
+// 	prop         *explorer.Property
+// 	typ          *llx.Primitive
+// 	dataChecksum string
+// 	name         string
+// }
 
 func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cache *resolverCache) (*ExecutionJob, *CollectorJob, error) {
 	ctx, span := tracer.Start(ctx, "resolver/jobsToQueries")
@@ -909,64 +951,107 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 	executionJob := &ExecutionJob{
 		Queries: map[string]*ExecutionQuery{},
 	}
-	props := map[string]*llx.Primitive{}
-	propsToChecksums := map[string]string{}
-
-	// sort execution queries by property dependencies
-	// FIXME: sort by internal dependencies of props as well
-	executionMrns := make([]string, len(cache.executionQueries))
-	var i int
-	var j int = len(cache.executionQueries) - 1
-	for mrn := range cache.executionQueries {
-		if _, ok := cache.propQueries[mrn]; ok {
-			executionMrns[i] = mrn
-			i++
-		} else {
-			executionMrns[j] = mrn
-			j--
-		}
-	}
 
 	// fill in all reporting jobs. we will remove the data query jobs and replace
 	// them with direct collections into their parent job later
-	for _, rj := range cache.reportingJobsByQrID {
+	for _, rj := range cache.reportingJobsByChecksum {
 		collectorJob.ReportingJobs[rj.Uuid] = rj
 	}
 
-	// second, we want to inject all the real query checksums and connect them to
-	// the uuids of data queries and reporting jobs
-	// note: the queries are NOT defined yet, we only have MRNs at this stage
-	for i := 0; i < len(executionMrns); i++ {
-		curMRN := executionMrns[i]
+	// // FIXME: sort by internal dependencies of props as well
+	// // we go properties first, since they have to be executed before queries
+	// props := map[string]propInfo{}
+	// for checksum, prop := range cache.propsByChecksum {
+	// 	codeID := prop.CodeId
+	// 	if existing, ok := executionJob.Queries[codeID]; ok {
+	// 		logCtx.Debug().
+	// 			Str("codeID", codeID).
+	// 			Str("existing", existing.Query).
+	// 			Str("new", prop.Mql).
+	// 			Msg("resolver> found duplicate prop")
+	// 	}
 
-		var mquery *Mquery
-		var err error
+	// 	propName := prop.Uid
+	// 	if propName == "" {
+	// 		var err error
+	// 		propName, err = mrn.GetResource(prop.Mrn, MRN_RESOURCE_QUERY)
+	// 		if err != nil {
+	// 			return nil, nil, errors.New("could not resolve property name from query mrn: " + prop.Mrn)
+	// 		}
+	// 	}
 
-		if m, ok := cache.bundleMap.Queries[curMRN]; ok {
-			mquery = m
-		} else {
-			mquery, err = s.DataLake.ResolveQuery(ctx, curMRN, cache.queries)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
+	// 	executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false)
+	// 	if err != nil {
+	// 		return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
+	// 	}
+	// 	if dataChecksum == "" {
+	// 		return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + prop.Mql + "'")
+	// 	}
 
-		codeID := mquery.CodeId
+	// 	cache.executionQueries[checksum] = executionQuery
+	// 	executionJob.Queries[codeID] = executionQuery
+
+	// 	props[prop.Checksum] = propInfo{
+	// 		prop:         prop,
+	// 		typ:          &llx.Primitive{Type: prop.Type},
+	// 		dataChecksum: dataChecksum,
+	// 		name:         propName,
+	// 	}
+	// }
+
+	// next we can continue with queries, after properties are all done
+	for checksum, query := range cache.queriesByChecksum {
+		codeID := query.CodeId
 
 		if existing, ok := executionJob.Queries[codeID]; ok {
 			logCtx.Debug().
-				Str("codeID", mquery.CodeId).
+				Str("codeID", codeID).
 				Str("existing", existing.Query).
-				Str("new", mquery.Query).
+				Str("new", query.Mql).
 				Msg("resolver> found duplicate query")
 		}
 
-		_, isDataQuery := cache.dataQueries[curMRN]
-		_, isPropQuery := cache.propQueries[curMRN]
+		_, isDataQuery := cache.dataQueries[query.Checksum]
 
-		executionQuery, dataChecksum, err := s.mquery2executionQuery(mquery, props, propsToChecksums, collectorJob, !(isDataQuery || isPropQuery))
+		var propTypes map[string]*llx.Primitive
+		var propToChecksums map[string]string
+		if len(query.Props) != 0 {
+			propTypes = make(map[string]*llx.Primitive, len(query.Props))
+			propToChecksums = make(map[string]string, len(query.Props))
+			for j := range query.Props {
+				prop := query.Props[j]
+
+				// we only get this if there is an override higher up in the policy
+				override, name, _ := cache.propsCache.Get(ctx, prop.Mrn)
+				if override != nil {
+					prop = override
+				}
+				if name == "" {
+					var err error
+					name, err = mrn.GetResource(prop.Mrn, MRN_RESOURCE_QUERY)
+					if err != nil {
+						return nil, nil, errors.New("failed to get property name")
+					}
+				}
+
+				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false)
+				if err != nil {
+					return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
+				}
+				if dataChecksum == "" {
+					return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + prop.Mql + "'")
+				}
+				cache.executionQueries[checksum] = executionQuery
+				executionJob.Queries[prop.CodeId] = executionQuery
+
+				propTypes[name] = &llx.Primitive{Type: prop.Type}
+				propToChecksums[name] = dataChecksum
+			}
+		}
+
+		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery)
 		if err != nil {
-			return nil, nil, errors.New("resolver> failed to compile query for ID " + curMRN + ": " + err.Error())
+			return nil, nil, errors.New("resolver> failed to compile query for MRN " + query.Mrn + ": " + err.Error())
 		}
 
 		if executionQuery == nil {
@@ -974,8 +1059,8 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			// v2 compiler but not the v1 compiler. In such case, we
 			// will expunge the query and reporting chain from the
 			// resolved policy
-			if rj, ok := cache.reportingJobsByQrID[curMRN]; ok {
-				delete(cache.reportingJobsByQrID, curMRN)
+			if rj, ok := cache.reportingJobsByChecksum[checksum]; ok {
+				delete(cache.reportingJobsByChecksum, checksum)
 				delete(cache.reportingJobsByUUID, rj.Uuid)
 				delete(collectorJob.ReportingJobs, rj.Uuid)
 				for _, parentID := range rj.Notify {
@@ -988,55 +1073,32 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			continue
 		}
 
-		cache.executionQueries[curMRN] = executionQuery
+		cache.executionQueries[checksum] = executionQuery
 		executionJob.Queries[codeID] = executionQuery
 
-		// (1) Property Queries handling
-		// properties will be executed but not reported (for now)
-		if isPropQuery {
-			propName, err := mrn.GetResource(curMRN, MRN_RESOURCE_QUERY)
-			if err != nil {
-				return nil, nil, errors.New("could not resolve property name from query mrn: " + curMRN)
-			}
-			props[propName] = &llx.Primitive{Type: mquery.Type} // placeholder
-
-			if dataChecksum == "" {
-				return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + mquery.Query + "'")
-			}
-			propsToChecksums[propName] = dataChecksum
-
-			continue
-		}
-
-		// (2+3) Scoring+Data Queries handling
-		rj, ok := cache.reportingJobsByQrID[curMRN]
+		// Scoring+Data Queries handling
+		rj, ok := cache.reportingJobsByChecksum[checksum]
 		if !ok {
 			logCtx.Debug().
-				Interface("reportingJobs", cache.reportingJobsByQrID).
-				Str("query", curMRN).
+				Interface("reportingJobs", cache.reportingJobsByChecksum).
+				Str("query", query.Mrn).
 				Str("policy", policyMrn).
 				Msg("resolver> phase 2: cannot find reporting job")
-			return nil, nil, errors.New("cannot find reporting job for query " + curMRN + " in policy " + policyMrn)
+			return nil, nil, errors.New("cannot find reporting job for query " + query.Mrn + " in policy " + policyMrn)
 		}
 
 		// (2) Scoring Queries handling
 		if !isDataQuery {
-			rj.QrId = mquery.CodeId
+			rj.QrId = codeID
 
-			if mquery.Severity != nil {
+			if query.Impact != nil {
 				for _, parentID := range rj.Notify {
 					parentJob, ok := collectorJob.ReportingJobs[parentID]
 					if !ok {
 						return nil, nil, errors.New("failed to connect datapoint to reporting job")
 					}
-					spec := parentJob.Spec[rj.Uuid]
-					if spec == nil {
-						spec = &ScoringSpec{}
-						parentJob.Spec[rj.Uuid] = spec
-					}
-					if spec.Severity == nil {
-						spec.Severity = &SeverityValue{Value: mquery.Severity.Value}
-					}
+					base := parentJob.Spec[rj.Uuid]
+					query.Impact.Merge(base)
 				}
 			}
 
@@ -1090,7 +1152,13 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 	return executionJob, collectorJob, nil
 }
 
-func (s *LocalServices) mquery2executionQuery(query *Mquery, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool) (*ExecutionQuery, string, error) {
+type queryLike interface {
+	Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, error)
+	GetChecksum() string
+	GetMql() string
+}
+
+func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool) (*ExecutionQuery, string, error) {
 	bundle, err := query.Compile(props)
 	if err != nil {
 		return nil, "", err
@@ -1134,14 +1202,14 @@ func (s *LocalServices) mquery2executionQuery(query *Mquery, props map[string]*l
 	for name := range bundle.Props {
 		checksum := propsToChecksums[name]
 		if checksum == "" {
-			return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.Query + "'")
+			return nil, "", errors.New("cannot find checksum for property " + name + " in query '" + query.GetMql() + "'")
 		}
 		eqProps[name] = checksum
 	}
 
 	res := ExecutionQuery{
-		Query:      query.Query,
-		Checksum:   query.Checksum,
+		Query:      query.GetMql(),
+		Checksum:   query.GetChecksum(),
 		Properties: eqProps,
 		Datapoints: datapoints,
 		Code:       bundle,
@@ -1170,7 +1238,7 @@ func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, 
 	return nil
 }
 
-func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, assetFilters []*Mquery) error {
+func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, assetFilters []*explorer.Mquery) error {
 	resolvedPolicy, err := s.resolve(ctx, assetMrn, assetFilters)
 	if err != nil {
 		return err

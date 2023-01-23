@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/mrn"
@@ -188,9 +189,9 @@ func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string
 	return mrn.String(), nil
 }
 
-func ChecksumAssetFilters(queries []*Mquery) (string, error) {
+func ChecksumAssetFilters(queries []*explorer.Mquery) (string, error) {
 	for i := range queries {
-		if _, err := queries[i].refreshChecksumAndType(nil); err != nil {
+		if _, err := queries[i].RefreshAsFilter(""); err != nil {
 			return "", errors.New("failed to compile query: " + err.Error())
 		}
 	}
@@ -208,7 +209,7 @@ func ChecksumAssetFilters(queries []*Mquery) (string, error) {
 }
 
 // RefreshChecksums of all queries
-func (m *Mqueries) RefreshChecksums(props map[string]*llx.Primitive) error {
+func (m *Mqueries) RefreshChecksums(props map[string]explorer.PropertyRef) error {
 	for i := range m.Items {
 		if _, err := m.Items[i].RefreshChecksumAndType(props); err != nil {
 			return err

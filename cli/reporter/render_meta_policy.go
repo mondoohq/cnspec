@@ -24,12 +24,12 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 	for i := range policyObj.Specs {
 		spec := policyObj.Specs[i]
 		for k := range spec.Policies {
-			name := k // fallback to mrn if we do not find a name
-			p, ok := bundle.Policies[k]
-			if ok {
+			ref := spec.Policies[k]
+			name := ref.Mrn
+			if p, ok := bundle.Policies[ref.Mrn]; ok && p.Name != "" {
 				name = p.Name
 			}
-			policies[k] = name
+			policies[ref.Mrn] = name
 		}
 	}
 
