@@ -99,8 +99,9 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 	case JSON:
 		writer := shared.IOWriter{Writer: out}
 		return ReportCollectionToJSON(data, &writer)
-	// case JUnit:
-	// 	res, err = data.ToJunit()
+	case JUnit:
+		writer := shared.IOWriter{Writer: out}
+		return ReportCollectionToJunit(data, &writer)
 	// case CSV:
 	// 	res, err = data.ToCsv()
 	default:
