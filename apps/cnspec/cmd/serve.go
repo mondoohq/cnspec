@@ -37,6 +37,8 @@ func init() {
 	// background scan flags
 	serveCmd.Flags().Int("timer", 60, "scan interval in minutes")
 	serveCmd.Flags().MarkHidden("timer")
+	// set inventory
+	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 }
 
 var serveCmd = &cobra.Command{
@@ -45,6 +47,7 @@ var serveCmd = &cobra.Command{
 
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("timer", cmd.Flags().Lookup("timer"))
+		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		prof.InitProfiler()
@@ -53,9 +56,12 @@ var serveCmd = &cobra.Command{
 		viper.Set("color", "none")
 
 		// check if an inventory file exists
-		inventoryFilePath, ok := config.InventoryPath(viper.ConfigFileUsed())
-		if ok {
-			viper.Set("inventory", inventoryFilePath)
+		if viper.GetString("inventory-file") == "" {
+			inventoryFilePath, ok := config.InventoryPath(viper.ConfigFileUsed())
+			if ok {
+				log.Info().Str("path", inventoryFilePath).Msg("found inventory file")
+				viper.Set("inventory-file", inventoryFilePath)
+			}
 		}
 
 		// determine the scan config from pipe or args
