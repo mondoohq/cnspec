@@ -312,6 +312,15 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
+		r.out.Write([]byte(r.Printer.H2("Asset: " + target)))
+
+		errorMsg, ok := r.data.Errors[assetMrn]
+		if ok {
+			r.out.Write([]byte(r.Printer.Error(errorMsg)))
+			r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
+			continue
+		}
+
 		report, ok := r.data.Reports[assetMrn]
 		if !ok {
 			// nothing to do, we get an error message in the summary code
@@ -321,12 +330,6 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			// the asset didn't match any policy, so no report was generated
 			continue
 		}
-		assetString := fmt.Sprintf("Asset: %s", target)
-		assetDivider := strings.Repeat("=", utf8.RuneCountInString(assetString))
-		r.out.Write([]byte(termenv.String("Asset: ").Foreground(r.Colors.Secondary).String()))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s%s", target, NewLineCharacter)).Foreground(r.Colors.Primary).String()))
-		r.out.Write([]byte(termenv.String(assetDivider).Foreground(r.Colors.Secondary).String()))
-		r.out.Write([]byte(NewLineCharacter))
 
 		resolved, ok := r.data.ResolvedPolicies[assetMrn]
 		if !ok {
