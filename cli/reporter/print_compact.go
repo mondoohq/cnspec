@@ -62,7 +62,6 @@ func (r *defaultReporter) print() error {
 		return orderedAssets[i].Name < orderedAssets[j].Name
 	})
 
-	r.out.Write([]byte(NewLineCharacter))
 	if !r.isSummary {
 		r.printAssetSections(orderedAssets)
 	}
@@ -90,7 +89,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		}
 	}
 
-	assetsByScore["X"] += len(r.data.Errors)
+	if len(r.data.Errors) > 0 {
+		assetsByScore["X"] += len(r.data.Errors)
+	}
 
 	if len(assetsByScore) > 0 {
 		header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))
@@ -298,8 +299,6 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		return
 	}
 
-	r.out.Write([]byte(NewLineCharacter))
-
 	var queries map[string]*policy.Mquery
 	if r.bundle != nil {
 		queries = r.bundle.QueryMap()
@@ -313,6 +312,15 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
+		r.out.Write([]byte(r.Printer.H2("Asset: " + target)))
+
+		errorMsg, ok := r.data.Errors[assetMrn]
+		if ok {
+			r.out.Write([]byte(r.Printer.Error(errorMsg)))
+			r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
+			continue
+		}
+
 		report, ok := r.data.Reports[assetMrn]
 		if !ok {
 			// nothing to do, we get an error message in the summary code
@@ -322,12 +330,6 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			// the asset didn't match any policy, so no report was generated
 			continue
 		}
-		assetString := fmt.Sprintf("Asset: %s", target)
-		assetDivider := strings.Repeat("=", utf8.RuneCountInString(assetString))
-		r.out.Write([]byte(termenv.String("Asset: ").Foreground(r.Colors.Secondary).String()))
-		r.out.Write([]byte(termenv.String(fmt.Sprintf("%s%s", target, NewLineCharacter)).Foreground(r.Colors.Primary).String()))
-		r.out.Write([]byte(termenv.String(assetDivider).Foreground(r.Colors.Secondary).String()))
-		r.out.Write([]byte(NewLineCharacter))
 
 		resolved, ok := r.data.ResolvedPolicies[assetMrn]
 		if !ok {

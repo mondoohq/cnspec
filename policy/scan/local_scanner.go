@@ -3,8 +3,10 @@ package scan
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -222,36 +224,72 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
 	}
 
+	progressBarElements := map[string]string{}
+	orderedKeys := []string{}
 	for i := range assetList {
-		asset := assetList[i]
-
-		// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
-		// we need to solve this at a different level.
-		select {
-		case <-ctx.Done():
-			log.Warn().Msg("request context has been canceled")
-			return reporter.Reports(), false, nil
-		default:
+		progressBarElements[assetList[i].PlatformIds[0]] = assetList[i].Name
+		orderedKeys = append(orderedKeys, assetList[i].PlatformIds[0])
+	}
+	var progressProg progress.Program
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		progressProg, err = progress.NewMultiProgressProgram(progressBarElements, orderedKeys)
+		if err != nil {
+			return nil, false, errors.Wrap(err, "could not create progress bar")
 		}
-
-		s.RunAssetJob(&AssetJob{
-			DoRecord:       job.DoRecord,
-			UpstreamConfig: upstreamConfig,
-			Asset:          asset,
-			Bundle:         job.Bundle,
-			PolicyFilters:  job.PolicyFilters,
-			Ctx:            ctx,
-			GetCredential:  im.GetCredential,
-			Reporter:       reporter,
-		})
+	} else {
+		progressProg = progress.NoopProgram{}
 	}
 
+	scanGroup := sync.WaitGroup{}
+	scanGroup.Add(1)
+
+	finished := false
+	go func() {
+		defer scanGroup.Done()
+		defer progressProg.Quit()
+		for i := range assetList {
+			asset := assetList[i]
+
+			// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
+			// we need to solve this at a different level.
+			select {
+			case <-ctx.Done():
+				log.Warn().Msg("request context has been canceled")
+				return
+			default:
+			}
+
+			s.RunAssetJob(&AssetJob{
+				DoRecord:       job.DoRecord,
+				UpstreamConfig: upstreamConfig,
+				Asset:          asset,
+				Bundle:         job.Bundle,
+				PolicyFilters:  job.PolicyFilters,
+				Ctx:            ctx,
+				GetCredential:  im.GetCredential,
+				Reporter:       reporter,
+				ProgressProg:   progressProg,
+			})
+		}
+		finished = true
+	}()
+
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		(logger.LogOutputWriter.(*logger.BufferedWriter)).Pause()
+		defer (logger.LogOutputWriter.(*logger.BufferedWriter)).Resume()
+	}
+	if _, err := progressProg.Run(); err != nil {
+		fmt.Println(err.Error())
+		panic(err)
+	}
+	scanGroup.Wait()
+
 	log.Debug().Msg("completed scanning all assets")
-	return reporter.Reports(), true, nil
+	return reporter.Reports(), finished, nil
 }
 
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
-	log.Info().Msgf("connecting to asset %s", job.Asset.HumanName())
+	log.Debug().Msgf("connecting to asset %s", job.Asset.HumanName())
 
 	var upstream *policy.Services
 	var err error
@@ -325,8 +363,13 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.connection = m
 			results, err := s.runMotorizedAsset(job)
 			if err != nil {
-				log.Error().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
+				log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 				job.Reporter.AddScanError(job.Asset, err)
+				job.ProgressProg.Send(progress.MsgErrored{Index: job.Asset.PlatformIds[0]})
+				job.ProgressProg.Send(progress.MsgScore{
+					Index: job.Asset.PlatformIds[0],
+					Score: "X",
+				})
 				return
 			}
 
@@ -360,22 +403,15 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		runtime := resources.NewRuntime(registry, job.connection)
 		runtime.UpstreamConfig = &job.UpstreamConfig
 
-		var progressListener progress.Progress
-		if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar {
-			progressListener = progress.New(job.Asset.Mrn, job.Asset.Name)
-		} else {
-			progressListener = progress.Noop{}
-		}
-
 		scanner := &localAssetScanner{
-			db:       db,
-			services: services,
-			job:      job,
-			fetcher:  s.fetcher,
-			Registry: registry,
-			Schema:   schema,
-			Runtime:  runtime,
-			Progress: progressListener,
+			db:           db,
+			services:     services,
+			job:          job,
+			fetcher:      s.fetcher,
+			Registry:     registry,
+			Schema:       schema,
+			Runtime:      runtime,
+			ProgressProg: job.ProgressProg,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
@@ -527,21 +563,16 @@ type localAssetScanner struct {
 	job      *AssetJob
 	fetcher  *fetcher
 
-	Registry *resources.Registry
-	Schema   *resources.Schema
-	Runtime  *resources.Runtime
-	Progress progress.Progress
+	Registry     *resources.Registry
+	Schema       *resources.Schema
+	Runtime      *resources.Runtime
+	ProgressProg progress.Program
 }
 
 // run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
 // case of an error, the results may contain partial results. The error is only returned if the scan failed to run not
 // when individual policies failed.
 func (s *localAssetScanner) run() (*AssetReport, error) {
-	s.Progress.Open()
-
-	// fallback to always close the progressbar if we error before getting the report
-	defer s.Progress.Close()
-
 	if err := s.prepareAsset(); err != nil {
 		return nil, err
 	}
@@ -561,6 +592,10 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	if err != nil {
 		return ar, err
 	}
+	s.ProgressProg.Send(progress.MsgScore{
+		Index: s.job.Asset.PlatformIds[0],
+		Score: report.Score.Rating().Letter(),
+	})
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
@@ -723,7 +758,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.Progress)
+	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset, resolvedPolicy, features, s.ProgressProg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -737,7 +772,6 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	// TODO: we do not needs this anymore since we receive updates already
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
 	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
-	s.Progress.Close()
 	// handle error
 	if err != nil {
 		return &policy.Report{
