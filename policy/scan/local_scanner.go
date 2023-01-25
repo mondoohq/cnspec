@@ -259,6 +259,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 			default:
 			}
 
+			p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: multiprogress}
 			s.RunAssetJob(&AssetJob{
 				DoRecord:         job.DoRecord,
 				UpstreamConfig:   upstreamConfig,
@@ -268,7 +269,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 				Ctx:              ctx,
 				GetCredential:    im.GetCredential,
 				Reporter:         reporter,
-				MultiProgressBar: multiprogress,
+				ProgressReporter: p,
 			})
 		}
 		finished = true
@@ -363,8 +364,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			if err != nil {
 				log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 				job.Reporter.AddScanError(job.Asset, err)
-				job.MultiProgressBar.Score(job.Asset.PlatformIds[0], "X")
-				job.MultiProgressBar.Errored(job.Asset.PlatformIds[0])
+				job.ProgressReporter.Score("X")
+				job.ProgressReporter.Errored()
 				return
 			}
 
@@ -406,7 +407,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			Registry:         registry,
 			Schema:           schema,
 			Runtime:          runtime,
-			MultiProgressBar: job.MultiProgressBar,
+			ProgressReporter: job.ProgressReporter,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
@@ -561,7 +562,7 @@ type localAssetScanner struct {
 	Registry         *resources.Registry
 	Schema           *resources.Schema
 	Runtime          *resources.Runtime
-	MultiProgressBar progress.MultiProgress
+	ProgressReporter progress.Progress
 }
 
 // run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
@@ -587,8 +588,8 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	if err != nil {
 		return ar, err
 	}
-	s.MultiProgressBar.Score(s.job.Asset.PlatformIds[0], report.Score.Rating().Letter())
-	s.MultiProgressBar.Completed(s.job.Asset.PlatformIds[0])
+	s.ProgressReporter.Score(report.Score.Rating().Letter())
+	s.ProgressReporter.Completed()
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
@@ -751,7 +752,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset, resolvedPolicy, features, s.MultiProgressBar)
+	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
 		return nil, nil, err
 	}

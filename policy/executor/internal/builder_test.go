@@ -171,7 +171,7 @@ func TestBuilder(t *testing.T) {
 		Mrn:         "assetMrn",
 		PlatformIds: []string{"platformId"},
 	}
-	ge, err := b.Build(nil, nil, asset)
+	ge, err := b.Build(nil, nil, asset.Mrn)
 	require.NoError(t, err)
 
 	hasNode(t, ge, "execution_query/propertyquery", ExecutionQueryNodeType)
