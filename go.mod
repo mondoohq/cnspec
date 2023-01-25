@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.14.0
 	github.com/stretchr/testify v1.8.1
-	go.mondoo.com/cnquery v0.0.0-20230124141307-582ae51ba008
+	go.mondoo.com/cnquery v0.0.0-20230125165118-27b0a608bc8a
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.11.1
 	golang.org/x/sync v0.1.0
@@ -193,8 +193,8 @@ require (
 	github.com/cenkalti/backoff/v4 v4.1.3 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/charithe/durationcheck v0.0.9 // indirect
-	github.com/charmbracelet/bubbles v0.14.0
-	github.com/charmbracelet/bubbletea v0.23.1
+	github.com/charmbracelet/bubbles v0.14.0 // indirect
+	github.com/charmbracelet/bubbletea v0.23.1 // indirect
 	github.com/charmbracelet/lipgloss v0.6.0 // indirect
 	github.com/chavacava/garif v0.0.0-20220630083739-93517212f375 // indirect
 	github.com/cjlapao/common-go v0.0.29 // indirect

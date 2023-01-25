@@ -4,11 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	tprogress "github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
@@ -1282,16 +1279,18 @@ func TestReportingJobNode(t *testing.T) {
 }
 
 type progressMock struct {
-	f func(percent float64)
+	f func(current int, total int)
 }
 
-func (p *progressMock) Send(msg tea.Msg)        { p.f(msg.(progress.MsgProgress).Percent) }
-func (p *progressMock) Run() (tea.Model, error) { return tprogress.Model{}, nil }
-func (p *progressMock) Kill()                   {}
-func (p *progressMock) Quit()                   {}
+func (p *progressMock) Open() error                       { return nil }
+func (p *progressMock) OnProgress(current int, total int) { p.f(current, total) }
+func (p *progressMock) Score(string)                      {}
+func (p *progressMock) Errored()                          {}
+func (p *progressMock) Completed()                        {}
+func (p *progressMock) Close()                            {}
 
 func TestCollectionFinisherNode(t *testing.T) {
-	newNodeData := func(reporter func(percent float64)) *CollectionFinisherNodeData {
+	newNodeData := func(reporter func(current int, total int)) *CollectionFinisherNodeData {
 		data := &CollectionFinisherNodeData{
 			progressReporter: &progressMock{f: reporter},
 			doneChan:         make(chan struct{}),
@@ -1309,8 +1308,9 @@ func TestCollectionFinisherNode(t *testing.T) {
 
 	t.Run("initialize/recalculate", func(t *testing.T) {
 		t.Run("recalculates if there are no remaining datapoints", func(t *testing.T) {
-			nodeData := newNodeData(func(percent float64) {
-				assert.Equal(t, 0.0, percent)
+			nodeData := newNodeData(func(completed int, total int) {
+				assert.Equal(t, 0, completed)
+				assert.Equal(t, 0, total)
 			})
 			nodeData.totalDatapoints = 0
 			nodeData.remainingDatapoints = map[string]struct{}{}
@@ -1326,7 +1326,7 @@ func TestCollectionFinisherNode(t *testing.T) {
 			}
 		})
 		t.Run("does not recalculate if there are remaining datapoints", func(t *testing.T) {
-			nodeData := newNodeData(func(percent float64) {
+			nodeData := newNodeData(func(completed int, total int) {
 				assert.Fail(t, "should not recalculate")
 			})
 
@@ -1350,9 +1350,10 @@ func TestCollectionFinisherNode(t *testing.T) {
 	t.Run("consume/recalculate", func(t *testing.T) {
 		t.Run("notifies progress when partially complete", func(t *testing.T) {
 			progressCalled := false
-			nodeData := newNodeData(func(percent float64) {
+			nodeData := newNodeData(func(completed int, total int) {
 				progressCalled = true
-				assert.Equal(t, 0.5, percent)
+				assert.Equal(t, 1, completed)
+				assert.Equal(t, 2, total)
 			})
 			nodeData.totalDatapoints = 2
 			nodeData.remainingDatapoints = map[string]struct{}{
@@ -1374,9 +1375,10 @@ func TestCollectionFinisherNode(t *testing.T) {
 		})
 		t.Run("notifies progress and signals finish when fully complete", func(t *testing.T) {
 			progressCalled := false
-			nodeData := newNodeData(func(percent float64) {
+			nodeData := newNodeData(func(completed int, total int) {
 				progressCalled = true
-				assert.Equal(t, 1.0, percent)
+				assert.Equal(t, 1, completed)
+				assert.Equal(t, 1, total)
 			})
 			nodeData.totalDatapoints = 1
 			nodeData.remainingDatapoints = map[string]struct{}{

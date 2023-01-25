@@ -6,7 +6,6 @@ import (
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec/policy"
@@ -17,20 +16,20 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, asset *asset.Asset,
-	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressProg progress.Program,
+func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
+	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressReporter progress.Progress,
 ) error {
-	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(asset.Mrn, collectorSvc))
+	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
 	defer collector.FlushAndStop()
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
-	if progressProg != nil {
-		builder.WithProgressReporter(progressProg)
+	if progressReporter != nil {
+		builder.WithProgressReporter(progressReporter)
 	}
 
-	ge, err := builder.Build(schema, runtime, asset)
+	ge, err := builder.Build(schema, runtime, assetMrn)
 	if err != nil {
 		return err
 	}
@@ -73,7 +72,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
 
-	ge, err := builder.Build(schema, runtime, nil)
+	ge, err := builder.Build(schema, runtime, "")
 	if err != nil {
 		errs = append(errs, err)
 		return nil, errs
@@ -124,7 +123,7 @@ func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBund
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
 
-	ge, err := builder.Build(schema, runtime, nil)
+	ge, err := builder.Build(schema, runtime, "")
 	if err != nil {
 		return nil, nil, err
 	}
