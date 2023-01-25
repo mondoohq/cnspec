@@ -4,11 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	tprogress "github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
@@ -1285,10 +1282,12 @@ type progressMock struct {
 	f func(percent float64)
 }
 
-func (p *progressMock) Send(msg tea.Msg)        { p.f(msg.(progress.MsgProgress).Percent) }
-func (p *progressMock) Run() (tea.Model, error) { return tprogress.Model{}, nil }
-func (p *progressMock) Kill()                   {}
-func (p *progressMock) Quit()                   {}
+func (p *progressMock) Open() error                              { return nil }
+func (p *progressMock) OnProgress(index string, percent float64) { p.f(percent) }
+func (p *progressMock) Score(string, string)                     {}
+func (p *progressMock) Errored(string)                           {}
+func (p *progressMock) Completed(string)                         {}
+func (p *progressMock) Close()                                   {}
 
 func TestCollectionFinisherNode(t *testing.T) {
 	newNodeData := func(reporter func(percent float64)) *CollectionFinisherNodeData {

@@ -26,14 +26,14 @@ func init() {
 }
 
 type AssetJob struct {
-	DoRecord       bool
-	UpstreamConfig resources.UpstreamConfig
-	Asset          *asset.Asset
-	Bundle         *policy.Bundle
-	PolicyFilters  []string
-	Ctx            context.Context
-	GetCredential  func(cred *vault.Credential) (*vault.Credential, error)
-	Reporter       Reporter
-	connection     *motor.Motor
-	ProgressProg   progress.Program
+	DoRecord         bool
+	UpstreamConfig   resources.UpstreamConfig
+	Asset            *asset.Asset
+	Bundle           *policy.Bundle
+	PolicyFilters    []string
+	Ctx              context.Context
+	GetCredential    func(cred *vault.Credential) (*vault.Credential, error)
+	Reporter         Reporter
+	connection       *motor.Motor
+	MultiProgressBar progress.MultiProgress
 }

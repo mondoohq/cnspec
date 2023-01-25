@@ -552,7 +552,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 // CollectionFinisherNodeData represents the node of type CollectionFinisherNodeType
 // It keeps track of the datapoints that have yet to report back
 type CollectionFinisherNodeData struct {
-	progressReporter progress.Program
+	progressReporter progress.MultiProgress
 	totalDatapoints  int
 
 	remainingDatapoints map[NodeID]struct{}
@@ -582,16 +582,11 @@ func (nodeData *CollectionFinisherNodeData) recalculate() *envelope {
 	if !nodeData.invalidated {
 		return nil
 	}
-	if nodeData.progressReporter != nil && nodeData.assetPlatformId != "" {
-		percent := 0.0
-		if nodeData.totalDatapoints > 0 {
-			percent = float64(nodeData.totalDatapoints-len(nodeData.remainingDatapoints)) / float64(nodeData.totalDatapoints)
-		}
-		nodeData.progressReporter.Send(progress.MsgProgress{
-			Index:   nodeData.assetPlatformId,
-			Percent: percent,
-		})
+	percent := 0.0
+	if nodeData.totalDatapoints > 0 {
+		percent = float64(nodeData.totalDatapoints-len(nodeData.remainingDatapoints)) / float64(nodeData.totalDatapoints)
 	}
+	nodeData.progressReporter.OnProgress(nodeData.assetPlatformId, percent)
 	nodeData.invalidated = false
 	if len(nodeData.remainingDatapoints) == 0 {
 		log.Debug().Msg("graph has received all datapoints")

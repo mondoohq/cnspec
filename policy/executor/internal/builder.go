@@ -45,7 +45,7 @@ type GraphBuilder struct {
 	datapointType map[string]string
 	// progressReporter is a configured interface to receive progress
 	// updates
-	progressReporter progress.Program
+	progressReporter progress.MultiProgress
 	// mondooVersion is the version of mondoo. This is generally sourced
 	// from the binary, but is configurable to make testing easier
 	mondooVersion string
@@ -63,7 +63,7 @@ func NewBuilder() *GraphBuilder {
 		collectDatapointChecksums: []string{},
 		collectScoreQrIDs:         []string{},
 		datapointType:             map[string]string{},
-		progressReporter:          progress.NoopProgram{},
+		progressReporter:          progress.NoopMultiProgressBars{},
 		mondooVersion:             cnspec.GetCoreVersion(),
 		queryTimeout:              5 * time.Minute,
 	}
@@ -118,7 +118,7 @@ func (b *GraphBuilder) AddDatapointCollector(c DatapointCollector) {
 }
 
 // WithProgressReporter sets the interface which will receive progress updates
-func (b *GraphBuilder) WithProgressReporter(r progress.Program) {
+func (b *GraphBuilder) WithProgressReporter(r progress.MultiProgress) {
 	b.progressReporter = r
 }
 
@@ -262,7 +262,7 @@ func (ge *GraphExecutor) addEdge(from NodeID, to NodeID) {
 	ge.edges[from] = insertSorted(ge.edges[from], to)
 }
 
-func (ge *GraphExecutor) createFinisherNode(assetPlatformId string, r progress.Program) {
+func (ge *GraphExecutor) createFinisherNode(assetPlatformId string, r progress.MultiProgress) {
 	nodeID := CollectionFinisherID
 	nodeData := &CollectionFinisherNodeData{
 		remainingDatapoints: make(map[string]struct{}, len(ge.nodes)),
