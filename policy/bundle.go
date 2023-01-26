@@ -162,7 +162,45 @@ func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
 func BundleFromYAML(data []byte) (*Bundle, error) {
 	var res Bundle
 	err := yaml.Unmarshal(data, &res)
+
+	// FIXME: DEPRECATED, remove in v9.0 vv
+	// first we want to see if this looks like a new Bundle. If it does, just
+	// return it and we are done. But if it doesn't, then we will try to
+	// parse it as a v7 bundle instead and see if that works.
+	if err == nil {
+		// Only new policies and bundles support logic where you don't have
+		// any policy in the bundle at all.
+		if len(res.Policies) == 0 {
+			return &res, nil
+		}
+
+		// If the policy as the groups field, then we know it's a new one
+		for i := range res.Policies {
+			cur := res.Policies[i]
+			if cur.Groups != nil {
+				return &res, nil
+			}
+		}
+	}
+
+	// We either got here because there is an error, or because it may also
+	// be an old bundle. So let's try to parse it as an old bundle.
+	var altRes DeprecatedV7_Bundle
+	altErr := yaml.Unmarshal(data, &altRes)
+	if altErr == nil && len(altRes.Policies) != 0 {
+		// we still want to do a sanity check that this is a valid v7 policy
+		for i := range altRes.Policies {
+			cur := altRes.Policies[i]
+			if cur.Specs != nil {
+				return altRes.ToV8(), nil
+			}
+		}
+	}
+
+	// This is the final fallthrough, where we either have an error or
+	// it's not a valid v7 policy
 	return &res, err
+	// ^^
 }
 
 // ToYAML returns the policy bundle as yaml
@@ -377,6 +415,10 @@ func (p *Bundle) compileProp(prop *explorer.Property, ownerMrn string, lookupPro
 		name = m.Basename()
 	}
 
+	if base, ok := lookupProp[prop.Mrn]; ok {
+		prop.Merge(base.Property)
+	}
+
 	code, err := prop.RefreshChecksumAndType()
 	if err != nil {
 		return err
@@ -486,26 +528,28 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			}
 		}
 
-		// Queries
-		for i := range policy.Specs {
-			spec := policy.Specs[i]
+		// Filters: prep a data structure in case it doesn't exist yet and add
+		// any filters that child groups may carry with them
+		if policy.Filters == nil || policy.Filters.Items == nil {
+			policy.Filters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
+		}
+		policy.Filters.Compile(ownerMrn)
 
-			// When filters are initially added they haven't been compiled, i.e. we don't have MRNs
-			// Time to do both
-			if spec.Filter != nil {
-				filters := make(map[string]*explorer.Mquery, len(spec.Filter.Items))
-				for j := range spec.Filter.Items {
-					filter := spec.Filter.Items[j]
-					if _, err := filter.RefreshAsFilter(ownerMrn); err != nil {
-						return nil, err
-					}
-					filters[filter.CodeId] = filter
+		// Queries
+		for i := range policy.Groups {
+			group := policy.Groups[i]
+
+			// When filters are initially added they haven't been compiled
+			group.Filters.Compile(ownerMrn)
+			if group.Filters != nil {
+				for j := range group.Filters.Items {
+					filter := group.Filters.Items[j]
+					policy.Filters.Items[filter.CodeId] = filter
 				}
-				spec.Filter.Items = filters
 			}
 
-			for j := range spec.Queries {
-				query := spec.Queries[j]
+			for j := range group.Queries {
+				query := group.Queries[j]
 
 				// remove leading and trailing whitespace of docs, refs and tags
 				query.Sanitize()
@@ -541,8 +585,8 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 				p.Queries = append(p.Queries, query)
 			}
 
-			for j := range spec.Checks {
-				check := spec.Checks[j]
+			for j := range group.Checks {
+				check := group.Checks[j]
 
 				// remove leading and trailing whitespace of docs, refs and tags
 				check.Sanitize()
@@ -592,7 +636,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			return nil, errors.New("received null policy")
 		}
 
-		err := translateSpecUIDs(ownerMrn, policy, uid2mrn)
+		err := translateGroupUIDs(ownerMrn, policy, uid2mrn)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
@@ -615,29 +659,29 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	return bundleMap, nil
 }
 
-// for a given policy, translate all local UIDs in all specs into global IDs/MRNs
-func translateSpecUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]string) error {
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
+// for a given policy, translate all local UIDs into global IDs/MRNs
+func translateGroupUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]string) error {
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
 
-		for i := range spec.Queries {
-			query := spec.Queries[i]
+		for i := range group.Queries {
+			query := group.Queries[i]
 			if mrn, ok := uid2mrn[query.Uid]; ok {
 				query.Mrn = mrn
 				query.Uid = ""
 			}
 		}
 
-		for i := range spec.Checks {
-			check := spec.Checks[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
 			if mrn, ok := uid2mrn[check.Uid]; ok {
 				check.Mrn = mrn
 				check.Uid = ""
 			}
 		}
 
-		for i := range spec.Policies {
-			policy := spec.Policies[i]
+		for i := range group.Policies {
+			policy := group.Policies[i]
 			if mrn, ok := uid2mrn[policy.Uid]; ok {
 				policy.Mrn = mrn
 				policy.Uid = ""

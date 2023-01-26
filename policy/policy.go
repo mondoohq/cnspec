@@ -18,7 +18,7 @@ import (
 //go:generate protoc --proto_path=../:../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
 
 // FIXME: DEPRECATED, remove in v9.0 vv
-func (sv *SeverityValue) UnmarshalJSON(data []byte) error {
+func (sv *DeprecatedV7_SeverityValue) UnmarshalJSON(data []byte) error {
 	var sev int64
 
 	if err := json.Unmarshal(data, &sev); err == nil {
@@ -113,14 +113,14 @@ func (p *Policy) RefreshLocalAssetFilters() {
 		Items: map[string]*explorer.Mquery{},
 	}
 
-	for i := range p.Specs {
-		spec := p.Specs[i]
-		if spec.Filter == nil || len(spec.Filter.Items) == 0 {
+	for i := range p.Groups {
+		group := p.Groups[i]
+		if group.Filters == nil || len(group.Filters.Items) == 0 {
 			continue
 		}
 
-		for i := range spec.Filter.Items {
-			filter := spec.Filter.Items[i]
+		for i := range group.Filters.Items {
+			filter := group.Filters.Items[i]
 			filter.RefreshAsFilter(p.Mrn)
 			p.Filters.Items[filter.CodeId] = filter
 		}
@@ -132,20 +132,20 @@ func (p *Policy) RefreshLocalAssetFilters() {
 func (p *Policy) ComputeAssetFilters(ctx context.Context, getPolicy func(ctx context.Context, mrn string) (*Policy, error), recursive bool) ([]*explorer.Mquery, error) {
 	filters := map[string]*explorer.Mquery{}
 
-	for i := range p.Specs {
-		spec := p.Specs[i]
+	for i := range p.Groups {
+		group := p.Groups[i]
 
 		// add asset filter of embedded policies
-		if spec.Filter != nil {
-			for i := range spec.Filter.Items {
-				filter := spec.Filter.Items[i]
+		if group.Filters != nil {
+			for i := range group.Filters.Items {
+				filter := group.Filters.Items[i]
 				filters[filter.CodeId] = filter
 			}
 		}
 
 		// add asset filter of child policies
-		for i := range spec.Policies {
-			if err := p.computeAssetFilters(ctx, spec.Policies[i].Mrn, getPolicy, recursive, filters); err != nil {
+		for i := range group.Policies {
+			if err := p.computeAssetFilters(ctx, group.Policies[i].Mrn, getPolicy, recursive, filters); err != nil {
 				return nil, err
 			}
 		}
@@ -254,14 +254,14 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 	graphContentChecksum := checksums.New
 
 	var err error
-	for i := range p.Specs {
-		spec := p.Specs[i]
+	for i := range p.Groups {
+		group := p.Groups[i]
 
 		// POLICIES (must be sorted)
-		policyMRNs := make([]string, len(spec.Policies))
+		policyMRNs := make([]string, len(group.Policies))
 		i = 0
-		for i := range spec.Policies {
-			policy := spec.Policies[i]
+		for i := range group.Policies {
+			policy := group.Policies[i]
 			policyMRNs[i] = policy.Mrn
 			i++
 		}
@@ -324,11 +324,6 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 	// content fields in the policy
 	contentChecksum = contentChecksum.Add(p.Mrn).Add(p.Name).Add(p.Version).Add(p.OwnerMrn)
-	if p.IsPublic {
-		contentChecksum = contentChecksum.AddUint(1)
-	} else {
-		contentChecksum = contentChecksum.AddUint(0)
-	}
 	for i := range p.Authors {
 		author := p.Authors[i]
 		contentChecksum = contentChecksum.Add(author.Email).Add(author.Name)
@@ -375,17 +370,17 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		executionChecksum = executionChecksum.Add(p.Props[i].Checksum)
 	}
 
-	// SPECS
-	for i := range p.Specs {
-		spec := p.Specs[i]
+	// GROUPS
+	for i := range p.Groups {
+		group := p.Groups[i]
 
 		// POLICIES (must be sorted)
-		sort.Slice(spec.Policies, func(i, j int) bool {
-			return spec.Policies[i].Mrn < spec.Policies[j].Mrn
+		sort.Slice(group.Policies, func(i, j int) bool {
+			return group.Policies[i].Mrn < group.Policies[j].Mrn
 		})
 
-		for i := range spec.Policies {
-			ref := spec.Policies[i]
+		for i := range group.Policies {
+			ref := group.Policies[i]
 
 			if ref.GraphContentChecksum == "" || ref.GraphExecutionChecksum == "" {
 				p, err := getPolicy(ctx, ref.Mrn)
@@ -409,12 +404,12 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// CHECKS (must be sorted)
-		sort.Slice(spec.Checks, func(i, j int) bool {
-			return spec.Checks[i].Mrn < spec.Checks[j].Mrn
+		sort.Slice(group.Checks, func(i, j int) bool {
+			return group.Checks[i].Mrn < group.Checks[j].Mrn
 		})
 
-		for i := range spec.Checks {
-			check := spec.Checks[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
 			if check.Checksum == "" {
 				return errors.New("failed to get checksum for check " + check.Mrn)
 			}
@@ -427,12 +422,12 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// DATA (must be sorted)
-		sort.Slice(spec.Queries, func(i, j int) bool {
-			return spec.Queries[i].Mrn < spec.Queries[j].Mrn
+		sort.Slice(group.Queries, func(i, j int) bool {
+			return group.Queries[i].Mrn < group.Queries[j].Mrn
 		})
 
-		for i := range spec.Queries {
-			query := spec.Queries[i]
+		for i := range group.Queries {
+			query := group.Queries[i]
 			if query.Checksum == "" {
 				return errors.New("failed to get checksum for query " + query.Mrn)
 			}
@@ -445,42 +440,44 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// FILTERs (also sorted)
-		keys := make([]string, len(spec.Filter.Items))
-		i := 0
-		for k := range spec.Filter.Items {
-			keys[i] = k
-			i++
-		}
-		sort.Strings(keys)
-
-		for i := range keys {
-			key := keys[i]
-			filter := spec.Filter.Items[key]
-			if filter.Checksum == "" {
-				return errors.New("failed to get checksum for filter " + filter.Mrn)
+		if group.Filters != nil {
+			keys := make([]string, len(group.Filters.Items))
+			i := 0
+			for k := range group.Filters.Items {
+				keys[i] = k
+				i++
 			}
-			if filter.CodeId == "" {
-				return errors.New("failed to get code ID for filter " + filter.Mrn)
-			}
+			sort.Strings(keys)
 
-			contentChecksum = contentChecksum.Add(filter.Checksum)
-			executionChecksum = executionChecksum.Add(filter.CodeId)
+			for i := range keys {
+				key := keys[i]
+				filter := group.Filters.Items[key]
+				if filter.Checksum == "" {
+					return errors.New("failed to get checksum for filter " + filter.Mrn)
+				}
+				if filter.CodeId == "" {
+					return errors.New("failed to get code ID for filter " + filter.Mrn)
+				}
+
+				contentChecksum = contentChecksum.Add(filter.Checksum)
+				executionChecksum = executionChecksum.Add(filter.CodeId)
+			}
 		}
 
 		// REMAINING FIELDS
 		executionChecksum = executionChecksum.
-			AddUint(uint64(spec.StartDate)).
-			AddUint(uint64(spec.EndDate))
+			AddUint(uint64(group.StartDate)).
+			AddUint(uint64(group.EndDate))
 
 		// other content fields
 		contentChecksum = contentChecksum.
-			AddUint(uint64(spec.ReminderDate)).
-			AddUint(uint64(spec.Created)).
-			AddUint(uint64(spec.Modified)).
-			Add(spec.Title)
-		if spec.Docs != nil {
+			AddUint(uint64(group.ReminderDate)).
+			AddUint(uint64(group.Created)).
+			AddUint(uint64(group.Modified)).
+			Add(group.Title)
+		if group.Docs != nil {
 			contentChecksum = contentChecksum.
-				Add(spec.Docs.Desc)
+				Add(group.Docs.Desc)
 		}
 	}
 
@@ -493,7 +490,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	return nil
 }
 
-func checksumAddSpec(checksum checksums.Fast, spec *ScoringSpec) checksums.Fast {
+func checksumAddSpec(checksum checksums.Fast, spec *DeprecatedV7_ScoringSpec) checksums.Fast {
 	checksum = checksum.AddUint((uint64(spec.Action) << 32) | (uint64(spec.ScoringSystem)))
 	var weightIsPrecentage uint64
 	if spec.WeightIsPercentage {
@@ -528,10 +525,10 @@ func (p *Policy) InvalidateAllChecksums() {
 // DependentPolicyMrns lists all policies found across all specs
 func (p *Policy) DependentPolicyMrns() map[string]struct{} {
 	mrns := map[string]struct{}{}
-	for i := range p.Specs {
-		spec := p.Specs[i]
-		for k := range spec.Policies {
-			mrns[spec.Policies[k].Mrn] = struct{}{}
+	for i := range p.Groups {
+		group := p.Groups[i]
+		for k := range group.Policies {
+			mrns[group.Policies[k].Mrn] = struct{}{}
 		}
 	}
 

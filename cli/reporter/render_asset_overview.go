@@ -64,20 +64,20 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 
 	// TODO: refactor once we have the json/dict export for policies since it will make the access a lot easier
 	// iterate over the data queries get the title and display the individual results
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
 
 		// filter by asset filter that do not match
-		if !hasAssetFilter(resolvedPolicy.Filters, spec.Filter) {
+		if !hasAssetFilter(resolvedPolicy.Filters, group.Filters) {
 			continue
 		}
 
 		// FIXME: use spec name from bundle if available
 		// FIXME: while transitioning to v2 policy this code now really needs cleanup
 		category := "General"
-		if spec.Filter != nil {
-			for i := range spec.Filter.Items {
-				f := spec.Filter.Items[i]
+		if group.Filters != nil {
+			for i := range group.Filters.Items {
+				f := group.Filters.Items[i]
 				if c, ok := mqlQueryNames[f.Mql]; ok {
 					category = c
 					break
@@ -88,8 +88,8 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 		table := []row{}
 		maxKeyWidth := 0
 
-		for j := range spec.Queries {
-			query := spec.Queries[j]
+		for j := range group.Queries {
+			query := group.Queries[j]
 
 			if len(query.Title) > maxKeyWidth {
 				maxKeyWidth = len(query.Title)

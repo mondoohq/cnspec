@@ -25,18 +25,18 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 		return nil, err
 	}
 
-	if len(policyw.Policy.Specs) == 0 {
+	if len(policyw.Policy.Groups) == 0 {
 		log.Error().Str("policy", targetMRN).Msg("resolver.db> failed to modify policy, it has no specs")
 		return nil, errors.New("cannot modify policy, it has no specs (invalid state)")
 	}
 
-	spec := policyw.Policy.Specs[0]
+	group := policyw.Policy.Groups[0]
 	changed := false
 
 	// prepare a map for easier processing
 	policies := map[string]*policy.PolicyRef{}
-	for i := range spec.Policies {
-		cur := spec.Policies[i]
+	for i := range group.Policies {
+		cur := group.Policies[i]
 		policies[cur.Mrn] = cur
 	}
 
@@ -92,10 +92,10 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 	}
 
 	// since the map was only used for faster create/delete, we now have to translate it back
-	spec.Policies = make([]*policy.PolicyRef, len(policies))
+	group.Policies = make([]*policy.PolicyRef, len(policies))
 	i := 0
 	for _, v := range policies {
-		spec.Policies[i] = v
+		group.Policies[i] = v
 		i++
 	}
 

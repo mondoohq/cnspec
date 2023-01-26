@@ -424,7 +424,7 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 		ge.addEdge(NodeID(rj.QrId), n.id)
 	}
 
-	for childReportingJobID, ss := range rj.Spec {
+	for childReportingJobID, ss := range rj.ChildJobs {
 		nodeData.childScores[childReportingJobID] = &reportingJobResult{
 			scoringSpec: ss,
 		}

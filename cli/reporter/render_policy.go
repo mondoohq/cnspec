@@ -46,10 +46,10 @@ func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *poli
 
 func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundleMap *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, res *bytes.Buffer) {
 	dataQueries := map[string]explorer.Mquery_Action{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for j := range spec.Queries {
-			query := spec.Queries[j]
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for j := range group.Queries {
+			query := group.Queries[j]
 			dataQueries[query.Mrn] = query.Action
 		}
 	}

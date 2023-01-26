@@ -63,7 +63,7 @@ func (x *ResolvedPolicy) RootBundlePolicies(bundle *PolicyBundleMap, assetMrn st
 		if ok {
 			res = append(res, p)
 		} else {
-			for j := range job.Spec {
+			for j := range job.ChildJobs {
 				jobs = append(jobs, j)
 			}
 		}

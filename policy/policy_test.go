@@ -66,7 +66,7 @@ func TestPolicyChecksums(t *testing.T) {
 
 	contentTests := map[string]func(p *Policy){
 		"author changed": func(p *Policy) {
-			p.Authors = []*Author{{Name: "Bob"}}
+			p.Authors = []*explorer.Author{{Name: "Bob"}}
 		},
 		"tags changed": func(p *Policy) {
 			p.Tags = map[string]string{"key": "val"}
@@ -78,7 +78,7 @@ func TestPolicyChecksums(t *testing.T) {
 			p.Version = "1.2.3"
 		},
 		"spec date changed": func(p *Policy) {
-			p.Specs[0].Created = 12345
+			p.Groups[0].Created = 12345
 		},
 	}
 
@@ -121,7 +121,7 @@ func TestPolicyChecksums(t *testing.T) {
 			b.Queries[0].CodeId = "12345"
 		},
 		"query spec set": func() {
-			p.Specs[0].Checks = []*explorer.Mquery{
+			p.Groups[0].Checks = []*explorer.Mquery{
 				{
 					Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
 					Impact: &explorer.Impact{

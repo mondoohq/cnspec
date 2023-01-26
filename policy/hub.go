@@ -26,7 +26,6 @@ func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Em
 // SetBundle stores a bundle of policies and queries in this marketplace
 func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
 	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
-	FixZeroValuesInPolicyBundle(bundle)
 
 	bundleMap, err := bundle.Compile(ctx, s.DataLake)
 	if err != nil {
@@ -66,11 +65,11 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 		checks := map[string]*explorer.Mquery{}
 		props := map[string]*explorer.Property{}
 
-		for i := range policyObj.Specs {
-			spec := policyObj.Specs[i]
+		for i := range policyObj.Groups {
+			group := policyObj.Groups[i]
 
-			for j := range spec.Queries {
-				query := spec.Queries[j]
+			for j := range group.Queries {
+				query := group.Queries[j]
 				queries[query.Mrn] = query
 
 				for k := range query.Props {
@@ -79,8 +78,8 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 				}
 			}
 
-			for j := range spec.Checks {
-				check := spec.Checks[j]
+			for j := range group.Checks {
+				check := group.Checks[j]
 				checks[check.Mrn] = check
 
 				if baseCheck, ok := bundle.Queries[check.Mrn]; ok {
@@ -115,7 +114,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	}
 
 	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
-	// e.g. ApplyScoringMutation changes the spec. Right now we assume the caller invalidates the checksum
+	// e.g. ApplyScoringMutation changes the group. Right now we assume the caller invalidates the checksum
 	//
 	// the only reason we make this conditional is because in a bundle we may have
 	// already done the work for a policy that is a dependency of another
@@ -186,11 +185,6 @@ func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *P
 		policyObj := policies[i]
 		logCtx.Debug().Str("owner", policyObj.OwnerMrn).Str("uid", policyObj.Uid).Str("mrn", policyObj.Mrn).Msg("store policy")
 		policyObj.OwnerMrn = bundleMap.OwnerMrn
-
-		// If this is a user generated policy, it must be non-public
-		if bundleMap.OwnerMrn != "//policy.api.mondoo.app" {
-			policyObj.IsPublic = false
-		}
 
 		if err = s.setPolicyFromBundle(ctx, policyObj, bundleMap); err != nil {
 			return err
@@ -364,18 +358,18 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 		bundleMap.Props[prop.Mrn] = prop
 	}
 
-	for i := range mpolicyObj.Specs {
-		spec := mpolicyObj.Specs[i]
+	for i := range mpolicyObj.Groups {
+		group := mpolicyObj.Groups[i]
 
-		if spec.Filter != nil {
-			filter := spec.Filter
-			for k, v := range filter.Items {
+		if group.Filters != nil {
+			filters := group.Filters
+			for k, v := range filters.Items {
 				mpolicyObj.Filters.Items[k] = v
 			}
 		}
 
-		for i := range spec.Queries {
-			query := spec.Queries[i]
+		for i := range group.Queries {
+			query := group.Queries[i]
 			base, err := s.DataLake.GetQuery(ctx, query.Mrn)
 			if err == nil {
 				query.Merge(base)
@@ -383,8 +377,8 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			bundleMap.Queries[query.Mrn] = query
 		}
 
-		for i := range spec.Checks {
-			check := spec.Checks[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
 			base, err := s.DataLake.GetQuery(ctx, check.Mrn)
 			if err != nil {
 				return nil, err
@@ -392,8 +386,8 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			bundleMap.Queries[check.Mrn] = base
 		}
 
-		for i := range spec.Policies {
-			policy := spec.Policies[i]
+		for i := range group.Policies {
+			policy := group.Policies[i]
 
 			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, policy.Mrn)
 			if err != nil {
@@ -444,9 +438,6 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*B
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + ": " + err.Error())
 	}
 
-	// fixme - this is a hack, more deets at method definition
-	FixZeroValuesInPolicyBundle(bundle)
-
 	bundleMap := bundle.ToMap()
 
 	err = s.setPolicyBundleFromMap(ctx, bundleMap)
@@ -457,33 +448,4 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*B
 
 	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetched policy bundle from upstream")
 	return bundle, nil
-}
-
-// fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized
-// instead of nil pointers for ScoringSpecs.
-// This is a quick fix for https://gitlab.com/mondoolabs/mondoo/-/issues/455
-// so that we can get a fix out while figuring out wtf is up with our null pointer serialization
-// open issue for deserialization: https://gitlab.com/mondoolabs/mondoo/-/issues/508
-func FixZeroValuesInPolicyBundle(bundle *Bundle) {
-	for _, policy := range bundle.Policies {
-		for _, spec := range policy.V1Specs {
-			if spec.Policies != nil {
-				for k, v := range spec.Policies {
-					// v.Action is only 0 for zero value structs
-					if v != nil && v.Action == 0 {
-						spec.Policies[k] = nil
-					}
-				}
-			}
-
-			if spec.ScoringQueries != nil {
-				for k, v := range spec.ScoringQueries {
-					// v.Action is only 0 for zero value structs
-					if v != nil && v.Action == 0 {
-						spec.ScoringQueries[k] = nil
-					}
-				}
-			}
-		}
-	}
 }

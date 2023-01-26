@@ -203,10 +203,10 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 
 func (r *reportRenderer) policyReportChildren(res *bytes.Buffer, policyObj *policy.Policy, bundle *policy.PolicyBundleMap) []*policy.Policy {
 	policies := map[string]struct{}{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for i := range spec.Policies {
-			policies[spec.Policies[i].Mrn] = struct{}{}
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for i := range group.Policies {
+			policies[group.Policies[i].Mrn] = struct{}{}
 		}
 	}
 
@@ -225,10 +225,10 @@ func (r *reportRenderer) policyReportChildren(res *bytes.Buffer, policyObj *poli
 
 func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolved *policy.ResolvedPolicy, parentQueryActions policyModActions) ([]reportRow, policyModActions) {
 	checks := map[string]*explorer.Mquery{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for i := range spec.Checks {
-			check := spec.Checks[i]
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
 			checks[check.Mrn] = check
 		}
 	}

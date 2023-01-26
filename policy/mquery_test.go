@@ -7,11 +7,11 @@ import (
 )
 
 func TestMquery_Whitespaces(t *testing.T) {
-	mq := Mquery{
+	mq := DeprecatedV7_Mquery{
 		Query: "  mondoo { version \n}   \t\n  ",
 	}
 
-	mqexpect := Mquery{
+	mqexpect := DeprecatedV7_Mquery{
 		Query: "mondoo { version \n}",
 	}
 
@@ -27,11 +27,11 @@ func TestMquery_Whitespaces(t *testing.T) {
 }
 
 func TestMquery_CodeIDs(t *testing.T) {
-	mqAssetFilter := Mquery{
+	mqAssetFilter := DeprecatedV7_Mquery{
 		Query: "mondoo { version \n}",
 	}
 
-	mqReg := Mquery{
+	mqReg := DeprecatedV7_Mquery{
 		Query: "mondoo { version \n}",
 	}
 

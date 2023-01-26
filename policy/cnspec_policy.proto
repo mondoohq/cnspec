@@ -8,19 +8,19 @@ import "motor/asset/asset.proto";
 import "explorer/cnquery_explorer.proto";
 
 /*
-  PolicySpec specifies and overrides a policy and all its queries and referenced policies.
+  PolicyGroup specifies and overrides a policy and all its queries and referenced policies.
   - Queries have UUIDs across all policies, so these overrides reach across policies.
   - Policies are targeted via UUID as well and may override their scoring behavior.
-  - PolicySpecs can be time-limited
-  - PolicySpecs can be limited to a subset of assets
+  - PolicyGroups can be time-limited
+  - PolicyGroups can be limited to a subset of assets
 */
-message PolicySpec {
+message PolicyGroup {
   repeated PolicyRef policies = 1;
   repeated cnquery.explorer.Mquery checks = 2;
   repeated cnquery.explorer.Mquery queries = 3;
 
   // filter for the assets this applies to
-  cnquery.explorer.Filters filter = 20;
+  cnquery.explorer.Filters filters = 20;
 
   // the timeline during which this scoring spec is active and reminders will be sent
   int64 start_date = 21;
@@ -29,41 +29,18 @@ message PolicySpec {
 
   // metadata
   string title = 24;
-  PolicySpecDocs docs = 25;
+  PolicyGroupDocs docs = 25;
 
   int64 created = 32;
   int64 modified = 33;
 }
-
-// FIXME: DEPRECATED, remove in v9.0 vv
-message DeprecatedV6_PolicySpec {
-  map<string,ScoringSpec> policies = 1;
-  map<string,ScoringSpec> scoring_queries = 2;
-  map<string,QueryAction> data_queries = 3;
-
-  // filter for the assets this applies to
-  Mquery asset_filter = 20;
-
-  // the timeline during which this scoring spec is active and reminders will be sent
-  int64 start_date = 21;
-  int64 end_date = 22;
-  int64 reminder_date = 23;
-
-  // metadata
-  string title = 24;
-  PolicySpecDocs docs = 25;
-
-  int64 created = 32;
-  int64 modified = 33;
-}
-// ^^
 
 message PolicyRef {
   enum Action {
-    UNKNOWN = 0;
-    ADD = 1;
-    DISABLE = 2;
-    MODIFY = 3;
+    UNSPECIFIED = 0;
+    MODIFY = 1;
+    DEACTIVATE = 2;
+    ACTIVATE = 3;
   }
 
   string mrn = 1;
@@ -86,9 +63,9 @@ message PolicyRef {
 */
 message Policy {
   // FIXME: DEPRECATED, remove in v9.0 vv
-  // This is replaced by the field "filters"
-  map<string,Mquery> v1_asset_filters = 7; // key == checksum, internal
-  repeated DeprecatedV6_PolicySpec v1_specs = 6;
+  // We carry these fields for old services still using the API with this proto.
+  repeated DeprecatedV7_PolicySpec specs = 6;
+  map<string,DeprecatedV7_Mquery> asset_filters = 7; // key == checksum
   // ^^
 
   string mrn = 1; // will be filled from UID on upload
@@ -97,19 +74,19 @@ message Policy {
   string version = 3;
   string owner_mrn = 8;
 
-  repeated PolicySpec specs = 11;
+  repeated PolicyGroup groups = 11;
 
-  bool is_public = 9;
   string license = 21;
   PolicyDocs docs = 41;
+  string summary = 46;
 
   ScoringSystem scoring_system = 10;
 
-  repeated Author authors = 30;
+  repeated cnquery.explorer.Author authors = 30;
   int64 created = 32;
   int64 modified = 33;
   map<string,string> tags = 34;
-  repeated cnquery.explorer.Property props = 35;
+  repeated cnquery.explorer.Property props = 45;
 
   // checksums are grouped into:
   // local... meaning this policy, not policy dependencies
@@ -128,8 +105,99 @@ message Policy {
 }
 
 message Policies {
-  repeated Policy items = 1;
+  repeated DeprecatedV7_Policy deprecated_v7_items = 1;
+  repeated Policy items = 2;
 }
+
+// FIXME: DEPRECATED, remove in v9.0 vv
+// All of these have been replaced as of the policy overhaul
+message DeprecatedV7_PolicySpec {
+  map<string,DeprecatedV7_ScoringSpec> policies = 1;
+  map<string,DeprecatedV7_ScoringSpec> scoring_queries = 2;
+  map<string,QueryAction> data_queries = 3;
+
+  // filter for the assets this applies to
+  DeprecatedV7_Mquery asset_filter = 20;
+
+  // the timeline during which this scoring spec is active and reminders will be sent
+  int64 start_date = 21;
+  int64 end_date = 22;
+  int64 reminder_date = 23;
+
+  // metadata
+  string title = 24;
+  PolicyGroupDocs docs = 25;
+
+  int64 created = 32;
+  int64 modified = 33;
+}
+
+message DeprecatedV7_Policy {
+  string mrn = 1; // will be filled from UID on upload
+  string name = 2;
+  string version = 3;
+
+  // checksums are grouped into:
+  // local... meaning this policy, not policy dependencies
+  // graph... meaning this and all dependent policies
+  // content... meaning all the content in the policy, everything there is
+  // execution... meaning everything that changes the resolved policy
+  string local_content_checksum = 37;
+  string graph_content_checksum = 38;
+  string local_execution_checksum = 39;
+  string graph_execution_checksum = 40;
+
+  repeated DeprecatedV7_PolicySpec specs = 6;
+  map<string,DeprecatedV7_Mquery> asset_filters = 7; // key == checksum
+
+  string owner_mrn = 8;
+  bool is_public = 9;
+
+  ScoringSystem scoring_system = 10;
+
+  repeated DeprecatedV7_Author authors = 30;
+  int64 created = 32;
+  int64 modified = 33;
+  map<string,string> tags = 34;
+  // mapping query ref => target; target may be empty if not overwriting
+  map<string,string> props = 35;
+  // user-defined uid, which is used to generate the MRN
+  string uid = 36;
+  PolicyDocs docs = 41;
+
+  QueryCounts query_counts = 42;
+}
+
+message DeprecatedV7_ScoringSpec {
+  string id = 1; // id of the policy or query, can also be an mrn
+  // weight: 0 means the result has no weight and will be ignored
+  // if weight_is_percentage, this value must be in 0 - 100 range
+  uint32 weight = 2;
+  bool weight_is_percentage = 3;
+
+  // only ever relevant when multiple scores bubble up into this spec
+  // the default is average if not specified
+  ScoringSystem scoring_system = 4;
+
+  QueryAction action = 6;
+
+  DeprecatedV7_SeverityValue severity = 7;
+}
+
+message DeprecatedV7_Bundle {
+  string owner_mrn = 1;
+  repeated DeprecatedV7_Mquery queries = 4;
+  repeated DeprecatedV7_Policy policies = 2;
+  repeated DeprecatedV7_Mquery props = 3;
+  PolicyDocs docs = 5;
+
+}
+
+message DeprecatedV7_Author {
+  string name = 1;
+  string email = 2;
+}
+// ^^
 
 /*
   ScoringSystem that determines how individual scores come together
@@ -149,32 +217,6 @@ enum QueryAction {
   ACTIVATE = 3;
 }
 
-// FIXME: DEPRECATED, remove in v9.0 vv
-/*
-  ScoringSpec defines how a query or policy will be scored
-*/
-message ScoringSpec {
-  string id = 1; // id of the policy or query, can also be an mrn
-  // weight: 0 means the result has no weight and will be ignored
-  // if weight_is_percentage, this value must be in 0 - 100 range
-  uint32 weight = 2;
-  bool weight_is_percentage = 3;
-
-  // only ever relevant when multiple scores bubble up into this spec
-  // the default is average if not specified
-  ScoringSystem scoring_system = 4;
-
-  QueryAction action = 6;
-
-  SeverityValue severity = 7;
-}
-// ^
-
-message Author {
-  string name = 1;
-  string email = 2;
-}
-
 message QueryCounts {
   int64 scoring_count = 1;
   int64 data_count = 2;
@@ -183,18 +225,23 @@ message QueryCounts {
 
 message Bundle {
   string owner_mrn = 1;
-  repeated Policy policies = 2;
+  repeated Policy policies = 7;
   repeated cnquery.explorer.Property props = 3;
   repeated cnquery.explorer.Mquery queries = 6;
   PolicyDocs docs = 5;
 
   // FIXME: DEPRECATED, remove in v9.0 vv
   // This is replaced by queries using cnquery structures
-  repeated Mquery v1_queries = 4;
+  repeated DeprecatedV7_Policy deprecated_v7_policies = 2;
+  // We left props largely unchanged, because it only used 2 fields from the
+  // Mquery message: uid and query (#5 and #1). Internally it used
+  // code_id, checksum and mrn (#2, #3, #4). These have been kept consistent
+  // between all protos and messages.
+  repeated DeprecatedV7_Mquery deprecated_v7_queries = 4;
   // ^^
 }
 
-message PolicySpecDocs {
+message PolicyGroupDocs {
   string desc = 1;
 }
 
@@ -204,7 +251,7 @@ message PolicyDocs {
 
 // FIXME: DEPRECATED, remove in v9.0 vv
 // This is moving entirely to cnquery's Mquery object.
-message Mquery {
+message DeprecatedV7_Mquery {
   string query = 1;
   string code_id = 2;
   string checksum = 3;
@@ -213,30 +260,24 @@ message Mquery {
   // It is not be persisted.
   string uid = 5;
   string type = 6;
-  SeverityValue severity = 19;
+  DeprecatedV7_SeverityValue severity = 19;
   string title = 20;
-  MqueryDocs docs = 21;
-  repeated MqueryRef refs = 22;
+  DeprecatedV7_MqueryDocs docs = 21;
+  repeated DeprecatedV7_MqueryRef refs = 22;
   map<string,string> tags = 34;
 }
-// ^^
 
-// FIXME: DEPRECATED, remove in v9.0 vv
-// This is moved to cnquery and the impact ImpactValue
-message SeverityValue {
+message DeprecatedV7_SeverityValue {
   int64 value = 1;
 }
-// ^^
 
-// FIXME: DEPRECATED, remove in v9.0 vv
-// also moves to cnquery
-message MqueryDocs {
+message DeprecatedV7_MqueryDocs {
   string desc = 1;
   string audit = 2;
   string remediation = 3;
 }
 
-message MqueryRef {
+message DeprecatedV7_MqueryRef {
   string title = 1;
   string url = 2;
 }
@@ -260,7 +301,7 @@ message Asset {
 message ResolvedPolicy {
   // FIXME: DEPRECATED, remove in v9.0 vv
   // Replaced by the new Mquery version
-  repeated Mquery v6_filters = 4;
+  repeated DeprecatedV7_Mquery deprecated_v7_filters = 4;
   // ^^
 
   ExecutionJob execution_job = 2;
@@ -336,7 +377,7 @@ message DataQueryInfo {
 message ReportingJob {
   // FIXME: DEPRECATED, remove in v9.0 vv
   // This is replaced by the new spec, which now references cnquery
-  map<string,ScoringSpec> v6_spec = 4;
+  map<string,DeprecatedV7_ScoringSpec> deprecated_v7_spec = 4;
   // ^^
 
   string checksum = 1;
@@ -346,7 +387,7 @@ message ReportingJob {
   ScoringSystem scoring_system = 6;
   map<string,bool> datapoints = 7;
   bool is_data = 8;
-  map<string,cnquery.explorer.Impact> spec = 9;
+  map<string,cnquery.explorer.Impact> child_jobs = 9;
 }
 
 // **********       Reporting         **************
@@ -467,7 +508,7 @@ message Mrn {
 message Mqueries {
   // FIXME: DEPRECATED, remove in v9.0 vv
   // just uses the old datatype and moved to the new one below
-  repeated Mquery v1_items = 1;
+  repeated DeprecatedV7_Mquery deprecated_v7_items = 1;
   // ^
 
   repeated cnquery.explorer.Mquery items = 2;

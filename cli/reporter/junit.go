@@ -7,6 +7,7 @@ import (
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"github.com/mitchellh/mapstructure"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/policy"
@@ -75,7 +76,7 @@ func ReportCollectionToJunit(r *policy.ReportCollection, out shared.OutputHelper
 }
 
 // assetPolicyTests converts asset scoring queries to Junit test cases
-func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *policy.Asset, queries map[string]*policy.Mquery) junit.Testsuite {
+func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *policy.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
 	ts := junit.Testsuite{
 		Time:      "",
 		Testcases: []junit.Testcase{},

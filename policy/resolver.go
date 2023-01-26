@@ -269,15 +269,14 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 		Mrn:     policyMrn,
 		Name:    name, // placeholder
 		Version: "",   // no version, semver otherwise
-		Specs: []*PolicySpec{{
+		Groups: []*PolicyGroup{{
 			Policies: []*PolicyRef{},
 			Checks:   []*explorer.Mquery{},
 			Queries:  []*explorer.Mquery{},
-			Filter:   &explorer.Filters{},
+			Filters:  &explorer.Filters{},
 		}},
 		Filters:  &explorer.Filters{},
 		OwnerMrn: ownerMrn,
-		IsPublic: false,
 	}
 
 	return &policyObj
@@ -479,7 +478,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	reportingJob := &ReportingJob{
 		Uuid:       rjUUID,
 		QrId:       "root",
-		Spec:       map[string]*explorer.Impact{},
+		ChildJobs:  map[string]*explorer.Impact{},
 		Datapoints: map[string]bool{},
 	}
 
@@ -664,7 +663,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 		return errors.New("cannot find policy '" + policyMrn + "' while resolving")
 	}
 
-	if len(policyObj.Specs) == 0 {
+	if len(policyObj.Groups) == 0 {
 		return nil
 	}
 
@@ -675,41 +674,41 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	parentCache.global.propsCache.Add(policyObj.Props...)
 
 	// get a list of matching specs
-	matchingSpecs := []*PolicySpec{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
+	matchingGroups := []*PolicyGroup{}
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
 
-		if spec.Filter == nil || len(spec.Filter.Items) == 0 {
-			matchingSpecs = append(matchingSpecs, spec)
+		if group.Filters == nil || len(group.Filters.Items) == 0 {
+			matchingGroups = append(matchingGroups, group)
 			continue
 		}
 
-		for j := range spec.Filter.Items {
-			filter := spec.Filter.Items[j]
+		for j := range group.Filters.Items {
+			filter := group.Filters.Items[j]
 			if _, ok := cache.global.assetFilters[filter.CodeId]; ok {
-				matchingSpecs = append(matchingSpecs, spec)
+				matchingGroups = append(matchingGroups, group)
 				break
 			}
 		}
 	}
 
 	// aggregate all removed policies and queries
-	for i := range matchingSpecs {
-		spec := matchingSpecs[i]
-		for i := range spec.Policies {
-			policy := spec.Policies[i]
-			if policy.Action == PolicyRef_DISABLE {
+	for i := range matchingGroups {
+		group := matchingGroups[i]
+		for i := range group.Policies {
+			policy := group.Policies[i]
+			if policy.Action == PolicyRef_DEACTIVATE {
 				cache.removedPolicies[policy.Mrn] = struct{}{}
 			}
 		}
-		for i := range spec.Checks {
-			check := spec.Checks[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
 			if check.Action == explorer.Mquery_DELETE {
 				cache.removedQueries[check.Mrn] = struct{}{}
 			}
 		}
-		for i := range spec.Queries {
-			query := spec.Checks[i]
+		for i := range group.Queries {
+			query := group.Checks[i]
 			if query.Action == explorer.Mquery_DELETE {
 				cache.removedQueries[query.Mrn] = struct{}{}
 			}
@@ -718,9 +717,9 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 
 	// resolve the rest
 	var err error
-	for i := range matchingSpecs {
-		spec := matchingSpecs[i]
-		if err = s.policyspecToJobs(ctx, spec, ownerJob, cache); err != nil {
+	for i := range matchingGroups {
+		group := matchingGroups[i]
+		if err = s.policyspecToJobs(ctx, group, ownerJob, cache); err != nil {
 			log.Error().Err(err).Msg("resolver> policyToJobs error")
 			return err
 		}
@@ -732,20 +731,20 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	return nil
 }
 
-func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, ownerJob *ReportingJob, cache *policyResolverCache) error {
+func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup, ownerJob *ReportingJob, cache *policyResolverCache) error {
 	ctx, span := tracer.Start(ctx, "resolver/policyspecToJobs")
 	defer span.End()
 
 	// include referenced policies
-	for i := range spec.Policies {
-		policy := spec.Policies[i]
+	for i := range group.Policies {
+		policy := group.Policies[i]
 
-		scoringSpec := &explorer.Impact{
+		scoring := &explorer.Impact{
 			Scoring: policy.ScoringSystem,
 		}
 
 		// ADD
-		if policy.Action == PolicyRef_UNKNOWN || policy.Action == PolicyRef_ADD {
+		if policy.Action == PolicyRef_UNSPECIFIED || policy.Action == PolicyRef_ACTIVATE {
 			if _, ok := cache.parentPolicies[policy.Mrn]; ok {
 				return errors.New("trying to resolve policy spec twice, it is cyclical for MRN: " + policy.Mrn)
 			}
@@ -778,7 +777,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 				policyJob = &ReportingJob{
 					QrId:          policy.Mrn,
 					Uuid:          cache.global.relativeChecksum(policy.Mrn),
-					Spec:          map[string]*explorer.Impact{},
+					ChildJobs:     map[string]*explorer.Impact{},
 					Datapoints:    map[string]bool{},
 					ScoringSystem: policyObj.ScoringSystem,
 				}
@@ -788,7 +787,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 
 			// local aspects for the resolved policy
 			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
-			ownerJob.Spec[policyJob.Uuid] = scoringSpec
+			ownerJob.ChildJobs[policyJob.Uuid] = scoring
 			cache.childPolicies[policy.Mrn] = struct{}{}
 
 			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache); err != nil {
@@ -814,15 +813,15 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 			for _, id := range policyJob.Notify {
 				parentJob := cache.global.reportingJobsByUUID[id]
 				if parentJob != nil {
-					parentJob.Spec[policyJob.Uuid] = scoringSpec
+					parentJob.ChildJobs[policyJob.Uuid] = scoring
 				}
 			}
 		}
 	}
 
 	// handle scoring queries
-	for i := range spec.Checks {
-		check := spec.Checks[i]
+	for i := range group.Checks {
+		check := group.Checks[i]
 
 		scoringSpec := check.Impact
 
@@ -840,7 +839,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 				queryJob = &ReportingJob{
 					Uuid:       cache.global.relativeChecksum(check.Checksum),
 					QrId:       check.Mrn,
-					Spec:       map[string]*explorer.Impact{},
+					ChildJobs:  map[string]*explorer.Impact{},
 					Datapoints: map[string]bool{},
 				}
 				cache.global.reportingJobsByChecksum[check.Checksum] = queryJob
@@ -850,7 +849,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 			// local aspects for the resolved policy
 			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
 
-			ownerJob.Spec[queryJob.Uuid] = scoringSpec
+			ownerJob.ChildJobs[queryJob.Uuid] = scoringSpec
 			cache.childQueries[check.Mrn] = struct{}{}
 
 			// we set a placeholder for the execution query, just to indicate it will be added
@@ -876,7 +875,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 			for _, id := range queryJob.Notify {
 				parentJob := cache.global.reportingJobsByUUID[id]
 				if parentJob != nil {
-					parentJob.Spec[queryJob.Uuid] = scoringSpec
+					parentJob.ChildJobs[queryJob.Uuid] = scoringSpec
 				}
 			}
 
@@ -885,8 +884,8 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 	}
 
 	// handle data queries
-	for i := range spec.Queries {
-		query := spec.Queries[i]
+	for i := range group.Queries {
+		query := group.Queries[i]
 
 		// Dom: Note: we do not carry over the impact from data queries yet
 
@@ -905,7 +904,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, spec *PolicySpec, 
 				queryJob = &ReportingJob{
 					Uuid:       cache.global.relativeChecksum(query.Checksum),
 					QrId:       query.Mrn,
-					Spec:       map[string]*explorer.Impact{},
+					ChildJobs:  map[string]*explorer.Impact{},
 					Datapoints: map[string]bool{},
 					IsData:     true,
 				}
@@ -958,46 +957,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 		collectorJob.ReportingJobs[rj.Uuid] = rj
 	}
 
-	// // FIXME: sort by internal dependencies of props as well
-	// // we go properties first, since they have to be executed before queries
-	// props := map[string]propInfo{}
-	// for checksum, prop := range cache.propsByChecksum {
-	// 	codeID := prop.CodeId
-	// 	if existing, ok := executionJob.Queries[codeID]; ok {
-	// 		logCtx.Debug().
-	// 			Str("codeID", codeID).
-	// 			Str("existing", existing.Query).
-	// 			Str("new", prop.Mql).
-	// 			Msg("resolver> found duplicate prop")
-	// 	}
-
-	// 	propName := prop.Uid
-	// 	if propName == "" {
-	// 		var err error
-	// 		propName, err = mrn.GetResource(prop.Mrn, MRN_RESOURCE_QUERY)
-	// 		if err != nil {
-	// 			return nil, nil, errors.New("could not resolve property name from query mrn: " + prop.Mrn)
-	// 		}
-	// 	}
-
-	// 	executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false)
-	// 	if err != nil {
-	// 		return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
-	// 	}
-	// 	if dataChecksum == "" {
-	// 		return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + prop.Mql + "'")
-	// 	}
-
-	// 	cache.executionQueries[checksum] = executionQuery
-	// 	executionJob.Queries[codeID] = executionQuery
-
-	// 	props[prop.Checksum] = propInfo{
-	// 		prop:         prop,
-	// 		typ:          &llx.Primitive{Type: prop.Type},
-	// 		dataChecksum: dataChecksum,
-	// 		name:         propName,
-	// 	}
-	// }
+	// FIXME: sort by internal dependencies of props as well
 
 	// next we can continue with queries, after properties are all done
 	for checksum, query := range cache.queriesByChecksum {
@@ -1065,7 +1025,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 				delete(collectorJob.ReportingJobs, rj.Uuid)
 				for _, parentID := range rj.Notify {
 					if parentJob, ok := collectorJob.ReportingJobs[parentID]; ok {
-						delete(parentJob.Spec, rj.Uuid)
+						delete(parentJob.ChildJobs, rj.Uuid)
 					}
 				}
 			}
@@ -1097,7 +1057,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 					if !ok {
 						return nil, nil, errors.New("failed to connect datapoint to reporting job")
 					}
-					base := parentJob.Spec[rj.Uuid]
+					base := parentJob.ChildJobs[rj.Uuid]
 					query.Impact.Merge(base)
 				}
 			}

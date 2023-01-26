@@ -122,7 +122,7 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 }
 
 // PoliciesSortedByDependency sorts policies by their dependencies
-// note: the MRN field must be set and dependencies in specs must be specified by MRN
+// note: the MRN field must be set and dependencies in groups must be specified by MRN
 func (p *PolicyBundleMap) PoliciesSortedByDependency() ([]*Policy, error) {
 	indexer := map[string]struct{}{}
 	var res []*Policy
@@ -149,10 +149,10 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 	var res []*Policy
 	indexer[p.Mrn] = struct{}{}
 
-	for i := range p.Specs {
-		spec := p.Specs[i]
-		for i := range spec.Policies {
-			policy := spec.Policies[i]
+	for i := range p.Groups {
+		group := p.Groups[i]
+		for i := range group.Policies {
+			policy := group.Policies[i]
 
 			// we only do very cursory sanity checking
 			if policy.Mrn == "" {
@@ -188,8 +188,8 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 		return errors.New("policy MRN is not valid: " + policy.Mrn)
 	}
 
-	for i := range policy.Specs {
-		if err := p.validateSpec(ctx, policy.Specs[i], policy.Mrn); err != nil {
+	for i := range policy.Groups {
+		if err := p.validateSpec(ctx, policy.Groups[i], policy.Mrn); err != nil {
 			return err
 		}
 	}
@@ -205,15 +205,15 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 	return nil
 }
 
-func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec, policyMrn string) error {
-	if spec == nil {
+func (p *PolicyBundleMap) validateSpec(ctx context.Context, group *PolicyGroup, policyMrn string) error {
+	if group == nil {
 		return errors.New("spec cannot be nil")
 	}
 
-	if spec.Filter != nil {
+	if group.Filters != nil {
 		// since asset filters are run beforehand and don't make it into the report
 		// we don't store their code bundles separately
-		for _, query := range spec.Filter.Items {
+		for _, query := range group.Filters.Items {
 			_, err := query.RefreshAsFilter(policyMrn)
 			if err != nil {
 				return err
@@ -221,8 +221,8 @@ func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec, po
 		}
 	}
 
-	for i := range spec.Checks {
-		check := spec.Checks[i]
+	for i := range group.Checks {
+		check := group.Checks[i]
 
 		exist, err := p.queryExists(ctx, check.Mrn)
 		if err != nil {
@@ -230,15 +230,15 @@ func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec, po
 		}
 
 		if check.Action == explorer.Mquery_ADD && exist {
-			return errors.New("check already exists, but spec is trying to add it: " + check.Mrn)
+			return errors.New("check already exists, but policy is trying to add it: " + check.Mrn)
 		}
 		if check.Action == explorer.Mquery_MODIFY && !exist {
-			return errors.New("check does not exist, but spec is trying to modify it: " + check.Mrn)
+			return errors.New("check does not exist, but policy is trying to modify it: " + check.Mrn)
 		}
 	}
 
-	for i := range spec.Queries {
-		query := spec.Queries[i]
+	for i := range group.Queries {
+		query := group.Queries[i]
 
 		exist, err := p.queryExists(ctx, query.Mrn)
 		if err != nil {
@@ -246,15 +246,15 @@ func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec, po
 		}
 
 		if query.Action == explorer.Mquery_ADD && exist {
-			return errors.New("query already exists, but spec is trying to add it: " + query.Mrn)
+			return errors.New("query already exists, but policy is trying to add it: " + query.Mrn)
 		}
 		if query.Action == explorer.Mquery_MODIFY && !exist {
-			return errors.New("query does not exist, but spec is trying to modify it: " + query.Mrn)
+			return errors.New("query does not exist, but policy is trying to modify it: " + query.Mrn)
 		}
 	}
 
-	for i := range spec.Policies {
-		policy := spec.Policies[i]
+	for i := range group.Policies {
+		policy := group.Policies[i]
 
 		exist, err := p.policyExists(ctx, policy.Mrn)
 		if err != nil {
@@ -263,7 +263,7 @@ func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec, po
 
 		// policies can only be modified, not fully embedded. so they must exist
 		if !exist {
-			return errors.New("policy does not exist, but spec is trying to modify it: " + policy.Mrn)
+			return errors.New("policy does not exist, but policy is trying to modify it: " + policy.Mrn)
 		}
 	}
 
