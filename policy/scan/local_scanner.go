@@ -230,7 +230,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		orderedKeys = append(orderedKeys, assetList[i].PlatformIds[0])
 	}
 	var multiprogress progress.MultiProgress
-	if isatty.IsTerminal(os.Stdout.Fd()) {
+	if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar {
 		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys)
 		if err != nil {
 			return nil, false, errors.Wrap(err, "could not create progress bar")
