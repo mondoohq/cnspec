@@ -313,6 +313,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
 			}
 		}
+		job.ProgressReporter.Score("X")
+		job.ProgressReporter.Errored()
 		return
 	}
 
@@ -350,6 +352,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				if err != nil {
 					log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
 					job.Reporter.AddScanError(job.Asset, err)
+					job.ProgressReporter.Score("X")
+					job.ProgressReporter.Errored()
 					return
 				}
 
