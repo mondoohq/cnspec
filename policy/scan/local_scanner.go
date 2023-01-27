@@ -304,6 +304,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	connections, err := resolver.OpenAssetConnections(job.Ctx, job.Asset, job.GetCredential, job.DoRecord)
 	if err != nil {
 		job.Reporter.AddScanError(job.Asset, err)
+		job.ProgressReporter.Score("X")
+		job.ProgressReporter.Errored()
 		if upstream != nil {
 			_, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
 				SpaceMrn: job.UpstreamConfig.SpaceMrn,
@@ -313,8 +315,6 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
 			}
 		}
-		job.ProgressReporter.Score("X")
-		job.ProgressReporter.Errored()
 		return
 	}
 
