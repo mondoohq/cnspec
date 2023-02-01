@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -14,7 +15,7 @@ import (
 // with their proto counterparts
 
 type wrapQuery struct {
-	*policy.Mquery
+	*explorer.Mquery
 	isScored bool
 }
 
@@ -44,7 +45,7 @@ func (db *Db) PolicyExists(ctx context.Context, mrn string) (bool, error) {
 }
 
 // GetQuery retrieves a given query
-func (db *Db) GetQuery(ctx context.Context, mrn string) (*policy.Mquery, error) {
+func (db *Db) GetQuery(ctx context.Context, mrn string) (*explorer.Mquery, error) {
 	q, ok := db.cache.Get(dbIDQuery + mrn)
 	if !ok {
 		return nil, errors.New("query '" + mrn + "' not found")
@@ -54,9 +55,28 @@ func (db *Db) GetQuery(ctx context.Context, mrn string) (*policy.Mquery, error) 
 
 // SetQuery stores a given query
 // Note: the query must be defined, it cannot be nil
-func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *policy.Mquery, isScored bool) error {
+func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *explorer.Mquery, isScored bool) error {
 	v := wrapQuery{mquery, isScored}
 	ok := db.cache.Set(dbIDQuery+mrn, v, 1)
+	if !ok {
+		return errors.New("failed to save query '" + mrn + "' to cache")
+	}
+	return nil
+}
+
+// GetProperty retrieves a given property
+func (db *Db) GetProperty(ctx context.Context, mrn string) (*explorer.Property, error) {
+	q, ok := db.cache.Get(dbIDProp + mrn)
+	if !ok {
+		return nil, errors.New("query '" + mrn + "' not found")
+	}
+	return q.(*explorer.Property), nil
+}
+
+// SetProperty stores a given query
+// Note: the query must be defined, it cannot be nil
+func (db *Db) SetProperty(ctx context.Context, mrn string, prop *explorer.Property, isScored bool) error {
+	ok := db.cache.Set(dbIDProp+mrn, prop, 1)
 	if !ok {
 		return errors.New("failed to save query '" + mrn + "' to cache")
 	}
@@ -73,15 +93,19 @@ func (db *Db) GetRawPolicy(ctx context.Context, mrn string) (*policy.Policy, err
 }
 
 // GetPolicyFilters retrieves the list of asset filters for a policy (fast)
-func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*policy.Mquery, error) {
+func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mquery, error) {
 	r, err := db.GetRawPolicy(ctx, mrn)
 	if err != nil {
 		return nil, err
 	}
 
-	res := make([]*policy.Mquery, len(r.AssetFilters))
+	if r.Filters == nil || len(r.Filters.Items) == 0 {
+		return nil, nil
+	}
+
+	res := make([]*explorer.Mquery, len(r.Filters.Items))
 	var i int
-	for _, v := range r.AssetFilters {
+	for _, v := range r.Filters.Items {
 		res[i] = v
 		i++
 	}
@@ -90,12 +114,12 @@ func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*policy.Mquer
 }
 
 // SetPolicy stores a given policy in the data lake
-func (db *Db) SetPolicy(ctx context.Context, policyObj *policy.Policy, filters []*policy.Mquery) error {
+func (db *Db) SetPolicy(ctx context.Context, policyObj *policy.Policy, filters []*explorer.Mquery) error {
 	_, err := db.setPolicy(ctx, policyObj, filters)
 	return err
 }
 
-func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters []*policy.Mquery) (wrapPolicy, error) {
+func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters []*explorer.Mquery) (wrapPolicy, error) {
 	var err error
 
 	// we may use the cached parents if this policy already exists i.e. if it's
@@ -120,10 +144,12 @@ func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters [
 		// fall through, re-create the policy
 	}
 
-	policyObj.AssetFilters = map[string]*policy.Mquery{}
+	policyObj.Filters = &explorer.Filters{
+		Items: make(map[string]*explorer.Mquery, len(filters)),
+	}
 	for i := range filters {
 		filter := filters[i]
-		policyObj.AssetFilters[filter.Mrn] = filter
+		policyObj.Filters.Items[filter.CodeId] = filter
 		if err = db.SetQuery(ctx, filter.Mrn, filter, false); err != nil {
 			return wrapPolicy{}, err
 		}
@@ -376,7 +402,7 @@ func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error 
 	wrap.Policy.InvalidateGraphChecksums()
 	wrap.Policy.UpdateChecksums(ctx,
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil)
 
 	ok := db.cache.Set(dbIDPolicy+wrap.Policy.Mrn, *wrap, 2)

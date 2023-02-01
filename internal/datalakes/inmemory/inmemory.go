@@ -52,6 +52,7 @@ func WithDb(resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalS
 // Prevent collisions by creating namespaces for different types of data.
 const (
 	dbIDQuery          = "q\x00"
+	dbIDProp           = "qp\x00"
 	dbIDPolicy         = "p\x00"
 	dbIDBundle         = "b\x00"
 	dbIDListPolicies   = "pl\x00"

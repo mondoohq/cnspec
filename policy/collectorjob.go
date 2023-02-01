@@ -46,7 +46,7 @@ func (c *CollectorJob) Validate() error {
 	invalidCollectorJobError := newInvalidCollectorJobError()
 
 	for _, job := range c.ReportingJobs {
-		for ref := range job.Spec {
+		for ref := range job.ChildJobs {
 			if _, ok := c.ReportingJobs[ref]; !ok {
 				invalid = true
 				invalidCollectorJobError.addInvalidSpec(job.Uuid, ref)

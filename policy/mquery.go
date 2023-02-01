@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/mrn"
@@ -17,7 +18,7 @@ import (
 
 // Compile a given query and return the bundle. Both v1 and v2 versions are compiled.
 // Both versions will be given the same code id.
-func (m *Mquery) Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+func (m *DeprecatedV7_Mquery) Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
 	if m.Query == "" {
 		return nil, errors.New("query is not implemented '" + m.Mrn + "'")
 	}
@@ -33,7 +34,7 @@ func (m *Mquery) Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, erro
 }
 
 // RefreshAsAssetFilter filters treats this query as an asset filter and sets its Mrn, Title, and Checksum
-func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
+func (m *DeprecatedV7_Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
 	bundle, err := m.refreshChecksumAndType(nil)
 	if err != nil {
 		return bundle, err
@@ -47,11 +48,11 @@ func (m *Mquery) RefreshAsAssetFilter(mrn string) (*llx.CodeBundle, error) {
 }
 
 // RefreshChecksumAndType by compiling the query and updating the Checksum field
-func (m *Mquery) RefreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+func (m *DeprecatedV7_Mquery) RefreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
 	return m.refreshChecksumAndType(props)
 }
 
-func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+func (m *DeprecatedV7_Mquery) refreshChecksumAndType(props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
 	bundle, err := m.Compile(props)
 	if err != nil {
 		return bundle, errors.New("failed to compile query '" + m.Query + "': " + err.Error())
@@ -121,7 +122,7 @@ func (m *Mquery) refreshChecksumAndType(props map[string]*llx.Primitive) (*llx.C
 }
 
 // Sanitize ensure the content is in good shape and removes leading and trailing whitespace
-func (m *Mquery) Sanitize() {
+func (m *DeprecatedV7_Mquery) Sanitize() {
 	if m == nil {
 		return
 	}
@@ -151,7 +152,7 @@ func (m *Mquery) Sanitize() {
 
 // RefreshMRN computes a MRN from the UID or validates the existing MRN.
 // Both of these need to fit the ownerMRN. It also removes the UID.
-func (m *Mquery) RefreshMRN(ownerMRN string) error {
+func (m *DeprecatedV7_Mquery) RefreshMRN(ownerMRN string) error {
 	nu, err := RefreshMRN(ownerMRN, m.Mrn, MRN_RESOURCE_QUERY, m.Uid)
 	if err != nil {
 		log.Debug().Err(err).Str("owner", ownerMRN).Str("uid", m.Uid).Msg("failed to refresh mrn")
@@ -188,9 +189,9 @@ func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string
 	return mrn.String(), nil
 }
 
-func ChecksumAssetFilters(queries []*Mquery) (string, error) {
+func ChecksumAssetFilters(queries []*explorer.Mquery) (string, error) {
 	for i := range queries {
-		if _, err := queries[i].refreshChecksumAndType(nil); err != nil {
+		if _, err := queries[i].RefreshAsFilter(""); err != nil {
 			return "", errors.New("failed to compile query: " + err.Error())
 		}
 	}
@@ -208,7 +209,7 @@ func ChecksumAssetFilters(queries []*Mquery) (string, error) {
 }
 
 // RefreshChecksums of all queries
-func (m *Mqueries) RefreshChecksums(props map[string]*llx.Primitive) error {
+func (m *Mqueries) RefreshChecksums(props map[string]explorer.PropertyRef) error {
 	for i := range m.Items {
 		if _, err := m.Items[i].RefreshChecksumAndType(props); err != nil {
 			return err

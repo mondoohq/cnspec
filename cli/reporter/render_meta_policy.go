@@ -21,15 +21,15 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 
 	// extract list of policies and gather policy name from bundle
 	policies := map[string]string{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for k := range spec.Policies {
-			name := k // fallback to mrn if we do not find a name
-			p, ok := bundle.Policies[k]
-			if ok {
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for k := range group.Policies {
+			ref := group.Policies[k]
+			name := ref.Mrn
+			if p, ok := bundle.Policies[ref.Mrn]; ok && p.Name != "" {
 				name = p.Name
 			}
-			policies[k] = name
+			policies[ref.Mrn] = name
 		}
 	}
 

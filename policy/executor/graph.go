@@ -5,6 +5,7 @@ import (
 
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/progress"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/resources"
@@ -39,13 +40,13 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 	return ge.Execute()
 }
 
-func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
 	var errs []error
-	queryMap := map[string]*policy.Mquery{}
+	queryMap := map[string]*explorer.Mquery{}
 
 	builder := internal.NewBuilder()
 	for _, m := range queries {
-		codeBundle, err := mqlc.Compile(m.Query, nil, mqlc.NewConfig(schema, cnquery.DefaultFeatures))
+		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(schema, cnquery.DefaultFeatures))
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -82,7 +83,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 		return nil, []error{err}
 	}
 
-	filteredQueries := []*policy.Mquery{}
+	filteredQueries := []*explorer.Mquery{}
 	for id, query := range queryMap {
 		if _, ok := passingFilterQueries[id]; ok {
 			filteredQueries = append(filteredQueries, query)

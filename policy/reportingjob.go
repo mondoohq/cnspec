@@ -14,20 +14,22 @@ func (r *ReportingJob) RefreshChecksum() {
 	checksum = checksum.Add(r.QrId)
 
 	{
-		specKeys := make([]string, len(r.Spec))
+		jobIDs := make([]string, len(r.ChildJobs))
 		i := 0
-		for k := range r.Spec {
-			specKeys[i] = k
+		for k := range r.ChildJobs {
+			jobIDs[i] = k
 			i++
 		}
-		sort.Strings(specKeys)
-		for i := range specKeys {
-			key := specKeys[i]
-			v := r.Spec[key]
+		sort.Strings(jobIDs)
+		for i := range jobIDs {
+			key := jobIDs[i]
+			impact := r.ChildJobs[key]
 			checksum = checksum.Add(key)
-			if v != nil {
-				// FIXME: scoring jobs need to fully go into the checksum or better yet have their own checksum
-				checksum = checksum.Add(v.Id)
+			if impact != nil {
+				checksum = checksum.
+					AddUint(uint64(impact.Scoring)).
+					AddUint(uint64(impact.Value)).
+					AddUint(uint64(impact.Weight))
 			}
 		}
 	}

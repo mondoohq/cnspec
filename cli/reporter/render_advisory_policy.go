@@ -122,11 +122,12 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 
 	// TODO: iterate over all other scoring queries that are not covered within the screen above
 	b.WriteString("Additional Checks:" + NewLineCharacter)
-	scoreQueries := map[string]*policy.ScoringSpec{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for qid, scoring := range spec.ScoringQueries {
-			scoreQueries[qid] = scoring
+	scoreQueries := map[string]struct{}{}
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
+			scoreQueries[check.Mrn] = struct{}{}
 		}
 	}
 

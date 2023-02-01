@@ -288,6 +288,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which to read the identity (private key) for public key authentication.")
 		cmd.Flags().String("id-detector", "", "User override for platform ID detection mechanism. Supported: "+strings.Join(providers.AvailablePlatformIdDetector(), ", "))
 		cmd.Flags().String("asset-name", "", "User override for the asset name.")
+		cmd.Flags().StringToString("props", nil, "Custom values for properties")
 
 		cmd.Flags().String("path", "", "Path to a local file or directory for the connection to use.")
 		cmd.Flags().StringToString("option", nil, "Additional connection options. You can pass multiple options using `--option key=value`.")
@@ -400,6 +401,7 @@ type scanConfig struct {
 
 	PolicyPaths []string
 	PolicyNames []string
+	Props       map[string]string
 	Bundle      *policy.Bundle
 
 	IsIncognito    bool
@@ -421,6 +423,11 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		log.Info().Strs("features", opts.Features).Msg("user activated features")
 	}
 
+	props, err := cmd.Flags().GetStringToString("props")
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse props")
+	}
+
 	conf := scanConfig{
 		Features:       opts.GetFeatures(),
 		IsIncognito:    viper.GetBool("incognito"),
@@ -428,6 +435,7 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		PolicyPaths:    viper.GetStringSlice("policy-bundle"),
 		PolicyNames:    viper.GetStringSlice("policies"),
 		ScoreThreshold: viper.GetInt("score-threshold"),
+		Props:          props,
 	}
 
 	// if users want to get more information on available output options,
@@ -526,6 +534,12 @@ func (c *scanConfig) loadPolicies() error {
 		if err != nil {
 			return err
 		}
+
+		_, err = bundle.Compile(context.Background(), nil)
+		if err != nil {
+			return errors.Wrap(err, "failed to compile bundle")
+		}
+
 		c.Bundle = bundle
 		return nil
 	}
@@ -560,6 +574,7 @@ func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportColl
 				Inventory:     config.Inventory,
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
+				Props:         config.Props,
 				ReportType:    config.ReportType,
 			})
 		if err != nil {
@@ -575,6 +590,7 @@ func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportColl
 			Inventory:     config.Inventory,
 			Bundle:        config.Bundle,
 			PolicyFilters: config.PolicyNames,
+			Props:         config.Props,
 			ReportType:    config.ReportType,
 		})
 	if err != nil {

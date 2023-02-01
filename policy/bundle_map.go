@@ -7,18 +7,19 @@ import (
 
 	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mrn"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
 type PolicyBundleMap struct {
-	OwnerMrn string                     `json:"owner_mrn,omitempty"`
-	Policies map[string]*Policy         `json:"policies,omitempty"`
-	Queries  map[string]*Mquery         `json:"queries,omitempty"`
-	Props    map[string]*Mquery         `json:"props,omitempty"`
-	Code     map[string]*llx.CodeBundle `json:"code,omitempty"`
-	Library  Library                    `json:"library,omitempty"`
+	OwnerMrn string                        `json:"owner_mrn,omitempty"`
+	Policies map[string]*Policy            `json:"policies,omitempty"`
+	Queries  map[string]*explorer.Mquery   `json:"queries,omitempty"`
+	Props    map[string]*explorer.Property `json:"props,omitempty"`
+	Code     map[string]*llx.CodeBundle    `json:"code,omitempty"`
+	Library  Library                       `json:"library,omitempty"`
 }
 
 // NewPolicyBundleMap creates a new empty initialized map
@@ -27,8 +28,8 @@ func NewPolicyBundleMap(ownerMrn string) *PolicyBundleMap {
 	return &PolicyBundleMap{
 		OwnerMrn: ownerMrn,
 		Policies: make(map[string]*Policy),
-		Queries:  make(map[string]*Mquery),
-		Props:    make(map[string]*Mquery),
+		Queries:  make(map[string]*explorer.Mquery),
+		Props:    make(map[string]*explorer.Property),
 		Code:     make(map[string]*llx.CodeBundle),
 	}
 }
@@ -98,7 +99,7 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 	}
 	sort.Strings(ids)
 
-	res.Queries = make([]*Mquery, len(p.Queries))
+	res.Queries = make([]*explorer.Mquery, len(p.Queries))
 	for i := range ids {
 		res.Queries[i] = p.Queries[ids[i]]
 	}
@@ -112,7 +113,7 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 	}
 	sort.Strings(ids)
 
-	res.Props = make([]*Mquery, len(p.Props))
+	res.Props = make([]*explorer.Property, len(p.Props))
 	for i := range ids {
 		res.Props[i] = p.Props[ids[i]]
 	}
@@ -121,7 +122,7 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 }
 
 // PoliciesSortedByDependency sorts policies by their dependencies
-// note: the MRN field must be set and dependencies in specs must be specified by MRN
+// note: the MRN field must be set and dependencies in groups must be specified by MRN
 func (p *PolicyBundleMap) PoliciesSortedByDependency() ([]*Policy, error) {
 	indexer := map[string]struct{}{}
 	var res []*Policy
@@ -148,19 +149,21 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 	var res []*Policy
 	indexer[p.Mrn] = struct{}{}
 
-	for i := range p.Specs {
-		spec := p.Specs[i]
-		for mrn := range spec.Policies {
+	for i := range p.Groups {
+		group := p.Groups[i]
+		for i := range group.Policies {
+			policy := group.Policies[i]
+
 			// we only do very cursory sanity checking
-			if mrn == "" {
+			if policy.Mrn == "" {
 				return nil, errors.New("failed to sort policies: dependency MRN is empty")
 			}
 
-			if _, ok := indexer[mrn]; ok {
+			if _, ok := indexer[policy.Mrn]; ok {
 				continue
 			}
 
-			dep, ok := bundle.Policies[mrn]
+			dep, ok := bundle.Policies[policy.Mrn]
 			if !ok {
 				// ignore, since we are only looking to sort the policies of the map
 				continue
@@ -185,8 +188,8 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 		return errors.New("policy MRN is not valid: " + policy.Mrn)
 	}
 
-	for i := range policy.Specs {
-		if err := p.validateSpec(ctx, policy.Specs[i]); err != nil {
+	for i := range policy.Groups {
+		if err := p.validateSpec(ctx, policy.Groups[i], policy.Mrn); err != nil {
 			return err
 		}
 	}
@@ -202,99 +205,117 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 	return nil
 }
 
-func (p *PolicyBundleMap) validateSpec(ctx context.Context, spec *PolicySpec) error {
-	if spec == nil {
+func (p *PolicyBundleMap) validateSpec(ctx context.Context, group *PolicyGroup, policyMrn string) error {
+	if group == nil {
 		return errors.New("spec cannot be nil")
 	}
 
-	var err error
-
-	if spec.AssetFilter != nil {
+	if group.Filters != nil {
 		// since asset filters are run beforehand and don't make it into the report
 		// we don't store their code bundles separately
-		if _, err := spec.AssetFilter.RefreshAsAssetFilter(""); err != nil {
-			return err
-		}
-	}
-
-	for mrn, spec := range spec.ScoringQueries {
-		if err = p.queryExists(ctx, mrn); err != nil {
-			return err
-		}
-
-		if spec != nil && spec.Action == QueryAction_UNSPECIFIED {
-			return errors.New("received a query spec without an action: " + mrn)
-		}
-	}
-
-	for mrn, action := range spec.DataQueries {
-		if err = p.queryExists(ctx, mrn); err != nil {
-			return err
-		}
-
-		if action == QueryAction_UNSPECIFIED {
-			// in this case users don't have to specify an action and we will
-			// interpret it as their intention to add the query
-			spec.DataQueries[mrn] = QueryAction_ACTIVATE
-		}
-	}
-
-	for mrn := range spec.Policies {
-		if _, ok := p.Policies[mrn]; ok {
-			continue
-		}
-
-		if p.Library != nil {
-			x, err := p.Library.PolicyExists(ctx, mrn)
+		for _, query := range group.Filters.Items {
+			_, err := query.RefreshAsFilter(policyMrn)
 			if err != nil {
 				return err
 			}
-			if !x {
-				return errors.New("cannot find policy '" + mrn + "'")
-			}
+		}
+	}
 
-			p.Policies[mrn] = nil
-			continue
+	for i := range group.Checks {
+		check := group.Checks[i]
+
+		exist, err := p.queryExists(ctx, check.Mrn)
+		if err != nil {
+			return err
 		}
 
-		return errors.New("cannot find policy '" + mrn + "'")
+		if check.Action == explorer.Mquery_ADD && exist {
+			return errors.New("check already exists, but policy is trying to add it: " + check.Mrn)
+		}
+		if check.Action == explorer.Mquery_MODIFY && !exist {
+			return errors.New("check does not exist, but policy is trying to modify it: " + check.Mrn)
+		}
+	}
+
+	for i := range group.Queries {
+		query := group.Queries[i]
+
+		exist, err := p.queryExists(ctx, query.Mrn)
+		if err != nil {
+			return err
+		}
+
+		if query.Action == explorer.Mquery_ADD && exist {
+			return errors.New("query already exists, but policy is trying to add it: " + query.Mrn)
+		}
+		if query.Action == explorer.Mquery_MODIFY && !exist {
+			return errors.New("query does not exist, but policy is trying to modify it: " + query.Mrn)
+		}
+	}
+
+	for i := range group.Policies {
+		policy := group.Policies[i]
+
+		exist, err := p.policyExists(ctx, policy.Mrn)
+		if err != nil {
+			return err
+		}
+
+		// policies can only be modified, not fully embedded. so they must exist
+		if !exist {
+			return errors.New("policy does not exist, but policy is trying to modify it: " + policy.Mrn)
+		}
 	}
 
 	return nil
 }
 
-func (p *PolicyBundleMap) queryExists(ctx context.Context, mrn string) error {
+func (p *PolicyBundleMap) queryExists(ctx context.Context, mrn string) (bool, error) {
 	if _, ok := p.Queries[mrn]; ok {
-		return nil
+		return true, nil
 	}
 
 	if p.Library != nil {
 		x, err := p.Library.QueryExists(ctx, mrn)
-		if err != nil {
-			return err
+		if x {
+			// we mark it off for caching purposes
+			p.Queries[mrn] = nil
 		}
 
-		if !x {
-			return errors.New("cannot find query '" + mrn + "'")
-		}
-
-		p.Queries[mrn] = nil
-		return nil
+		return x, err
 	}
 
-	return errors.New("cannot find query '" + mrn + "'")
+	return false, nil
+}
+
+func (p *PolicyBundleMap) policyExists(ctx context.Context, mrn string) (bool, error) {
+	if _, ok := p.Policies[mrn]; ok {
+		return true, nil
+	}
+
+	if p.Library != nil {
+		x, err := p.Library.PolicyExists(ctx, mrn)
+		if x {
+			// we mark it off for caching purposes
+			p.Policies[mrn] = nil
+		}
+
+		return x, err
+	}
+
+	return false, nil
 }
 
 // QueryMap extracts all the queries from the policy bundle map
-func (bundle *PolicyBundleMap) QueryMap() map[string]*Mquery {
-	res := make(map[string]*Mquery, len(bundle.Queries))
+func (bundle *PolicyBundleMap) QueryMap() map[string]*explorer.Mquery {
+	res := make(map[string]*explorer.Mquery, len(bundle.Queries))
 	for _, v := range bundle.Queries {
 		res[v.CodeId] = v
 	}
 	return res
 }
 
-func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*Mquery) *PolicyBundleMap {
+func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*explorer.Mquery) *PolicyBundleMap {
 	var id string
 	if policy.Mrn != "" {
 		id = policy.Mrn

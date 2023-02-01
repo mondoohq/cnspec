@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
@@ -25,7 +26,6 @@ func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Em
 // SetBundle stores a bundle of policies and queries in this marketplace
 func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
 	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
-	FixZeroValuesInPolicyBundle(bundle)
 
 	bundleMap, err := bundle.Compile(ctx, s.DataLake)
 	if err != nil {
@@ -47,7 +47,7 @@ func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, 
 //
 //	Reason: SetPolicyBundle may be setting 1 outer and 3 embedded policies.
 //	But we need to create ent.PolicyBundles for all 4 of those.
-func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*Mquery, error) {
+func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*explorer.Mquery, error) {
 	logCtx := logger.FromContext(ctx)
 	var err error
 
@@ -61,55 +61,60 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	// NOTE: if we modify the spec only, we may not have the queries available e.g. used by ApplyScoringMutation
 	// FIXME: we need to verify that the policy has access to all referenced queries
 	if bundle != nil {
-		dataQueries := map[string]*Mquery{}
-		scoredQueries := map[string]*Mquery{}
-		for i := range policyObj.Specs {
-			spec := policyObj.Specs[i]
-			for k := range spec.DataQueries {
-				q, ok := bundle.Queries[k]
-				if !ok {
-					return nil, nil, status.Error(codes.InvalidArgument, "policy "+policyObj.Mrn+" is referencing unknown query "+k)
-				}
-				dataQueries[k] = q
-			}
-			for k := range spec.ScoringQueries {
-				q, ok := bundle.Queries[k]
-				if !ok {
-					return nil, nil, status.Error(codes.InvalidArgument, "policy "+policyObj.Mrn+" is referencing unknown query "+k)
-				}
-				scoredQueries[k] = q
-			}
-		}
+		queries := map[string]*explorer.Mquery{}
+		checks := map[string]*explorer.Mquery{}
+		props := map[string]*explorer.Property{}
 
-		propsQueries := map[string]*Mquery{}
-		for k := range policyObj.Props {
-			q, ok := bundle.Props[k]
-			if !ok {
-				return nil, nil, status.Error(codes.InvalidArgument, "policy "+policyObj.Mrn+" is referencing unknown property "+k)
+		for i := range policyObj.Groups {
+			group := policyObj.Groups[i]
+
+			for j := range group.Queries {
+				query := group.Queries[j]
+				queries[query.Mrn] = query
+
+				for k := range query.Props {
+					prop := query.Props[k]
+					props[prop.Mrn] = prop
+				}
 			}
-			propsQueries[k] = q
+
+			for j := range group.Checks {
+				check := group.Checks[j]
+				checks[check.Mrn] = check
+
+				if baseCheck, ok := bundle.Queries[check.Mrn]; ok {
+					check.Merge(baseCheck)
+				}
+
+				for k := range check.Props {
+					prop := check.Props[k]
+					if baseProp, ok := bundle.Props[prop.Mrn]; ok {
+						prop.Merge(baseProp)
+					}
+				}
+			}
 		}
 
 		// TODO: this may need to happen in a bulk call
-		for k, v := range dataQueries {
+		for k, v := range queries {
 			if err := s.setQuery(ctx, k, v, false); err != nil {
 				return nil, nil, err
 			}
 		}
-		for k, v := range scoredQueries {
+		for k, v := range checks {
 			if err := s.setQuery(ctx, k, v, true); err != nil {
 				return nil, nil, err
 			}
 		}
-		for k, v := range propsQueries {
-			if err := s.setQuery(ctx, k, v, true); err != nil {
+		for k, v := range props {
+			if err := s.setProperty(ctx, k, v, true); err != nil {
 				return nil, nil, err
 			}
 		}
 	}
 
 	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
-	// e.g. ApplyScoringMutation changes the spec. Right now we assume the caller invalidates the checksum
+	// e.g. ApplyScoringMutation changes the group. Right now we assume the caller invalidates the checksum
 	//
 	// the only reason we make this conditional is because in a bundle we may have
 	// already done the work for a policy that is a dependency of another
@@ -181,11 +186,6 @@ func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *P
 		logCtx.Debug().Str("owner", policyObj.OwnerMrn).Str("uid", policyObj.Uid).Str("mrn", policyObj.Mrn).Msg("store policy")
 		policyObj.OwnerMrn = bundleMap.OwnerMrn
 
-		// If this is a user generated policy, it must be non-public
-		if bundleMap.OwnerMrn != "//policy.api.mondoo.app" {
-			policyObj.IsPublic = false
-		}
-
 		if err = s.setPolicyFromBundle(ctx, policyObj, bundleMap); err != nil {
 			return err
 		}
@@ -194,16 +194,28 @@ func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *P
 	return nil
 }
 
-func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *Mquery, isScored bool) error {
+func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *explorer.Mquery, isScored bool) error {
 	if query == nil {
 		return errors.New("cannot set query '" + mrn + "' as it is not defined")
 	}
 
 	if query.Title == "" {
-		query.Title = query.Query
+		query.Title = query.Mql
 	}
 
 	return s.DataLake.SetQuery(ctx, mrn, query, isScored)
+}
+
+func (s *LocalServices) setProperty(ctx context.Context, mrn string, prop *explorer.Property, isScored bool) error {
+	if prop == nil {
+		return errors.New("cannot set query '" + mrn + "' as it is not defined")
+	}
+
+	if prop.Title == "" {
+		prop.Title = prop.Mql
+	}
+
+	return s.DataLake.SetProperty(ctx, mrn, prop, isScored)
 }
 
 // GetPolicy without cascading dependencies
@@ -325,52 +337,59 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 	bundleMap := PolicyBundleMap{
 		OwnerMrn: mpolicyObj.OwnerMrn,
 		Policies: map[string]*Policy{},
-		Queries:  map[string]*Mquery{},
-		Props:    map[string]*Mquery{},
+		Queries:  map[string]*explorer.Mquery{},
+		Props:    map[string]*explorer.Property{},
 	}
 
 	// we need to re-compute the asset filters
-	mpolicyObj.AssetFilters = map[string]*Mquery{}
+	mpolicyObj.Filters = &explorer.Filters{
+		Items: map[string]*explorer.Mquery{},
+	}
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
 
-	for mrn, v := range mpolicyObj.Props {
-		if v != "" {
-			return nil, errors.New("cannot support properties which overwrite other properties")
+	for i := range mpolicyObj.Props {
+		prop := mpolicyObj.Props[i]
+
+		base, err := s.DataLake.GetProperty(ctx, prop.Mrn)
+		if err == nil {
+			prop.Merge(base)
 		}
 
-		query, err := s.DataLake.GetQuery(ctx, mrn)
-		if err != nil {
-			return nil, err
-		}
-		bundleMap.Props[mrn] = query
+		bundleMap.Props[prop.Mrn] = prop
 	}
 
-	for i := range mpolicyObj.Specs {
-		spec := mpolicyObj.Specs[i]
+	for i := range mpolicyObj.Groups {
+		group := mpolicyObj.Groups[i]
 
-		if spec.AssetFilter != nil {
-			filter := spec.AssetFilter
-			mpolicyObj.AssetFilters[filter.CodeId] = filter
+		if group.Filters != nil {
+			filters := group.Filters
+			for k, v := range filters.Items {
+				mpolicyObj.Filters.Items[k] = v
+			}
 		}
 
-		for mrn := range spec.DataQueries {
-			query, err := s.DataLake.GetQuery(ctx, mrn)
+		for i := range group.Queries {
+			query := group.Queries[i]
+			base, err := s.DataLake.GetQuery(ctx, query.Mrn)
+			if err == nil {
+				query.Merge(base)
+			}
+			bundleMap.Queries[query.Mrn] = query
+		}
+
+		for i := range group.Checks {
+			check := group.Checks[i]
+			base, err := s.DataLake.GetQuery(ctx, check.Mrn)
 			if err != nil {
 				return nil, err
 			}
-			bundleMap.Queries[mrn] = query
+			bundleMap.Queries[check.Mrn] = base
 		}
 
-		for mrn := range spec.ScoringQueries {
-			query, err := s.DataLake.GetQuery(ctx, mrn)
-			if err != nil {
-				return nil, err
-			}
-			bundleMap.Queries[mrn] = query
-		}
+		for i := range group.Policies {
+			policy := group.Policies[i]
 
-		for mrn := range spec.Policies {
-			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, mrn)
+			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, policy.Mrn)
 			if err != nil {
 				return nil, err
 			}
@@ -388,12 +407,12 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 				bundleMap.Props[query.Mrn] = query
 			}
 
-			nuPolicy := bundleMap.Policies[mrn]
+			nuPolicy := bundleMap.Policies[policy.Mrn]
 			if nuPolicy == nil {
-				return nil, errors.New("pulled policy bundle for " + mrn + " but couldn't find the policy in the bundle")
+				return nil, errors.New("pulled policy bundle for " + policy.Mrn + " but couldn't find the policy in the bundle")
 			}
-			for k, v := range nuPolicy.AssetFilters {
-				mpolicyObj.AssetFilters[k] = v
+			for k, v := range nuPolicy.Filters.Items {
+				mpolicyObj.Filters.Items[k] = v
 			}
 		}
 	}
@@ -419,9 +438,6 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*B
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + ": " + err.Error())
 	}
 
-	// fixme - this is a hack, more deets at method definition
-	FixZeroValuesInPolicyBundle(bundle)
-
 	bundleMap := bundle.ToMap()
 
 	err = s.setPolicyBundleFromMap(ctx, bundleMap)
@@ -432,32 +448,4 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*B
 
 	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetched policy bundle from upstream")
 	return bundle, nil
-}
-
-// fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized
-// instead of nil pointers for ScoringSpecs.
-// This is a quick fix for https://gitlab.com/mondoolabs/mondoo/-/issues/455
-// so that we can get a fix out while figuring out wtf is up with our null pointer serialization
-// open issue for deserialization: https://gitlab.com/mondoolabs/mondoo/-/issues/508
-func FixZeroValuesInPolicyBundle(bundle *Bundle) {
-	for _, policy := range bundle.Policies {
-		for _, spec := range policy.Specs {
-			if spec.Policies != nil {
-				for k, v := range spec.Policies {
-					// v.Action is only 0 for zero value structs
-					if v != nil && v.Action == 0 {
-						spec.Policies[k] = nil
-					}
-				}
-			}
-			if spec.ScoringQueries != nil {
-				for k, v := range spec.ScoringQueries {
-					// v.Action is only 0 for zero value structs
-					if v != nil && v.Action == 0 {
-						spec.ScoringQueries[k] = nil
-					}
-				}
-			}
-		}
-	}
 }

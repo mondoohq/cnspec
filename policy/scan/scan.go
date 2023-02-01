@@ -31,6 +31,7 @@ type AssetJob struct {
 	Asset            *asset.Asset
 	Bundle           *policy.Bundle
 	PolicyFilters    []string
+	Props            map[string]string
 	Ctx              context.Context
 	GetCredential    func(cred *vault.Credential) (*vault.Credential, error)
 	Reporter         Reporter

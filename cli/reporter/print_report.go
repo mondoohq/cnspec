@@ -12,6 +12,7 @@ import (
 	"go.mondoo.com/cnquery/cli/pager"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/stringx"
 	"go.mondoo.com/cnspec/cli/components"
@@ -134,7 +135,7 @@ func (r *reportRenderer) assetSummary(assetObj *policy.Asset, score *policy.Scor
 }
 
 // policyModActions tracks the remove and modify actions to pass them to childs for proper rendering of ignores
-type policyModActions map[string]policy.QueryAction
+type policyModActions map[string]explorer.Mquery_Action
 
 func (p policyModActions) Clone() policyModActions {
 	res := policyModActions{}
@@ -148,7 +149,7 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 	var res bytes.Buffer
 	var queryActionsForChildren policyModActions
 
-	log.Trace().Str("mrn", policyObj.Mrn).Msgf("match policy assetfilter: %v, pfilter: %v", resolved.Filters, policyObj.AssetFilters)
+	log.Trace().Str("mrn", policyObj.Mrn).Msgf("match policy assetfilter: %v, pfilter: %v", resolved.Filters, policyObj.Filters)
 	filters, err := policy.MatchingAssetFilters(policyObj.Mrn, resolved.Filters, policyObj)
 	if err != nil {
 		return r.printer.Error(err.Error), nil
@@ -156,7 +157,7 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 
 	// print policy details
 	// NOTE: asset policies and space policies have no filter set but we want to render them too
-	if len(filters) > 0 || len(policyObj.AssetFilters) == 0 {
+	if len(filters) > 0 || policyObj.Filters == nil || len(policyObj.Filters.Items) == 0 {
 		var scoringData []reportRow
 		scoringData, queryActionsForChildren = r.generateScoringResults(policyObj, report, bundle, resolved, parentQueryActions)
 
@@ -201,11 +202,11 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 }
 
 func (r *reportRenderer) policyReportChildren(res *bytes.Buffer, policyObj *policy.Policy, bundle *policy.PolicyBundleMap) []*policy.Policy {
-	policies := map[string]*policy.ScoringSpec{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for qid, spec := range spec.Policies {
-			policies[qid] = spec
+	policies := map[string]struct{}{}
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for i := range group.Policies {
+			policies[group.Policies[i].Mrn] = struct{}{}
 		}
 	}
 
@@ -223,11 +224,12 @@ func (r *reportRenderer) policyReportChildren(res *bytes.Buffer, policyObj *poli
 }
 
 func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolved *policy.ResolvedPolicy, parentQueryActions policyModActions) ([]reportRow, policyModActions) {
-	scoreQueries := map[string]*policy.ScoringSpec{}
-	for i := range policyObj.Specs {
-		spec := policyObj.Specs[i]
-		for qid, scoring := range spec.ScoringQueries {
-			scoreQueries[qid] = scoring
+	checks := map[string]*explorer.Mquery{}
+	for i := range policyObj.Groups {
+		group := policyObj.Groups[i]
+		for i := range group.Checks {
+			check := group.Checks[i]
+			checks[check.Mrn] = check
 		}
 	}
 
@@ -240,20 +242,13 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 	actionsForChilds := policyModActions{}
 
 	// extract queries for scores that are in the bundle
-	for qid := range scoreQueries {
-		scoringSpec := scoreQueries[qid]
-
-		action := policy.QueryAction_ACTIVATE
-		var actionSpec *policy.ScoringSpec
-		if scoringSpec != nil {
-			action = scoringSpec.Action
-			actionSpec = scoringSpec
-		}
+	for qid, check := range checks {
+		action := check.Action
 
 		// we only render query additions, all others need to be passed-through to the child policy
 		// NOTE: we need to copy the map when we pass eg. Remove to Children, since multiple children can add the same query
-		if action != policy.QueryAction_ACTIVATE {
-			actionsForChilds[qid] = action
+		if action != explorer.Mquery_ADD {
+			actionsForChilds[qid] = check.Action
 			continue
 		}
 
@@ -289,7 +284,7 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 			Bundle:     codeBundle,
 			Score:      score,
 			Action:     action,
-			ActionSpec: actionSpec,
+			Impact:     check.Impact,
 			Assessment: assessment,
 		})
 	}
@@ -306,11 +301,11 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 }
 
 type reportRow struct {
-	Query      *policy.Mquery
+	Query      *explorer.Mquery
 	Bundle     *llx.CodeBundle
 	Score      *policy.Score
-	Action     policy.QueryAction
-	ActionSpec *policy.ScoringSpec
+	Action     explorer.Mquery_Action
+	Impact     *explorer.Impact
 	Assessment *llx.Assessment
 }
 
@@ -325,12 +320,12 @@ func (row reportRow) Indicator() string {
 			char = '×'
 		}
 
-		if row.Action == policy.QueryAction_DEACTIVATE {
+		if row.Action == explorer.Mquery_DELETE {
 			color = colors.DefaultColorTheme.Disabled
 			char = '×'
 		}
 
-		if row.Action == policy.QueryAction_MODIFY && row.ActionSpec != nil && row.ActionSpec.Weight == 0 {
+		if row.Action == explorer.Mquery_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			color = colors.DefaultColorTheme.Secondary
 			char = '»'
 		}
@@ -373,12 +368,12 @@ func colorizeRow(row reportRow, text string) string {
 			explain = "(unscored)"
 		}
 
-		if row.Action == policy.QueryAction_DEACTIVATE {
+		if row.Action == explorer.Mquery_DELETE {
 			color = colors.DefaultColorTheme.Disabled
 			explain = "(removed)"
 		}
 
-		if row.Action == policy.QueryAction_MODIFY && row.ActionSpec != nil && row.ActionSpec.Weight == 0 {
+		if row.Action == explorer.Mquery_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			color = colors.DefaultColorTheme.Low
 			explain = "(modified)"
 		}
@@ -408,10 +403,10 @@ var sortedScores = map[uint32]uint32{
 // sort by severity and title
 func (data rowByScoreAndAction) Less(i, j int) bool {
 	if data[i].Action != data[j].Action {
-		if data[i].Action == policy.QueryAction_DEACTIVATE {
+		if data[i].Action == explorer.Mquery_DELETE {
 			return false
 		}
-		if data[j].Action == policy.QueryAction_DEACTIVATE {
+		if data[j].Action == explorer.Mquery_DELETE {
 			return true
 		}
 	}

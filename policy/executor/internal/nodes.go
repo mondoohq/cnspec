@@ -5,6 +5,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/progress"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/types"
@@ -409,7 +410,7 @@ type reportingJobDatapoint struct {
 }
 
 type reportingJobResult struct {
-	scoringSpec *policy.ScoringSpec
+	scoringSpec *explorer.Impact
 	score       *policy.Score
 }
 
