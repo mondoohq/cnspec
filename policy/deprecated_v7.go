@@ -238,6 +238,33 @@ func (d deprecatedV7_PolicySpecs) ToV8() []*PolicyGroup {
 	return res
 }
 
+func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
+	// For convenience we allow calling it on nil and handle it here.
+	if s == nil {
+		return
+	}
+
+	// If the action is unspecified, it means that the spec is effectively null.
+	// Since it's null, don't do anything with it.
+	if s.Action == QueryAction_UNSPECIFIED {
+		return
+	}
+
+	ref.Action = explorer.Mquery_Action(s.Action)
+
+	// For deactivate we don't need anything else in the spec. Just turn it off and
+	// we are done.
+	if s.Action == QueryAction_DEACTIVATE {
+		return
+	}
+
+	if ref.Impact == nil {
+		ref.Impact = &explorer.Impact{}
+	}
+	ref.Impact.Scoring = explorer.Impact_ScoringSystem(s.ScoringSystem)
+	ref.Impact.Weight = int32(s.Weight)
+}
+
 func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	policies := make([]*PolicyRef, len(d.Policies))
 	i := 0
@@ -262,14 +289,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	i = 0
 	for id, spec := range d.ScoringQueries {
 		ref := &explorer.Mquery{}
-
-		if spec != nil {
-			ref.Action = explorer.Mquery_Action(spec.Action)
-			if spec.ScoringSystem != ScoringSystem_SCORING_UNSPECIFIED {
-				ref.Impact = &explorer.Impact{}
-				ref.Impact.Scoring = explorer.Impact_ScoringSystem(spec.ScoringSystem)
-			}
-		}
+		spec.ApplyToV8(ref)
 
 		if strings.HasPrefix(id, "//") && mrn.IsValid(id) {
 			ref.Mrn = id
