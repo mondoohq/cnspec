@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/Masterminds/semver v1.5.0
-	github.com/cockroachdb/errors v1.9.0
+	github.com/cockroachdb/errors v1.9.1
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/go-hclog v1.3.1
 	github.com/hashicorp/go-multierror v1.1.1
