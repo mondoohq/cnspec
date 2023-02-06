@@ -23,7 +23,8 @@ type averageScoreCalculator struct {
 	scoreCnt        uint32
 	dataTotal       uint32
 	dataCompletion  uint32
-	allErrored      bool
+	hasResults      bool
+	hasErrors       bool
 }
 
 func (c *averageScoreCalculator) Init() {
@@ -34,10 +35,11 @@ func (c *averageScoreCalculator) Init() {
 	c.scoreCnt = 0
 	c.dataTotal = 0
 	c.dataCompletion = 0
-	c.allErrored = true
+	c.hasResults = false
+	c.hasErrors = false
 }
 
-func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, spec *explorer.Impact) {
+func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *explorer.Impact) {
 	if !found {
 		calculator.Add(&Score{
 			ScoreCompletion: 0,
@@ -47,22 +49,22 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, spec *explo
 	}
 
 	score := proto.Clone(s).(*Score)
-	if spec != nil {
-		floor := 100 - uint32(spec.Value)
+	if impact != nil {
+		floor := 100 - uint32(impact.Value)
 		if floor > score.Value {
 			score.Value = floor
 		}
 	}
 
 	// we ignore the UNSPECIFIED specs
-	if spec == nil {
+	if impact == nil {
 		calculator.Add(score)
 		return
 	}
 
 	// everything else is modify or activate
 
-	if spec.Weight == 0 {
+	if impact.Weight == 0 {
 		calculator.Add(&Score{
 			// We override the type because:
 			// 1. If it is set to Result, its value will be added to the total
@@ -82,12 +84,11 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, spec *explo
 		return
 	}
 
-	if spec.Weight != -1 {
-		score.Weight = uint32(spec.Weight)
+	if impact.Weight != -1 {
+		score.Weight = uint32(impact.Weight)
 	}
 
 	calculator.Add(score)
-	return
 }
 
 func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
@@ -106,11 +107,10 @@ func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
 func (c *averageScoreCalculator) Add(score *Score) {
 	switch score.Type {
 	case ScoreType_Skip:
-		c.allErrored = false
+		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
-		c.allErrored = false
 
 	case ScoreType_Result:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
@@ -124,7 +124,11 @@ func (c *averageScoreCalculator) Add(score *Score) {
 			c.scoreCnt++
 			c.value += score.Value
 		}
-		c.allErrored = false
+		c.hasResults = true
+
+	case ScoreType_Error:
+		c.hasErrors = true
+		fallthrough
 
 	default:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
@@ -145,17 +149,12 @@ func (c *averageScoreCalculator) Calculate() *Score {
 		// since we are done with the scoring piece
 		ScoreCompletion: 100,
 	}
+
 	if c.dataTotal != 0 {
 		res.DataCompletion = c.dataCompletion / c.dataTotal
 	}
 
-	if c.scoreTotal == 0 {
-		return res
-	}
-
-	if c.allErrored {
-		res.Type = ScoreType_Error
-	} else {
+	if c.hasResults {
 		// if this is scored indicator, we need to calculate the value
 		res.Type = ScoreType_Result
 		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
@@ -163,6 +162,8 @@ func (c *averageScoreCalculator) Calculate() *Score {
 		if c.scoreCnt != 0 {
 			res.Value = c.value / c.scoreCnt
 		}
+	} else if c.hasErrors {
+		res.Type = ScoreType_Error
 	}
 
 	return res
@@ -176,7 +177,8 @@ type weightedScoreCalculator struct {
 	scoreCnt        uint32
 	dataTotal       uint32
 	dataCompletion  uint32
-	allErrored      bool
+	hasResults      bool
+	hasErrors       bool
 }
 
 func (c *weightedScoreCalculator) Init() {
@@ -187,17 +189,18 @@ func (c *weightedScoreCalculator) Init() {
 	c.scoreCnt = 0
 	c.dataTotal = 0
 	c.dataCompletion = 0
-	c.allErrored = true
+	c.hasResults = false
+	c.hasErrors = false
 }
 
 func (c *weightedScoreCalculator) Add(score *Score) {
 	switch score.Type {
 	case ScoreType_Skip:
-		c.allErrored = false
+		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
-		c.allErrored = false
+
 	case ScoreType_Result:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
@@ -210,7 +213,12 @@ func (c *weightedScoreCalculator) Add(score *Score) {
 			c.scoreCnt += score.Weight
 			c.value += score.Value * score.Weight
 		}
-		c.allErrored = false
+		c.hasResults = true
+
+	case ScoreType_Error:
+		c.hasErrors = true
+		fallthrough
+
 	default:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
@@ -230,21 +238,18 @@ func (c *weightedScoreCalculator) Calculate() *Score {
 		// since we are done with the scoring piece
 		ScoreCompletion: 100,
 	}
+
 	if c.dataTotal != 0 {
 		res.DataCompletion = c.dataCompletion / c.dataTotal
 	}
 
-	if c.scoreTotal == 0 {
-		return res
-	}
-
-	if c.allErrored {
-		res.Type = ScoreType_Error
-	} else {
+	if c.hasResults {
 		res.Type = ScoreType_Result
 		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
 		res.Weight = c.weight
 		res.Value = c.value / c.scoreCnt
+	} else if c.hasErrors {
+		res.Type = ScoreType_Error
 	}
 
 	return res
@@ -257,7 +262,8 @@ type worstScoreCalculator struct {
 	scoreCompletion uint32
 	dataTotal       uint32
 	dataCompletion  uint32
-	allErrored      bool
+	hasResults      bool
+	hasErrors       bool
 }
 
 func (c *worstScoreCalculator) Init() {
@@ -267,17 +273,18 @@ func (c *worstScoreCalculator) Init() {
 	c.scoreCompletion = 0
 	c.dataTotal = 0
 	c.dataCompletion = 0
-	c.allErrored = true
+	c.hasResults = false
+	c.hasErrors = false
 }
 
 func (c *worstScoreCalculator) Add(score *Score) {
 	switch score.Type {
 	case ScoreType_Skip:
-		c.allErrored = false
+		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
-		c.allErrored = false
+
 	case ScoreType_Result:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
@@ -289,7 +296,12 @@ func (c *worstScoreCalculator) Add(score *Score) {
 		if score.ScoreCompletion != 0 && score.Weight != 0 && score.Value < c.value {
 			c.value = score.Value
 		}
-		c.allErrored = false
+		c.hasResults = true
+
+	case ScoreType_Error:
+		c.hasErrors = true
+		fallthrough
+
 	default:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
@@ -317,13 +329,13 @@ func (c *worstScoreCalculator) Calculate() *Score {
 		return res
 	}
 
-	if c.allErrored {
-		res.Type = ScoreType_Error
-	} else {
+	if c.hasResults {
 		res.Type = ScoreType_Result
 		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
 		res.Weight = c.weight
 		res.Value = c.value
+	} else if c.hasErrors {
+		res.Type = ScoreType_Error
 	}
 
 	return res
