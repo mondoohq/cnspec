@@ -335,7 +335,7 @@ func (p *PolicyHubServer) DefaultPolicies(ctx context.Context, reqBytes *[]byte)
 type PolicyResolver interface {
 	Assign(context.Context, *PolicyAssignment) (*Empty, error)
 	Unassign(context.Context, *PolicyAssignment) (*Empty, error)
-	SetProps(context.Context, *explorer.PropsReq) (*Empty, error)
+	SetProps(context.Context, *explorer.PropsReq) (*explorer.Empty, error)
 	Resolve(context.Context, *ResolveReq) (*ResolvedPolicy, error)
 	UpdateAssetJobs(context.Context, *UpdateAssetJobsReq) (*Empty, error)
 	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
@@ -383,8 +383,8 @@ func (c *PolicyResolverClient) Unassign(ctx context.Context, in *PolicyAssignmen
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Unassign"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) SetProps(ctx context.Context, in *explorer.PropsReq) (*Empty, error) {
-	out := new(Empty)
+func (c *PolicyResolverClient) SetProps(ctx context.Context, in *explorer.PropsReq) (*explorer.Empty, error) {
+	out := new(explorer.Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetProps"}, ""), in, out)
 	return out, err
 }

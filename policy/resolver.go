@@ -102,7 +102,7 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 	return globalEmpty, err
 }
 
-func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*Empty, error) {
+func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*explorer.Empty, error) {
 	// validate that the queries compile and fill in checksums
 	for i := range req.Props {
 		prop := req.Props[i]
@@ -113,7 +113,7 @@ func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*
 		prop.CodeId = code.CodeV2.Id
 	}
 
-	return globalEmpty, s.DataLake.SetProps(ctx, req)
+	return &explorer.Empty{}, s.DataLake.SetProps(ctx, req)
 }
 
 // Resolve a given policy for a set of asset filters
