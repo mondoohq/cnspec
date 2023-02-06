@@ -273,7 +273,6 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 			Policies: []*PolicyRef{},
 			Checks:   []*explorer.Mquery{},
 			Queries:  []*explorer.Mquery{},
-			Filters:  &explorer.Filters{},
 		}},
 		Filters:  &explorer.Filters{},
 		OwnerMrn: ownerMrn,
