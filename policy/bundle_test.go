@@ -12,8 +12,11 @@ func TestBundleFromPaths(t *testing.T) {
 		bundle, err := BundleFromPaths("../examples/example.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
-		assert.Len(t, bundle.Queries, 4)
-		assert.Len(t, bundle.Policies, 1)
+		assert.Len(t, bundle.Queries, 1)
+		require.Len(t, bundle.Policies, 1)
+		require.Len(t, bundle.Policies[0].Groups, 1)
+		assert.Len(t, bundle.Policies[0].Groups[0].Checks, 3)
+		assert.Len(t, bundle.Policies[0].Groups[0].Queries, 2)
 	})
 
 	t.Run("mql bundle file with multiple policies and queries", func(t *testing.T) {

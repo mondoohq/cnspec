@@ -360,7 +360,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	if p.ScoringSystem == ScoringSystem_SCORING_UNSPECIFIED {
 		p.ScoringSystem = ScoringSystem_AVERAGE
 	}
-	executionChecksum = executionChecksum.Add(p.ScoringSystem.String())
+	executionChecksum = executionChecksum.AddUint(uint64(p.ScoringSystem))
 
 	// PROPS (must be sorted)
 	sort.Slice(p.Props, func(i, j int) bool {
@@ -410,6 +410,14 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		for i := range group.Checks {
 			check := group.Checks[i]
+
+			if base, ok := bundle.Queries[check.Mrn]; ok {
+				check = check.Merge(base)
+				if err := check.RefreshChecksum(); err != nil {
+					return err
+				}
+			}
+
 			if check.Checksum == "" {
 				return errors.New("failed to get checksum for check " + check.Mrn)
 			}
@@ -428,6 +436,14 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		for i := range group.Queries {
 			query := group.Queries[i]
+
+			if base, ok := bundle.Queries[query.Mrn]; ok {
+				query = query.Merge(base)
+				if err := query.RefreshChecksum(); err != nil {
+					return err
+				}
+			}
+
 			if query.Checksum == "" {
 				return errors.New("failed to get checksum for query " + query.Mrn)
 			}
