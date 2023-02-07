@@ -268,7 +268,7 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 			log.Fatal().Msg("no asset selected")
 		}
 
-		backend, err := provider_resolver.OpenAssetConnection(ctx, connectAsset, im.CredsResolver, false)
+		backend, err := provider_resolver.OpenAssetConnection(ctx, connectAsset, im.GetCredsResolver(), false)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not connect to asset")
 		}
