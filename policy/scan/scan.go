@@ -33,7 +33,7 @@ type AssetJob struct {
 	PolicyFilters    []string
 	Props            map[string]string
 	Ctx              context.Context
-	GetCredential    func(cred *vault.Credential) (*vault.Credential, error)
+	CredsResolver    vault.Resolver
 	Reporter         Reporter
 	connection       *motor.Motor
 	ProgressReporter progress.Progress
