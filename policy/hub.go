@@ -41,12 +41,13 @@ func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, 
 
 // PreparePolicy takes a policy and an optional bundle and gets it
 // ready to be saved in the DB, including asset filters.
+//
 // Note1: The bundle must have been pre-compiled and validated!
 // Note2: The bundle may be nil, in which case we will try to find what is needed for the policy
 // Note3: We create the ent.PolicyBundle in this function, not in the `SetPolicyBundle`
 //
-//	Reason: SetPolicyBundle may be setting 1 outer and 3 embedded policies.
-//	But we need to create ent.PolicyBundles for all 4 of those.
+// Reason: SetPolicyBundle may be setting 1 outer and 3 embedded policies.
+// But we need to create ent.PolicyBundles for all 4 of those.
 func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*explorer.Mquery, error) {
 	logCtx := logger.FromContext(ctx)
 	var err error
@@ -97,17 +98,17 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 
 		// TODO: this may need to happen in a bulk call
 		for k, v := range queries {
-			if err := s.setQuery(ctx, k, v, false); err != nil {
+			if err := s.setQuery(ctx, k, v); err != nil {
 				return nil, nil, err
 			}
 		}
 		for k, v := range checks {
-			if err := s.setQuery(ctx, k, v, true); err != nil {
+			if err := s.setQuery(ctx, k, v); err != nil {
 				return nil, nil, err
 			}
 		}
 		for k, v := range props {
-			if err := s.setProperty(ctx, k, v, true); err != nil {
+			if err := s.setProperty(ctx, k, v); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -194,7 +195,7 @@ func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *P
 	return nil
 }
 
-func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *explorer.Mquery, isScored bool) error {
+func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *explorer.Mquery) error {
 	if query == nil {
 		return errors.New("cannot set query '" + mrn + "' as it is not defined")
 	}
@@ -203,10 +204,10 @@ func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *explore
 		query.Title = query.Mql
 	}
 
-	return s.DataLake.SetQuery(ctx, mrn, query, isScored)
+	return s.DataLake.SetQuery(ctx, mrn, query)
 }
 
-func (s *LocalServices) setProperty(ctx context.Context, mrn string, prop *explorer.Property, isScored bool) error {
+func (s *LocalServices) setProperty(ctx context.Context, mrn string, prop *explorer.Property) error {
 	if prop == nil {
 		return errors.New("cannot set query '" + mrn + "' as it is not defined")
 	}
@@ -215,7 +216,7 @@ func (s *LocalServices) setProperty(ctx context.Context, mrn string, prop *explo
 		prop.Title = prop.Mql
 	}
 
-	return s.DataLake.SetProperty(ctx, mrn, prop, isScored)
+	return s.DataLake.SetProperty(ctx, mrn, prop)
 }
 
 // GetPolicy without cascading dependencies
