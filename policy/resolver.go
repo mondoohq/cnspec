@@ -832,6 +832,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 				continue
 			}
 
+			if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
+				check = check.Merge(base)
+			}
+
 			// the job itself is global to the resolution
 			queryJob := cache.global.reportingJobsByChecksum[check.Checksum]
 			if queryJob == nil {
@@ -894,6 +898,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		if query.Action == explorer.Mquery_UNKNOWN || query.Action == explorer.Mquery_ADD {
 			if _, ok := cache.removedQueries[query.Mrn]; ok {
 				continue
+			}
+
+			if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
+				query = query.Merge(base)
 			}
 
 			// the job itself is global to the resolution
