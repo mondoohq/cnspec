@@ -226,7 +226,7 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 		ctx := discovery.InitCtx(context.Background())
 
 		log.Info().Msgf("discover related assets for %d asset(s)", len(conf.Inventory.Spec.Assets))
-		im, err := inventory.New(inventory.WithInventory(conf.Inventory), inventory.WithCachedCredsResolver())
+		im, err := inventory.New(inventory.WithInventory(conf.Inventory))
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not load asset information")
 		}
