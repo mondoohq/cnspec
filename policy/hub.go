@@ -58,62 +58,6 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 
 	policyObj.RefreshLocalAssetFilters()
 
-	// store all queries
-	// NOTE: if we modify the spec only, we may not have the queries available e.g. used by ApplyScoringMutation
-	// FIXME: we need to verify that the policy has access to all referenced queries
-	if bundle != nil {
-		queries := map[string]*explorer.Mquery{}
-		checks := map[string]*explorer.Mquery{}
-		props := map[string]*explorer.Property{}
-
-		for i := range policyObj.Groups {
-			group := policyObj.Groups[i]
-
-			for j := range group.Queries {
-				query := group.Queries[j]
-				queries[query.Mrn] = query
-
-				for k := range query.Props {
-					prop := query.Props[k]
-					props[prop.Mrn] = prop
-				}
-			}
-
-			for j := range group.Checks {
-				check := group.Checks[j]
-				checks[check.Mrn] = check
-
-				if baseCheck, ok := bundle.Queries[check.Mrn]; ok {
-					check.Merge(baseCheck)
-				}
-
-				for k := range check.Props {
-					prop := check.Props[k]
-					if baseProp, ok := bundle.Props[prop.Mrn]; ok {
-						prop.Merge(baseProp)
-					}
-				}
-			}
-		}
-
-		// TODO: this may need to happen in a bulk call
-		for k, v := range queries {
-			if err := s.setQuery(ctx, k, v); err != nil {
-				return nil, nil, err
-			}
-		}
-		for k, v := range checks {
-			if err := s.setQuery(ctx, k, v); err != nil {
-				return nil, nil, err
-			}
-		}
-		for k, v := range props {
-			if err := s.setProperty(ctx, k, v); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-
 	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
 	// e.g. ApplyScoringMutation changes the group. Right now we assume the caller invalidates the checksum
 	//
@@ -175,6 +119,12 @@ func (s *LocalServices) setPolicyFromBundle(ctx context.Context, policyObj *Poli
 
 func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *PolicyBundleMap) error {
 	logCtx := logger.FromContext(ctx)
+
+	for mrn, query := range bundleMap.Queries {
+		if err := s.setQuery(ctx, mrn, query); err != nil {
+			return nil
+		}
+	}
 
 	// sort policies, so that we store child policies before their parents
 	policies, err := bundleMap.PoliciesSortedByDependency()
