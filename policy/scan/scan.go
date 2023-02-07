@@ -32,7 +32,7 @@ type AssetJob struct {
 	Bundle           *policy.Bundle
 	PolicyFilters    []string
 	Ctx              context.Context
-	GetCredential    func(cred *vault.Credential) (*vault.Credential, error)
+	CredsResolver    vault.Resolver
 	Reporter         Reporter
 	connection       *motor.Motor
 	ProgressReporter progress.Progress
