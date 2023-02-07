@@ -16,7 +16,6 @@ import (
 
 type wrapQuery struct {
 	*explorer.Mquery
-	isScored bool
 }
 
 type wrapPolicy struct {
@@ -55,8 +54,8 @@ func (db *Db) GetQuery(ctx context.Context, mrn string) (*explorer.Mquery, error
 
 // SetQuery stores a given query
 // Note: the query must be defined, it cannot be nil
-func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *explorer.Mquery, isScored bool) error {
-	v := wrapQuery{mquery, isScored}
+func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *explorer.Mquery) error {
+	v := wrapQuery{mquery}
 	ok := db.cache.Set(dbIDQuery+mrn, v, 1)
 	if !ok {
 		return errors.New("failed to save query '" + mrn + "' to cache")
@@ -75,7 +74,7 @@ func (db *Db) GetProperty(ctx context.Context, mrn string) (*explorer.Property, 
 
 // SetProperty stores a given query
 // Note: the query must be defined, it cannot be nil
-func (db *Db) SetProperty(ctx context.Context, mrn string, prop *explorer.Property, isScored bool) error {
+func (db *Db) SetProperty(ctx context.Context, mrn string, prop *explorer.Property) error {
 	ok := db.cache.Set(dbIDProp+mrn, prop, 1)
 	if !ok {
 		return errors.New("failed to save query '" + mrn + "' to cache")
@@ -150,7 +149,7 @@ func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters [
 	for i := range filters {
 		filter := filters[i]
 		policyObj.Filters.Items[filter.CodeId] = filter
-		if err = db.SetQuery(ctx, filter.Mrn, filter, false); err != nil {
+		if err = db.SetQuery(ctx, filter.Mrn, filter); err != nil {
 			return wrapPolicy{}, err
 		}
 	}

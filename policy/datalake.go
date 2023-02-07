@@ -25,12 +25,12 @@ type DataLake interface {
 	GetQuery(ctx context.Context, mrn string) (*explorer.Mquery, error)
 	// SetQuery stores a given query
 	// Note: the query must be defined, it cannot be nil
-	SetQuery(ctx context.Context, mrn string, query *explorer.Mquery, isScored bool) error
+	SetQuery(ctx context.Context, mrn string, query *explorer.Mquery) error
 	// GetProperty retrieves a given property
 	GetProperty(ctx context.Context, mrn string) (*explorer.Property, error)
 	// SetProperty stores a given property
 	// Note: the property must be defined, it cannot be nil
-	SetProperty(ctx context.Context, mrn string, prop *explorer.Property, isScored bool) error
+	SetProperty(ctx context.Context, mrn string, prop *explorer.Property) error
 
 	// GetValidatedPolicy retrieves and if necessary updates the policy
 	GetValidatedPolicy(ctx context.Context, mrn string) (*Policy, error)
