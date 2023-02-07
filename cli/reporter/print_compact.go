@@ -410,7 +410,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *e
 	}
 
 	var scoreIndicator string
-	if query.Impact != nil && score.Value != 100 {
+	if query.Impact != nil {
 		scoreIndicator = termenv.String(
 			fmt.Sprintf("%s %3d  ", rating.Letter(), score.Value),
 		).Foreground(color).String()
