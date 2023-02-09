@@ -740,6 +740,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 
 		scoring := &explorer.Impact{
 			Scoring: policy.ScoringSystem,
+			Weight:  -1,
 		}
 
 		// ADD
