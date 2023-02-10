@@ -49,7 +49,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 	}
 
 	score := proto.Clone(s).(*Score)
-	if impact != nil {
+	if impact != nil && impact.Value != -1 {
 		floor := 100 - uint32(impact.Value)
 		if floor > score.Value {
 			score.Value = floor

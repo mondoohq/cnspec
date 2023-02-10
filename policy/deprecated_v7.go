@@ -238,6 +238,30 @@ func (d deprecatedV7_PolicySpecs) ToV8() []*PolicyGroup {
 	return res
 }
 
+func Impact2ScoringSpec(impact *explorer.Impact, action QueryAction) *DeprecatedV7_ScoringSpec {
+	if impact == nil {
+		return nil
+	}
+
+	weight := impact.Weight
+	if weight == -1 {
+		weight = 1
+	}
+
+	var severity *DeprecatedV7_SeverityValue
+	if impact.Value != -1 {
+		severity = &DeprecatedV7_SeverityValue{Value: int64(impact.Value)}
+	}
+
+	return &DeprecatedV7_ScoringSpec{
+		Weight:             uint32(weight),
+		WeightIsPercentage: false,
+		ScoringSystem:      ScoringSystem(impact.Scoring), // numbers are identical in this enum
+		Action:             action,
+		Severity:           severity,
+	}
+}
+
 func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 	// For convenience we allow calling it on nil and handle it here.
 	if s == nil {

@@ -426,7 +426,7 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 
 	for childReportingJobID, ss := range rj.ChildJobs {
 		nodeData.childScores[childReportingJobID] = &reportingJobResult{
-			scoringSpec: ss,
+			impact: ss,
 		}
 	}
 

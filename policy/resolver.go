@@ -479,6 +479,9 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		QrId:       "root",
 		ChildJobs:  map[string]*explorer.Impact{},
 		Datapoints: map[string]bool{},
+		// FIXME: DEPRECATED, remove in v9.0 vv
+		DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
+		// ^^
 	}
 
 	cache.reportingJobsByUUID[reportingJob.Uuid] = reportingJob
@@ -738,9 +741,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 	for i := range group.Policies {
 		policy := group.Policies[i]
 
-		scoring := &explorer.Impact{
+		impact := &explorer.Impact{
 			Scoring: policy.ScoringSystem,
 			Weight:  -1,
+			Value:   -1,
 		}
 
 		// ADD
@@ -780,6 +784,9 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 					ChildJobs:     map[string]*explorer.Impact{},
 					Datapoints:    map[string]bool{},
 					ScoringSystem: policyObj.ScoringSystem,
+					// FIXME: DEPRECATED, remove in v9.0 vv
+					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
+					// ^^
 				}
 				cache.global.reportingJobsByChecksum[policy.Mrn] = policyJob
 				cache.global.reportingJobsByUUID[policyJob.Uuid] = policyJob
@@ -787,7 +794,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 
 			// local aspects for the resolved policy
 			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
-			ownerJob.ChildJobs[policyJob.Uuid] = scoring
+			ownerJob.ChildJobs[policyJob.Uuid] = impact
+			// FIXME: DEPRECATED, remove in v9.0 vv
+			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(policy.Action))
+			// ^^
 			cache.childPolicies[policy.Mrn] = struct{}{}
 
 			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache); err != nil {
@@ -813,7 +823,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 			for _, id := range policyJob.Notify {
 				parentJob := cache.global.reportingJobsByUUID[id]
 				if parentJob != nil {
-					parentJob.ChildJobs[policyJob.Uuid] = scoring
+					parentJob.ChildJobs[policyJob.Uuid] = impact
+					// FIXME: DEPRECATED, remove in v9.0 vv
+					parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(policy.Action))
+					// ^^
 				}
 			}
 		}
@@ -822,8 +835,11 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 	// handle scoring queries
 	for i := range group.Checks {
 		check := group.Checks[i]
+		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
+			check = check.Merge(base)
+		}
 
-		scoringSpec := check.Impact
+		impact := check.Impact
 
 		cache.global.propsCache.Add(check.Props...)
 
@@ -831,10 +847,6 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		if check.Action == explorer.Mquery_UNKNOWN || check.Action == explorer.Mquery_ADD {
 			if _, ok := cache.removedQueries[check.Mrn]; ok {
 				continue
-			}
-
-			if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
-				check = check.Merge(base)
 			}
 
 			// the job itself is global to the resolution
@@ -845,6 +857,9 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 					QrId:       check.Mrn,
 					ChildJobs:  map[string]*explorer.Impact{},
 					Datapoints: map[string]bool{},
+					// FIXME: DEPRECATED, remove in v9.0 vv
+					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
+					// ^^
 				}
 				cache.global.reportingJobsByChecksum[check.Checksum] = queryJob
 				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
@@ -853,7 +868,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 			// local aspects for the resolved policy
 			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
 
-			ownerJob.ChildJobs[queryJob.Uuid] = scoringSpec
+			ownerJob.ChildJobs[queryJob.Uuid] = impact
+			// FIXME: DEPRECATED, remove in v9.0 vv
+			ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(check.Action))
+			// ^^
 			cache.childQueries[check.Mrn] = struct{}{}
 
 			// we set a placeholder for the execution query, just to indicate it will be added
@@ -879,7 +897,10 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 			for _, id := range queryJob.Notify {
 				parentJob := cache.global.reportingJobsByUUID[id]
 				if parentJob != nil {
-					parentJob.ChildJobs[queryJob.Uuid] = scoringSpec
+					parentJob.ChildJobs[queryJob.Uuid] = impact
+					// FIXME: DEPRECATED, remove in v9.0 vv
+					parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(check.Action))
+					// ^^
 				}
 			}
 
@@ -890,6 +911,9 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 	// handle data queries
 	for i := range group.Queries {
 		query := group.Queries[i]
+		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
+			query = query.Merge(base)
+		}
 
 		// Dom: Note: we do not carry over the impact from data queries yet
 
@@ -899,10 +923,6 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		if query.Action == explorer.Mquery_UNKNOWN || query.Action == explorer.Mquery_ADD {
 			if _, ok := cache.removedQueries[query.Mrn]; ok {
 				continue
-			}
-
-			if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
-				query = query.Merge(base)
 			}
 
 			// the job itself is global to the resolution
@@ -915,6 +935,9 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 					ChildJobs:  map[string]*explorer.Impact{},
 					Datapoints: map[string]bool{},
 					IsData:     true,
+					// FIXME: DEPRECATED, remove in v9.0 vv
+					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
+					// ^^
 				}
 				cache.global.reportingJobsByChecksum[query.Checksum] = queryJob
 				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
