@@ -410,8 +410,8 @@ type reportingJobDatapoint struct {
 }
 
 type reportingJobResult struct {
-	scoringSpec *explorer.Impact
-	score       *policy.Score
+	impact *explorer.Impact
+	score  *policy.Score
 }
 
 // ReportingJobNodeData is the data for nodes of type ReportingJobNodeType
@@ -540,7 +540,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		if s == nil {
 			return nil, nil
 		}
-		policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.scoringSpec)
+		policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.impact)
 	}
 
 	policy.AddDataScore(calculator, len(nodeData.datapoints), finishedDatapoints)
