@@ -86,6 +86,7 @@ func (s *summaryPrinter) GenerateStats(report *policy.ReportCollection) summaryS
 	// extract statistics from scan report
 	pbm := report.Bundle.ToMap()
 	for assetMrn := range report.Assets {
+		stats.assetNames[assetMrn] = report.Assets[assetMrn].Name
 		assetReport, ok := report.Reports[assetMrn]
 		if !ok {
 			if errMsg := report.Errors[assetMrn]; errMsg != "" {
