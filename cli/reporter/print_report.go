@@ -39,11 +39,14 @@ func (r *reportRenderer) print() error {
 	// TODO: sort assets by reverse score
 
 	var res bytes.Buffer
+	var scanSummary string
 
 	// print summaryPrinter
 	s := NewSummaryRenderer(r.printer)
-	scanSummary := s.Render(r.data)
-	res.WriteString(scanSummary)
+	if len(r.data.Reports) > 0 {
+		scanSummary = s.Render(r.data)
+		res.WriteString(scanSummary)
+	}
 
 	// render asset name/summaryPrinter + policy results
 	for assetMrn := range r.data.Assets {
@@ -53,6 +56,7 @@ func (r *reportRenderer) print() error {
 		} else {
 			res.WriteString(renderedAsset)
 		}
+		res.WriteString(NewLineCharacter)
 	}
 
 	// print errors
