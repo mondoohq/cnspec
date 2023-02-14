@@ -296,7 +296,7 @@ func addSpace(s string) string {
 }
 
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
-	if len(orderedAssets) == 0 || len(r.data.Errors) == len(orderedAssets) {
+	if len(orderedAssets) == 0 {
 		return
 	}
 
