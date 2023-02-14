@@ -45,6 +45,7 @@ require (
 	cloud.google.com/go/storage v1.27.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.0.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2 v2.0.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v2 v2.3.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/mysql/armmysqlflexibleservers v1.0.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/security/armsecurity v0.9.0 // indirect
 	github.com/GoogleCloudPlatform/berglas v1.0.1 // indirect
