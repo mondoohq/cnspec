@@ -319,22 +319,26 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			}
 		}
 
+		// For all queries and checks we are looking to get the shared objects only.
+		// This is because the embedded queries and checks are already part of the
+		// policy and what the bundle represents in its toplevel Queries field is
+		// the collection of shared content (not its overrides). So the section
+		// below is all about adding the shared content only.
+
 		for i := range group.Queries {
 			query := group.Queries[i]
-			base, err := s.DataLake.GetQuery(ctx, query.Mrn)
-			if err == nil {
-				query.Merge(base)
+			if base, _ := s.DataLake.GetQuery(ctx, query.Mrn); base != nil {
+				query = base
 			}
 			bundleMap.Queries[query.Mrn] = query
 		}
 
 		for i := range group.Checks {
 			check := group.Checks[i]
-			base, err := s.DataLake.GetQuery(ctx, check.Mrn)
-			if err != nil {
-				return nil, err
+			if base, _ := s.DataLake.GetQuery(ctx, check.Mrn); base != nil {
+				check = base
 			}
-			bundleMap.Queries[check.Mrn] = base
+			bundleMap.Queries[check.Mrn] = check
 		}
 
 		for i := range group.Policies {

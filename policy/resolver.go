@@ -837,6 +837,12 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		check := group.Checks[i]
 		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
 			check = check.Merge(base)
+			if err := check.RefreshChecksum(); err != nil {
+				return err
+			}
+		}
+		if check.Checksum == "" {
+			return errors.New("invalid check encountered, missing checksum for: " + check.Mrn)
 		}
 
 		impact := check.Impact
@@ -913,6 +919,12 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		query := group.Queries[i]
 		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
 			query = query.Merge(base)
+			if err := query.RefreshChecksum(); err != nil {
+				return err
+			}
+		}
+		if query.Checksum == "" {
+			return errors.New("invalid query encountered, missing checksum for: " + query.Mrn)
 		}
 
 		// Dom: Note: we do not carry over the impact from data queries yet
