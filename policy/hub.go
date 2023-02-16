@@ -157,18 +157,6 @@ func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *explore
 	return s.DataLake.SetQuery(ctx, mrn, query)
 }
 
-func (s *LocalServices) setProperty(ctx context.Context, mrn string, prop *explorer.Property) error {
-	if prop == nil {
-		return errors.New("cannot set query '" + mrn + "' as it is not defined")
-	}
-
-	if prop.Title == "" {
-		prop.Title = prop.Mql
-	}
-
-	return s.DataLake.SetProperty(ctx, mrn, prop)
-}
-
 // GetPolicy without cascading dependencies
 func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
 	logCtx := logger.FromContext(ctx)
@@ -300,12 +288,6 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 	for i := range mpolicyObj.Props {
 		prop := mpolicyObj.Props[i]
-
-		base, err := s.DataLake.GetProperty(ctx, prop.Mrn)
-		if err == nil {
-			prop.Merge(base)
-		}
-
 		bundleMap.Props[prop.Mrn] = prop
 	}
 
