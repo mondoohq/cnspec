@@ -668,14 +668,14 @@ func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
 		return err
 	}
 
-	propsIdx := make(map[string]*explorer.Property, len(policyw.Props))
+	allProps := make(map[string]*explorer.Property, len(policyw.Props))
 	for i := range policyw.Props {
 		cur := policyw.Props[i]
 		if cur.Mrn != "" {
-			propsIdx[cur.Mrn] = cur
+			allProps[cur.Mrn] = cur
 		}
 		if cur.Uid != "" {
-			propsIdx[cur.Uid] = cur
+			allProps[cur.Uid] = cur
 		}
 	}
 
@@ -689,16 +689,41 @@ func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
 			return errors.New("cannot set property without MRN: " + cur.Mql)
 		}
 
-		if x, ok := propsIdx[id]; ok {
-			x.Mql = cur.Mql
-			continue
+		if cur.Mql == "" {
+			delete(allProps, id)
 		}
-
-		policyw.Props = append(policyw.Props, cur)
-		propsIdx[id] = cur
+		allProps[id] = cur
 	}
 
-	// since weonly altered an existing policy, we don't need to set it again
+	policyw.Props = []*explorer.Property{}
+	for k, v := range allProps {
+		// since props can be in the list with both UIDs and MRNs, in the case
+		// where a property sets both we want to ignore one entry to avoid duplicates
+		if v.Mrn != "" && v.Uid != "" && k == v.Uid {
+			continue
+		}
+		policyw.Props = append(policyw.Props, v)
+	}
+
+	policyw.Policy.InvalidateExecutionChecksums()
+	err = policyw.Policy.UpdateChecksums(ctx,
+		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	ok := db.cache.Set(dbIDPolicy+req.EntityMrn, policyw, 2)
+	if !ok {
+		return errors.New("")
+	}
+
+	err = db.checkAndInvalidatePolicyBundle(ctx, &policyw)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
