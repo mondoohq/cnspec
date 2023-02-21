@@ -8,10 +8,109 @@ import (
 	"go.mondoo.com/cnquery/mrn"
 )
 
-// FIXME: DEPRECATED, remove in v9.0
+// FIXME: DEPRECATED, remove in v9.0 (all of it)
 // This file contains conversion and helper structures that were introduced
 // with the PolicyV2 update in late v7.x. The can be safely removed (alongside
 // the old proto structures) in v9.
+
+// DeprecatedV7Conversions will find any v7 pieces in the bundle and convert
+// them to V8+
+func (p *Bundle) DeprecatedV7Conversions() {
+	p.deprecatedV7convertQueries()
+	p.deprecatedV7convertPolicies()
+}
+
+// Note: we don't want to duplicate policies; If it exists in v7 and in v8,
+// then v7 policies are dropped. Checks for both UIDs and MRNs
+func (p *Bundle) deprecatedV7convertPolicies() {
+	if len(p.DeprecatedV7Policies) == 0 {
+		return
+	}
+
+	existing := map[string]struct{}{}
+	for i := range p.Policies {
+		cur := p.Policies[i]
+		if cur.Uid != "" {
+			existing[cur.Uid] = struct{}{}
+		}
+		if cur.Mrn != "" {
+			existing[cur.Mrn] = struct{}{}
+		}
+	}
+
+	for i := range p.DeprecatedV7Policies {
+		cur := p.DeprecatedV7Policies[i]
+		if _, ok := existing[cur.Mrn]; ok {
+			continue
+		}
+		if _, ok := existing[cur.Uid]; ok {
+			continue
+		}
+
+		p.Policies = append(p.Policies, cur.ToV8())
+	}
+
+	p.DeprecatedV7Policies = nil
+}
+
+// Note: we don't want to duplicate queries; If it exists in v7 and in v8,
+// then v7 queries are dropped. Checks for both UIDs and MRNs and across all
+// policies (which is why we run this before the policy conversion)
+func (p *Bundle) deprecatedV7convertQueries() {
+	if len(p.DeprecatedV7Queries) == 0 {
+		return
+	}
+
+	existing := map[string]struct{}{}
+	for i := range p.Queries {
+		cur := p.Queries[i]
+		if cur.Uid != "" {
+			existing[cur.Uid] = struct{}{}
+		}
+		if cur.Mrn != "" {
+			existing[cur.Mrn] = struct{}{}
+		}
+	}
+
+	for i := range p.Policies {
+		pol := p.Policies[i]
+		for j := range pol.Groups {
+			group := pol.Groups[j]
+			for k := range group.Queries {
+				cur := group.Queries[k]
+				if cur.Uid != "" {
+					existing[cur.Uid] = struct{}{}
+				}
+				if cur.Mrn != "" {
+					existing[cur.Mrn] = struct{}{}
+				}
+			}
+			for k := range group.Checks {
+				cur := group.Checks[k]
+				if cur.Uid != "" {
+					existing[cur.Uid] = struct{}{}
+				}
+				if cur.Mrn != "" {
+					existing[cur.Mrn] = struct{}{}
+				}
+			}
+		}
+	}
+
+	for i := range p.DeprecatedV7Queries {
+		cur := p.DeprecatedV7Queries[i]
+		if _, ok := existing[cur.Mrn]; ok {
+			continue
+		}
+		if _, ok := existing[cur.Uid]; ok {
+			continue
+		}
+
+		p.Queries = append(p.Queries, cur.ToV8())
+	}
+
+	p.DeprecatedV7Queries = nil
+}
 
 func (d *DeprecatedV7_Bundle) ToV8() *Bundle {
 	if d == nil {
@@ -401,6 +500,22 @@ func (d *DeprecatedV7_Policy) ToV8() *Policy {
 		LocalExecutionChecksum: d.LocalExecutionChecksum,
 		GraphExecutionChecksum: d.GraphExecutionChecksum,
 	}
+}
+
+// DeprecatedV7_Add is a helper to add a policy and a bunch of queries to this bundle
+func (bundle *PolicyBundleMap) DeprecatedV7_Add(policy *DeprecatedV7_Policy, queries map[string]*DeprecatedV7_Mquery) *PolicyBundleMap {
+	var id string
+	if policy.Mrn != "" {
+		id = policy.Mrn
+	} else {
+		id = policy.Uid
+	}
+
+	bundle.Policies[id] = policy.ToV8()
+	for k, v := range queries {
+		bundle.Queries[k] = v.ToV8()
+	}
+	return bundle
 }
 
 // fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized

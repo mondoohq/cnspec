@@ -449,6 +449,10 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		ownerMrn = "//local.cnspec.io/run/local-execution"
 	}
 
+	// FIXME: DEPRECATED, remove in v9.0 vv
+	p.DeprecatedV7Conversions()
+	// ^^
+
 	var err error
 	var warnings []error
 
