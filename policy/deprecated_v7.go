@@ -518,6 +518,95 @@ func (bundle *PolicyBundleMap) DeprecatedV7_Add(policy *DeprecatedV7_Policy, que
 	return bundle
 }
 
+// Conveting back to V7 structures
+// -------------------------------
+
+func ToV7Severity(i *explorer.Impact) *DeprecatedV7_SeverityValue {
+	if i == nil {
+		return nil
+	}
+
+	return &DeprecatedV7_SeverityValue{
+		Value: int64(i.Value),
+	}
+}
+
+func ToV7Mquery(x *explorer.Mquery) *DeprecatedV7_Mquery {
+	if x == nil {
+		return nil
+	}
+
+	return &DeprecatedV7_Mquery{
+		Query:    x.Mql,
+		CodeId:   x.CodeId,
+		Checksum: x.Checksum,
+		Mrn:      x.Mrn,
+		Uid:      x.Uid,
+		Type:     x.Type,
+		Severity: ToV7Severity(x.Impact),
+		Title:    x.Title,
+		Docs:     ToV7MqueryDocs(x.Docs),
+		Refs:     ToV7MqueryRefs(x.Refs),
+		Tags:     x.Tags,
+	}
+}
+
+func ToV7MqueryDocs(x *explorer.MqueryDocs) *DeprecatedV7_MqueryDocs {
+	if x == nil {
+		return nil
+	}
+
+	return &DeprecatedV7_MqueryDocs{
+		Desc:        x.Desc,
+		Audit:       x.Audit,
+		Remediation: ToV7Remediation(x.Remediation),
+	}
+}
+
+func ToV7Remediation(x *explorer.Remediation) string {
+	if x == nil || len(x.Items) == 0 {
+		return ""
+	}
+
+	return x.Items[0].Desc
+}
+
+func ToV7MqueryRefs(x []*explorer.MqueryRef) []*DeprecatedV7_MqueryRef {
+	if x == nil {
+		return nil
+	}
+
+	res := make([]*DeprecatedV7_MqueryRef, len(x))
+	for i := range x {
+		res[i] = ToV7MqueryRef(x[i])
+	}
+	return res
+}
+
+func ToV7MqueryRef(x *explorer.MqueryRef) *DeprecatedV7_MqueryRef {
+	if x == nil {
+		return nil
+	}
+
+	return &DeprecatedV7_MqueryRef{
+		Title: x.Title,
+		Url:   x.Url,
+	}
+}
+
+func ToV7Filters(f *explorer.Filters) deprecatedV7_AssetFilters {
+	if f == nil {
+		return nil
+	}
+
+	res := map[string]*DeprecatedV7_Mquery{}
+	for k, v := range f.Items {
+		res[k] = ToV7Mquery(v)
+	}
+
+	return res
+}
+
 // fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized
 // instead of nil pointers for ScoringSpecs.
 // This is a quick fix for https://gitlab.com/mondoolabs/mondoo/-/issues/455
