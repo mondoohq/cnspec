@@ -32,7 +32,7 @@ func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, 
 		return globalEmpty, err
 	}
 
-	if err := s.setPolicyBundleFromMap(ctx, bundleMap); err != nil {
+	if err := s.SetBundleMap(ctx, bundleMap); err != nil {
 		return nil, err
 	}
 
@@ -91,7 +91,9 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	return policyObj, filters, nil
 }
 
-func (s *LocalServices) setPolicyFromBundle(ctx context.Context, policyObj *Policy, bundleMap *PolicyBundleMap) error {
+// SetPolicyFromBundle takes a policy and stores it in the datalake. The
+// bundle is used as an optional local reference.
+func (s *LocalServices) SetPolicyFromBundle(ctx context.Context, policyObj *Policy, bundleMap *PolicyBundleMap) error {
 	logCtx := logger.FromContext(ctx)
 	policyObj, filters, err := s.PreparePolicy(ctx, policyObj, bundleMap)
 	if err != nil {
@@ -117,7 +119,9 @@ func (s *LocalServices) setPolicyFromBundle(ctx context.Context, policyObj *Poli
 	return nil
 }
 
-func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *PolicyBundleMap) error {
+// SetBundleMap takes a bundle map (converted from a policy bundle) and
+// creates all queries and policies in it.
+func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundleMap) error {
 	logCtx := logger.FromContext(ctx)
 
 	for mrn, query := range bundleMap.Queries {
@@ -137,7 +141,7 @@ func (s *LocalServices) setPolicyBundleFromMap(ctx context.Context, bundleMap *P
 		logCtx.Debug().Str("owner", policyObj.OwnerMrn).Str("uid", policyObj.Uid).Str("mrn", policyObj.Mrn).Msg("store policy")
 		policyObj.OwnerMrn = bundleMap.OwnerMrn
 
-		if err = s.setPolicyFromBundle(ctx, policyObj, bundleMap); err != nil {
+		if err = s.SetPolicyFromBundle(ctx, policyObj, bundleMap); err != nil {
 			return err
 		}
 	}
@@ -377,7 +381,7 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string) (*B
 
 	bundleMap := bundle.ToMap()
 
-	err = s.setPolicyBundleFromMap(ctx, bundleMap)
+	err = s.SetBundleMap(ctx, bundleMap)
 	if err != nil {
 		logCtx.Error().Err(err).Str("policy", mrn).Msg("marketplace> failed to set policy bundle retrieved from upstream")
 		return nil, errors.New("failed to cache upstream policy " + mrn + ": " + err.Error())
