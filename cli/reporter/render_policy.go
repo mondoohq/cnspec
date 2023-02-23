@@ -45,7 +45,7 @@ func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *poli
 }
 
 func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundleMap *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, res *bytes.Buffer) {
-	dataQueries := map[string]explorer.Mquery_Action{}
+	dataQueries := map[string]explorer.Action{}
 	for i := range policyObj.Groups {
 		group := policyObj.Groups[i]
 		for j := range group.Queries {
@@ -145,9 +145,9 @@ func renderPolicySummary(res *bytes.Buffer, data []reportRow) {
 		row := data[i]
 
 		ps.Total++
-		if row.Action == explorer.Mquery_DELETE {
+		if row.Action == explorer.Action_DEACTIVATE {
 			ps.Skipped++
-		} else if row.Action == explorer.Mquery_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
+		} else if row.Action == explorer.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			ps.Skipped++
 		} else if row.Score != nil && row.Score.Type == policy.ScoreType_Error {
 			ps.Errors.Total++
@@ -190,9 +190,9 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 		row := data[i]
 
 		action := ""
-		if row.Action == explorer.Mquery_DELETE {
+		if row.Action == explorer.Action_DEACTIVATE {
 			action = "// removed by user"
-		} else if row.Action == explorer.Mquery_MODIFY && (row.Impact == nil || row.Impact.Weight == 0) {
+		} else if row.Action == explorer.Action_MODIFY && (row.Impact == nil || row.Impact.Weight == 0) {
 			action = "// ignored by user"
 		} else if row.Score != nil && row.Score.Type == policy.ScoreType_Skip {
 			action = "// skipped by query condition"

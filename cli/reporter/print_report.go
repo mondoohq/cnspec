@@ -139,7 +139,7 @@ func (r *reportRenderer) assetSummary(assetObj *policy.Asset, score *policy.Scor
 }
 
 // policyModActions tracks the remove and modify actions to pass them to childs for proper rendering of ignores
-type policyModActions map[string]explorer.Mquery_Action
+type policyModActions map[string]explorer.Action
 
 func (p policyModActions) Clone() policyModActions {
 	res := policyModActions{}
@@ -251,7 +251,7 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 
 		// we only render query additions, all others need to be passed-through to the child policy
 		// NOTE: we need to copy the map when we pass eg. Remove to Children, since multiple children can add the same query
-		if action != explorer.Mquery_ADD {
+		if action != explorer.Action_ACTIVATE {
 			actionsForChilds[qid] = check.Action
 			continue
 		}
@@ -308,7 +308,7 @@ type reportRow struct {
 	Query      *explorer.Mquery
 	Bundle     *llx.CodeBundle
 	Score      *policy.Score
-	Action     explorer.Mquery_Action
+	Action     explorer.Action
 	Impact     *explorer.Impact
 	Assessment *llx.Assessment
 }
@@ -324,12 +324,12 @@ func (row reportRow) Indicator() string {
 			char = '×'
 		}
 
-		if row.Action == explorer.Mquery_DELETE {
+		if row.Action == explorer.Action_DEACTIVATE {
 			color = colors.DefaultColorTheme.Disabled
 			char = '×'
 		}
 
-		if row.Action == explorer.Mquery_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
+		if row.Action == explorer.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			color = colors.DefaultColorTheme.Secondary
 			char = '»'
 		}
@@ -372,12 +372,12 @@ func colorizeRow(row reportRow, text string) string {
 			explain = "(unscored)"
 		}
 
-		if row.Action == explorer.Mquery_DELETE {
+		if row.Action == explorer.Action_DEACTIVATE {
 			color = colors.DefaultColorTheme.Disabled
 			explain = "(removed)"
 		}
 
-		if row.Action == explorer.Mquery_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
+		if row.Action == explorer.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			color = colors.DefaultColorTheme.Low
 			explain = "(modified)"
 		}
@@ -407,10 +407,10 @@ var sortedScores = map[uint32]uint32{
 // sort by severity and title
 func (data rowByScoreAndAction) Less(i, j int) bool {
 	if data[i].Action != data[j].Action {
-		if data[i].Action == explorer.Mquery_DELETE {
+		if data[i].Action == explorer.Action_DEACTIVATE {
 			return false
 		}
-		if data[j].Action == explorer.Mquery_DELETE {
+		if data[j].Action == explorer.Action_DEACTIVATE {
 			return true
 		}
 	}

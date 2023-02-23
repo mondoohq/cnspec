@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/mrn"
 )
@@ -375,7 +376,7 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 		return
 	}
 
-	ref.Action = explorer.Mquery_Action(s.Action)
+	ref.Action = ToV8Action(s.Action)
 
 	// For deactivate we don't need anything else in the spec. Just turn it off and
 	// we are done.
@@ -399,7 +400,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 		ref := &PolicyRef{}
 
 		if spec != nil {
-			ref.Action = PolicyRef_Action(spec.Action)
+			ref.Action = ToV8Action(spec.Action)
 		}
 
 		if strings.HasPrefix(id, "//") && mrn.IsValid(id) {
@@ -438,7 +439,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 		ref := &explorer.Mquery{}
 
 		if action != QueryAction_UNSPECIFIED {
-			ref.Action = explorer.Mquery_Action(action)
+			ref.Action = ToV8Action(action)
 		}
 
 		if strings.HasPrefix(id, "//") && mrn.IsValid(id) {
@@ -613,6 +614,120 @@ func ToV7Filters(f *explorer.Filters) deprecatedV7_AssetFilters {
 	}
 
 	return res
+}
+
+func ToV7SpecFilter(f *explorer.Filters, policyMrn string) *DeprecatedV7_Mquery {
+	if f == nil || len(f.Items) == 0 {
+		return nil
+	}
+
+	filters := []string{}
+	for _, v := range f.Items {
+		filters = append(filters, v.Mql)
+	}
+
+	res := &DeprecatedV7_Mquery{
+		Query: strings.Join(filters, " || "),
+	}
+	_, err := res.RefreshAsAssetFilter(policyMrn)
+	if err != nil {
+		log.Error().Str("policy", policyMrn).Err(err).Msg("failed to convert filter to v7 for spec in policy")
+	}
+
+	return res
+}
+
+func ToV7ScoringSpec(action explorer.Action, impact *explorer.Impact) *DeprecatedV7_ScoringSpec {
+	if action == explorer.Action_UNSPECIFIED {
+		return nil
+	}
+
+	res := &DeprecatedV7_ScoringSpec{
+		Action: ToV7Action(action),
+	}
+
+	if impact != nil && impact.Weight != -1 {
+		res.Weight = uint32(impact.Weight)
+	}
+
+	return res
+}
+
+func ToV7Action(action explorer.Action) QueryAction {
+	switch action {
+	case explorer.Action_ACTIVATE:
+		return QueryAction_ACTIVATE
+	case explorer.Action_DEACTIVATE:
+		return QueryAction_DEACTIVATE
+	case explorer.Action_MODIFY:
+		return QueryAction_MODIFY
+	default:
+		return QueryAction_UNSPECIFIED
+	}
+}
+
+func ToV8Action(action QueryAction) explorer.Action {
+	switch action {
+	case QueryAction_ACTIVATE:
+		return explorer.Action_ACTIVATE
+	case QueryAction_DEACTIVATE:
+		return explorer.Action_DEACTIVATE
+	case QueryAction_MODIFY:
+		return explorer.Action_MODIFY
+	default:
+		return explorer.Action_UNSPECIFIED
+	}
+}
+
+func (x *PolicyGroup) ToV7(policyMrn string) *DeprecatedV7_PolicySpec {
+	if x == nil {
+		return nil
+	}
+
+	res := &DeprecatedV7_PolicySpec{
+		Policies:       map[string]*DeprecatedV7_ScoringSpec{},
+		ScoringQueries: map[string]*DeprecatedV7_ScoringSpec{},
+		DataQueries:    map[string]QueryAction{},
+	}
+
+	for i := range x.Policies {
+		p := x.Policies[i]
+		if p.Mrn == "" {
+			continue
+		}
+		res.Policies[p.Mrn] = ToV7ScoringSpec(p.Action, p.Impact)
+	}
+	for i := range x.Checks {
+		check := x.Checks[i]
+		if check.Mrn == "" {
+			continue
+		}
+		res.ScoringQueries[check.Mrn] = ToV7ScoringSpec(check.Action, check.Impact)
+	}
+	for i := range x.Queries {
+		query := x.Queries[i]
+		if query.Mrn == "" {
+			continue
+		}
+		res.DataQueries[query.Mrn] = ToV7Action(query.Action)
+	}
+
+	res.AssetFilter = ToV7SpecFilter(x.Filters, policyMrn)
+
+	return res
+}
+
+func (x *Policy) FillV7() {
+	if x == nil {
+		return
+	}
+
+	x.AssetFilters = ToV7Filters(x.Filters)
+
+	x.Specs = make([]*DeprecatedV7_PolicySpec, len(x.Groups))
+	for i := range x.Groups {
+		x.Specs[i] = x.Groups[i].ToV7(x.Mrn)
+	}
 }
 
 // fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized
