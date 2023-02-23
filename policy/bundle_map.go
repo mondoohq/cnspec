@@ -206,10 +206,10 @@ func (p *PolicyBundleMap) validateSpec(ctx context.Context, group *PolicyGroup, 
 			return err
 		}
 
-		if check.Action == explorer.Mquery_ADD && exist {
+		if check.Action == explorer.Action_ACTIVATE && exist {
 			return errors.New("check already exists, but policy is trying to add it: " + check.Mrn)
 		}
-		if check.Action == explorer.Mquery_MODIFY && !exist {
+		if check.Action == explorer.Action_MODIFY && !exist {
 			return errors.New("check does not exist, but policy is trying to modify it: " + check.Mrn)
 		}
 	}
@@ -222,10 +222,10 @@ func (p *PolicyBundleMap) validateSpec(ctx context.Context, group *PolicyGroup, 
 			return err
 		}
 
-		if query.Action == explorer.Mquery_ADD && exist {
+		if query.Action == explorer.Action_ACTIVATE && exist {
 			return errors.New("query already exists, but policy is trying to add it: " + query.Mrn)
 		}
-		if query.Action == explorer.Mquery_MODIFY && !exist {
+		if query.Action == explorer.Action_MODIFY && !exist {
 			return errors.New("query does not exist, but policy is trying to modify it: " + query.Mrn)
 		}
 	}

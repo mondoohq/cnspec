@@ -687,19 +687,19 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 		group := matchingGroups[i]
 		for i := range group.Policies {
 			policy := group.Policies[i]
-			if policy.Action == PolicyRef_DEACTIVATE {
+			if policy.Action == explorer.Action_DEACTIVATE {
 				cache.removedPolicies[policy.Mrn] = struct{}{}
 			}
 		}
 		for i := range group.Checks {
 			check := group.Checks[i]
-			if check.Action == explorer.Mquery_DELETE {
+			if check.Action == explorer.Action_DEACTIVATE {
 				cache.removedQueries[check.Mrn] = struct{}{}
 			}
 		}
 		for i := range group.Queries {
 			query := group.Checks[i]
-			if query.Action == explorer.Mquery_DELETE {
+			if query.Action == explorer.Action_DEACTIVATE {
 				cache.removedQueries[query.Mrn] = struct{}{}
 			}
 		}
@@ -730,13 +730,13 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		policy := group.Policies[i]
 
 		impact := &explorer.Impact{
-			Scoring: policy.ScoringSystem,
+			Scoring: explorer.Impact_SCORING_UNSPECIFIED,
 			Weight:  -1,
 			Value:   -1,
 		}
 
 		// ADD
-		if policy.Action == PolicyRef_UNSPECIFIED || policy.Action == PolicyRef_ACTIVATE {
+		if policy.Action == explorer.Action_UNSPECIFIED || policy.Action == explorer.Action_ACTIVATE {
 			if _, ok := cache.parentPolicies[policy.Mrn]; ok {
 				return errors.New("trying to resolve policy spec twice, it is cyclical for MRN: " + policy.Mrn)
 			}
@@ -796,7 +796,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		}
 
 		// MODIFY
-		if policy.Action == PolicyRef_MODIFY {
+		if policy.Action == explorer.Action_MODIFY {
 			_, ok := cache.childPolicies[policy.Mrn]
 			if !ok {
 				cache.global.errors = append(cache.global.errors, &policyResolutionError{
@@ -838,7 +838,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		cache.global.propsCache.Add(check.Props...)
 
 		// ADD
-		if check.Action == explorer.Mquery_UNKNOWN || check.Action == explorer.Mquery_ADD {
+		if check.Action == explorer.Action_UNSPECIFIED || check.Action == explorer.Action_ACTIVATE {
 			if _, ok := cache.removedQueries[check.Mrn]; ok {
 				continue
 			}
@@ -876,7 +876,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		}
 
 		// MODIFY
-		if check.Action == explorer.Mquery_MODIFY {
+		if check.Action == explorer.Action_MODIFY {
 			_, ok := cache.childQueries[check.Mrn]
 			if !ok {
 				cache.global.errors = append(cache.global.errors, &policyResolutionError{
@@ -920,7 +920,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		cache.global.propsCache.Add(query.Props...)
 
 		// ADD
-		if query.Action == explorer.Mquery_UNKNOWN || query.Action == explorer.Mquery_ADD {
+		if query.Action == explorer.Action_UNSPECIFIED || query.Action == explorer.Action_ACTIVATE {
 			if _, ok := cache.removedQueries[query.Mrn]; ok {
 				continue
 			}
