@@ -552,6 +552,13 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 				}
 			}
 
+			for j := range group.Policies {
+				policyRef := group.Policies[j]
+				if err = policyRef.RefreshMRN(ownerMrn); err != nil {
+					return nil, err
+				}
+			}
+
 			for j := range group.Queries {
 				query := group.Queries[j]
 

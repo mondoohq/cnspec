@@ -166,7 +166,7 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 	}
 
 	for i := range policy.Groups {
-		if err := p.validateSpec(ctx, policy.Groups[i], policy.Mrn); err != nil {
+		if err := p.validateGroup(ctx, policy.Groups[i], policy.Mrn); err != nil {
 			return err
 		}
 	}
@@ -182,7 +182,7 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 	return nil
 }
 
-func (p *PolicyBundleMap) validateSpec(ctx context.Context, group *PolicyGroup, policyMrn string) error {
+func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup, policyMrn string) error {
 	if group == nil {
 		return errors.New("spec cannot be nil")
 	}
