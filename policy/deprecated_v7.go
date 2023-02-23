@@ -14,12 +14,13 @@ import (
 // the old proto structures) in v9.
 
 // DeprecatedV7Conversions will find any v7 pieces in the bundle and convert
-// them to V8+
+// them to v8+
 func (p *Bundle) DeprecatedV7Conversions() {
 	p.deprecatedV7convertQueries()
 	p.deprecatedV7convertPolicies()
 }
 
+// Find any v7 policies and convert them to v8+
 // Note: we don't want to duplicate policies; If it exists in v7 and in v8,
 // then v7 policies are dropped. Checks for both UIDs and MRNs
 func (p *Bundle) deprecatedV7convertPolicies() {
@@ -53,6 +54,7 @@ func (p *Bundle) deprecatedV7convertPolicies() {
 	p.DeprecatedV7Policies = nil
 }
 
+// Find any v7 queries and convert them to v8+
 // Note: we don't want to duplicate queries; If it exists in v7 and in v8,
 // then v7 queries are dropped. Checks for both UIDs and MRNs and across all
 // policies (which is why we run this before the policy conversion)
@@ -390,8 +392,10 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 
 func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	policies := make([]*PolicyRef, len(d.Policies))
-	i := 0
-	for id, spec := range d.Policies {
+	policyIDs := sortedKeys(d.Policies)
+	for i := range policyIDs {
+		id := policyIDs[i]
+		spec := d.Policies[id]
 		ref := &PolicyRef{}
 
 		if spec != nil {
@@ -409,8 +413,10 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	}
 
 	checks := make([]*explorer.Mquery, len(d.ScoringQueries))
-	i = 0
-	for id, spec := range d.ScoringQueries {
+	checkIDs := sortedKeys(d.ScoringQueries)
+	for i := range checkIDs {
+		id := checkIDs[i]
+		spec := d.ScoringQueries[id]
 		ref := &explorer.Mquery{}
 		spec.ApplyToV8(ref)
 
@@ -425,8 +431,10 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	}
 
 	queries := make([]*explorer.Mquery, len(d.DataQueries))
-	i = 0
-	for id, action := range d.DataQueries {
+	queryIDs := sortedKeys(d.DataQueries)
+	for i := range queryIDs {
+		id := checkIDs[i]
+		action := d.DataQueries[id]
 		ref := &explorer.Mquery{}
 
 		if action != QueryAction_UNSPECIFIED {

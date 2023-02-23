@@ -14,13 +14,7 @@ func (r *ReportingJob) RefreshChecksum() {
 	checksum = checksum.Add(r.QrId)
 
 	{
-		jobIDs := make([]string, len(r.ChildJobs))
-		i := 0
-		for k := range r.ChildJobs {
-			jobIDs[i] = k
-			i++
-		}
-		sort.Strings(jobIDs)
+		jobIDs := sortedKeys(r.ChildJobs)
 		for i := range jobIDs {
 			key := jobIDs[i]
 			impact := r.ChildJobs[key]
@@ -37,7 +31,6 @@ func (r *ReportingJob) RefreshChecksum() {
 	{
 		notify := make([]string, len(r.Notify))
 		copy(notify, r.Notify)
-
 		sort.Strings(notify)
 		for i := range notify {
 			checksum = checksum.Add(notify[i])
