@@ -416,6 +416,13 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				if err := check.RefreshChecksum(); err != nil {
 					return err
 				}
+			} else if check.Checksum == "" {
+				if check.Mrn == "" {
+					return errors.New("failed to get checksum for check " + check.Uid + ", MRN is empty")
+				}
+				if x, err := getQuery(ctx, check.Mrn); err == nil {
+					check = x
+				}
 			}
 
 			if check.Checksum == "" {
@@ -441,6 +448,13 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				query = query.Merge(base)
 				if err := query.RefreshChecksum(); err != nil {
 					return err
+				}
+			} else if query.Checksum == "" {
+				if query.Mrn == "" {
+					return errors.New("failed to get checksum for query " + query.Uid + ", MRN is empty")
+				}
+				if x, err := getQuery(ctx, query.Mrn); err == nil {
+					query = x
 				}
 			}
 
