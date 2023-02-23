@@ -367,9 +367,13 @@ func Impact2ScoringSpec(impact *explorer.Impact, action QueryAction) *Deprecated
 func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 	// For convenience we allow calling it on nil and handle it here.
 	if s == nil {
+		log.Error().Msg("cannot apply v7 scoring spec to mquery, spec is nil")
 		return
 	}
-
+	if ref == nil {
+		log.Error().Msg("cannot apply v7 scoring spec to mquery, query is nil")
+		return
+	}
 	// If the action is unspecified, it means that the spec is effectively null.
 	// Since it's null, don't do anything with it.
 	if s.Action == QueryAction_UNSPECIFIED {
@@ -724,6 +728,74 @@ func (x *Policy) FillV7() {
 	x.Specs = make([]*DeprecatedV7_PolicySpec, len(x.Groups))
 	for i := range x.Groups {
 		x.Specs[i] = x.Groups[i].ToV7(x.Mrn)
+	}
+}
+
+func ToV7Authors(x []*explorer.Author) []*DeprecatedV7_Author {
+	res := make([]*DeprecatedV7_Author, len(x))
+	for i := range x {
+		cur := x[i]
+		res[i] = &DeprecatedV7_Author{
+			Name:  cur.Name,
+			Email: cur.Email,
+		}
+	}
+	return res
+}
+
+func (x *Policy) ToV7() *DeprecatedV7_Policy {
+	if x == nil {
+		return nil
+	}
+
+	specs := make([]*DeprecatedV7_PolicySpec, len(x.Groups))
+	for i := range x.Groups {
+		specs[i] = x.Groups[i].ToV7(x.Mrn)
+	}
+
+	props := map[string]string{}
+	for i := range x.Props {
+		prop := x.Props[i]
+		props[prop.Mrn] = ""
+	}
+
+	return &DeprecatedV7_Policy{
+		Mrn:                    x.Mrn,
+		Name:                   x.Name,
+		Version:                x.Version,
+		LocalContentChecksum:   x.LocalContentChecksum,
+		GraphContentChecksum:   x.GraphContentChecksum,
+		LocalExecutionChecksum: x.LocalExecutionChecksum,
+		GraphExecutionChecksum: x.GraphExecutionChecksum,
+		Specs:                  specs,
+		AssetFilters:           ToV7Filters(x.Filters),
+		OwnerMrn:               x.OwnerMrn,
+		IsPublic:               false,
+		ScoringSystem:          x.ScoringSystem,
+		Authors:                ToV7Authors(x.Authors),
+		Created:                x.Created,
+		Modified:               x.Modified,
+		Tags:                   x.Tags,
+		Props:                  props,
+		Uid:                    x.Uid,
+		Docs:                   x.Docs,
+		QueryCounts:            x.QueryCounts,
+	}
+}
+
+func (x *Bundle) FillV7() {
+	if x == nil {
+		return
+	}
+
+	x.DeprecatedV7Policies = make([]*DeprecatedV7_Policy, len(x.Policies))
+	for i := range x.Policies {
+		x.DeprecatedV7Policies[i] = x.Policies[i].ToV7()
+	}
+
+	x.DeprecatedV7Queries = make([]*DeprecatedV7_Mquery, len(x.Queries))
+	for i := range x.Queries {
+		x.DeprecatedV7Queries[i] = ToV7Mquery(x.Queries[i])
 	}
 }
 
