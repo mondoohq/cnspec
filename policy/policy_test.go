@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,42 @@ func testChecksums(t *testing.T, equality []bool, expected map[string]string, ac
 		} else {
 			assert.NotEqual(t, expected[s], actual[s], s+" should not be equal")
 		}
+	}
+}
+
+func makeYamlCategory(d string) []byte {
+	return []byte(`
+policies:
+- uid: test-policy
+  groups:
+  - title: First group
+    ` + d + "\n")
+}
+
+func TestPolicyGroupCategory(t *testing.T) {
+	tests := []struct {
+		title string
+		yaml  string
+		typ   GroupType
+	}{
+		{"empty", "", GroupType_UNCATEGORIZED},
+		{"uncategorized", "type: uncategorized", GroupType_UNCATEGORIZED},
+		{"uncategorized", "type: chapter", GroupType_CHAPTER},
+		{"uncategorized", "type: import", GroupType_IMPORT},
+		{"uncategorized", "type: override", GroupType_OVERRIDE},
+		{"uncategorized", "type: 1", GroupType_CHAPTER},
+		{"uncategorized", "type: 2", GroupType_IMPORT},
+		{"uncategorized", "type: 3", GroupType_OVERRIDE},
+	}
+	for i := range tests {
+		cur := tests[i]
+		t.Run(cur.title, func(t *testing.T) {
+			fmt.Println(string(makeYamlCategory(cur.yaml)))
+			b, err := BundleFromYAML(makeYamlCategory(cur.yaml))
+			require.NoError(t, err)
+			require.NotNil(t, b)
+			assert.Equal(t, cur.typ, b.Policies[0].Groups[0].Type)
+		})
 	}
 }
 

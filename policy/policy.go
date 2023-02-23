@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -626,4 +627,31 @@ func (s *ScoringSystem) UnmarshalJSON(data []byte) error {
 		}
 	}
 	return nil
+}
+
+func (s *GroupType) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		*s = GroupType_UNCATEGORIZED
+		return nil
+	}
+
+	type tmp GroupType
+	err := json.Unmarshal(data, (*tmp)(s))
+	if err == nil {
+		return nil
+	}
+
+	var str string
+	err = json.Unmarshal(data, &str)
+	if err != nil {
+		return errors.New("failed to unmarshal group type: " + string(data))
+	}
+
+	v := strings.ToUpper(string(str))
+	if x, ok := GroupType_value[v]; ok {
+		*s = GroupType(x)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal group type: " + str)
 }
