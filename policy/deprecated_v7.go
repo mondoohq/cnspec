@@ -367,7 +367,6 @@ func Impact2ScoringSpec(impact *explorer.Impact, action QueryAction) *Deprecated
 func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 	// For convenience we allow calling it on nil and handle it here.
 	if s == nil {
-		log.Error().Msg("cannot apply v7 scoring spec to mquery, spec is nil")
 		return
 	}
 	if ref == nil {
@@ -436,7 +435,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	queries := make([]*explorer.Mquery, len(d.DataQueries))
 	queryIDs := sortedKeys(d.DataQueries)
 	for i := range queryIDs {
-		id := checkIDs[i]
+		id := queryIDs[i]
 		action := d.DataQueries[id]
 		ref := &explorer.Mquery{}
 
