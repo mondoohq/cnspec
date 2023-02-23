@@ -73,10 +73,13 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	// otherwise we generate the old GraphChecksum
 	if policyObj.GraphExecutionChecksum == "" || policyObj.GraphContentChecksum == "" {
 		logCtx.Trace().Str("policy", policyObj.Mrn).Msg("marketplace> update graphchecksum")
-		policyObj.UpdateChecksums(ctx,
+		err = policyObj.UpdateChecksums(ctx,
 			s.DataLake.GetValidatedPolicy,
 			s.DataLake.GetQuery,
 			bundle)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	filters, err := policyObj.ComputeAssetFilters(
