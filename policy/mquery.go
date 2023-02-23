@@ -99,13 +99,7 @@ func (m *DeprecatedV7_Mquery) refreshChecksumAndType(props map[string]*llx.Primi
 			Add(m.Refs[i].Url)
 	}
 
-	keys := make([]string, len(m.Tags))
-	i := 0
-	for k := range m.Tags {
-		keys[i] = k
-		i++
-	}
-	sort.Strings(keys)
+	keys := sortedKeys(m.Tags)
 	for _, k := range keys {
 		c = c.
 			Add(k).

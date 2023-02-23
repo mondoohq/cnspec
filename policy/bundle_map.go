@@ -2,7 +2,6 @@ package policy
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/hashicorp/go-version"
@@ -73,46 +72,24 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 	res := Bundle{
 		OwnerMrn: p.OwnerMrn,
 	}
-	var i int
 	var ids []string
 
 	// policies
-	ids = make([]string, len(p.Policies))
-	i = 0
-	for k := range p.Policies {
-		ids[i] = k
-		i++
-	}
-	sort.Strings(ids)
-
+	ids = sortedKeys(p.Policies)
 	res.Policies = make([]*Policy, len(p.Policies))
 	for i := range ids {
 		res.Policies[i] = p.Policies[ids[i]]
 	}
 
 	// queries
-	ids = make([]string, len(p.Queries))
-	i = 0
-	for k := range p.Queries {
-		ids[i] = k
-		i++
-	}
-	sort.Strings(ids)
-
+	ids = sortedKeys(p.Queries)
 	res.Queries = make([]*explorer.Mquery, len(p.Queries))
 	for i := range ids {
 		res.Queries[i] = p.Queries[ids[i]]
 	}
 
 	// props
-	ids = make([]string, len(p.Props))
-	i = 0
-	for k := range p.Props {
-		ids[i] = k
-		i++
-	}
-	sort.Strings(ids)
-
+	ids = sortedKeys(p.Props)
 	res.Props = make([]*explorer.Property, len(p.Props))
 	for i := range ids {
 		res.Props[i] = p.Props[ids[i]]

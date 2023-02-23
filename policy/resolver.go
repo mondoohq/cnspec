@@ -26,6 +26,17 @@ const (
 	POLICY_SERVICE_NAME = "policy.api.mondoo.com"
 )
 
+func sortedKeys[X any](m map[string]X) []string {
+	res := make([]string, len(m))
+	i := 0
+	for k := range m {
+		res[i] = k
+		i++
+	}
+	sort.Strings(res)
+	return res
+}
+
 // Assign a policy to an asset
 //
 // We need to handle multiple cases:
@@ -591,14 +602,7 @@ func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error 
 func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
 	// execution job
 	{
-		queryKeys := make([]string, len(executionJob.Queries))
-		i := 0
-		for k := range executionJob.Queries {
-			queryKeys[i] = k
-			i++
-		}
-		sort.Strings(queryKeys)
-
+		queryKeys := sortedKeys(executionJob.Queries)
 		checksum := checksums.New
 		checksum = checksum.Add("v2")
 		for i := range queryKeys {
@@ -612,15 +616,7 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 	{
 		checksum := checksums.New
 		{
-			reportingJobKeys := make([]string, len(collectorJob.ReportingJobs))
-			i := 0
-			for k, rj := range collectorJob.ReportingJobs {
-				rj.RefreshChecksum()
-				reportingJobKeys[i] = k
-				i++
-			}
-			sort.Strings(reportingJobKeys)
-
+			reportingJobKeys := sortedKeys(collectorJob.ReportingJobs)
 			for i := range reportingJobKeys {
 				key := reportingJobKeys[i]
 				checksum = checksum.Add(key)
@@ -628,15 +624,7 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 			}
 		}
 		{
-			datapointsKeys := make([]string, len(collectorJob.Datapoints))
-
-			i := 0
-			for k := range collectorJob.Datapoints {
-				datapointsKeys[i] = k
-				i++
-			}
-			sort.Strings(datapointsKeys)
-
+			datapointsKeys := sortedKeys(collectorJob.Datapoints)
 			for i := range datapointsKeys {
 				key := datapointsKeys[i]
 				info := collectorJob.Datapoints[key]
