@@ -1286,6 +1286,7 @@ func (p *progressMock) Open() error                       { return nil }
 func (p *progressMock) OnProgress(current int, total int) { p.f(current, total) }
 func (p *progressMock) Score(string)                      {}
 func (p *progressMock) Errored()                          {}
+func (p *progressMock) NotApplicable()                    {}
 func (p *progressMock) Completed()                        {}
 func (p *progressMock) Close()                            {}
 
