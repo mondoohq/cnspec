@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
-const defaultQueryHubUrl = "https://hub.api.mondoo.com"
+const defaultRegistryUrl = "https://registry.api.mondoo.com"
 
 var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
 
@@ -263,12 +263,12 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 		return s.Upstream.DefaultPolicies(ctx, req)
 	}
 
-	queryHubURL := os.Getenv("QUERYHUB_URL")
-	if queryHubURL == "" {
-		queryHubURL = defaultQueryHubUrl
+	registryEndpoint := os.Getenv("REGISTRY_URL")
+	if registryEndpoint == "" {
+		registryEndpoint = defaultRegistryUrl
 	}
 
-	client, err := NewPolicyHubClient(queryHubURL, ranger.DefaultHttpClient())
+	client, err := NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
 	if err != nil {
 		return nil, err
 	}
