@@ -10,7 +10,7 @@
 
 **Open source, cloud-native security and policy project**
 
-cnspec assesses your entire infrastructure's security and compliance. It finds vulnerabilities and misconfigurations on all your systems, including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers, and endpoints, SaaS products, infrastructure as code, APIs, and more.
+cnspec assesses your entire infrastructure's security and compliance. It finds vulnerabilities and misconfigurations across public and private cloud environments, Kubernetes clusters, containers, container registries, servers, and endpoints, SaaS products, infrastructure as code, APIs, and more.
 
 A powerful policy as code engine, cnspec is built upon [`cnquery`](https://github.com/mondoohq/cnquery). It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
