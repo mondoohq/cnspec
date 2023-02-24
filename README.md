@@ -76,6 +76,8 @@ export GITHUB_TOKEN=<personal_access_token>
 cnspec scan github repo <org/repo>
 ```
 
+[:books: To learn more, read the cnquery docs.](https://mondoo.com/docs/cnquery/home)
+
 ### Policies
 
 cnspec policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). cnspec comes with default security policies configured for all supported targets. The default policies are available via the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
