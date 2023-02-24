@@ -10,15 +10,15 @@
 
 **Open source, cloud-native security and policy project**
 
-`cnspec` is a cloud-native solution to assess the security and compliance of your business-critical infrastructure. `cnspec` finds vulnerabilities and misconfigurations on all systems in your infrastructure including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers, and endpoints, SaaS products, infrastructure as code, APIs, and more.
+cnspec assesses your entire infrastructure's security and compliance. It finds vulnerabilities and misconfigurations on all your systems, including: public and private cloud environments, Kubernetes clusters, containers, container registries, servers, and endpoints, SaaS products, infrastructure as code, APIs, and more.
 
-`cnspec` is a powerful Policy as Code engine built on [`cnquery`](https://github.com/mondoohq/cnquery), and comes configured with default security policies that run right out of the box. It's both fast and simple to use!
+A powerful policy as code engine, cnspec is built upon [`cnquery`](https://github.com/mondoohq/cnquery). It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
 ![cnspec scan example](docs/gif/cnspec-scan.gif)
 
 ## Installation
 
-Install `cnspec` with our installation script:
+Install cnspec with our installation script:
 
 **Linux and macOS**
 
@@ -78,11 +78,11 @@ cnspec scan github repo <org/repo>
 
 ### Policies
 
-`cnspec` policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). `cnspec` comes with default security policies configured for all supported targets. The default policies are available via the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
+cnspec policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). cnspec comes with default security policies configured for all supported targets. The default policies are available via the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
 
-## Vulnerability Scan
+## Vulnerability scan
 
-`cnspec` supports vulnerability scanning for a wide-range of platforms. The vulnerability scanning is not restricted to container images, it works for build and runtime.
+cnspec supports vulnerability scanning for a wide-range of platforms. The vulnerability scanning is not restricted to container images, it works for build and runtime.
 
 ![cnspec vuln example](docs/gif/cnspec-vuln.gif)
 
@@ -132,7 +132,7 @@ cnspec vuln local
 
 ## cnspec interactive shell
 
-`cnspec` also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It's also a great way to interact with both local and remote targets on the fly.
+cnspec also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It's also a great way to interact with both local and remote targets on the fly.
 
 ### Local system shell
 
@@ -140,7 +140,7 @@ cnspec vuln local
 cnspec shell local
 ```
 
-The shell provides a `help` command to get help on the resources that power `cnspec`. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource. For example:
+The shell provides a `help` command to get help on the resources that power cnspec. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource. For example:
 
 ```bash
 cnquery> help ports
@@ -161,7 +161,7 @@ To exit, either hit CTRL + D or type `exit`.
 
 ## Scale cnspec across your fleet with the Mondoo Platform
 
-The easiest way to scale `cnspec` across your fleet is to sign up for a free Mondoo Platform account. With the Mondoo Platform, you can:
+The easiest way to scale cnspec across your fleet is to sign up for a free Mondoo Platform account. With the Mondoo Platform, you can:
 
 - Aggregate and share reports
 - Perform vulnerability scans
@@ -173,11 +173,11 @@ Mondoo's web-based console allows you to navigate, search, and arrange all of yo
 
 Go to [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup) to sign up.
 
-To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs) or visit [mondoo.com](https://www.mondoo.com).
+To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home) or visit [mondoo.com](https://www.mondoo.com).
 
 ### Register cnspec with the Mondoo Platform
 
-To use `cnspec` with the Mondoo Platform, generate a token with the Mondoo platform, then run:
+To use cnspec with the Mondoo Platform, generate a token with the Mondoo platform, then run:
 
 ```bash
 cnspec login --token TOKEN
@@ -189,7 +189,7 @@ Once authenticated, you can scan any target:
 cnspec scan <target>
 ```
 
-`cnspec` returns the results from the scan to `STDOUT` and to the platform.
+cnspec returns the results from the scan to `STDOUT` and to the platform.
 
 With an account on Mondoo Platform, you can upload policies:
 
@@ -199,7 +199,7 @@ cnspec bundle upload mypolicy.mql.yaml
 
 ## Custom policies
 
-A `cnspec` policy is simply a YAML file that lets you express any security rule or best practice for your fleet.
+A cnspec policy is simply a YAML file that lets you express any security rule or best practice for your fleet.
 
 A few examples can be found in the `examples` folder in this repo. You can run any of these policies via:
 
@@ -207,9 +207,9 @@ A few examples can be found in the `examples` folder in this repo. You can run a
 cnspec scan local -f examples/example.mql.yaml
 ```
 
-If you're interested in writing your own policies or contributing policies back to the `cnspec` community, see our [policy as code guide](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/).
+If you're interested in writing your own policies or contributing policies back to the cnspec community, see our [policy as code guide](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/).
 
-## Supported Targets
+## Supported targets
 
 | Description                      | Provider                   | Example                                                                                                                                               |
 | -------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -245,25 +245,25 @@ If you're interested in writing your own policies or contributing policies back 
 
 ## What's next?
 
-There are so many things `cnspec` can do, from testing your entire fleet for vulnerabilities to gathering information and creating reports for auditors. With its custom policies, `cnspec` can scan any component you care about!
+There are so many things cnspec can do, from testing your entire fleet for vulnerabilities to gathering information and creating reports for auditors. With its custom policies, cnspec can scan any component you care about!
 
 Explore our:
 
-- [cnspec docs](https://mondoo.com/docs/cnspec/)
-- [Policy Bundles](https://github.com/mondoohq/cnspec-policies)
-- [Policy as Code](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/)
+- [cnspec docs](https://mondoo.com/docs/cnspec/home)
+- [Policy bundles](https://github.com/mondoohq/cnspec-policies)
+- [Policy as code](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources/)
 - [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
-- [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-mondoo) to integrate `cnspec` with HashiCorp Packer!
+- [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-mondoo) to integrate cnspec with HashiCorp Packer!
 
 ## Join the community!
 
-Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of `cnspec`, join our [community](https://github.com/orgs/mondoohq/discussions) today and let's grow it together!
+Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of cnspec, join our [community](https://github.com/orgs/mondoohq/discussions) today and let's grow it together!
 
 ## Development
 
-See our [Development Documentation](docs/development.md) for information on building and contributing to cnspec.
+See our [development docs](docs/development.md) for information on building and contributing to cnspec.
 
 ## Legal
 

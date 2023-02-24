@@ -1,6 +1,6 @@
 # Development
 
-## Building
+## Build
 
 ### Prerequisites
 
@@ -11,9 +11,9 @@ Before building from source, be sure to install:
 
 On macOS systems with Homebrew, run: `brew install go@1.19 protobuf`
 
-## Installation from source
+## Install from source
 
-1. Verify that you have Go 1.19+ installed
+1. Verify that you have Go 1.19+ installed:
 
     ```
     $ go version
@@ -21,22 +21,22 @@ On macOS systems with Homebrew, run: `brew install go@1.19 protobuf`
 
 If `go` is not installed or an older version exists, follow instructions on [the Go website](https://golang.org/doc/install).
 
-2. Clone this repository
+2. Clone this repository:
 
    ```sh
    $ git clone https://github.com/mondoohq/cnspec.git
    $ cd cnspec
    ```
 
-3. Build and install
+3. Build and install:
 
     #### Unix-like systems
     ```sh
-    # To install `cnspec` using Go into the $GOBIN directory:
+    # To install cnspec using Go into the $GOBIN directory:
     make cnspec/install
     ```
 
-## Developing cnspec
+## Develop cnspec
 
 Whenever you change protos or other auto-generated files, you must regenerate files for the compiler. To do this, be sure you have the necessary tools installed (such as protobuf):
 
@@ -64,9 +64,9 @@ make cnspec/generate
 
 This generates and updates all required files for the build. At this point you can `make cnspec/install` again as outlined above.
 
-## Contributing Changes
+## Contribute changes
 
-### Marking PRs with Emojis
+### Mark PRs with emojis
 
 We love emojis in our commits. These are their meanings:
 
