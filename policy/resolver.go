@@ -698,7 +698,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 			}
 		}
 		for i := range group.Queries {
-			query := group.Checks[i]
+			query := group.Queries[i]
 			if query.Action == explorer.Action_DEACTIVATE {
 				cache.removedQueries[query.Mrn] = struct{}{}
 			}
