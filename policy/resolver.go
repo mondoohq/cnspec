@@ -17,6 +17,7 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/sortx"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -25,17 +26,6 @@ import (
 const (
 	POLICY_SERVICE_NAME = "policy.api.mondoo.com"
 )
-
-func sortedKeys[X any](m map[string]X) []string {
-	res := make([]string, len(m))
-	i := 0
-	for k := range m {
-		res[i] = k
-		i++
-	}
-	sort.Strings(res)
-	return res
-}
 
 // Assign a policy to an asset
 //
@@ -602,7 +592,7 @@ func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error 
 func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
 	// execution job
 	{
-		queryKeys := sortedKeys(executionJob.Queries)
+		queryKeys := sortx.Keys(executionJob.Queries)
 		checksum := checksums.New
 		checksum = checksum.Add("v2")
 		for i := range queryKeys {
@@ -616,7 +606,7 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 	{
 		checksum := checksums.New
 		{
-			reportingJobKeys := sortedKeys(collectorJob.ReportingJobs)
+			reportingJobKeys := sortx.Keys(collectorJob.ReportingJobs)
 			for i := range reportingJobKeys {
 				key := reportingJobKeys[i]
 				checksum = checksum.Add(key)
@@ -624,7 +614,7 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 			}
 		}
 		{
-			datapointsKeys := sortedKeys(collectorJob.Datapoints)
+			datapointsKeys := sortx.Keys(collectorJob.Datapoints)
 			for i := range datapointsKeys {
 				key := datapointsKeys[i]
 				info := collectorJob.Datapoints[key]

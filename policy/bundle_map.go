@@ -9,6 +9,7 @@ import (
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/sortx"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
@@ -75,21 +76,21 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 	var ids []string
 
 	// policies
-	ids = sortedKeys(p.Policies)
+	ids = sortx.Keys(p.Policies)
 	res.Policies = make([]*Policy, len(p.Policies))
 	for i := range ids {
 		res.Policies[i] = p.Policies[ids[i]]
 	}
 
 	// queries
-	ids = sortedKeys(p.Queries)
+	ids = sortx.Keys(p.Queries)
 	res.Queries = make([]*explorer.Mquery, len(p.Queries))
 	for i := range ids {
 		res.Queries[i] = p.Queries[ids[i]]
 	}
 
 	// props
-	ids = sortedKeys(p.Props)
+	ids = sortx.Keys(p.Props)
 	res.Props = make([]*explorer.Property, len(p.Props))
 	for i := range ids {
 		res.Props[i] = p.Props[ids[i]]
