@@ -7,6 +7,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/sortx"
 )
 
 // FIXME: DEPRECATED, remove in v9.0 (all of it)
@@ -396,7 +397,7 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 
 func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	policies := make([]*PolicyRef, len(d.Policies))
-	policyIDs := sortedKeys(d.Policies)
+	policyIDs := sortx.Keys(d.Policies)
 	for i := range policyIDs {
 		id := policyIDs[i]
 		spec := d.Policies[id]
@@ -416,7 +417,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	}
 
 	checks := make([]*explorer.Mquery, len(d.ScoringQueries))
-	checkIDs := sortedKeys(d.ScoringQueries)
+	checkIDs := sortx.Keys(d.ScoringQueries)
 	for i := range checkIDs {
 		id := checkIDs[i]
 		spec := d.ScoringQueries[id]
@@ -433,7 +434,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 	}
 
 	queries := make([]*explorer.Mquery, len(d.DataQueries))
-	queryIDs := sortedKeys(d.DataQueries)
+	queryIDs := sortx.Keys(d.DataQueries)
 	for i := range queryIDs {
 		id := queryIDs[i]
 		action := d.DataQueries[id]

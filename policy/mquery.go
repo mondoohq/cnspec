@@ -13,6 +13,7 @@ import (
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/resources/packs/all/info"
+	"go.mondoo.com/cnquery/sortx"
 	"go.mondoo.com/cnquery/types"
 )
 
@@ -99,7 +100,7 @@ func (m *DeprecatedV7_Mquery) refreshChecksumAndType(props map[string]*llx.Primi
 			Add(m.Refs[i].Url)
 	}
 
-	keys := sortedKeys(m.Tags)
+	keys := sortx.Keys(m.Tags)
 	for _, k := range keys {
 		c = c.
 			Add(k).

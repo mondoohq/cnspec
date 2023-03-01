@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"go.mondoo.com/cnquery/checksums"
+	"go.mondoo.com/cnquery/sortx"
 )
 
 // RefreshChecksum recalculates the reporting job checksum
@@ -14,7 +15,7 @@ func (r *ReportingJob) RefreshChecksum() {
 	checksum = checksum.Add(r.QrId)
 
 	{
-		jobIDs := sortedKeys(r.ChildJobs)
+		jobIDs := sortx.Keys(r.ChildJobs)
 		for i := range jobIDs {
 			key := jobIDs[i]
 			impact := r.ChildJobs[key]
