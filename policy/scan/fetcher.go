@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -60,7 +61,7 @@ func (f *fetcher) fetchBundle(url string) (*policy.Bundle, error) {
 		return nil, errors.Wrap(err, "failed to set up request to fetch bundle")
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; cnquery/1.0; +http://www.mondoo.com)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; cnspec/"+cnspec.Version+"; +http://www.mondoo.com)")
 
 	resp, err := client.Do(req)
 	if err != nil {
