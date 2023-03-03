@@ -170,7 +170,7 @@ func (s *DeprecatedV7_SeverityValue) ToV8() *explorer.Impact {
 	}
 	return &explorer.Impact{
 		Value:   &explorer.ImpactValue{Value: int32(s.Value)},
-		Weight:  -1,
+		Weight:  0,
 		Scoring: explorer.Impact_SCORING_UNSPECIFIED,
 	}
 }
@@ -675,8 +675,12 @@ func ToV7ScoringSpec(action explorer.Action, impact *explorer.Impact) *Deprecate
 		Action: ToV7Action(action),
 	}
 
-	if impact != nil && impact.Weight != -1 {
+	if impact != nil && impact.Weight != 0 {
 		res.Weight = uint32(impact.Weight)
+	}
+
+	if action == explorer.Action_IGNORE {
+		res.Weight = 0
 	}
 
 	return res
