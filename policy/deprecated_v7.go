@@ -169,7 +169,7 @@ func (s *DeprecatedV7_SeverityValue) ToV8() *explorer.Impact {
 		return nil
 	}
 	return &explorer.Impact{
-		Value:   int32(s.Value),
+		Value:   &explorer.ImpactValue{Value: int32(s.Value)},
 		Weight:  -1,
 		Scoring: explorer.Impact_SCORING_UNSPECIFIED,
 	}
@@ -341,26 +341,44 @@ func (d deprecatedV7_PolicySpecs) ToV8() []*PolicyGroup {
 	return res
 }
 
-func Impact2ScoringSpec(impact *explorer.Impact, action QueryAction) *DeprecatedV7_ScoringSpec {
+func Impact2ScoringSpec(impact *explorer.Impact, action explorer.Action) *DeprecatedV7_ScoringSpec {
 	if impact == nil {
 		return nil
 	}
 
-	weight := impact.Weight
-	if weight == -1 {
-		weight = 1
+	var severity *DeprecatedV7_SeverityValue
+	if impact.Value != nil {
+		severity = &DeprecatedV7_SeverityValue{Value: int64(impact.Value.Value)}
 	}
 
-	var severity *DeprecatedV7_SeverityValue
-	if impact.Value != -1 {
-		severity = &DeprecatedV7_SeverityValue{Value: int64(impact.Value)}
+	weight := uint32(impact.Weight)
+	scoring := ScoringSystem(impact.Scoring) // numbers are identical except for one vv
+	if impact.Scoring == explorer.Impact_IGNORE || action == explorer.Action_IGNORE {
+		weight = 0
+		// We have to set a scoring system here, but really it doesn't matter.
+		// In v7 it was possible to have both a "weight=0" (i.e. ignored) and
+		// e.g. "scoring=2" (i.e. worst scoring) spec. However this never applies.
+		// The ScoringSpec whose weight is set is only done on collecting info,
+		// e.g. in child jobs of a reporting job, which doesn't care about scoring
+		// multiple results. And the ScoringSpec that has different calculator
+		// methods set comes from policies, which doesn't get to set its own weight
+		// to zero (i.e. ignore).
+		// With v8 we will introduce simulated policies, but that too is done on
+		// the collecting spec (e.g. the parent policy, not its child).
+		scoring = ScoringSystem_SCORING_UNSPECIFIED
+		// We are converting the action to a QueryAction. This is largely compatibly
+		// except for Action_IGNORE. Whenever an active ignore was set, we can
+		// translate it to ACTIVATE + weight=0 for v7.
+		if action == explorer.Action_IGNORE {
+			action = explorer.Action_ACTIVATE
+		}
 	}
 
 	return &DeprecatedV7_ScoringSpec{
-		Weight:             uint32(weight),
+		Weight:             weight,
 		WeightIsPercentage: false,
-		ScoringSystem:      ScoringSystem(impact.Scoring), // numbers are identical in this enum
-		Action:             action,
+		ScoringSystem:      scoring,
+		Action:             QueryAction(action),
 		Severity:           severity,
 	}
 }
@@ -392,7 +410,17 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 		ref.Impact = &explorer.Impact{}
 	}
 	ref.Impact.Scoring = explorer.Impact_ScoringSystem(s.ScoringSystem)
-	ref.Impact.Weight = int32(s.Weight)
+
+	// For all v7 specs, a weight of 0 means that we want to ignore the score.
+	// Weight was evaluated first, so we can safely assume that the intention
+	// is to ignore the score. Scoring is overwritten in this case, because
+	// it would not have been evaluated. Also see above Impact2ScoringSpec for
+	// more details on the behavior of ScoringSpec.
+	if s.Weight > 0 {
+		ref.Impact.Weight = int32(s.Weight)
+	} else {
+		ref.Impact.Scoring = explorer.Impact_IGNORE
+	}
 }
 
 func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
@@ -532,12 +560,12 @@ func (bundle *PolicyBundleMap) DeprecatedV7_Add(policy *DeprecatedV7_Policy, que
 // -------------------------------
 
 func ToV7Severity(i *explorer.Impact) *DeprecatedV7_SeverityValue {
-	if i == nil {
+	if i == nil || i.Value == nil {
 		return nil
 	}
 
 	return &DeprecatedV7_SeverityValue{
-		Value: int64(i.Value),
+		Value: int64(i.Value.Value),
 	}
 }
 

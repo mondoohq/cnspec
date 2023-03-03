@@ -49,8 +49,8 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 	}
 
 	score := proto.Clone(s).(*Score)
-	if impact != nil && impact.Value != -1 {
-		floor := 100 - uint32(impact.Value)
+	if impact != nil && impact.Value != nil {
+		floor := 100 - uint32(impact.Value.Value)
 		if floor > score.Value {
 			score.Value = floor
 		}
@@ -64,7 +64,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 
 	// everything else is modify or activate
 
-	if impact.Weight == 0 {
+	if impact.Scoring == explorer.Impact_IGNORE {
 		calculator.Add(&Score{
 			// We override the type because:
 			// 1. If it is set to Result, its value will be added to the total
@@ -84,8 +84,10 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 		return
 	}
 
-	if impact.Weight != -1 {
+	if impact.Weight > 0 {
 		score.Weight = uint32(impact.Weight)
+	} else if score.Weight == 0 {
+		score.Weight = 1
 	}
 
 	calculator.Add(score)
