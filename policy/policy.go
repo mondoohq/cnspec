@@ -434,7 +434,9 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			}
 
 			contentChecksum = contentChecksum.Add(check.Checksum)
-			executionChecksum = executionChecksum.Add(check.CodeId)
+			executionChecksum = executionChecksum.
+				Add(check.CodeId).
+				AddUint(check.Impact.Checksum())
 		}
 
 		// DATA (must be sorted)

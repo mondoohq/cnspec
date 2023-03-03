@@ -159,12 +159,6 @@ func TestPolicyChecksums(t *testing.T) {
 			// execution updates
 
 			executionTests := map[string]func(){
-				"query changed": func() {
-					// Note: changing the Checksum of a base query doesn't do anything.
-					// Only the content matters. Changing the base's CodeIDs/MQL/Type is only
-					// effective if the query is taking the mql bits from its base.
-					b.Queries[0].CodeId = "12345"
-				},
 				"query spec set": func() {
 					if p.Groups == nil {
 						p.Specs[0].ScoringQueries = map[string]*DeprecatedV7_ScoringSpec{
@@ -173,15 +167,19 @@ func TestPolicyChecksums(t *testing.T) {
 							},
 						}
 					} else {
-						p.Groups[0].Checks = []*explorer.Mquery{
-							{
-								Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
-								Impact: &explorer.Impact{
-									Scoring: explorer.Impact_WORST,
-								},
+						p.Groups[0].Checks[1] = &explorer.Mquery{
+							Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
+							Impact: &explorer.Impact{
+								Scoring: explorer.Impact_WORST,
 							},
 						}
 					}
+				},
+				"query changed": func() {
+					// Note: changing the Checksum of a base query doesn't do anything.
+					// Only the content matters. Changing the base's CodeIDs/MQL/Type is only
+					// effective if the query is taking the mql bits from its base.
+					b.Queries[0].CodeId = "12345"
 				},
 				"mrn changed": func() {
 					p.Mrn = "normal mrn"
@@ -195,7 +193,8 @@ func TestPolicyChecksums(t *testing.T) {
 					p.InvalidateLocalChecksums()
 					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap())
 					assert.NoError(t, err, "computing checksums")
-					testChecksums(t, []bool{false, false, false, false}, checksums, getChecksums(p))
+					updated := getChecksums(p)
+					testChecksums(t, []bool{false, false, false, false}, checksums, updated)
 				})
 			}
 		})
