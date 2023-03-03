@@ -1084,7 +1084,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 						return nil, nil, errors.New("failed to connect datapoint to reporting job")
 					}
 					base := parentJob.ChildJobs[rj.Uuid]
-					query.Impact.Merge(base)
+					query.Impact.AddBase(base)
 				}
 			}
 
