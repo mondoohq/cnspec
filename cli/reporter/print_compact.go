@@ -393,8 +393,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 // only works with type == policy.ScoreType_Result
 func (r *defaultReporter) printScore(title string, score *policy.Score, query *explorer.Mquery) string {
 	// FIXME: this is only a workaround for a deeper bug with the score value
-	if query.Impact != nil && query.Impact.Value != -1 {
-		floor := 100 - uint32(query.Impact.Value)
+	if query.Impact != nil && query.Impact.Value != nil {
+		floor := 100 - uint32(query.Impact.Value.Value)
 		if floor > score.Value {
 			score.Value = floor
 		}

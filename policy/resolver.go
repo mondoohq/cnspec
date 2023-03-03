@@ -719,11 +719,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 	for i := range group.Policies {
 		policy := group.Policies[i]
 
-		impact := &explorer.Impact{
-			Scoring: explorer.Impact_SCORING_UNSPECIFIED,
-			Weight:  -1,
-			Value:   -1,
-		}
+		impact := policy.Impact
 
 		// ADD
 		if policy.Action == explorer.Action_UNSPECIFIED || policy.Action == explorer.Action_ACTIVATE {
@@ -774,7 +770,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
 			ownerJob.ChildJobs[policyJob.Uuid] = impact
 			// FIXME: DEPRECATED, remove in v9.0 vv
-			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(policy.Action))
+			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
 			// ^^
 			cache.childPolicies[policy.Mrn] = struct{}{}
 
@@ -803,7 +799,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 				if parentJob != nil {
 					parentJob.ChildJobs[policyJob.Uuid] = impact
 					// FIXME: DEPRECATED, remove in v9.0 vv
-					parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(policy.Action))
+					parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
 					// ^^
 				}
 			}
@@ -824,6 +820,15 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 		}
 
 		impact := check.Impact
+
+		// If we ignore this check, we have to transfer this info to the impact var,
+		// which is used to inform how to aggregate the scores of all child jobs.
+		if check.Action == explorer.Action_IGNORE {
+			if impact == nil {
+				impact = &explorer.Impact{}
+			}
+			impact.Scoring = explorer.Impact_IGNORE
+		}
 
 		cache.global.propsCache.Add(check.Props...)
 
@@ -854,7 +859,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 
 			ownerJob.ChildJobs[queryJob.Uuid] = impact
 			// FIXME: DEPRECATED, remove in v9.0 vv
-			ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(check.Action))
+			ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
 			// ^^
 			cache.childQueries[check.Mrn] = struct{}{}
 
@@ -883,7 +888,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 				if parentJob != nil {
 					parentJob.ChildJobs[queryJob.Uuid] = impact
 					// FIXME: DEPRECATED, remove in v9.0 vv
-					parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, QueryAction(check.Action))
+					parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
 					// ^^
 				}
 			}

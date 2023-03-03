@@ -23,8 +23,10 @@ func (r *ReportingJob) RefreshChecksum() {
 			if impact != nil {
 				checksum = checksum.
 					AddUint(uint64(impact.Scoring)).
-					AddUint(uint64(impact.Value)).
 					AddUint(uint64(impact.Weight))
+				if impact.Value != nil {
+					checksum = checksum.AddUint(uint64(impact.Value.Value))
+				}
 			}
 		}
 	}

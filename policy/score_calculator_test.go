@@ -220,7 +220,7 @@ func TestImpact(t *testing.T) {
 			ScoreCompletion: 100,
 			Weight:          1,
 		}, true, &explorer.Impact{
-			Value: 0,
+			Value: &explorer.ImpactValue{},
 		})
 
 		s := calc.Calculate()
@@ -237,8 +237,8 @@ func TestImpact(t *testing.T) {
 			ScoreCompletion: 100,
 			Weight:          1,
 		}, true, &explorer.Impact{
-			Value:  20,
-			Weight: -1,
+			Value:  &explorer.ImpactValue{Value: 20},
+			Weight: 1,
 		})
 
 		s := calc.Calculate()
@@ -255,8 +255,8 @@ func TestImpact(t *testing.T) {
 			ScoreCompletion: 100,
 			Weight:          1,
 		}, true, &explorer.Impact{
-			Value:  20,
-			Weight: -1,
+			Value:  &explorer.ImpactValue{Value: 20},
+			Weight: 1,
 		})
 
 		s := calc.Calculate()
