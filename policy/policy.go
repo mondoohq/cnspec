@@ -110,8 +110,14 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 
 // RefreshLocalAssetFilters looks through the local policy asset filters and rolls them up
 func (p *Policy) RefreshLocalAssetFilters() {
-	p.Filters = &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
+	if p.Filters == nil {
+		p.Filters = &explorer.Filters{
+			Items: map[string]*explorer.Mquery{},
+		}
+	}
+
+	if p.Filters.Items == nil {
+		p.Filters.Items = map[string]*explorer.Mquery{}
 	}
 
 	for i := range p.Groups {
@@ -132,6 +138,11 @@ func (p *Policy) RefreshLocalAssetFilters() {
 // recursive tells us if we want to call this function for all policy dependencies (costly; set to false by default)
 func (p *Policy) ComputeAssetFilters(ctx context.Context, getPolicy func(ctx context.Context, mrn string) (*Policy, error), recursive bool) ([]*explorer.Mquery, error) {
 	filters := map[string]*explorer.Mquery{}
+
+	for i := range p.Filters.Items {
+		filter := p.Filters.Items[i]
+		filters[filter.CodeId] = filter
+	}
 
 	for i := range p.Groups {
 		group := p.Groups[i]
