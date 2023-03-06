@@ -305,24 +305,23 @@ type resolverCache struct {
 	assetFilters           map[string]struct{}
 
 	// assigned queries, listed by their UUID (i.e. policy context)
-	executionQueries  map[string]*ExecutionQuery
-	dataQueries       map[string]struct{}
-	queriesByChecksum map[string]*explorer.Mquery
-	propsCache        explorer.PropsCache
+	executionQueries map[string]*ExecutionQuery
+	dataQueries      map[string]struct{}
+	queriesByMsum    map[string]*explorer.Mquery // Msum == Mquery.Checksum
+	propsCache       explorer.PropsCache
 
-	reportingJobsByChecksum map[string]*ReportingJob
-	reportingJobsByUUID     map[string]*ReportingJob
-	reportingJobsActive     map[string]bool
-	errors                  []*policyResolutionError
-	bundleMap               *PolicyBundleMap
+	reportingJobsByUUID map[string]*ReportingJob
+	reportingJobsByMsum map[string][]*ReportingJob // Msum == Mquery.Checksum, i.e. only reporting jobs for mqueries
+	reportingJobsActive map[string]bool
+	errors              []*policyResolutionError
+	bundleMap           *PolicyBundleMap
 }
 
 type policyResolverCache struct {
-	removedPolicies map[string]struct{} // tracks policies that will not be added
-	removedQueries  map[string]struct{} // tracks queries that will not be added
-	parentPolicies  map[string]struct{} // tracks policies in the ancestry, to prevent loops
-	childPolicies   map[string]struct{} // tracks policies that were added below (at any level)
-	childQueries    map[string]struct{} // tracks queries that were added below (at any level)
+	removedPolicies map[string]struct{}        // tracks policies that will not be added
+	removedQueries  map[string]struct{}        // tracks queries that will not be added
+	parentPolicies  map[string]struct{}        // tracks policies in the ancestry, to prevent loops
+	childJobsByMrn  map[string][]*ReportingJob // tracks policies+queries+checks that were added below (at any level)
 	global          *resolverCache
 }
 
@@ -349,8 +348,7 @@ func (p *policyResolverCache) clone() *policyResolverCache {
 		removedPolicies: map[string]struct{}{},
 		removedQueries:  map[string]struct{}{},
 		parentPolicies:  map[string]struct{}{},
-		childPolicies:   map[string]struct{}{},
-		childQueries:    map[string]struct{}{},
+		childJobsByMrn:  map[string][]*ReportingJob{},
 		global:          p.global,
 	}
 
@@ -368,11 +366,12 @@ func (p *policyResolverCache) clone() *policyResolverCache {
 }
 
 func (p *policyResolverCache) addChildren(other *policyResolverCache) {
-	for k, v := range other.childPolicies {
-		p.childPolicies[k] = v
-	}
-	for k, v := range other.childQueries {
-		p.childQueries[k] = v
+	// we copy these back into the parent, but don't keep them around in the global
+	// cache. The reason for that is that policy siblings could accidentally access
+	// each others jobs when they shouldn't be able to.
+	// In this sense, reporting jobs by MRN only bubble up, never down or sideways.
+	for k, v := range other.childJobsByMrn {
+		p.childJobsByMrn[k] = append(p.childJobsByMrn[k], v...)
 	}
 }
 
@@ -460,17 +459,17 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		Msg("resolver> phase 1: no cached result, resolve the policy now")
 
 	cache := &resolverCache{
-		graphExecutionChecksum:  policyObj.GraphExecutionChecksum,
-		assetFiltersChecksum:    assetFiltersChecksum,
-		assetFilters:            assetFiltersMap,
-		executionQueries:        map[string]*ExecutionQuery{},
-		dataQueries:             map[string]struct{}{},
-		propsCache:              explorer.NewPropsCache(),
-		queriesByChecksum:       map[string]*explorer.Mquery{},
-		reportingJobsByChecksum: map[string]*ReportingJob{},
-		reportingJobsByUUID:     map[string]*ReportingJob{},
-		reportingJobsActive:     map[string]bool{},
-		bundleMap:               bundleMap,
+		graphExecutionChecksum: policyObj.GraphExecutionChecksum,
+		assetFiltersChecksum:   assetFiltersChecksum,
+		assetFilters:           assetFiltersMap,
+		executionQueries:       map[string]*ExecutionQuery{},
+		dataQueries:            map[string]struct{}{},
+		propsCache:             explorer.NewPropsCache(),
+		queriesByMsum:          map[string]*explorer.Mquery{},
+		reportingJobsByUUID:    map[string]*ReportingJob{},
+		reportingJobsByMsum:    map[string][]*ReportingJob{},
+		reportingJobsActive:    map[string]bool{},
+		bundleMap:              bundleMap,
 	}
 
 	rjUUID := cache.relativeChecksum(policyObj.GraphExecutionChecksum)
@@ -486,7 +485,6 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	cache.reportingJobsByUUID[reportingJob.Uuid] = reportingJob
-	cache.reportingJobsByChecksum[reportingJob.QrId] = reportingJob
 
 	// phase 2: optimizations for assets
 	// assets are always connected to a space, so figure out if a space policy exists
@@ -499,8 +497,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		removedPolicies: map[string]struct{}{},
 		removedQueries:  map[string]struct{}{},
 		parentPolicies:  map[string]struct{}{},
-		childPolicies:   map[string]struct{}{},
-		childQueries:    map[string]struct{}{},
+		childJobsByMrn:  map[string][]*ReportingJob{},
 		global:          cache,
 	}
 	err = s.policyToJobs(ctx, policyMrn, reportingJob, policyToJobsCache)
@@ -699,7 +696,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	var err error
 	for i := range matchingGroups {
 		group := matchingGroups[i]
-		if err = s.policyspecToJobs(ctx, group, ownerJob, cache); err != nil {
+		if err = s.policyGroupToJobs(ctx, group, ownerJob, cache); err != nil {
 			log.Error().Err(err).Msg("resolver> policyToJobs error")
 			return err
 		}
@@ -711,8 +708,8 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	return nil
 }
 
-func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup, ownerJob *ReportingJob, cache *policyResolverCache) error {
-	ctx, span := tracer.Start(ctx, "resolver/policyspecToJobs")
+func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGroup, ownerJob *ReportingJob, cache *policyResolverCache) error {
+	ctx, span := tracer.Start(ctx, "resolver/policyGroupToJobs")
 	defer span.End()
 
 	// include referenced policies
@@ -738,6 +735,8 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 				return errors.New("cannot find policy '" + policy.Mrn + "' while resolving")
 			}
 
+			// make sure this policy supports the selected filters, otherwise we
+			// don't need to include it
 			var found bool
 			for checksum := range policyObj.Filters.Items {
 				if _, ok := cache.global.assetFilters[checksum]; ok {
@@ -749,12 +748,23 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 				continue
 			}
 
-			// the job itself is global to the resolution
-			policyJob := cache.global.reportingJobsByChecksum[policy.Mrn]
-			if policyJob == nil {
+			// TODO: We currently enforce the policy object to only be created
+			// once per resolution. It can be attached to multiple other jobs,
+			// i.e. it can be called by multiple different owners. But it only
+			// translates into one reportingjob. This will need to be expanded
+			// in case we allow for modifications on the policy object.
+			// vv-------------- singular policyref ----------------
+			var policyJob *ReportingJob
+			policyJobs := cache.childJobsByMrn[policy.Mrn]
+			if len(policyJobs) == 0 {
+				// FIXME: we are receiving policies here that may not have their checksum calculated
+				// This should not be the case, policy bundles that are downloaded
+				// should have their checksums updated.
+				policy.RefreshChecksum()
+
 				policyJob = &ReportingJob{
 					QrId:          policy.Mrn,
-					Uuid:          cache.global.relativeChecksum(policy.Mrn),
+					Uuid:          cache.global.relativeChecksum(policy.Checksum),
 					ChildJobs:     map[string]*explorer.Impact{},
 					Datapoints:    map[string]bool{},
 					ScoringSystem: policyObj.ScoringSystem,
@@ -762,9 +772,15 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
 					// ^^
 				}
-				cache.global.reportingJobsByChecksum[policy.Mrn] = policyJob
 				cache.global.reportingJobsByUUID[policyJob.Uuid] = policyJob
+				cache.childJobsByMrn[policy.Mrn] = []*ReportingJob{policyJob}
+			} else {
+				if len(policyJobs) != 1 {
+					log.Warn().Msg("found more than one policy job for " + policy.Mrn)
+				}
+				policyJob = policyJobs[0]
 			}
+			// ^^-------------- singular policyref ----------------
 
 			// local aspects for the resolved policy
 			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
@@ -772,7 +788,6 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 			// FIXME: DEPRECATED, remove in v9.0 vv
 			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
 			// ^^
-			cache.childPolicies[policy.Mrn] = struct{}{}
 
 			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache); err != nil {
 				return err
@@ -783,7 +798,7 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 
 		// MODIFY
 		if policy.Action == explorer.Action_MODIFY {
-			_, ok := cache.childPolicies[policy.Mrn]
+			policyJobs, ok := cache.childJobsByMrn[policy.Mrn]
 			if !ok {
 				cache.global.errors = append(cache.global.errors, &policyResolutionError{
 					ID:       policy.Mrn,
@@ -793,14 +808,16 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 				continue
 			}
 
-			policyJob := cache.global.reportingJobsByChecksum[policy.Mrn]
-			for _, id := range policyJob.Notify {
-				parentJob := cache.global.reportingJobsByUUID[id]
-				if parentJob != nil {
-					parentJob.ChildJobs[policyJob.Uuid] = impact
-					// FIXME: DEPRECATED, remove in v9.0 vv
-					parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
-					// ^^
+			for j := range policyJobs {
+				policyJob := policyJobs[j]
+				for _, id := range policyJob.Notify {
+					parentJob := cache.global.reportingJobsByUUID[id]
+					if parentJob != nil {
+						parentJob.ChildJobs[policyJob.Uuid] = impact
+						// FIXME: DEPRECATED, remove in v9.0 vv
+						parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
+						// ^^
+					}
 				}
 			}
 		}
@@ -809,6 +826,11 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 	// handle scoring queries
 	for i := range group.Checks {
 		check := group.Checks[i]
+
+		if _, ok := cache.removedQueries[check.Mrn]; ok {
+			continue
+		}
+
 		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
 			check = check.Merge(base)
 			if err := check.RefreshChecksum(); err != nil {
@@ -819,10 +841,9 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 			return errors.New("invalid check encountered, missing checksum for: " + check.Mrn)
 		}
 
-		impact := check.Impact
-
 		// If we ignore this check, we have to transfer this info to the impact var,
 		// which is used to inform how to aggregate the scores of all child jobs.
+		impact := check.Impact
 		if check.Action == explorer.Action_IGNORE {
 			if impact == nil {
 				impact = &explorer.Impact{}
@@ -832,74 +853,24 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 
 		cache.global.propsCache.Add(check.Props...)
 
-		// ADD
 		if check.Action == explorer.Action_UNSPECIFIED || check.Action == explorer.Action_ACTIVATE {
-			if _, ok := cache.removedQueries[check.Mrn]; ok {
-				continue
-			}
-
-			// the job itself is global to the resolution
-			queryJob := cache.global.reportingJobsByChecksum[check.Checksum]
-			if queryJob == nil {
-				queryJob = &ReportingJob{
-					Uuid:       cache.global.relativeChecksum(check.Checksum),
-					QrId:       check.Mrn,
-					ChildJobs:  map[string]*explorer.Impact{},
-					Datapoints: map[string]bool{},
-					// FIXME: DEPRECATED, remove in v9.0 vv
-					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
-					// ^^
-				}
-				cache.global.reportingJobsByChecksum[check.Checksum] = queryJob
-				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
-			}
-
-			// local aspects for the resolved policy
-			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
-
-			ownerJob.ChildJobs[queryJob.Uuid] = impact
-			// FIXME: DEPRECATED, remove in v9.0 vv
-			ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
-			// ^^
-			cache.childQueries[check.Mrn] = struct{}{}
-
-			// we set a placeholder for the execution query, just to indicate it will be added
-			cache.global.executionQueries[check.Checksum] = nil
-			cache.global.queriesByChecksum[check.Checksum] = check
-
+			cache.addCheckJob(check, impact, ownerJob)
 			continue
 		}
 
-		// MODIFY
 		if check.Action == explorer.Action_MODIFY {
-			_, ok := cache.childQueries[check.Mrn]
-			if !ok {
-				cache.global.errors = append(cache.global.errors, &policyResolutionError{
-					ID:       check.Mrn,
-					IsPolicy: true,
-					Error:    "cannot modify query, it doesn't exist",
-				})
-				continue
-			}
-
-			queryJob := cache.global.reportingJobsByChecksum[check.Checksum]
-			for _, id := range queryJob.Notify {
-				parentJob := cache.global.reportingJobsByUUID[id]
-				if parentJob != nil {
-					parentJob.ChildJobs[queryJob.Uuid] = impact
-					// FIXME: DEPRECATED, remove in v9.0 vv
-					parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
-					// ^^
-				}
-			}
-
-			cache.global.queriesByChecksum[check.Checksum] = check
+			cache.modifyCheckJob(check, impact)
 		}
 	}
 
 	// handle data queries
 	for i := range group.Queries {
 		query := group.Queries[i]
+
+		if _, ok := cache.removedQueries[query.Mrn]; ok {
+			continue
+		}
+
 		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
 			query = query.Merge(base)
 			if err := query.RefreshChecksum(); err != nil {
@@ -916,44 +887,100 @@ func (s *LocalServices) policyspecToJobs(ctx context.Context, group *PolicyGroup
 
 		// ADD
 		if query.Action == explorer.Action_UNSPECIFIED || query.Action == explorer.Action_ACTIVATE {
-			if _, ok := cache.removedQueries[query.Mrn]; ok {
-				continue
-			}
-
-			// the job itself is global to the resolution
-			// note: the ReportingJob is only a placeholder and is replaced by individual query LLX checksum ReportingJobs
-			queryJob := cache.global.reportingJobsByChecksum[query.Checksum]
-			if queryJob == nil {
-				queryJob = &ReportingJob{
-					Uuid:       cache.global.relativeChecksum(query.Checksum),
-					QrId:       query.Mrn,
-					ChildJobs:  map[string]*explorer.Impact{},
-					Datapoints: map[string]bool{},
-					IsData:     true,
-					// FIXME: DEPRECATED, remove in v9.0 vv
-					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
-					// ^^
-				}
-				cache.global.reportingJobsByChecksum[query.Checksum] = queryJob
-				cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
-			}
-
-			// local aspects for the resolved policy
-			queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
-
-			ownerJob.Datapoints[queryJob.Uuid] = true
-			cache.childQueries[query.Mrn] = struct{}{}
-
-			// we set a placeholder for the execution query, just to indicate it will be added
-			cache.global.executionQueries[query.Checksum] = nil
-			cache.global.dataQueries[query.Checksum] = struct{}{}
-			cache.global.queriesByChecksum[query.Checksum] = query
-
-			continue
+			cache.addDataQueryJob(query, ownerJob)
 		}
 	}
 
 	return nil
+}
+
+func (cache *policyResolverCache) addCheckJob(check *explorer.Mquery, impact *explorer.Impact, ownerJob *ReportingJob) {
+	uuid := cache.global.relativeChecksum(check.Checksum)
+	queryJob := cache.global.reportingJobsByUUID[uuid]
+
+	if queryJob == nil {
+		queryJob = &ReportingJob{
+			Uuid:       uuid,
+			QrId:       check.Mrn,
+			ChildJobs:  map[string]*explorer.Impact{},
+			Datapoints: map[string]bool{},
+			// FIXME: DEPRECATED, remove in v9.0 vv
+			DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
+			// ^^
+		}
+		cache.global.reportingJobsByUUID[uuid] = queryJob
+		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], queryJob)
+		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], queryJob)
+	}
+
+	// local aspects for the resolved policy
+	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
+
+	ownerJob.ChildJobs[queryJob.Uuid] = impact
+	// FIXME: DEPRECATED, remove in v9.0 vv
+	ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
+	// ^^
+
+	// we set a placeholder for the execution query, just to indicate it will be added
+	cache.global.executionQueries[check.Checksum] = nil
+	cache.global.queriesByMsum[check.Checksum] = check
+}
+
+func (cache *policyResolverCache) addDataQueryJob(query *explorer.Mquery, ownerJob *ReportingJob) {
+	uuid := cache.global.relativeChecksum(query.Checksum)
+	queryJob := cache.global.reportingJobsByUUID[uuid]
+
+	// note: the ReportingJob is only a placeholder and is replaced by individual query LLX checksum ReportingJobs
+	if queryJob == nil {
+		queryJob = &ReportingJob{
+			Uuid:       cache.global.relativeChecksum(query.Checksum),
+			QrId:       query.Mrn,
+			ChildJobs:  map[string]*explorer.Impact{},
+			Datapoints: map[string]bool{},
+			IsData:     true,
+			// FIXME: DEPRECATED, remove in v9.0 vv
+			DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
+			// ^^
+		}
+		cache.global.reportingJobsByUUID[queryJob.Uuid] = queryJob
+		cache.global.reportingJobsByMsum[query.Checksum] = append(cache.global.reportingJobsByMsum[query.Checksum], queryJob)
+		cache.childJobsByMrn[query.Mrn] = append(cache.childJobsByMrn[query.Mrn], queryJob)
+	}
+
+	// local aspects for the resolved policy
+	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
+
+	ownerJob.Datapoints[queryJob.Uuid] = true
+
+	// we set a placeholder for the execution query, just to indicate it will be added
+	cache.global.executionQueries[query.Checksum] = nil
+	cache.global.dataQueries[query.Checksum] = struct{}{}
+	cache.global.queriesByMsum[query.Checksum] = query
+}
+
+func (cache *policyResolverCache) modifyCheckJob(check *explorer.Mquery, impact *explorer.Impact) {
+	queryJobs, ok := cache.childJobsByMrn[check.Mrn]
+	if !ok {
+		cache.global.errors = append(cache.global.errors, &policyResolutionError{
+			ID:       check.Mrn,
+			IsPolicy: true,
+			Error:    "cannot modify query, it doesn't exist",
+		})
+		return
+	}
+
+	for i := range queryJobs {
+		queryJob := queryJobs[i]
+		for _, id := range queryJob.Notify {
+			parentJob := cache.global.reportingJobsByUUID[id]
+			if parentJob != nil {
+				parentJob.ChildJobs[queryJob.Uuid] = impact
+				// FIXME: DEPRECATED, remove in v9.0 vv
+				parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
+				// ^^
+			}
+		}
+	}
 }
 
 // type propInfo struct {
@@ -979,14 +1006,14 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 
 	// fill in all reporting jobs. we will remove the data query jobs and replace
 	// them with direct collections into their parent job later
-	for _, rj := range cache.reportingJobsByChecksum {
+	for _, rj := range cache.reportingJobsByUUID {
 		collectorJob.ReportingJobs[rj.Uuid] = rj
 	}
 
 	// FIXME: sort by internal dependencies of props as well
 
 	// next we can continue with queries, after properties are all done
-	for checksum, query := range cache.queriesByChecksum {
+	for checksum, query := range cache.queriesByMsum {
 		codeID := query.CodeId
 
 		if existing, ok := executionJob.Queries[codeID]; ok {
@@ -1045,15 +1072,18 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			// v2 compiler but not the v1 compiler. In such case, we
 			// will expunge the query and reporting chain from the
 			// resolved policy
-			if rj, ok := cache.reportingJobsByChecksum[checksum]; ok {
-				delete(cache.reportingJobsByChecksum, checksum)
-				delete(cache.reportingJobsByUUID, rj.Uuid)
-				delete(collectorJob.ReportingJobs, rj.Uuid)
-				for _, parentID := range rj.Notify {
-					if parentJob, ok := collectorJob.ReportingJobs[parentID]; ok {
-						delete(parentJob.ChildJobs, rj.Uuid)
+			if reportingjobs, ok := cache.reportingJobsByMsum[query.Checksum]; ok {
+				for i := range reportingjobs {
+					rj := reportingjobs[i]
+					delete(cache.reportingJobsByUUID, rj.Uuid)
+					delete(collectorJob.ReportingJobs, rj.Uuid)
+					for _, parentID := range rj.Notify {
+						if parentJob, ok := collectorJob.ReportingJobs[parentID]; ok {
+							delete(parentJob.ChildJobs, rj.Uuid)
+						}
 					}
 				}
+				delete(cache.reportingJobsByMsum, query.Checksum)
 			}
 
 			continue
@@ -1063,75 +1093,79 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 		executionJob.Queries[codeID] = executionQuery
 
 		// Scoring+Data Queries handling
-		rj, ok := cache.reportingJobsByChecksum[checksum]
+		reportingjobs, ok := cache.reportingJobsByMsum[query.Checksum]
 		if !ok {
 			logCtx.Debug().
-				Interface("reportingJobs", cache.reportingJobsByChecksum).
+				Interface("reportingJobs", cache.reportingJobsByMsum).
 				Str("query", query.Mrn).
+				Str("checksum", query.Checksum).
 				Str("policy", policyMrn).
-				Msg("resolver> phase 2: cannot find reporting job")
+				Msg("resolver> phase 4: cannot find reporting job")
 			return nil, nil, errors.New("cannot find reporting job for query " + query.Mrn + " in policy " + policyMrn)
 		}
 
-		// (2) Scoring Queries handling
-		if !isDataQuery {
-			rj.QrId = codeID
+		for i := range reportingjobs {
+			rj := reportingjobs[i]
+			// (2) Scoring Queries handling
+			if !isDataQuery {
+				rj.QrId = codeID
 
-			if query.Impact != nil {
-				for _, parentID := range rj.Notify {
-					parentJob, ok := collectorJob.ReportingJobs[parentID]
-					if !ok {
-						return nil, nil, errors.New("failed to connect datapoint to reporting job")
+				if query.Impact != nil {
+					for _, parentID := range rj.Notify {
+						parentJob, ok := collectorJob.ReportingJobs[parentID]
+						if !ok {
+							return nil, nil, errors.New("failed to connect datapoint to reporting job")
+						}
+						base := parentJob.ChildJobs[rj.Uuid]
+						query.Impact.AddBase(base)
 					}
-					base := parentJob.ChildJobs[rj.Uuid]
-					query.Impact.AddBase(base)
 				}
-			}
 
-			arr, ok := collectorJob.ReportingQueries[codeID]
-			if !ok {
-				arr = &StringArray{}
-				collectorJob.ReportingQueries[codeID] = arr
-			}
-			arr.Items = append(arr.Items, rj.Uuid)
-
-			// process all the datapoints of this job
-			for dp := range executionQuery.Datapoints {
-				datapointID := executionQuery.Datapoints[dp]
-				datapointInfo, ok := collectorJob.Datapoints[datapointID]
+				arr, ok := collectorJob.ReportingQueries[codeID]
 				if !ok {
-					return nil, nil, errors.New("failed to identity datapoint in collectorjob")
+					arr = &StringArray{}
+					collectorJob.ReportingQueries[codeID] = arr
+				}
+				arr.Items = append(arr.Items, rj.Uuid)
+
+				// process all the datapoints of this job
+				for dp := range executionQuery.Datapoints {
+					datapointID := executionQuery.Datapoints[dp]
+					datapointInfo, ok := collectorJob.Datapoints[datapointID]
+					if !ok {
+						return nil, nil, errors.New("failed to identity datapoint in collectorjob")
+					}
+
+					datapointInfo.Notify = append(datapointInfo.Notify, rj.Uuid)
+					rj.Datapoints[datapointID] = true
 				}
 
-				datapointInfo.Notify = append(datapointInfo.Notify, rj.Uuid)
-				rj.Datapoints[datapointID] = true
+				continue
 			}
 
-			continue
-		}
-
-		// (3) Data Queries handling
-		for _, parentID := range rj.Notify {
-			parentJob, ok := collectorJob.ReportingJobs[parentID]
-			if !ok {
-				return nil, nil, errors.New("failed to connect datapoint to reporting job")
-			}
-
-			for dp := range executionQuery.Datapoints {
-				datapointID := executionQuery.Datapoints[dp]
-				datapointInfo, ok := collectorJob.Datapoints[datapointID]
+			// (3) Data Queries handling
+			for _, parentID := range rj.Notify {
+				parentJob, ok := collectorJob.ReportingJobs[parentID]
 				if !ok {
-					return nil, nil, errors.New("failed to identity datapoint in collectorjob")
+					return nil, nil, errors.New("failed to connect datapoint to reporting job")
 				}
 
-				datapointInfo.Notify = append(datapointInfo.Notify, parentJob.Uuid)
-				parentJob.Datapoints[datapointID] = true
-			}
+				for dp := range executionQuery.Datapoints {
+					datapointID := executionQuery.Datapoints[dp]
+					datapointInfo, ok := collectorJob.Datapoints[datapointID]
+					if !ok {
+						return nil, nil, errors.New("failed to identity datapoint in collectorjob")
+					}
 
-			// we don't need this any longer, since every datapoint now reports into
-			// the parent job (i.e. reports into the policy instead of the data query)
-			delete(collectorJob.ReportingJobs, rj.Uuid)
-			delete(parentJob.Datapoints, rj.Uuid)
+					datapointInfo.Notify = append(datapointInfo.Notify, parentJob.Uuid)
+					parentJob.Datapoints[datapointID] = true
+				}
+
+				// we don't need this any longer, since every datapoint now reports into
+				// the parent job (i.e. reports into the policy instead of the data query)
+				delete(collectorJob.ReportingJobs, rj.Uuid)
+				delete(parentJob.Datapoints, rj.Uuid)
+			}
 		}
 	}
 
