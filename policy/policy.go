@@ -383,25 +383,20 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		for i := range group.Policies {
 			ref := group.Policies[i]
 
-			if ref.GraphContentChecksum == "" || ref.GraphExecutionChecksum == "" {
-				p, err := getPolicy(ctx, ref.Mrn)
-				if err != nil {
-					return err
-				}
-
-				ref.GraphContentChecksum = p.GraphContentChecksum
-				ref.GraphExecutionChecksum = p.GraphExecutionChecksum
+			p, err := getPolicy(ctx, ref.Mrn)
+			if err != nil {
+				return err
 			}
 
-			if ref.GraphContentChecksum == "" || ref.GraphExecutionChecksum == "" {
+			if p.GraphContentChecksum == "" || p.GraphExecutionChecksum == "" {
 				return errors.New("failed to get checksums for dependent policy " + ref.Mrn)
 			}
 
 			executionChecksum = executionChecksum.Add(ref.Mrn)
 			graphExecutionChecksum = graphExecutionChecksum.
-				Add(ref.GraphExecutionChecksum)
+				Add(p.GraphExecutionChecksum)
 			graphContentChecksum = graphContentChecksum.
-				Add(ref.GraphContentChecksum)
+				Add(p.GraphContentChecksum)
 		}
 
 		// CHECKS (must be sorted)
@@ -594,6 +589,15 @@ func (p *PolicyRef) RefreshMRN(ownerMRN string) error {
 	p.Mrn = nu
 	p.Uid = ""
 	return nil
+}
+
+func (p *PolicyRef) RefreshChecksum() {
+	c := checksums.New.
+		Add(p.Mrn).
+		AddUint(uint64(p.Action)).
+		AddUint(p.Impact.Checksum())
+
+	p.Checksum = c.String()
 }
 
 func IsPolicyMrn(candidate string) error {

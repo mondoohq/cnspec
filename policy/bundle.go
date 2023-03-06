@@ -557,6 +557,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 				if err = policyRef.RefreshMRN(ownerMrn); err != nil {
 					return nil, err
 				}
+				policyRef.RefreshChecksum()
 			}
 
 			for j := range group.Queries {
