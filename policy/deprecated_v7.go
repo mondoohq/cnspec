@@ -398,7 +398,7 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 		return
 	}
 
-	ref.Action = ToV8Action(s.Action)
+	ref.Action = explorer.Action(s.Action)
 
 	// For deactivate we don't need anything else in the spec. Just turn it off and
 	// we are done.
@@ -432,7 +432,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 		ref := &PolicyRef{}
 
 		if spec != nil {
-			ref.Action = ToV8Action(spec.Action)
+			ref.Action = explorer.Action(spec.Action)
 		}
 
 		if strings.HasPrefix(id, "//") && mrn.IsValid(id) {
@@ -469,7 +469,7 @@ func (d *DeprecatedV7_PolicySpec) ToV8() *PolicyGroup {
 		ref := &explorer.Mquery{}
 
 		if action != QueryAction_UNSPECIFIED {
-			ref.Action = ToV8Action(action)
+			ref.Action = explorer.Action(action)
 		}
 
 		if strings.HasPrefix(id, "//") && mrn.IsValid(id) {
@@ -672,7 +672,7 @@ func ToV7ScoringSpec(action explorer.Action, impact *explorer.Impact) *Deprecate
 	}
 
 	res := &DeprecatedV7_ScoringSpec{
-		Action: ToV7Action(action),
+		Action: QueryAction(action),
 	}
 
 	if impact != nil && impact.Weight != 0 {
@@ -684,32 +684,6 @@ func ToV7ScoringSpec(action explorer.Action, impact *explorer.Impact) *Deprecate
 	}
 
 	return res
-}
-
-func ToV7Action(action explorer.Action) QueryAction {
-	switch action {
-	case explorer.Action_ACTIVATE:
-		return QueryAction_ACTIVATE
-	case explorer.Action_DEACTIVATE:
-		return QueryAction_DEACTIVATE
-	case explorer.Action_MODIFY:
-		return QueryAction_MODIFY
-	default:
-		return QueryAction_UNSPECIFIED
-	}
-}
-
-func ToV8Action(action QueryAction) explorer.Action {
-	switch action {
-	case QueryAction_ACTIVATE:
-		return explorer.Action_ACTIVATE
-	case QueryAction_DEACTIVATE:
-		return explorer.Action_DEACTIVATE
-	case QueryAction_MODIFY:
-		return explorer.Action_MODIFY
-	default:
-		return explorer.Action_UNSPECIFIED
-	}
 }
 
 func (x *PolicyGroup) ToV7(policyMrn string) *DeprecatedV7_PolicySpec {
@@ -742,7 +716,7 @@ func (x *PolicyGroup) ToV7(policyMrn string) *DeprecatedV7_PolicySpec {
 		if query.Mrn == "" {
 			continue
 		}
-		res.DataQueries[query.Mrn] = ToV7Action(query.Action)
+		res.DataQueries[query.Mrn] = QueryAction(query.Action)
 	}
 
 	res.AssetFilter = ToV7SpecFilter(x.Filters, policyMrn)
