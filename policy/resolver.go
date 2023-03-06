@@ -786,7 +786,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			policyJob.Notify = append(policyJob.Notify, ownerJob.Uuid)
 			ownerJob.ChildJobs[policyJob.Uuid] = impact
 			// FIXME: DEPRECATED, remove in v9.0 vv
-			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
+			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact)
 			// ^^
 
 			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache); err != nil {
@@ -815,7 +815,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 					if parentJob != nil {
 						parentJob.ChildJobs[policyJob.Uuid] = impact
 						// FIXME: DEPRECATED, remove in v9.0 vv
-						parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact, policy.Action)
+						parentJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact)
 						// ^^
 					}
 				}
@@ -849,6 +849,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 				impact = &explorer.Impact{}
 			}
 			impact.Scoring = explorer.Impact_IGNORE
+			impact.Action = check.Action
 		}
 
 		cache.global.propsCache.Add(check.Props...)
@@ -918,7 +919,7 @@ func (cache *policyResolverCache) addCheckJob(check *explorer.Mquery, impact *ex
 
 	ownerJob.ChildJobs[queryJob.Uuid] = impact
 	// FIXME: DEPRECATED, remove in v9.0 vv
-	ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
+	ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact)
 	// ^^
 
 	// we set a placeholder for the execution query, just to indicate it will be added
@@ -976,7 +977,7 @@ func (cache *policyResolverCache) modifyCheckJob(check *explorer.Mquery, impact 
 			if parentJob != nil {
 				parentJob.ChildJobs[queryJob.Uuid] = impact
 				// FIXME: DEPRECATED, remove in v9.0 vv
-				parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact, check.Action)
+				parentJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact)
 				// ^^
 			}
 		}

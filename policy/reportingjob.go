@@ -21,12 +21,7 @@ func (r *ReportingJob) RefreshChecksum() {
 			impact := r.ChildJobs[key]
 			checksum = checksum.Add(key)
 			if impact != nil {
-				checksum = checksum.
-					AddUint(uint64(impact.Scoring)).
-					AddUint(uint64(impact.Weight))
-				if impact.Value != nil {
-					checksum = checksum.AddUint(uint64(impact.Value.Value))
-				}
+				checksum = checksum.AddUint(impact.Checksum())
 			}
 		}
 	}

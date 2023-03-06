@@ -353,7 +353,7 @@ func (d deprecatedV7_PolicySpecs) ToV8() []*PolicyGroup {
 	return res
 }
 
-func Impact2ScoringSpec(impact *explorer.Impact, action explorer.Action) *DeprecatedV7_ScoringSpec {
+func Impact2ScoringSpec(impact *explorer.Impact) *DeprecatedV7_ScoringSpec {
 	if impact == nil {
 		return nil
 	}
@@ -363,9 +363,19 @@ func Impact2ScoringSpec(impact *explorer.Impact, action explorer.Action) *Deprec
 		severity = &DeprecatedV7_SeverityValue{Value: int64(impact.Value.Value)}
 	}
 
+	v7Action := QueryAction_UNSPECIFIED
+	switch impact.Action {
+	case explorer.Action_ACTIVATE:
+		v7Action = QueryAction_ACTIVATE
+	case explorer.Action_DEACTIVATE:
+		v7Action = QueryAction_DEACTIVATE
+	case explorer.Action_MODIFY:
+		v7Action = QueryAction_MODIFY
+	}
+
 	weight := uint32(impact.Weight)
 	scoring := ScoringSystem(impact.Scoring) // numbers are identical except for one vv
-	if impact.Scoring == explorer.Impact_IGNORE || action == explorer.Action_IGNORE {
+	if impact.Scoring == explorer.Impact_IGNORE || impact.Action == explorer.Action_IGNORE {
 		weight = 0
 		// We have to set a scoring system here, but really it doesn't matter.
 		// In v7 it was possible to have both a "weight=0" (i.e. ignored) and
@@ -381,16 +391,14 @@ func Impact2ScoringSpec(impact *explorer.Impact, action explorer.Action) *Deprec
 		// We are converting the action to a QueryAction. This is largely compatibly
 		// except for Action_IGNORE. Whenever an active ignore was set, we can
 		// translate it to ACTIVATE + weight=0 for v7.
-		if action == explorer.Action_IGNORE {
-			action = explorer.Action_ACTIVATE
-		}
+		v7Action = QueryAction_ACTIVATE
 	}
 
 	return &DeprecatedV7_ScoringSpec{
 		Weight:             weight,
 		WeightIsPercentage: false,
 		ScoringSystem:      scoring,
-		Action:             QueryAction(action),
+		Action:             v7Action,
 		Severity:           severity,
 	}
 }
