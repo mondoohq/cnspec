@@ -287,9 +287,11 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 		Props:    map[string]*explorer.Property{},
 	}
 
-	// we need to re-compute the asset filters
-	mpolicyObj.Filters = &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
+	if mpolicyObj.Filters == nil {
+		// we need to re-compute the asset filters
+		mpolicyObj.Filters = &explorer.Filters{
+			Items: map[string]*explorer.Mquery{},
+		}
 	}
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
 
