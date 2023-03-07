@@ -138,7 +138,17 @@ func (d *DeprecatedV7_Bundle) ToV8() *Bundle {
 	props := make(map[string]*explorer.Property, len(d.Props))
 	for i := range res.Props {
 		prop := res.Props[i]
-		props[prop.Uid] = prop
+		if prop.Uid != "" {
+			props[prop.Uid] = prop
+		} else if prop.Mrn != "" {
+			if x, err := mrn.NewMRN(prop.Mrn); err == nil {
+				props[x.Basename()] = prop
+			} else {
+				log.Error().Str("propMrn", prop.Mrn).Msg("trying to convert a v7 bundle prop with invalid mrn")
+			}
+		} else {
+			log.Error().Interface("prop", prop).Msg("trying to convert a v7 bundle prop with no uid/mrn")
+		}
 	}
 
 	for i := range d.Queries {
@@ -156,10 +166,8 @@ func updateProps(q *explorer.Mquery, lookup map[string]*explorer.Property) {
 	names := reMqlProperty.FindAllString(q.Mql, -1)
 	for i := range names {
 		name := names[i][6:]
-		if _, ok := lookup[name]; ok {
-			q.Props = append(q.Props, &explorer.Property{
-				Uid: name,
-			})
+		if prop, ok := lookup[name]; ok {
+			q.Props = append(q.Props, prop)
 		}
 	}
 }
@@ -303,8 +311,12 @@ func (d DeprecatedV7_Props) ToV8() []*explorer.Property {
 	res := make([]*explorer.Property, len(d))
 	i := 0
 	for key := range d {
-		res[i] = &explorer.Property{
-			Uid: key,
+		// In v7, propety keys may be UIDs or MRNs. This is only for props in policies
+		// so all we need is the reference (UID or MRN).
+		if strings.HasPrefix(key, "//") {
+			res[i] = &explorer.Property{Mrn: key}
+		} else {
+			res[i] = &explorer.Property{Uid: key}
 		}
 		i++
 	}
@@ -527,9 +539,13 @@ func (d *DeprecatedV7_Policy) ToV8() *Policy {
 		Created:       d.Created,
 		Modified:      d.Modified,
 		Tags:          d.Tags,
-		Props:         DeprecatedV7_Props(d.Props).ToV8(),
-		Filters:       deprecatedV7_AssetFilters(d.AssetFilters).ToV8(),
-		QueryCounts:   d.QueryCounts,
+		// Props: We don't assign these from v7 policies. In v7, their only function
+		// was to make properties available to queries in the policy. We are instead
+		// scanning through the queries of v7 bundles and embedding properties
+		// directly into them. Because of this behavior, properties in policies
+		// don't fulfill any function (in v8 they are used for wiring/overwrites).
+		Filters:     deprecatedV7_AssetFilters(d.AssetFilters).ToV8(),
+		QueryCounts: d.QueryCounts,
 
 		Groups: deprecatedV7_PolicySpecs(d.Specs).ToV8(),
 
