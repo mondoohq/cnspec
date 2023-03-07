@@ -26,9 +26,9 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
-	go.mondoo.com/cnquery v0.0.0-20230303203325-3a928f09397a
+	go.mondoo.com/cnquery v0.0.0-20230306205231-249528dc35d3
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
-	go.opentelemetry.io/otel v1.13.0
+	go.opentelemetry.io/otel v1.14.0
 	golang.org/x/sync v0.1.0
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f
 	google.golang.org/protobuf v1.28.1
@@ -62,6 +62,7 @@ require (
 	github.com/junk1tm/musttag v0.5.0 // indirect
 	github.com/kkHAIKE/contextcheck v1.1.3 // indirect
 	github.com/maratori/testableexamples v1.0.0 // indirect
+	github.com/microsoft/kiota-serialization-form-go v0.9.0 // indirect
 	github.com/nunnatsa/ginkgolinter v0.9.0 // indirect
 	github.com/sethvargo/go-retry v0.2.3 // indirect
 	github.com/t-yuki/gocover-cobertura v0.0.0-20180217150009-aaee18c8195c // indirect
@@ -89,7 +90,7 @@ require (
 	github.com/Antonboom/nilnil v0.1.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.4.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.2.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.1.2 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.2.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azcertificates v0.7.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys v0.9.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azsecrets v0.11.0 // indirect
@@ -202,7 +203,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.23.1 // indirect
 	github.com/charmbracelet/lipgloss v0.6.0 // indirect
 	github.com/chavacava/garif v0.0.0-20230227094218-b8c73b2037b8 // indirect
-	github.com/cjlapao/common-go v0.0.29 // indirect
+	github.com/cjlapao/common-go v0.0.38 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20211118104740-dabe8e521a4f // indirect
 	github.com/cockroachdb/redact v1.1.3 // indirect
 	github.com/containerd/console v1.0.3 // indirect
@@ -353,13 +354,13 @@ require (
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/mbilski/exhaustivestruct v1.2.0 // indirect
 	github.com/mgechev/revive v1.2.5 // indirect
-	github.com/microsoft/kiota-abstractions-go v0.14.0 // indirect
-	github.com/microsoft/kiota-authentication-azure-go v0.5.0 // indirect
-	github.com/microsoft/kiota-http-go v0.9.0 // indirect
-	github.com/microsoft/kiota-serialization-json-go v0.7.2 // indirect
-	github.com/microsoft/kiota-serialization-text-go v0.6.0 // indirect
-	github.com/microsoftgraph/msgraph-sdk-go v0.48.0 // indirect
-	github.com/microsoftgraph/msgraph-sdk-go-core v0.30.1 // indirect
+	github.com/microsoft/kiota-abstractions-go v0.17.2 // indirect
+	github.com/microsoft/kiota-authentication-azure-go v0.6.0 // indirect
+	github.com/microsoft/kiota-http-go v0.16.0 // indirect
+	github.com/microsoft/kiota-serialization-json-go v0.8.2 // indirect
+	github.com/microsoft/kiota-serialization-text-go v0.7.0 // indirect
+	github.com/microsoftgraph/msgraph-sdk-go v0.56.0 // indirect
+	github.com/microsoftgraph/msgraph-sdk-go-core v0.34.0 // indirect
 	github.com/miekg/dns v1.1.50 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
@@ -448,7 +449,7 @@ require (
 	github.com/zclconf/go-cty v1.10.0 // indirect
 	gitlab.com/bosi/decorder v0.2.3 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	go.opentelemetry.io/otel/trace v1.13.0 // indirect
+	go.opentelemetry.io/otel/trace v1.14.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
