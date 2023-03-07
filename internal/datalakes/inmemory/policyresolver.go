@@ -156,12 +156,12 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 		return errors.New("failed to compute asset filters: " + err.Error())
 	}
 
-	policyObj.Filters = &explorer.Filters{
+	policyObj.ComputedFilters = &explorer.Filters{
 		Items: map[string]*explorer.Mquery{},
 	}
 	for i := range filters {
 		filter := filters[i]
-		policyObj.Filters.Items[filter.CodeId] = filter
+		policyObj.ComputedFilters.Items[filter.CodeId] = filter
 	}
 
 	depMrns := policyObj.DependentPolicyMrns()
@@ -171,12 +171,12 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 			return errors.New("failed to get dependent policy '" + mrn + "': " + err.Error())
 		}
 
-		if dep.Filters == nil {
+		if dep.ComputedFilters == nil {
 			continue
 		}
 
-		for k, v := range dep.Filters.Items {
-			policyObj.Filters.Items[k] = v
+		for k, v := range dep.ComputedFilters.Items {
+			policyObj.ComputedFilters.Items[k] = v
 		}
 	}
 

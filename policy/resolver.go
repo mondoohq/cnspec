@@ -275,8 +275,8 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 			Checks:   []*explorer.Mquery{},
 			Queries:  []*explorer.Mquery{},
 		}},
-		Filters:  &explorer.Filters{},
-		OwnerMrn: ownerMrn,
+		ComputedFilters: &explorer.Filters{},
+		OwnerMrn:        ownerMrn,
 	}
 
 	return &policyObj
@@ -571,8 +571,8 @@ func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error 
 	}
 
 	policyFilter := []string{}
-	if p.Filters != nil {
-		for k := range p.Filters.Items {
+	if p.ComputedFilters != nil {
+		for k := range p.ComputedFilters.Items {
 			policyFilter = append(policyFilter, strings.TrimSpace(k))
 		}
 	}
@@ -738,7 +738,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			// make sure this policy supports the selected filters, otherwise we
 			// don't need to include it
 			var found bool
-			for checksum := range policyObj.Filters.Items {
+			for checksum := range policyObj.ComputedFilters.Items {
 				if _, ok := cache.global.assetFilters[checksum]; ok {
 					found = true
 					break

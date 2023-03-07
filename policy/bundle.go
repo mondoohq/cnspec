@@ -297,8 +297,8 @@ func (p *Bundle) RemoveOrphaned() {
 func (p *Bundle) Clean() *Bundle {
 	for i := range p.Policies {
 		policy := p.Policies[i]
-		if policy.Filters == nil {
-			policy.Filters = &explorer.Filters{
+		if policy.ComputedFilters == nil {
+			policy.ComputedFilters = &explorer.Filters{
 				Items: map[string]*explorer.Mquery{},
 			}
 		}
@@ -534,10 +534,10 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 
 		// Filters: prep a data structure in case it doesn't exist yet and add
 		// any filters that child groups may carry with them
-		if policy.Filters == nil || policy.Filters.Items == nil {
-			policy.Filters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
+		if policy.ComputedFilters == nil || policy.ComputedFilters.Items == nil {
+			policy.ComputedFilters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
 		}
-		policy.Filters.Compile(ownerMrn)
+		policy.ComputedFilters.Compile(ownerMrn)
 
 		// Queries
 		for i := range policy.Groups {
@@ -548,7 +548,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			if group.Filters != nil {
 				for j := range group.Filters.Items {
 					filter := group.Filters.Items[j]
-					policy.Filters.Items[filter.CodeId] = filter
+					policy.ComputedFilters.Items[filter.CodeId] = filter
 				}
 			}
 

@@ -153,7 +153,7 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 	var res bytes.Buffer
 	var queryActionsForChildren policyModActions
 
-	log.Trace().Str("mrn", policyObj.Mrn).Msgf("match policy assetfilter: %v, pfilter: %v", resolved.Filters, policyObj.Filters)
+	log.Trace().Str("mrn", policyObj.Mrn).Msgf("match policy assetfilter: %v, pfilter: %v", resolved.Filters, policyObj.ComputedFilters)
 	filters, err := policy.MatchingAssetFilters(policyObj.Mrn, resolved.Filters, policyObj)
 	if err != nil {
 		return r.printer.Error(err.Error), nil
@@ -161,7 +161,7 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 
 	// print policy details
 	// NOTE: asset policies and space policies have no filter set but we want to render them too
-	if len(filters) > 0 || policyObj.Filters == nil || len(policyObj.Filters.Items) == 0 {
+	if len(filters) > 0 || policyObj.ComputedFilters == nil || len(policyObj.ComputedFilters.Items) == 0 {
 		var scoringData []reportRow
 		scoringData, queryActionsForChildren = r.generateScoringResults(policyObj, report, bundle, resolved, parentQueryActions)
 
