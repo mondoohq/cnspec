@@ -110,7 +110,7 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 
 // RefreshLocalAssetFilters looks through the local policy asset filters and rolls them up
 func (p *Policy) RefreshLocalAssetFilters() {
-	p.Filters = &explorer.Filters{
+	p.ComputedFilters = &explorer.Filters{
 		Items: map[string]*explorer.Mquery{},
 	}
 
@@ -123,7 +123,7 @@ func (p *Policy) RefreshLocalAssetFilters() {
 		for i := range group.Filters.Items {
 			filter := group.Filters.Items[i]
 			filter.RefreshAsFilter(p.Mrn)
-			p.Filters.Items[filter.CodeId] = filter
+			p.ComputedFilters.Items[filter.CodeId] = filter
 		}
 	}
 }
@@ -177,9 +177,9 @@ func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string, getP
 			c := childFilters[i]
 			tracker[c.CodeId] = c
 		}
-	} else if child.Filters != nil {
-		for i := range child.Filters.Items {
-			filter := child.Filters.Items[i]
+	} else if child.ComputedFilters != nil {
+		for i := range child.ComputedFilters.Items {
+			filter := child.ComputedFilters.Items[i]
 			tracker[filter.CodeId] = filter
 		}
 	}
@@ -191,13 +191,13 @@ func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string, getP
 // that are supported by the policy. if no matching field is found it will
 // return an empty list
 func MatchingAssetFilters(policyMrn string, assetFilters []*explorer.Mquery, p *Policy) ([]*explorer.Mquery, error) {
-	if p.Filters == nil || len(p.Filters.Items) == 0 {
+	if p.ComputedFilters == nil || len(p.ComputedFilters.Items) == 0 {
 		return nil, nil
 	}
 
 	policyFilters := map[string]struct{}{}
-	for i := range p.Filters.Items {
-		policyFilters[p.Filters.Items[i].CodeId] = struct{}{}
+	for i := range p.ComputedFilters.Items {
+		policyFilters[p.ComputedFilters.Items[i].CodeId] = struct{}{}
 	}
 
 	res := []*explorer.Mquery{}

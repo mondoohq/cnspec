@@ -98,13 +98,13 @@ func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mqu
 		return nil, err
 	}
 
-	if r.Filters == nil || len(r.Filters.Items) == 0 {
+	if r.ComputedFilters == nil || len(r.ComputedFilters.Items) == 0 {
 		return nil, nil
 	}
 
-	res := make([]*explorer.Mquery, len(r.Filters.Items))
+	res := make([]*explorer.Mquery, len(r.ComputedFilters.Items))
 	var i int
-	for _, v := range r.Filters.Items {
+	for _, v := range r.ComputedFilters.Items {
 		res[i] = v
 		i++
 	}
@@ -143,12 +143,12 @@ func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters [
 		// fall through, re-create the policy
 	}
 
-	policyObj.Filters = &explorer.Filters{
+	policyObj.ComputedFilters = &explorer.Filters{
 		Items: make(map[string]*explorer.Mquery, len(filters)),
 	}
 	for i := range filters {
 		filter := filters[i]
-		policyObj.Filters.Items[filter.CodeId] = filter
+		policyObj.ComputedFilters.Items[filter.CodeId] = filter
 		if err = db.SetQuery(ctx, filter.Mrn, filter); err != nil {
 			return wrapPolicy{}, err
 		}

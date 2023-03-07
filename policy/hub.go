@@ -288,7 +288,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 	}
 
 	// we need to re-compute the asset filters
-	mpolicyObj.Filters = &explorer.Filters{
+	mpolicyObj.ComputedFilters = &explorer.Filters{
 		Items: map[string]*explorer.Mquery{},
 	}
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
@@ -304,7 +304,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 		if group.Filters != nil {
 			filters := group.Filters
 			for k, v := range filters.Items {
-				mpolicyObj.Filters.Items[k] = v
+				mpolicyObj.ComputedFilters.Items[k] = v
 			}
 		}
 
@@ -355,8 +355,8 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			if nuPolicy == nil {
 				return nil, errors.New("pulled policy bundle for " + policy.Mrn + " but couldn't find the policy in the bundle")
 			}
-			for k, v := range nuPolicy.Filters.Items {
-				mpolicyObj.Filters.Items[k] = v
+			for k, v := range nuPolicy.ComputedFilters.Items {
+				mpolicyObj.ComputedFilters.Items[k] = v
 			}
 		}
 	}

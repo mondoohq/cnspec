@@ -544,8 +544,8 @@ func (d *DeprecatedV7_Policy) ToV8() *Policy {
 		// scanning through the queries of v7 bundles and embedding properties
 		// directly into them. Because of this behavior, properties in policies
 		// don't fulfill any function (in v8 they are used for wiring/overwrites).
-		Filters:     deprecatedV7_AssetFilters(d.AssetFilters).ToV8(),
-		QueryCounts: d.QueryCounts,
+		ComputedFilters: deprecatedV7_AssetFilters(d.AssetFilters).ToV8(),
+		QueryCounts:     d.QueryCounts,
 
 		Groups: deprecatedV7_PolicySpecs(d.Specs).ToV8(),
 
@@ -745,7 +745,7 @@ func (x *Policy) FillV7() {
 		return
 	}
 
-	x.AssetFilters = ToV7Filters(x.Filters)
+	x.AssetFilters = ToV7Filters(x.ComputedFilters)
 
 	x.Specs = make([]*DeprecatedV7_PolicySpec, len(x.Groups))
 	for i := range x.Groups {
@@ -790,7 +790,7 @@ func (x *Policy) ToV7() *DeprecatedV7_Policy {
 		LocalExecutionChecksum: x.LocalExecutionChecksum,
 		GraphExecutionChecksum: x.GraphExecutionChecksum,
 		Specs:                  specs,
-		AssetFilters:           ToV7Filters(x.Filters),
+		AssetFilters:           ToV7Filters(x.ComputedFilters),
 		OwnerMrn:               x.OwnerMrn,
 		IsPublic:               false,
 		ScoringSystem:          x.ScoringSystem,
