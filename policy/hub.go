@@ -347,8 +347,8 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 				bundleMap.Queries[query.Mrn] = query
 			}
 			for i := range nuBundle.Props {
-				query := nuBundle.Props[i]
-				bundleMap.Props[query.Mrn] = query
+				prop := nuBundle.Props[i]
+				bundleMap.Props[prop.Mrn] = prop
 			}
 
 			nuPolicy := bundleMap.Policies[policy.Mrn]
