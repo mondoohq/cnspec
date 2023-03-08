@@ -613,6 +613,21 @@ func ToV7Mquery(x *explorer.Mquery) *DeprecatedV7_Mquery {
 	}
 }
 
+func ToV7Property(x *explorer.Property) *DeprecatedV7_Mquery {
+	if x == nil {
+		return nil
+	}
+	return &DeprecatedV7_Mquery{
+		Query:    x.Mql,
+		CodeId:   x.CodeId,
+		Checksum: x.Checksum,
+		Mrn:      x.Mrn,
+		Uid:      x.Uid,
+		Type:     x.Type,
+		Title:    x.Title,
+	}
+}
+
 func ToV7MqueryDocs(x *explorer.MqueryDocs) *DeprecatedV7_MqueryDocs {
 	if x == nil {
 		return nil
@@ -827,6 +842,51 @@ func (x *Bundle) FillV7() {
 	for i := range x.Queries {
 		x.DeprecatedV7Queries[i] = ToV7Mquery(x.Queries[i])
 	}
+}
+
+func (x *Bundle) ToV7Bundle() *DeprecatedV7_Bundle {
+	if x == nil {
+		return nil
+	}
+
+	v7bundle := &DeprecatedV7_Bundle{}
+
+	// add backwards-compatibility structs v7 clients as double format which works in v7 and v8
+	properties := map[string]*explorer.Property{}
+	for i := range x.Queries {
+		q := x.Queries[i]
+		for j := range q.Props {
+			prop := q.Props[j]
+
+			m, err := mrn.NewMRN(prop.Mrn)
+			if err == nil {
+				uid, err := m.ResourceID("queries")
+				if err == nil {
+					properties[uid] = prop
+				}
+			}
+		}
+	}
+
+	for k := range properties {
+		v7bundle.Props = append(v7bundle.Props, ToV7Property(properties[k]))
+	}
+
+	v7bundle.Policies = make([]*DeprecatedV7_Policy, len(x.Policies))
+	for i := range x.Policies {
+		p := x.Policies[i].ToV7()
+		for k := range properties {
+			p.Props[k] = ""
+		}
+		v7bundle.Policies[i] = p
+	}
+
+	v7bundle.Queries = make([]*DeprecatedV7_Mquery, len(x.Queries))
+	for i := range x.Queries {
+		v7bundle.Queries[i] = ToV7Mquery(x.Queries[i])
+	}
+
+	return v7bundle
 }
 
 // fixme - this is a hack to deal with the fact that zero valued ScoringSpecs are getting deserialized
