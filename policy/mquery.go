@@ -204,9 +204,12 @@ func ChecksumAssetFilters(queries []*explorer.Mquery) (string, error) {
 }
 
 // RefreshChecksums of all queries
+// Note: This method is used for testing purposes only. If you need it in other
+// places please make sure to implement the query lookup.
 func (m *Mqueries) RefreshChecksums(props map[string]explorer.PropertyRef) error {
+	queries := map[string]*explorer.Mquery{}
 	for i := range m.Items {
-		if _, err := m.Items[i].RefreshChecksumAndType(props); err != nil {
+		if _, err := m.Items[i].RefreshChecksumAndType(queries, props); err != nil {
 			return err
 		}
 	}

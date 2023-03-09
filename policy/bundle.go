@@ -392,48 +392,6 @@ func (p *Bundle) SortContents() {
 	})
 }
 
-func (p *Bundle) compileProp(prop *explorer.Property, ownerMrn string, lookupProp map[string]explorer.PropertyRef, uid2mrn map[string]string, bundles map[string]*llx.CodeBundle) error {
-	var name string
-
-	if prop.Mrn == "" {
-		uid := prop.Uid
-		if err := prop.RefreshMRN(ownerMrn); err != nil {
-			return err
-		}
-		if uid != "" {
-			uid2mrn[uid] = prop.Mrn
-		}
-
-		// TODO: uid's can be namespaced, extract the name
-		name = uid
-	} else {
-		m, err := mrn.NewMRN(prop.Mrn)
-		if err != nil {
-			return errors.Wrap(err, "failed to compile prop, invalid mrn: "+prop.Mrn)
-		}
-
-		name = m.Basename()
-	}
-
-	if base, ok := lookupProp[prop.Mrn]; ok {
-		prop.Merge(base.Property)
-	}
-
-	code, err := prop.RefreshChecksumAndType()
-	if err != nil {
-		return err
-	}
-
-	lookupProp[prop.Mrn] = explorer.PropertyRef{
-		Property: prop,
-		Name:     name,
-	}
-
-	bundles[prop.Mrn] = code
-
-	return nil
-}
-
 // Compile PolicyBundle into a PolicyBundleMap
 // Does 4 things:
 // 1. turns policy bundle into a map for easier access
@@ -453,57 +411,25 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	p.DeprecatedV7Conversions()
 	// ^^
 
-	var err error
-	var warnings []error
+	cache := &bundleCache{
+		ownerMrn:    ownerMrn,
+		bundle:      p,
+		uid2mrn:     map[string]string{},
+		lookupProp:  map[string]explorer.PropertyRef{},
+		lookupQuery: map[string]*explorer.Mquery{},
+		codeBundles: map[string]*llx.CodeBundle{},
+	}
 
-	uid2mrn := map[string]string{}
-	bundles := map[string]*llx.CodeBundle{}
-
-	// Index properties
-	lookupProp := map[string]explorer.PropertyRef{}
-	lookupQuery := map[string]*explorer.Mquery{}
-
+	// TODO: Make this compatible as a store for shared properties across queries.
+	// Also pre-compile as many as possible before returning any errors.
 	for i := range p.Props {
-		if err = p.compileProp(p.Props[i], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+		if err := cache.compileProp(p.Props[i]); err != nil {
 			return nil, err
 		}
 	}
 
-	// Index queries + update MRNs and checksums
-	for i := range p.Queries {
-		query := p.Queries[i]
-		if query == nil {
-			return nil, errors.New("received null query")
-		}
-
-		// remove leading and trailing whitespace of docs, refs and tags
-		query.Sanitize()
-
-		// ensure the correct mrn is set
-		uid := query.Uid
-		if err = query.RefreshMRN(ownerMrn); err != nil {
-			return nil, err
-		}
-		if uid != "" {
-			uid2mrn[uid] = query.Mrn
-		}
-		lookupQuery[query.Mrn] = query
-
-		// ensure MRNs for properties
-		for i := range query.Props {
-			if err = p.compileProp(query.Props[i], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
-				return nil, err
-			}
-		}
-
-		// recalculate the checksums
-		bundle, err := query.RefreshChecksumAndType(lookupProp)
-		if err != nil {
-			log.Error().Err(err).Msg("could not compile the query")
-			warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
-		}
-
-		bundles[query.Mrn] = bundle
+	if err := cache.compileQueries(p.Queries, nil); err != nil {
+		return nil, err
 	}
 
 	// Index policies + update MRNs and checksums, link properties via MRNs
@@ -522,12 +448,12 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 
 		if policyUID != "" {
-			uid2mrn[policyUID] = policy.Mrn
+			cache.uid2mrn[policyUID] = policy.Mrn
 		}
 
 		// Properties
 		for i := range policy.Props {
-			if err = p.compileProp(policy.Props[i], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
+			if err := cache.compileProp(policy.Props[i]); err != nil {
 				return nil, err
 			}
 		}
@@ -539,7 +465,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 		policy.ComputedFilters.Compile(ownerMrn)
 
-		// Queries
+		// ---- GROUPs -------------
 		for i := range policy.Groups {
 			group := policy.Groups[i]
 
@@ -560,78 +486,11 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 				policyRef.RefreshChecksum()
 			}
 
-			for j := range group.Queries {
-				query := group.Queries[j]
-
-				// remove leading and trailing whitespace of docs, refs and tags
-				query.Sanitize()
-
-				// ensure the correct mrn is set
-				if err = query.RefreshMRN(ownerMrn); err != nil {
-					return nil, err
-				}
-
-				for k := range query.Props {
-					if err = p.compileProp(query.Props[k], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
-						return nil, err
-					}
-				}
-
-				existing, ok := lookupQuery[query.Mrn]
-				if ok {
-					query.Merge(existing)
-					query.RefreshChecksumAndType(lookupProp)
-					continue
-				}
-
-				// recalculate the checksums
-				_, err := query.RefreshChecksumAndType(lookupProp)
-				if err != nil {
-					log.Error().Err(err).Msg("could not compile the query")
-					warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
-				}
-
-				lookupQuery[query.Mrn] = query
-
-				// we may have embed-only queries, that we externalize and make available
-				p.Queries = append(p.Queries, query)
+			if err := cache.compileQueries(group.Queries, policy); err != nil {
+				return nil, err
 			}
-
-			for j := range group.Checks {
-				check := group.Checks[j]
-
-				// remove leading and trailing whitespace of docs, refs and tags
-				check.Sanitize()
-
-				// ensure the correct mrn is set
-				if err = check.RefreshMRN(ownerMrn); err != nil {
-					return nil, err
-				}
-
-				for k := range check.Props {
-					if err = p.compileProp(check.Props[k], ownerMrn, lookupProp, uid2mrn, bundles); err != nil {
-						return nil, err
-					}
-				}
-
-				existing, ok := lookupQuery[check.Mrn]
-				if ok {
-					check.Merge(existing)
-					check.RefreshChecksumAndType(lookupProp)
-					continue
-				}
-
-				// recalculate the checksums
-				_, err := check.RefreshChecksumAndType(lookupProp)
-				if err != nil {
-					log.Error().Err(err).Msg("could not compile the query")
-					warnings = append(warnings, errors.Wrap(err, "failed to validate query '"+check.Mrn+"'"))
-				}
-
-				lookupQuery[check.Mrn] = check
-
-				// we may have embed-only queries, that we externalize and make available
-				p.Queries = append(p.Queries, check)
+			if err := cache.compileQueries(group.Checks, policy); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -639,7 +498,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	// cannot be done before all policies and queries have their MRNs set
 	bundleMap := p.ToMap()
 	bundleMap.Library = library
-	bundleMap.Code = bundles
+	bundleMap.Code = cache.codeBundles
 
 	// Validate integrity of references + translate UIDs to MRNs
 	for i := range p.Policies {
@@ -648,7 +507,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			return nil, errors.New("received null policy")
 		}
 
-		err := translateGroupUIDs(ownerMrn, policy, uid2mrn)
+		err := translateGroupUIDs(ownerMrn, policy, cache.uid2mrn)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
@@ -659,16 +518,171 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 	}
 
-	if len(warnings) != 0 {
-		var msg strings.Builder
-		for i := range warnings {
-			msg.WriteString(warnings[i].Error())
-			msg.WriteString("\n")
-		}
-		return bundleMap, errors.New(msg.String())
+	return bundleMap, cache.error()
+}
+
+type bundleCache struct {
+	ownerMrn    string
+	lookupQuery map[string]*explorer.Mquery
+	lookupProp  map[string]explorer.PropertyRef
+	uid2mrn     map[string]string
+	codeBundles map[string]*llx.CodeBundle
+	bundle      *Bundle
+	errors      []error
+}
+
+func (c *bundleCache) hasErrors() bool {
+	return len(c.errors) != 0
+}
+
+func (c *bundleCache) error() error {
+	if len(c.errors) == 0 {
+		return nil
 	}
 
-	return bundleMap, nil
+	var msg strings.Builder
+	for i := range c.errors {
+		msg.WriteString(c.errors[i].Error())
+		msg.WriteString("\n")
+	}
+	return errors.New(msg.String())
+}
+
+func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy) error {
+	for i := range queries {
+		c.precompileQuery(queries[i], policy)
+	}
+
+	// After the first pass we may have errors. We try to collect as many errors
+	// as we can before returning, so more problems can be fixed at once.
+	// We have to return at this point, because these errors will prevent us from
+	// compiling the queries.
+	if c.hasErrors() {
+		return c.error()
+	}
+
+	for i := range queries {
+		c.compileQuery(queries[i])
+	}
+
+	// The second pass on errors is done after we have compiled as much as possible.
+	// Since shared queries may be used in other places, any errors here will prevent
+	// us from compiling further.
+	return c.error()
+}
+
+// precompileQuery indexes the query, turns UIDs into MRNs, compiles properties
+// and filters, and pre-processes variants. Also makes sure the query isn't nil.
+func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) {
+	if query == nil {
+		c.errors = append(c.errors, errors.New("query or check is null"))
+		return
+	}
+
+	// remove leading and trailing whitespace of docs, refs and tags
+	query.Sanitize()
+
+	// ensure the correct mrn is set
+	uid := query.Uid
+	if err := query.RefreshMRN(c.ownerMrn); err != nil {
+		c.errors = append(c.errors, errors.New("failed to refresh MRN for "+query.Uid))
+		return
+	}
+	if uid != "" {
+		c.uid2mrn[uid] = query.Mrn
+	}
+
+	// the policy is only nil if we are dealing with shared queries
+	if policy == nil {
+		c.lookupQuery[query.Mrn] = query
+	} else if existing, ok := c.lookupQuery[query.Mrn]; ok {
+		query.AddBase(existing)
+	} else {
+		// Any other query that is in a pack, that does not exist globally,
+		// we share out to be available in the bundle.
+		c.bundle.Queries = append(c.bundle.Queries, query)
+		c.lookupQuery[query.Mrn] = query
+	}
+
+	// ensure MRNs for properties
+	for i := range query.Props {
+		if err := c.compileProp(query.Props[i]); err != nil {
+			c.errors = append(c.errors, errors.New("failed to compile properties for "+query.Mrn))
+			return
+		}
+	}
+
+	// filters have no dependencies, so we can compile them early
+	if err := query.Filters.Compile(c.ownerMrn); err != nil {
+		c.errors = append(c.errors, errors.New("failed to compile filters for query "+query.Mrn))
+		return
+	}
+
+	// filters will need to be aggregated into the pack's filters
+	if policy != nil {
+		if err := policy.ComputedFilters.RegisterQuery(query, c.lookupQuery); err != nil {
+			c.errors = append(c.errors, errors.New("failed to register filters for query "+query.Mrn))
+			return
+		}
+	}
+
+	// ensure MRNs for variants
+	for i := range query.Variants {
+		variant := query.Variants[i]
+		uid := variant.Uid
+		if err := variant.RefreshMRN(c.ownerMrn); err != nil {
+			c.errors = append(c.errors, errors.New("failed to refresh MRN for variant in query "+query.Uid))
+			return
+		}
+		if uid != "" {
+			c.uid2mrn[uid] = variant.Mrn
+		}
+	}
+}
+
+// Note: you only want to run this, after you are sure that all connected
+// dependencies have been processed. Properties must be compiled. Connected
+// queries may not be ready yet, but we have to have precompiled them.
+func (c *bundleCache) compileQuery(query *explorer.Mquery) {
+	_, err := query.RefreshChecksumAndType(c.lookupQuery, c.lookupProp)
+	if err != nil {
+		c.errors = append(c.errors, errors.Wrap(err, "failed to compile "+query.Mrn))
+	}
+}
+
+func (c *bundleCache) compileProp(prop *explorer.Property) error {
+	var name string
+
+	if prop.Mrn == "" {
+		uid := prop.Uid
+		if err := prop.RefreshMRN(c.ownerMrn); err != nil {
+			return err
+		}
+		if uid != "" {
+			c.uid2mrn[uid] = prop.Mrn
+		}
+
+		// TODO: uid's can be namespaced, extract the name
+		name = uid
+	} else {
+		m, err := mrn.NewMRN(prop.Mrn)
+		if err != nil {
+			return errors.Wrap(err, "failed to compile prop, invalid mrn: "+prop.Mrn)
+		}
+
+		name = m.Basename()
+	}
+
+	if _, err := prop.RefreshChecksumAndType(); err != nil {
+		return err
+	}
+
+	c.lookupProp[prop.Mrn] = explorer.PropertyRef{
+		Property: prop,
+		Name:     name,
+	}
+
+	return nil
 }
 
 // for a given policy, translate all local UIDs into global IDs/MRNs

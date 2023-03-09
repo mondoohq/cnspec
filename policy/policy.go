@@ -415,7 +415,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			if base, ok := bundle.Queries[check.Mrn]; ok {
 				check = check.Merge(base)
-				if err := check.RefreshChecksum(); err != nil {
+				if err := check.RefreshChecksum(ctx, getQuery); err != nil {
 					return err
 				}
 			} else if check.Checksum == "" {
@@ -429,9 +429,6 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			if check.Checksum == "" {
 				return errors.New("failed to get checksum for check " + check.Mrn)
-			}
-			if check.CodeId == "" {
-				return errors.New("failed to get code ID for check " + check.Mrn)
 			}
 
 			contentChecksum = contentChecksum.Add(check.Checksum)
@@ -450,7 +447,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			if base, ok := bundle.Queries[query.Mrn]; ok {
 				query = query.Merge(base)
-				if err := query.RefreshChecksum(); err != nil {
+				if err := query.RefreshChecksum(ctx, getQuery); err != nil {
 					return err
 				}
 			} else if query.Checksum == "" {
@@ -464,9 +461,6 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			if query.Checksum == "" {
 				return errors.New("failed to get checksum for query " + query.Mrn)
-			}
-			if query.CodeId == "" {
-				return errors.New("failed to get code ID for query " + query.Mrn)
 			}
 
 			contentChecksum = contentChecksum.Add(query.Checksum)
