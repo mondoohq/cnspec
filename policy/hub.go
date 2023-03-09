@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/ranger-rpc"
@@ -355,6 +356,12 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			if nuPolicy == nil {
 				return nil, errors.New("pulled policy bundle for " + policy.Mrn + " but couldn't find the policy in the bundle")
 			}
+
+			if nuPolicy.ComputedFilters == nil {
+				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters")
+				nuPolicy.RefreshLocalAssetFilters()
+			}
+
 			for k, v := range nuPolicy.ComputedFilters.Items {
 				mpolicyObj.ComputedFilters.Items[k] = v
 			}
