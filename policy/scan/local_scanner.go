@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -227,6 +228,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	progressBarElements := map[string]string{}
 	orderedKeys := []string{}
 	for i := range assetList {
+		// this shouldn't happen, but might
+		// it normally indicates a bug in the provider
+		if presentAsset, present := progressBarElements[assetList[i].PlatformIds[0]]; present {
+			return nil, false, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, assetList[i].Name, assetList[i].PlatformIds[0])
+		}
 		progressBarElements[assetList[i].PlatformIds[0]] = assetList[i].Name
 		orderedKeys = append(orderedKeys, assetList[i].PlatformIds[0])
 	}
