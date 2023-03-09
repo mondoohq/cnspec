@@ -26,7 +26,7 @@ func TestParser(t *testing.T) {
 }
 
 func TestParser_DeprecatedV7(t *testing.T) {
-	raw, err := os.ReadFile("../../examples/example.deprecated_v7.mql.yaml")
+	raw, err := os.ReadFile("../../policy/deprecated_v7.mql.yaml")
 	require.NoError(t, err)
 	require.NotEmpty(t, raw)
 

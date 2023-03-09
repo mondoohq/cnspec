@@ -70,7 +70,7 @@ func TestPolicyGroupCategory(t *testing.T) {
 func TestPolicyChecksums(t *testing.T) {
 	files := []string{
 		"../examples/example.mql.yaml",
-		"../examples/example.deprecated_v7.mql.yaml",
+		"./deprecated_v7.mql.yaml",
 	}
 
 	for _, file := range files {
