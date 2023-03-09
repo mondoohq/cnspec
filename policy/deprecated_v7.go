@@ -745,20 +745,17 @@ func (x *PolicyGroup) ToV7(policyMrn string) *DeprecatedV7_PolicySpec {
 	}
 	for i := range x.Checks {
 		check := x.Checks[i]
-		if check.Mrn != "" {
-			res.ScoringQueries[check.Mrn] = ToV7ScoringSpec(check.Action, check.Impact)
-		} else if check.Uid != "" {
-			res.ScoringQueries[check.Uid] = ToV7ScoringSpec(check.Action, check.Impact)
+		if check.Mrn == "" {
+			continue
 		}
+		res.ScoringQueries[check.Mrn] = ToV7ScoringSpec(check.Action, check.Impact)
 	}
 	for i := range x.Queries {
 		query := x.Queries[i]
-		if query.Mrn != "" {
-			res.DataQueries[query.Mrn] = QueryAction(query.Action)
-		} else if query.Uid != "" {
-			res.DataQueries[query.Uid] = QueryAction(query.Action)
+		if query.Mrn == "" {
+			continue
 		}
-
+		res.DataQueries[query.Mrn] = QueryAction(query.Action)
 	}
 
 	res.AssetFilter = ToV7SpecFilter(x.Filters, policyMrn)
@@ -836,52 +833,14 @@ func (x *Bundle) FillV7() {
 		return
 	}
 
-	queries := map[string]*explorer.Mquery{}
+	x.DeprecatedV7Policies = make([]*DeprecatedV7_Policy, len(x.Policies))
+	for i := range x.Policies {
+		x.DeprecatedV7Policies[i] = x.Policies[i].ToV7()
+	}
 
 	x.DeprecatedV7Queries = make([]*DeprecatedV7_Mquery, len(x.Queries))
 	for i := range x.Queries {
-		query := x.Queries[i]
-		if query.Mrn != "" {
-			queries[query.Mrn] = query
-		}
-		if query.Uid != "" {
-			queries[query.Uid] = query
-		}
-		x.DeprecatedV7Queries[i] = ToV7Mquery(query)
-	}
-
-	x.DeprecatedV7Policies = make([]*DeprecatedV7_Policy, len(x.Policies))
-	for i := range x.Policies {
-		policy := x.Policies[i].ToV7()
-		x.DeprecatedV7Policies[i] = policy
-
-		// v7 had properties attached to their policies. This is not necessary
-		// in v8, but we do need to convert back.
-		for j := range policy.Specs {
-			spec := policy.Specs[j]
-
-			for id := range spec.ScoringQueries {
-				if query, ok := queries[id]; ok {
-					for p := range query.Props {
-						prop := query.Props[p]
-						policy.Props[prop.Uid] = ""
-					}
-				}
-			}
-
-			for id := range spec.DataQueries {
-				if query, ok := queries[id]; ok {
-					for p := range query.Props {
-						prop := query.Props[p]
-						if prop.Uid != "" {
-							policy.Props[prop.Uid] = ""
-						} else if prop.Mrn != "" {
-							policy.Props[prop.Mrn] = ""
-						}
-					}
-				}
-			}
-		}
+		x.DeprecatedV7Queries[i] = ToV7Mquery(x.Queries[i])
 	}
 }
 
