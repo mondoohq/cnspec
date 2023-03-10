@@ -8,10 +8,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/policy"
 	"gopkg.in/yaml.v3"
+	k8s_yaml "sigs.k8s.io/yaml"
 )
 
 // Formats the given bundle to a yaml string
-func Format(bundle *PolicyBundle) ([]byte, error) {
+func Format[T any](bundle *T) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -45,6 +46,44 @@ func FormatRecursive(mqlBundlePath string) error {
 	return nil
 }
 
+// ParseYaml loads a yaml file and parse it into the go struct
+func ParseYaml(data []byte) (*Bundle, error) {
+	baseline := Bundle{}
+
+	err := yaml.Unmarshal([]byte(data), &baseline)
+	return &baseline, err
+}
+
+func DeprecatedV7_ToV8(data []byte) ([]byte, error) {
+	// In the case of deprecated V7, we are only going to focus on the
+	// conversion, throwing away everything else, including comments.
+	// The focus is to get it to v8, none of the other formatting matters in this
+	// step.
+	v7baseline := policy.DeprecatedV7_Bundle{}
+	if err := k8s_yaml.Unmarshal([]byte(data), &v7baseline); err != nil {
+		return nil, err
+	}
+
+	v8 := v7baseline.ToV8()
+
+	// this step will unfortunately not produce well-formatted YAML at all
+	// because the proto structures don't have the yaml tags (only the
+	// yac-it structures do) ...
+	interim, err := Format(v8)
+	if err != nil {
+		return nil, err
+	}
+
+	// ... so we have to ping pong convert it a bit ...
+	v8yaci, err := ParseYaml(interim)
+	if err != nil {
+		return nil, err
+	}
+
+	// ... until we have it where we want it
+	return Format(v8yaci)
+}
+
 // Format formats the .mql.yaml bundle
 func FormatFile(filename string) error {
 	log.Info().Str("file", filename).Msg("format file")
@@ -55,10 +94,10 @@ func FormatFile(filename string) error {
 
 	b, err := ParseYaml(data)
 	if err != nil {
-		return err
+		data, err = DeprecatedV7_ToV8(data)
+	} else {
+		data, err = Format(b)
 	}
-
-	data, err = Format(b)
 	if err != nil {
 		return err
 	}
