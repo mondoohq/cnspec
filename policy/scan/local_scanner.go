@@ -601,7 +601,11 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return ar, err
 	}
 	s.ProgressReporter.Score(report.Score.Rating().Letter())
-	s.ProgressReporter.Completed()
+	if report.Score.Rating().Letter() == "U" {
+		s.ProgressReporter.NotApplicable()
+	} else {
+		s.ProgressReporter.Completed()
+	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
