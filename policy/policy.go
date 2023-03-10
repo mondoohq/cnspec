@@ -14,6 +14,7 @@ import (
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/types"
 	"google.golang.org/protobuf/proto"
+	"gopkg.in/yaml.v3"
 )
 
 //go:generate protoc --proto_path=../:../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
@@ -39,6 +40,11 @@ func (sv *DeprecatedV7_SeverityValue) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+func (sv *DeprecatedV7_SeverityValue) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	return node.Decode(&sv.Value)
 }
 
 // ^^
@@ -630,6 +636,30 @@ func (s *ScoringSystem) UnmarshalJSON(data []byte) error {
 			*s = ScoringSystem_AVERAGE
 		default:
 			return errors.New("unknown scoring system: " + string(data))
+		}
+	}
+	return nil
+}
+
+func (s *ScoringSystem) UnmarshalYAML(node *yaml.Node) error {
+	// check if we have a number
+	var code int32
+	err := node.Decode(&code)
+	if err == nil {
+		*s = ScoringSystem(code)
+	} else {
+		var name string
+		_ = node.Decode(&name)
+
+		switch name {
+		case "highest impact":
+			*s = ScoringSystem_WORST
+		case "weighted":
+			*s = ScoringSystem_WEIGHTED
+		case "average", "":
+			*s = ScoringSystem_AVERAGE
+		default:
+			return errors.New("unknown scoring system: " + string(name))
 		}
 	}
 	return nil
