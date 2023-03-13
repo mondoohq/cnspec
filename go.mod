@@ -15,7 +15,7 @@ require (
 	github.com/mattn/go-isatty v0.0.17
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/muesli/reflow v0.3.0
-	github.com/muesli/termenv v0.14.0
+	github.com/muesli/termenv v0.15.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/owenrumney/go-sarif/v2 v2.1.2
 	github.com/pkg/errors v0.9.1
@@ -55,6 +55,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.24.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.22.0 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20221221165957-55f4180e6214 // indirect
+	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/cloudflare/circl v1.1.0 // indirect
@@ -186,7 +187,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.14.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.18.0 // indirect
 	github.com/aws/smithy-go v1.13.5 // indirect
-	github.com/aymanbagabas/go-osc52 v1.2.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bkielbasa/cyclop v1.2.0 // indirect
 	github.com/blizzy78/varnamelen v0.8.0 // indirect
