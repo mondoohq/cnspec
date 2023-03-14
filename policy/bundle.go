@@ -420,16 +420,21 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		codeBundles: map[string]*llx.CodeBundle{},
 	}
 
+	// cannot be done before all policies and queries have their MRNs set
+	bundleMap := p.ToMap()
+	bundleMap.Library = library
+	bundleMap.Code = cache.codeBundles
+
 	// TODO: Make this compatible as a store for shared properties across queries.
 	// Also pre-compile as many as possible before returning any errors.
 	for i := range p.Props {
 		if err := cache.compileProp(p.Props[i]); err != nil {
-			return nil, err
+			return bundleMap, err
 		}
 	}
 
 	if err := cache.compileQueries(p.Queries, nil); err != nil {
-		return nil, err
+		return bundleMap, err
 	}
 
 	// Index policies + update MRNs and checksums, link properties via MRNs
@@ -444,7 +449,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 
 		err := policy.RefreshMRN(ownerMrn)
 		if err != nil {
-			return nil, errors.New("failed to refresh policy " + policy.Mrn + ": " + err.Error())
+			return bundleMap, errors.New("failed to refresh policy " + policy.Mrn + ": " + err.Error())
 		}
 
 		if policyUID != "" {
@@ -454,7 +459,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		// Properties
 		for i := range policy.Props {
 			if err := cache.compileProp(policy.Props[i]); err != nil {
-				return nil, err
+				return bundleMap, err
 			}
 		}
 
@@ -481,40 +486,35 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			for j := range group.Policies {
 				policyRef := group.Policies[j]
 				if err = policyRef.RefreshMRN(ownerMrn); err != nil {
-					return nil, err
+					return bundleMap, err
 				}
 				policyRef.RefreshChecksum()
 			}
 
 			if err := cache.compileQueries(group.Queries, policy); err != nil {
-				return nil, err
+				return bundleMap, err
 			}
 			if err := cache.compileQueries(group.Checks, policy); err != nil {
-				return nil, err
+				return bundleMap, err
 			}
 		}
 	}
-
-	// cannot be done before all policies and queries have their MRNs set
-	bundleMap := p.ToMap()
-	bundleMap.Library = library
-	bundleMap.Code = cache.codeBundles
 
 	// Validate integrity of references + translate UIDs to MRNs
 	for i := range p.Policies {
 		policy := p.Policies[i]
 		if policy == nil {
-			return nil, errors.New("received null policy")
+			return bundleMap, errors.New("received null policy")
 		}
 
 		err := translateGroupUIDs(ownerMrn, policy, cache.uid2mrn)
 		if err != nil {
-			return nil, errors.New("failed to validate policy: " + err.Error())
+			return bundleMap, errors.New("failed to validate policy: " + err.Error())
 		}
 
 		err = bundleMap.ValidatePolicy(ctx, policy)
 		if err != nil {
-			return nil, errors.New("failed to validate policy: " + err.Error())
+			return bundleMap, errors.New("failed to validate policy: " + err.Error())
 		}
 	}
 
