@@ -549,8 +549,9 @@ func (c *bundleCache) error() error {
 }
 
 func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy) error {
+	mergedQueries := make([]*explorer.Mquery, len(queries))
 	for i := range queries {
-		c.precompileQuery(queries[i], policy)
+		mergedQueries[i] = c.precompileQuery(queries[i], policy)
 	}
 
 	// After the first pass we may have errors. We try to collect as many errors
@@ -561,8 +562,17 @@ func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy)
 		return c.error()
 	}
 
-	for i := range queries {
-		c.compileQuery(queries[i])
+	for i := range mergedQueries {
+		query := mergedQueries[i]
+		if query != nil {
+			c.compileQuery(query)
+
+			if query != queries[i] {
+				queries[i].Checksum = query.Checksum
+				queries[i].CodeId = query.CodeId
+				queries[i].Type = query.Type
+			}
+		}
 	}
 
 	// The second pass on errors is done after we have compiled as much as possible.
@@ -573,10 +583,10 @@ func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy)
 
 // precompileQuery indexes the query, turns UIDs into MRNs, compiles properties
 // and filters, and pre-processes variants. Also makes sure the query isn't nil.
-func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) {
+func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *explorer.Mquery {
 	if query == nil {
 		c.errors = append(c.errors, errors.New("query or check is null"))
-		return
+		return nil
 	}
 
 	// remove leading and trailing whitespace of docs, refs and tags
@@ -586,7 +596,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) {
 	uid := query.Uid
 	if err := query.RefreshMRN(c.ownerMrn); err != nil {
 		c.errors = append(c.errors, errors.New("failed to refresh MRN for "+query.Uid))
-		return
+		return nil
 	}
 	if uid != "" {
 		c.uid2mrn[uid] = query.Mrn
@@ -596,7 +606,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) {
 	if policy == nil {
 		c.lookupQuery[query.Mrn] = query
 	} else if existing, ok := c.lookupQuery[query.Mrn]; ok {
-		query.AddBase(existing)
+		query = query.Merge(existing)
 	} else {
 		// Any other query that is in a pack, that does not exist globally,
 		// we share out to be available in the bundle.
@@ -608,21 +618,21 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) {
 	for i := range query.Props {
 		if err := c.compileProp(query.Props[i]); err != nil {
 			c.errors = append(c.errors, errors.New("failed to compile properties for "+query.Mrn))
-			return
+			return nil
 		}
 	}
 
 	// filters have no dependencies, so we can compile them early
 	if err := query.Filters.Compile(c.ownerMrn); err != nil {
 		c.errors = append(c.errors, errors.New("failed to compile filters for query "+query.Mrn))
-		return
+		return nil
 	}
 
 	// filters will need to be aggregated into the pack's filters
 	if policy != nil {
 		if err := policy.ComputedFilters.RegisterQuery(query, c.lookupQuery); err != nil {
 			c.errors = append(c.errors, errors.New("failed to register filters for query "+query.Mrn))
-			return
+			return nil
 		}
 	}
 
@@ -632,12 +642,14 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) {
 		uid := variant.Uid
 		if err := variant.RefreshMRN(c.ownerMrn); err != nil {
 			c.errors = append(c.errors, errors.New("failed to refresh MRN for variant in query "+query.Uid))
-			return
+			return nil
 		}
 		if uid != "" {
 			c.uid2mrn[uid] = variant.Mrn
 		}
 	}
+
+	return query
 }
 
 // Note: you only want to run this, after you are sure that all connected
