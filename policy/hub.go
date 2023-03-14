@@ -321,6 +321,12 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 				query = base
 			}
 			bundleMap.Queries[query.Mrn] = query
+
+			for j := range query.Variants {
+				if v, _ := s.DataLake.GetQuery(ctx, query.Variants[j].Mrn); v != nil {
+					bundleMap.Queries[v.Mrn] = v
+				}
+			}
 		}
 
 		for i := range group.Checks {
@@ -329,6 +335,12 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 				check = base
 			}
 			bundleMap.Queries[check.Mrn] = check
+
+			for j := range check.Variants {
+				if v, _ := s.DataLake.GetQuery(ctx, check.Variants[j].Mrn); v != nil {
+					bundleMap.Queries[v.Mrn] = v
+				}
+			}
 		}
 
 		for i := range group.Policies {

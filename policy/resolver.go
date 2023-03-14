@@ -833,7 +833,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 
 		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
 			check = check.Merge(base)
-			if err := check.RefreshChecksum(); err != nil {
+			if err := check.RefreshChecksum(ctx, explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery); err != nil {
 				return err
 			}
 		}
@@ -874,7 +874,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 
 		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
 			query = query.Merge(base)
-			if err := query.RefreshChecksum(); err != nil {
+			if err := query.RefreshChecksum(ctx, explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery); err != nil {
 				return err
 			}
 		}
@@ -896,6 +896,11 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 }
 
 func (cache *policyResolverCache) addCheckJob(check *explorer.Mquery, impact *explorer.Impact, ownerJob *ReportingJob) {
+	if len(check.Variants) != 0 {
+		log.Warn().Msg("check variants cannot be added")
+		return
+	}
+
 	uuid := cache.global.relativeChecksum(check.Checksum)
 	queryJob := cache.global.reportingJobsByUUID[uuid]
 
@@ -928,6 +933,11 @@ func (cache *policyResolverCache) addCheckJob(check *explorer.Mquery, impact *ex
 }
 
 func (cache *policyResolverCache) addDataQueryJob(query *explorer.Mquery, ownerJob *ReportingJob) {
+	if len(query.Variants) != 0 {
+		log.Warn().Msg("query variants cannot be added")
+		return
+	}
+
 	uuid := cache.global.relativeChecksum(query.Checksum)
 	queryJob := cache.global.reportingJobsByUUID[uuid]
 
