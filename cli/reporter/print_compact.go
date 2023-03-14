@@ -19,6 +19,9 @@ import (
 	"go.mondoo.com/cnquery/upstream/mvd"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 type assetMrnName struct {
@@ -242,6 +245,23 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*p
 			} else {
 				assetScoreRating = policy.ScoreRating_error
 				assetScore = "X"
+				if r.data.Errors[assetsByPlatform[platform][i].Mrn] != nil {
+					es := r.data.Errors[assetsByPlatform[platform][i].Mrn]
+					ei := errdetails.ErrorInfo{}
+					pberr := anypb.UnmarshalTo(es.Details[0], &ei, proto.UnmarshalOptions{})
+					if pberr != nil {
+						log.Error().Err(pberr).Msg("failed to unmarshal error info")
+					} else {
+						if _, ok := ei.Metadata["errorCode"]; ok {
+							statusCode := ei.Metadata["errorCode"]
+							esc := explorer.NewErrorStatusCodeFromString(statusCode)
+							if esc.Category() == explorer.ErrorCategoryWarning || esc.Category() == explorer.ErrorCategoryInformational {
+								assetScoreRating = policy.ScoreRating_unrated
+								assetScore = "U"
+							}
+						}
+					}
+				}
 			}
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
 			output := fmt.Sprintf("    %s %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
@@ -315,9 +335,16 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 
 		r.out.Write([]byte(r.Printer.H2("Asset: " + target)))
 
-		errorMsg, ok := r.data.Errors[assetMrn]
+		errStatus, ok := r.data.Errors[assetMrn]
 		if ok {
-			r.out.Write([]byte(r.Printer.Error(errorMsg)))
+			switch errStatus.ErrorCode().Category() {
+			case explorer.ErrorCategoryInformational:
+				r.out.Write([]byte(errStatus.Message))
+			case explorer.ErrorCategoryWarning:
+				r.out.Write([]byte(r.Printer.Warn(errStatus.Message)))
+			case explorer.ErrorCategoryError:
+				r.out.Write([]byte(r.Printer.Error(errStatus.Message)))
+			}
 			r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
 			continue
 		}

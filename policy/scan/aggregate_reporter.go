@@ -3,6 +3,7 @@ package scan
 import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -69,9 +70,9 @@ func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
 }
 
 func (r *AggregateReporter) Reports() *ScanResult {
-	errors := make(map[string]string, len(r.assetErrors))
+	errors := make(map[string]*explorer.ErrorStatus, len(r.assetErrors))
 	for k, v := range r.assetErrors {
-		errors[k] = v.Error()
+		errors[k] = explorer.NewErrorStatus(v)
 	}
 
 	return &ScanResult{

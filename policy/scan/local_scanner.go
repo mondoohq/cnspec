@@ -37,6 +37,9 @@ import (
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 type LocalScanner struct {
@@ -376,12 +379,37 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			if err != nil {
 				log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 				job.Reporter.AddScanError(job.Asset, err)
-				job.ProgressReporter.Score("X")
-				job.ProgressReporter.Errored()
-				return
+				es := explorer.NewErrorStatus(err)
+				ei := errdetails.ErrorInfo{}
+				pberr := anypb.UnmarshalTo(es.Details[0], &ei, proto.UnmarshalOptions{})
+				if pberr != nil {
+					log.Error().Err(pberr).Msg("failed to unmarshal error info")
+				}
+				if _, ok := ei.Metadata["errorCode"]; ok {
+					statusCode := ei.Metadata["errorCode"]
+					esc := explorer.NewErrorStatusCodeFromString(statusCode)
+					switch esc.Category() {
+					case explorer.ErrorCategoryError:
+						job.ProgressReporter.Score("X")
+						job.ProgressReporter.Errored()
+					case explorer.ErrorCategoryWarning:
+						fallthrough
+					case explorer.ErrorCategoryInformational:
+						job.ProgressReporter.Score("U")
+						job.ProgressReporter.NotApplicable()
+					default:
+						job.ProgressReporter.Score("X")
+						job.ProgressReporter.Errored()
+					}
+				} else {
+					job.ProgressReporter.Score("X")
+					job.ProgressReporter.Errored()
+				}
+			} else {
+				job.ProgressReporter.Score(results.Report.Score.Rating().Letter())
+				job.ProgressReporter.Completed()
+				job.Reporter.AddReport(job.Asset, results)
 			}
-
-			job.Reporter.AddReport(job.Asset, results)
 		}(connections[c])
 	}
 
@@ -599,12 +627,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	report, err := s.getReport()
 	if err != nil {
 		return ar, err
-	}
-	s.ProgressReporter.Score(report.Score.Rating().Letter())
-	if report.Score.Rating().Letter() == "U" {
-		s.ProgressReporter.NotApplicable()
-	} else {
-		s.ProgressReporter.Completed()
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")

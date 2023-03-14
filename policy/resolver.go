@@ -525,6 +525,10 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		Str("policy", policyMrn).
 		Msg("resolver> phase 4: aggregate queries and jobs [ok]")
 
+	if len(executionJob.Queries) == 0 {
+		return nil, NewPolicyNoQueriesError(executionJob, policyObj)
+	}
+
 	// phase 5: refresh all checksums
 	s.refreshChecksums(executionJob, collectorJob)
 
@@ -560,7 +564,8 @@ func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error 
 			Domain: POLICY_SERVICE_NAME,
 			Reason: "no-matching-policy", // TODO: make those error codes global for policy service
 			Metadata: map[string]string{
-				"policy": p.Mrn,
+				"policy":    p.Mrn,
+				"errorCode": explorer.NotApplicable.String(),
 			},
 		})
 		if err != nil {
@@ -584,6 +589,29 @@ func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error 
 
 	msg := "asset does not support any policy\nfilter supported by policies:\n" + strings.Join(policyFilter, ",\n") + "\n\nasset supports the following filters:\n" + strings.Join(filters, ",\n")
 	return status.Error(codes.InvalidArgument, msg)
+}
+
+func NewPolicyNoQueriesError(executionJob *ExecutionJob, p *Policy) error {
+	if len(executionJob.Queries) == 0 {
+		// send a proto error with details, so that the agent can render it properly
+		msg := "resolved policy does not contain any queries"
+		st := status.New(codes.NotFound, msg)
+
+		std, err := st.WithDetails(&errdetails.ErrorInfo{
+			Domain: POLICY_SERVICE_NAME,
+			Reason: "no-queries-found", // TODO: make those error codes global for policy service
+			Metadata: map[string]string{
+				"policy":    p.Mrn,
+				"errorCode": explorer.NoQueries.String(),
+			},
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("could not send status with additional information")
+			return st.Err()
+		}
+		return std.Err()
+	}
+	return nil
 }
 
 func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
