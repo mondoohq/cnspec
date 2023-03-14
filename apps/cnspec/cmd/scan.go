@@ -14,6 +14,7 @@ import (
 	"go.mondoo.com/cnquery"
 	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
+	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder/common"
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
@@ -21,7 +22,7 @@ import (
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor/asset"
-	"go.mondoo.com/cnquery/motor/discovery/common"
+	discovery_common "go.mondoo.com/cnquery/motor/discovery/common"
 	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
 	"go.mondoo.com/cnquery/motor/providers"
 	"go.mondoo.com/cnquery/resources"
@@ -93,8 +94,8 @@ This scan uses an existing Ansible inventory:
 
 To learn more, read https://mondoo.com/docs/.
 	`,
-	Docs: builder.CommandsDocs{
-		Entries: map[string]builder.CommandDocsEntry{
+	Docs: common.CommandsDocs{
+		Entries: map[string]common.CommandDocsEntry{
 			"local": {
 				Short: "Scan your local system.",
 			},
@@ -292,7 +293,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
 		cmd.Flags().String("path", "", "Path to a local file or directory for the connection to use.")
 		cmd.Flags().StringToString("option", nil, "Additional connection options. You can pass multiple options using `--option key=value`.")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported: 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().String("discover", discovery_common.DiscoveryAuto, "Enable the discovery of nested assets. Supported: 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
 		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery.")
 		cmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
 

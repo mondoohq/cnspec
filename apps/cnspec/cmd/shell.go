@@ -7,7 +7,8 @@ import (
 	"go.mondoo.com/cnquery"
 	cnquery_app "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
-	"go.mondoo.com/cnquery/motor/discovery/common"
+	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder/common"
+	discovery_common "go.mondoo.com/cnquery/motor/discovery/common"
 	"go.mondoo.com/cnquery/motor/providers"
 	"go.mondoo.com/cnspec"
 )
@@ -36,7 +37,7 @@ var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 
 		cmd.Flags().String("path", "", "Path to a local file or directory for the connection to use.")
 		cmd.Flags().StringToString("option", nil, "Additional connection options. You can pass multiple options using `--option key=value`.")
-		cmd.Flags().String("discover", common.DiscoveryAuto, "Enable the discovery of nested assets. Supported: 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
+		cmd.Flags().String("discover", discovery_common.DiscoveryAuto, "Enable the discovery of nested assets. Supported: 'all|auto|instances|host-instances|host-machines|container|container-images|pods|cronjobs|statefulsets|deployments|jobs|replicasets|daemonsets'")
 		cmd.Flags().StringToString("discover-filter", nil, "Additional filter for asset discovery.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
@@ -51,8 +52,8 @@ var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 		viper.BindPFlag("vault.name", cmd.Flags().Lookup("vault"))
 		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 	},
-	Docs: builder.CommandsDocs{
-		Entries: map[string]builder.CommandDocsEntry{
+	Docs: common.CommandsDocs{
+		Entries: map[string]common.CommandDocsEntry{
 			"local": {
 				Short: "Connect to your local system.",
 			},

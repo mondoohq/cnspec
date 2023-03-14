@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
-	go.mondoo.com/cnquery v0.0.0-20230309071919-a3f56da5a8af
+	go.mondoo.com/cnquery v0.0.0-20230314162618-bbfbfdc6b802
 	go.mondoo.com/ranger-rpc v0.5.1-0.20220923135836-9e7732899d34
 	go.opentelemetry.io/otel v1.14.0
 	golang.org/x/sync v0.1.0
@@ -379,7 +379,7 @@ require (
 	github.com/nishanths/exhaustive v0.9.5 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/oklog/run v1.0.0 // indirect
-	github.com/okta/okta-sdk-golang/v2 v2.14.0 // indirect
+	github.com/okta/okta-sdk-golang/v2 v2.17.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0-rc2 // indirect
 	github.com/packethost/packngo v0.25.0 // indirect
