@@ -89,11 +89,11 @@ func (s *summaryPrinter) GenerateStats(report *policy.ReportCollection) summaryS
 		stats.assetNames[assetMrn] = report.Assets[assetMrn].Name
 		assetReport, ok := report.Reports[assetMrn]
 		if !ok {
-			if errMsg := report.Errors[assetMrn]; errMsg != "" {
+			if errStatus := report.Errors[assetMrn]; errStatus != nil {
 				stats.assetScores[assetMrn] = &policy.Score{
 					QrId:    assetMrn,
 					Type:    policy.ScoreType_Error,
-					Message: errMsg,
+					Message: errStatus.Message,
 				}
 			} else {
 				stats.assetScores[assetMrn] = &policy.Score{

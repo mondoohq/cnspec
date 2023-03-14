@@ -95,8 +95,8 @@ var serveCmd = &cobra.Command{
 			// log errors
 			if result != nil && result.GetErrors() != nil && len(result.GetErrors()) > 0 {
 				assetErrors := result.GetErrors()
-				for a, err := range assetErrors {
-					log.Error().Err(errors.New(err)).Str("asset", a).Msg("could not connect to asset")
+				for a, errStatus := range assetErrors {
+					log.Error().Err(errors.New(errStatus.Message)).Str("asset", a).Msg("could not connect to asset")
 				}
 			}
 			return nil

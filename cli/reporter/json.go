@@ -125,8 +125,8 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 		"\"errors\":" +
 		"{")
 	pre = ""
-	for id, err := range data.Errors {
-		out.WriteString(pre + llx.PrettyPrintString(id) + ":" + llx.PrettyPrintString(err))
+	for id, errStatus := range data.Errors {
+		out.WriteString(pre + llx.PrettyPrintString(id) + ":" + llx.PrettyPrintString(errStatus.Message))
 		pre = ","
 	}
 	out.WriteString("}}")
