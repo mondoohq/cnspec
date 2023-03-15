@@ -115,21 +115,31 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 }
 
 // RefreshLocalAssetFilters looks through the local policy asset filters and rolls them up
-func (p *Policy) RefreshLocalAssetFilters() {
+func (p *Policy) RefreshLocalAssetFilters(lookupQueries map[string]*explorer.Mquery) {
 	p.ComputedFilters = &explorer.Filters{
 		Items: map[string]*explorer.Mquery{},
 	}
 
 	for i := range p.Groups {
 		group := p.Groups[i]
-		if group.Filters == nil || len(group.Filters.Items) == 0 {
-			continue
+		p.ComputedFilters.RegisterChild(group.Filters)
+
+		for j := range group.Checks {
+			check := group.Checks[j]
+			if base, ok := lookupQueries[check.Mrn]; ok {
+				check = check.Merge(base)
+			}
+
+			p.ComputedFilters.RegisterQuery(check, lookupQueries)
 		}
 
-		for i := range group.Filters.Items {
-			filter := group.Filters.Items[i]
-			filter.RefreshAsFilter(p.Mrn)
-			p.ComputedFilters.Items[filter.CodeId] = filter
+		for j := range group.Queries {
+			query := group.Queries[j]
+			if base, ok := lookupQueries[query.Mrn]; ok {
+				query = query.Merge(base)
+			}
+
+			p.ComputedFilters.RegisterQuery(query, lookupQueries)
 		}
 	}
 }

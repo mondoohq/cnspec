@@ -23,7 +23,7 @@ func TestBundleFromPaths(t *testing.T) {
 		bundle, err := BundleFromPaths("../examples/complex.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
-		assert.Len(t, bundle.Queries, 3)
+		assert.Len(t, bundle.Queries, 5)
 		assert.Len(t, bundle.Policies, 2)
 	})
 

@@ -282,7 +282,11 @@ func (p *PolicyBundleMap) policyExists(ctx context.Context, mrn string) (bool, e
 func (bundle *PolicyBundleMap) QueryMap() map[string]*explorer.Mquery {
 	res := make(map[string]*explorer.Mquery, len(bundle.Queries))
 	for _, v := range bundle.Queries {
-		res[v.CodeId] = v
+		if v.CodeId != "" {
+			res[v.CodeId] = v
+		} else {
+			res[v.Mrn] = v
+		}
 	}
 	return res
 }

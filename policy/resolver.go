@@ -841,6 +841,10 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			return errors.New("invalid check encountered, missing checksum for: " + check.Mrn)
 		}
 
+		if !check.Filters.Supports(cache.global.assetFilters) {
+			continue
+		}
+
 		// If we ignore this check, we have to transfer this info to the impact var,
 		// which is used to inform how to aggregate the scores of all child jobs.
 		impact := check.Impact
@@ -855,7 +859,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		cache.global.propsCache.Add(check.Props...)
 
 		if check.Action == explorer.Action_UNSPECIFIED || check.Action == explorer.Action_ACTIVATE {
-			cache.addCheckJob(check, impact, ownerJob)
+			cache.addCheckJob(ctx, check, impact, ownerJob)
 			continue
 		}
 
@@ -882,25 +886,24 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			return errors.New("invalid query encountered, missing checksum for: " + query.Mrn)
 		}
 
+		if !query.Filters.Supports(cache.global.assetFilters) {
+			continue
+		}
+
 		// Dom: Note: we do not carry over the impact from data queries yet
 
 		cache.global.propsCache.Add(query.Props...)
 
 		// ADD
 		if query.Action == explorer.Action_UNSPECIFIED || query.Action == explorer.Action_ACTIVATE {
-			cache.addDataQueryJob(query, ownerJob)
+			cache.addDataQueryJob(ctx, query, ownerJob)
 		}
 	}
 
 	return nil
 }
 
-func (cache *policyResolverCache) addCheckJob(check *explorer.Mquery, impact *explorer.Impact, ownerJob *ReportingJob) {
-	if len(check.Variants) != 0 {
-		log.Warn().Msg("check variants cannot be added")
-		return
-	}
-
+func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explorer.Mquery, impact *explorer.Impact, ownerJob *ReportingJob) {
 	uuid := cache.global.relativeChecksum(check.Checksum)
 	queryJob := cache.global.reportingJobsByUUID[uuid]
 
@@ -927,14 +930,57 @@ func (cache *policyResolverCache) addCheckJob(check *explorer.Mquery, impact *ex
 	ownerJob.DeprecatedV7Spec[queryJob.Uuid] = Impact2ScoringSpec(impact)
 	// ^^
 
-	// we set a placeholder for the execution query, just to indicate it will be added
-	cache.global.executionQueries[check.Checksum] = nil
-	cache.global.queriesByMsum[check.Checksum] = check
+	if len(check.Variants) != 0 {
+		err := cache.addCheckJobVariants(ctx, check, queryJob)
+		if err != nil {
+			log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")
+		}
+	} else {
+		// we set a placeholder for the execution query, just to indicate it will be added
+		cache.global.executionQueries[check.Checksum] = nil
+		cache.global.queriesByMsum[check.Checksum] = check
+	}
 }
 
-func (cache *policyResolverCache) addDataQueryJob(query *explorer.Mquery, ownerJob *ReportingJob) {
+func (cache *policyResolverCache) addCheckJobVariants(ctx context.Context, query *explorer.Mquery, ownerJob *ReportingJob) error {
+	for i := range query.Variants {
+		mrn := query.Variants[i].Mrn
+
+		if _, ok := cache.removedQueries[mrn]; ok {
+			continue
+		}
+
+		v, ok := cache.global.bundleMap.Queries[mrn]
+		if !ok {
+			return errors.New("cannot find variant " + mrn)
+		}
+		if v.Checksum == "" {
+			return errors.New("invalid check encountered, missing checksum for: " + mrn)
+		}
+
+		if !v.Filters.Supports(cache.global.assetFilters) {
+			continue
+		}
+
+		// Dom: Note: we do not carry over the impact from data queries yet
+
+		cache.global.propsCache.Add(v.Props...)
+
+		// ADD
+		if v.Action == explorer.Action_UNSPECIFIED || v.Action == explorer.Action_ACTIVATE {
+			cache.addCheckJob(ctx, v, v.Impact, ownerJob)
+		}
+	}
+
+	return nil
+}
+
+func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *explorer.Mquery, ownerJob *ReportingJob) {
 	if len(query.Variants) != 0 {
-		log.Warn().Msg("query variants cannot be added")
+		err := cache.addDataQueryVariants(ctx, query, ownerJob)
+		if err != nil {
+			log.Error().Err(err).Str("queryMrn", query.Mrn).Msg("failed to add data query variants")
+		}
 		return
 	}
 
@@ -962,11 +1008,43 @@ func (cache *policyResolverCache) addDataQueryJob(query *explorer.Mquery, ownerJ
 	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
 
 	ownerJob.Datapoints[queryJob.Uuid] = true
-
 	// we set a placeholder for the execution query, just to indicate it will be added
 	cache.global.executionQueries[query.Checksum] = nil
 	cache.global.dataQueries[query.Checksum] = struct{}{}
 	cache.global.queriesByMsum[query.Checksum] = query
+}
+
+func (cache *policyResolverCache) addDataQueryVariants(ctx context.Context, query *explorer.Mquery, ownerJob *ReportingJob) error {
+	for i := range query.Variants {
+		mrn := query.Variants[i].Mrn
+
+		if _, ok := cache.removedQueries[mrn]; ok {
+			continue
+		}
+
+		v, ok := cache.global.bundleMap.Queries[mrn]
+		if !ok {
+			return errors.New("cannot find variant " + mrn)
+		}
+		if v.Checksum == "" {
+			return errors.New("invalid query encountered, missing checksum for: " + mrn)
+		}
+
+		if !v.Filters.Supports(cache.global.assetFilters) {
+			continue
+		}
+
+		// Dom: Note: we do not carry over the impact from data queries yet
+
+		cache.global.propsCache.Add(v.Props...)
+
+		// ADD
+		if v.Action == explorer.Action_UNSPECIFIED || v.Action == explorer.Action_ACTIVATE {
+			cache.addDataQueryJob(ctx, v, ownerJob)
+		}
+	}
+
+	return nil
 }
 
 func (cache *policyResolverCache) modifyCheckJob(check *explorer.Mquery, impact *explorer.Impact) {
