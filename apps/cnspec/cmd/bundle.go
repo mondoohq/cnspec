@@ -31,6 +31,11 @@ func init() {
 	// fmt
 	policyBundlesCmd.AddCommand(policyFmtCmd)
 
+	// docs
+	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
+	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyBundlesCmd.AddCommand(policyDocsCmd)
+
 	// publish
 	policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
 	policyBundlesCmd.AddCommand(policyPublishCmd)
@@ -223,5 +228,27 @@ var policyPublishCmd = &cobra.Command{
 		}
 
 		log.Info().Msg("successfully added policies")
+	},
+}
+
+var policyDocsCmd = &cobra.Command{
+	Use:     "docs [path]",
+	Aliases: []string{},
+	Short:   "Retrieve only the docs for a bundle.",
+	Args:    cobra.MinimumNArgs(1),
+	Hidden:  true,
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))
+		viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		bundle, err := policy.BundleFromPaths(args...)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to load bundle")
+		}
+
+		noIDs := viper.GetBool("no-ids")
+		noCode := viper.GetBool("no-code")
+		bundle.ExtractDocs(os.Stdout, noIDs, noCode)
 	},
 }

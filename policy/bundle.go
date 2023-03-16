@@ -2,9 +2,11 @@ package policy
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -390,6 +392,125 @@ func (p *Bundle) SortContents() {
 	sort.SliceStable(p.Policies, func(i, j int) bool {
 		return p.Policies[i].Mrn < p.Policies[j].Mrn
 	})
+}
+
+type docsPrinter interface {
+	Write(section string, data string)
+}
+
+type nocodeWriter struct {
+	docsWriter
+}
+
+var reCode = regexp.MustCompile("(?s)`[^`]+`|```.*```")
+
+func (n nocodeWriter) Write(section string, data string) {
+	n.docsWriter.Write(section, reCode.ReplaceAllString(data, ""))
+}
+
+type docsWriter struct {
+	out io.Writer
+}
+
+func (n docsWriter) Write(section string, data string) {
+	if data == "" {
+		return
+	}
+	io.WriteString(n.out, section)
+	io.WriteString(n.out, ": ")
+	io.WriteString(n.out, data)
+	n.out.Write([]byte{'\n'})
+}
+
+func extractQueryDocs(query *explorer.Mquery, w docsPrinter, noIDs bool) {
+	if !noIDs {
+		w.Write("query ID", query.Uid)
+		w.Write("query Mrn", query.Mrn)
+	}
+
+	w.Write("query title", query.Title)
+	w.Write("query description", query.Desc)
+
+	if query.Docs != nil {
+		w.Write("query description", query.Docs.Desc)
+		w.Write("query audit", query.Docs.Audit)
+		if query.Docs.Remediation != nil {
+			for i := range query.Docs.Remediation.Items {
+				remediation := query.Docs.Remediation.Items[i]
+				if noIDs {
+					w.Write("query remediation", remediation.Desc)
+				} else {
+					w.Write("query remediation "+remediation.Id, remediation.Desc)
+				}
+			}
+		}
+	}
+}
+
+func extractPropertyDocs(prop *explorer.Property, w docsPrinter, noIDs bool) {
+	if !noIDs {
+		w.Write("property ID", prop.Uid)
+		w.Write("property Mrn", prop.Mrn)
+	}
+
+	w.Write("property title", prop.Title)
+	w.Write("property description", prop.Desc)
+}
+
+func extractPolicyDocs(policy *Policy, w docsPrinter, noIDs bool) {
+	if !noIDs {
+		w.Write("policy ID", policy.Uid)
+		w.Write("policy Mrn", policy.Mrn)
+	}
+
+	w.Write("policy summary", policy.Summary)
+
+	for i := range policy.Props {
+		extractPropertyDocs(policy.Props[i], w, noIDs)
+	}
+	if policy.Docs != nil {
+		w.Write("policy description", policy.Docs.Desc)
+	}
+
+	for g := range policy.Groups {
+		group := policy.Groups[g]
+
+		w.Write("group summary", group.Title)
+
+		if group.Docs != nil {
+			w.Write("group description", group.Docs.Desc)
+		}
+
+		for i := range group.Queries {
+			extractQueryDocs(group.Queries[i], w, noIDs)
+		}
+		for i := range group.Checks {
+			extractQueryDocs(group.Checks[i], w, noIDs)
+		}
+	}
+}
+
+func (p *Bundle) ExtractDocs(out io.Writer, noIDs bool, noCode bool) {
+	if p == nil {
+		return
+	}
+
+	var printer docsPrinter
+	if noCode {
+		printer = nocodeWriter{docsWriter: docsWriter{out}}
+	} else {
+		printer = docsWriter{out}
+	}
+
+	for i := range p.Queries {
+		extractQueryDocs(p.Queries[i], printer, noIDs)
+	}
+	for i := range p.Props {
+		extractPropertyDocs(p.Props[i], printer, noIDs)
+	}
+	for i := range p.Policies {
+		extractPolicyDocs(p.Policies[i], printer, noIDs)
+	}
 }
 
 // Compile PolicyBundle into a PolicyBundleMap
