@@ -150,6 +150,7 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 	policyObj := policyw.Policy
 	filters, err := policyObj.ComputeAssetFilters(ctx,
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetRawPolicy(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		false,
 	)
 	if err != nil {

@@ -144,25 +144,71 @@ func (p *Policy) RefreshLocalAssetFilters(lookupQueries map[string]*explorer.Mqu
 	}
 }
 
-// ComputeAssetFilters of a given policy resolving them as you go
-// recursive tells us if we want to call this function for all policy dependencies (costly; set to false by default)
-func (p *Policy) ComputeAssetFilters(ctx context.Context, getPolicy func(ctx context.Context, mrn string) (*Policy, error), recursive bool) ([]*explorer.Mquery, error) {
-	filters := map[string]*explorer.Mquery{}
+func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQueryByMrn func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (*explorer.Filters, error) {
+	filters := &explorer.Filters{
+		Items: map[string]*explorer.Mquery{},
+	}
 
-	for i := range p.Groups {
-		group := p.Groups[i]
+	for _, group := range groups {
+		filters.RegisterChild(group.Filters)
 
-		// add asset filter of embedded policies
-		if group.Filters != nil {
-			for i := range group.Filters.Items {
-				filter := group.Filters.Items[i]
-				filters[filter.CodeId] = filter
+		for k, m := range group.Filters.GetItems() {
+			filters.Items[k] = m
+		}
+
+		for _, check := range group.Checks {
+			base, _ := lookupQueryByMrn(ctx, check.Mrn) //nolint: errcheck
+			// The implementations of the getQuery interface all return random error messages
+			// that is not well defined.
+
+			if base != nil {
+				check = check.Merge(base)
+			}
+
+			if err := filters.RegisterQueryLookupFunc(ctx, check, lookupQueryByMrn); err != nil {
+				return nil, err
 			}
 		}
 
+		for _, query := range group.Queries {
+			base, _ := lookupQueryByMrn(ctx, query.Mrn) //nolint: errcheck
+			// The implementations of the getQuery interface all return random error messages
+			// that is not well defined.
+
+			if base != nil {
+				query = query.Merge(base)
+			}
+
+			if err := filters.RegisterQueryLookupFunc(ctx, query, lookupQueryByMrn); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return filters, nil
+}
+
+// ComputeAssetFilters of a given policy resolving them as you go
+// recursive tells us if we want to call this function for all policy dependencies (costly; set to false by default)
+func (p *Policy) ComputeAssetFilters(ctx context.Context,
+	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
+	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
+	recursive bool) ([]*explorer.Mquery, error) {
+	filters := map[string]*explorer.Mquery{}
+
+	localFilters, err := gatherLocalAssetFilters(ctx, p.Groups, getQuery)
+	if err != nil {
+		return nil, err
+	}
+	for k, m := range localFilters.GetItems() {
+		filters[k] = m
+	}
+
+	for i := range p.Groups {
+		group := p.Groups[i]
 		// add asset filter of child policies
 		for i := range group.Policies {
-			if err := p.computeAssetFilters(ctx, group.Policies[i].Mrn, getPolicy, recursive, filters); err != nil {
+			if err := p.computeAssetFilters(ctx, group.Policies[i].Mrn, getPolicy, getQuery, recursive, filters); err != nil {
 				return nil, err
 			}
 		}
@@ -178,14 +224,17 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context, getPolicy func(ctx con
 	return res, nil
 }
 
-func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string, getPolicy func(ctx context.Context, mrn string) (*Policy, error), recursive bool, tracker map[string]*explorer.Mquery) error {
+func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string,
+	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
+	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
+	recursive bool, tracker map[string]*explorer.Mquery) error {
 	child, err := getPolicy(ctx, policyMrn)
 	if err != nil {
 		return err
 	}
 
 	if recursive {
-		childFilters, err := child.ComputeAssetFilters(ctx, getPolicy, recursive)
+		childFilters, err := child.ComputeAssetFilters(ctx, getPolicy, getQuery, recursive)
 		if err != nil {
 			return err
 		}

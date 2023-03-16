@@ -90,6 +90,12 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	filters, err := policyObj.ComputeAssetFilters(
 		ctx,
 		s.DataLake.GetRawPolicy,
+		func(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+			if q, ok := queriesLookup[mrn]; ok {
+				return q, nil
+			}
+			return s.DataLake.GetQuery(ctx, mrn)
+		},
 		false,
 	)
 	if err != nil {
@@ -292,11 +298,15 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 		Props:    map[string]*explorer.Property{},
 	}
 
-	// we need to re-compute the asset filters
-	mpolicyObj.ComputedFilters = &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
-	}
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
+
+	// we need to re-compute the asset filters
+	localFilters, err := gatherLocalAssetFilters(ctx, mpolicyObj.Groups, s.DataLake.GetQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	mpolicyObj.ComputedFilters = localFilters
 
 	for i := range mpolicyObj.Props {
 		prop := mpolicyObj.Props[i]
@@ -305,13 +315,6 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 	for i := range mpolicyObj.Groups {
 		group := mpolicyObj.Groups[i]
-
-		if group.Filters != nil {
-			filters := group.Filters
-			for k, v := range filters.Items {
-				mpolicyObj.ComputedFilters.Items[k] = v
-			}
-		}
 
 		// For all queries and checks we are looking to get the shared objects only.
 		// This is because the embedded queries and checks are already part of the
