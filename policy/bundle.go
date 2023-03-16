@@ -749,14 +749,6 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 		return nil
 	}
 
-	// filters will need to be aggregated into the pack's filters
-	if policy != nil {
-		if err := policy.ComputedFilters.RegisterQuery(query, c.lookupQuery); err != nil {
-			c.errors = append(c.errors, errors.New("failed to register filters for query "+query.Mrn))
-			return nil
-		}
-	}
-
 	// ensure MRNs for variants
 	for i := range query.Variants {
 		variant := query.Variants[i]
@@ -767,6 +759,15 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 		}
 		if uid != "" {
 			c.uid2mrn[uid] = variant.Mrn
+		}
+	}
+
+	// Filters will need to be aggregated into the pack's filters
+	// note: must happen after all MRNs (including variants) are computed
+	if policy != nil {
+		if err := policy.ComputedFilters.RegisterQuery(query, c.lookupQuery); err != nil {
+			c.errors = append(c.errors, errors.New("failed to register filters for query "+query.Mrn))
+			return nil
 		}
 	}
 

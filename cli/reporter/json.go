@@ -36,10 +36,15 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 		return nil
 	}
 
-	queryMrnIdx := map[string]string{}
+	qid2mrn := make(map[string]string, len(data.Bundle.Queries))
+	aggregateQueries := []string{}
 	for i := range data.Bundle.Queries {
 		query := data.Bundle.Queries[i]
-		queryMrnIdx[query.CodeId] = query.Mrn
+		if query.CodeId == "" {
+			aggregateQueries = append(aggregateQueries, query.Mrn)
+		} else {
+			qid2mrn[query.CodeId] = query.Mrn
+		}
 	}
 
 	out.WriteString(
@@ -67,7 +72,7 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 		results := report.RawResults()
 		pre2 := ""
 		for qid, query := range resolved.ExecutionJob.Queries {
-			mrn := queryMrnIdx[qid]
+			mrn := qid2mrn[qid]
 			// policies and other stuff
 			if mrn == "" {
 				continue
@@ -108,7 +113,7 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 		}
 
 		for qid := range resolved.ExecutionJob.Queries {
-			mrn := queryMrnIdx[qid]
+			mrn := qid2mrn[qid]
 			// policies and other stuff
 			if mrn == "" {
 				continue
@@ -118,6 +123,13 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 				pre2 = ","
 			}
 		}
+
+		for _, mrn := range aggregateQueries {
+			if printScore(report.Scores[mrn], mrn, out, pre2) {
+				pre2 = ","
+			}
+		}
+
 		out.WriteString("}")
 	}
 

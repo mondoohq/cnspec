@@ -57,7 +57,11 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 		return nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
 
-	policyObj.RefreshLocalAssetFilters()
+	var queriesLookup map[string]*explorer.Mquery
+	if bundle != nil {
+		queriesLookup = bundle.Queries
+	}
+	policyObj.RefreshLocalAssetFilters(queriesLookup)
 
 	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
 	// e.g. ApplyScoringMutation changes the group. Right now we assume the caller invalidates the checksum
@@ -371,7 +375,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 			if nuPolicy.ComputedFilters == nil {
 				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters")
-				nuPolicy.RefreshLocalAssetFilters()
+				nuPolicy.RefreshLocalAssetFilters(bundleMap.Queries)
 			}
 
 			for k, v := range nuPolicy.ComputedFilters.Items {
