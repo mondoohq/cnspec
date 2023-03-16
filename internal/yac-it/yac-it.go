@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -70,7 +71,16 @@ func (t *YacIt) String() string {
 
 	res.WriteString(prefix)
 
-	for _, v := range t.types {
+	keys := make([]string, len(t.types))
+	i := 0
+	for k := range t.types {
+		keys[i] = k
+		i++
+	}
+	sort.Strings(keys)
+
+	for i := range keys {
+		v := t.types[keys[i]]
 		res.WriteString(v)
 		res.WriteByte('\n')
 	}

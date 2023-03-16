@@ -417,7 +417,7 @@ type reportingJobResult struct {
 // ReportingJobNodeData is the data for nodes of type ReportingJobNodeType
 type ReportingJobNodeData struct {
 	queryID       string
-	scoringSystem policy.ScoringSystem
+	scoringSystem explorer.ScoringSystem
 	isQuery       bool
 
 	childScores map[NodeID]*reportingJobResult
@@ -530,7 +530,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		return s, nil
 	}
 
-	calculator, err := policy.NewScoreCalculator(policy.ScoringSystem(nodeData.scoringSystem))
+	calculator, err := policy.NewScoreCalculator(nodeData.scoringSystem)
 	if err != nil {
 		return nil, err
 	}

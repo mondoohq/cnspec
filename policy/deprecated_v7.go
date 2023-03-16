@@ -179,7 +179,7 @@ func (s *DeprecatedV7_SeverityValue) ToV8() *explorer.Impact {
 	return &explorer.Impact{
 		Value:   &explorer.ImpactValue{Value: int32(s.Value)},
 		Weight:  0,
-		Scoring: explorer.Impact_SCORING_UNSPECIFIED,
+		Scoring: explorer.ScoringSystem_SCORING_UNSPECIFIED,
 	}
 }
 
@@ -374,8 +374,8 @@ func Impact2ScoringSpec(impact *explorer.Impact) *DeprecatedV7_ScoringSpec {
 	}
 
 	weight := uint32(impact.Weight)
-	scoring := ScoringSystem(impact.Scoring) // numbers are identical except for one vv
-	if impact.Scoring == explorer.Impact_IGNORE || impact.Action == explorer.Action_IGNORE {
+	scoring := impact.Scoring // numbers are identical except for one vv
+	if impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE || impact.Action == explorer.Action_IGNORE {
 		weight = 0
 		// We have to set a scoring system here, but really it doesn't matter.
 		// In v7 it was possible to have both a "weight=0" (i.e. ignored) and
@@ -387,7 +387,7 @@ func Impact2ScoringSpec(impact *explorer.Impact) *DeprecatedV7_ScoringSpec {
 		// to zero (i.e. ignore).
 		// With v8 we will introduce simulated policies, but that too is done on
 		// the collecting spec (e.g. the parent policy, not its child).
-		scoring = ScoringSystem_SCORING_UNSPECIFIED
+		scoring = explorer.ScoringSystem_SCORING_UNSPECIFIED
 		// We are converting the action to a QueryAction. This is largely compatibly
 		// except for Action_IGNORE. Whenever an active ignore was set, we can
 		// translate it to ACTIVATE + weight=0 for v7.
@@ -429,7 +429,7 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 	if ref.Impact == nil {
 		ref.Impact = &explorer.Impact{}
 	}
-	ref.Impact.Scoring = explorer.Impact_ScoringSystem(s.ScoringSystem)
+	ref.Impact.Scoring = s.ScoringSystem
 
 	// For all v7 specs, a weight of 0 means that we want to ignore the score.
 	// Weight was evaluated first, so we can safely assume that the intention
@@ -439,7 +439,7 @@ func (s *DeprecatedV7_ScoringSpec) ApplyToV8(ref *explorer.Mquery) {
 	if s.Weight > 0 {
 		ref.Impact.Weight = int32(s.Weight)
 	} else {
-		ref.Impact.Scoring = explorer.Impact_IGNORE
+		ref.Impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
 	}
 }
 
