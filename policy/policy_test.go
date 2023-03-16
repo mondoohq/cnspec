@@ -163,14 +163,14 @@ func TestPolicyChecksums(t *testing.T) {
 					if p.Groups == nil {
 						p.Specs[0].ScoringQueries = map[string]*DeprecatedV7_ScoringSpec{
 							"//local.cnspec.io/run/local-execution/queries/sshd-01": {
-								ScoringSystem: ScoringSystem_WORST,
+								ScoringSystem: explorer.ScoringSystem_WORST,
 							},
 						}
 					} else {
 						p.Groups[0].Checks[1] = &explorer.Mquery{
 							Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
 							Impact: &explorer.Impact{
-								Scoring: explorer.Impact_WORST,
+								Scoring: explorer.ScoringSystem_WORST,
 							},
 						}
 					}

@@ -848,7 +848,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			if impact == nil {
 				impact = &explorer.Impact{}
 			}
-			impact.Scoring = explorer.Impact_IGNORE
+			impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
 			impact.Action = check.Action
 		}
 

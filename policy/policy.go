@@ -364,8 +364,8 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	}
 
 	// execution fields in policy
-	if p.ScoringSystem == ScoringSystem_SCORING_UNSPECIFIED {
-		p.ScoringSystem = ScoringSystem_AVERAGE
+	if p.ScoringSystem == explorer.ScoringSystem_SCORING_UNSPECIFIED {
+		p.ScoringSystem = explorer.ScoringSystem_AVERAGE
 	}
 	executionChecksum = executionChecksum.AddUint(uint64(p.ScoringSystem))
 
@@ -607,54 +607,6 @@ func IsPolicyMrn(candidate string) error {
 	}
 	if policyID == "" {
 		return errors.New("policy MRN is invalid, no policy ID in " + candidate)
-	}
-	return nil
-}
-
-func (s *ScoringSystem) UnmarshalJSON(data []byte) error {
-	// check if we have a number
-	var code int32
-	err := json.Unmarshal(data, &code)
-	if err == nil {
-		*s = ScoringSystem(code)
-	} else {
-		var name string
-		_ = json.Unmarshal(data, &name)
-
-		switch name {
-		case "highest impact":
-			*s = ScoringSystem_WORST
-		case "weighted":
-			*s = ScoringSystem_WEIGHTED
-		case "average", "":
-			*s = ScoringSystem_AVERAGE
-		default:
-			return errors.New("unknown scoring system: " + string(data))
-		}
-	}
-	return nil
-}
-
-func (s *ScoringSystem) UnmarshalYAML(node *yaml.Node) error {
-	// check if we have a number
-	var code int32
-	err := node.Decode(&code)
-	if err == nil {
-		*s = ScoringSystem(code)
-	} else {
-		var name string
-		_ = node.Decode(&name)
-
-		switch name {
-		case "highest impact":
-			*s = ScoringSystem_WORST
-		case "weighted":
-			*s = ScoringSystem_WEIGHTED
-		case "average", "":
-			*s = ScoringSystem_AVERAGE
-		default:
-			return errors.New("unknown scoring system: " + string(name))
-		}
 	}
 	return nil
 }

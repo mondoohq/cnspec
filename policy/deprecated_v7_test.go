@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnquery/explorer"
 )
 
 func TestV7Fill(t *testing.T) {
@@ -17,7 +18,7 @@ func TestV7Fill(t *testing.T) {
 			Name:          "Example policy 1",
 			Version:       "1.0.0",
 			Uid:           "example1",
-			ScoringSystem: ScoringSystem_WORST,
+			ScoringSystem: explorer.ScoringSystem_WORST,
 			Authors:       []*DeprecatedV7_Author{{Name: "Mondoo", Email: "hello@mondoo.com"}},
 			Props: map[string]string{
 				"homeProp": "",

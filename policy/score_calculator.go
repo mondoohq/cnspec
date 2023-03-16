@@ -64,7 +64,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 
 	// everything else is modify or activate
 
-	if impact.Scoring == explorer.Impact_IGNORE {
+	if impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
 		calculator.Add(&Score{
 			// We override the type because:
 			// 1. If it is set to Result, its value will be added to the total
@@ -344,14 +344,14 @@ func (c *worstScoreCalculator) Calculate() *Score {
 }
 
 // NewScoreCalculator returns a score calculator based on a scoring system
-func NewScoreCalculator(scoringSystem ScoringSystem) (ScoreCalculator, error) {
+func NewScoreCalculator(scoringSystem explorer.ScoringSystem) (ScoreCalculator, error) {
 	var res ScoreCalculator
 	switch scoringSystem {
-	case ScoringSystem_AVERAGE, ScoringSystem_SCORING_UNSPECIFIED:
+	case explorer.ScoringSystem_AVERAGE, explorer.ScoringSystem_SCORING_UNSPECIFIED:
 		res = &averageScoreCalculator{}
-	case ScoringSystem_WEIGHTED:
+	case explorer.ScoringSystem_WEIGHTED:
 		res = &weightedScoreCalculator{}
-	case ScoringSystem_WORST:
+	case explorer.ScoringSystem_WORST:
 		res = &worstScoreCalculator{}
 	default:
 		return nil, errors.New("don't know how to create scoring calculator for system " + strconv.Itoa(int(scoringSystem)))

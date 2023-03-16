@@ -27,7 +27,7 @@ func (x *Impact) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (v *Impact) MarshalYAML() (interface{}, error) {
-	if v.Action == explorer.Action_UNSPECIFIED && v.Scoring == explorer.Impact_SCORING_UNSPECIFIED && v.Weight < 1 {
+	if v.Action == explorer.Action_UNSPECIFIED && v.Scoring == explorer.ScoringSystem_SCORING_UNSPECIFIED && v.Weight < 1 {
 		if v.Value == nil {
 			return nil, nil
 		}
