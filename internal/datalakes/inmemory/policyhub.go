@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnspec/policy"
+	"google.golang.org/protobuf/proto"
 )
 
 // this section lists internal data structures that map additional metadata
@@ -69,7 +70,7 @@ func (db *Db) GetProperty(ctx context.Context, mrn string) (*explorer.Property, 
 	if !ok {
 		return nil, errors.New("query '" + mrn + "' not found")
 	}
-	return q.(*explorer.Property), nil
+	return proto.Clone(q.(*explorer.Property)).(*explorer.Property), nil
 }
 
 // SetProperty stores a given query
@@ -88,7 +89,7 @@ func (db *Db) GetRawPolicy(ctx context.Context, mrn string) (*policy.Policy, err
 	if !ok {
 		return nil, errors.New("policy '" + mrn + "' not found")
 	}
-	return (q.(wrapPolicy)).Policy, nil
+	return proto.Clone((q.(wrapPolicy)).Policy).(*policy.Policy), nil
 }
 
 // GetPolicyFilters retrieves the list of asset filters for a policy (fast)
@@ -105,7 +106,7 @@ func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mqu
 	res := make([]*explorer.Mquery, len(r.ComputedFilters.Items))
 	var i int
 	for _, v := range r.ComputedFilters.Items {
-		res[i] = v
+		res[i] = proto.Clone(v).(*explorer.Mquery)
 		i++
 	}
 
@@ -376,7 +377,7 @@ func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.Bundl
 		return nil, errors.New("failed to save policy bundle '" + policyv.Mrn + "' to cache")
 	}
 
-	return bundle, nil
+	return proto.Clone(bundle).(*policy.Bundle), nil
 }
 
 // GetValidatedPolicy retrieves and if necessary updates the policy
@@ -394,7 +395,7 @@ func (db *Db) GetValidatedPolicy(ctx context.Context, mrn string) (*policy.Polic
 		}
 	}
 
-	return p.Policy, nil
+	return proto.Clone(p.Policy).(*policy.Policy), nil
 }
 
 func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error {

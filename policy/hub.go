@@ -61,7 +61,6 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	if bundle != nil {
 		queriesLookup = bundle.Queries
 	}
-	policyObj.RefreshLocalAssetFilters(queriesLookup)
 
 	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
 	// e.g. ApplyScoringMutation changes the group. Right now we assume the caller invalidates the checksum
@@ -90,6 +89,12 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	filters, err := policyObj.ComputeAssetFilters(
 		ctx,
 		s.DataLake.GetRawPolicy,
+		func(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+			if q, ok := queriesLookup[mrn]; ok {
+				return q, nil
+			}
+			return s.DataLake.GetQuery(ctx, mrn)
+		},
 		false,
 	)
 	if err != nil {
@@ -292,11 +297,15 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 		Props:    map[string]*explorer.Property{},
 	}
 
-	// we need to re-compute the asset filters
-	mpolicyObj.ComputedFilters = &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
-	}
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
+
+	// we need to re-compute the asset filters
+	localFilters, err := gatherLocalAssetFilters(ctx, mpolicyObj.Groups, s.DataLake.GetQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	mpolicyObj.ComputedFilters = localFilters
 
 	for i := range mpolicyObj.Props {
 		prop := mpolicyObj.Props[i]
@@ -305,13 +314,6 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 	for i := range mpolicyObj.Groups {
 		group := mpolicyObj.Groups[i]
-
-		if group.Filters != nil {
-			filters := group.Filters
-			for k, v := range filters.Items {
-				mpolicyObj.ComputedFilters.Items[k] = v
-			}
-		}
 
 		// For all queries and checks we are looking to get the shared objects only.
 		// This is because the embedded queries and checks are already part of the
@@ -374,8 +376,8 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			}
 
 			if nuPolicy.ComputedFilters == nil {
-				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters")
-				nuPolicy.RefreshLocalAssetFilters(bundleMap.Queries)
+				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters; trying to refresh it")
+				nuPolicy.ComputeAssetFilters(ctx, s.DataLake.GetValidatedPolicy, s.DataLake.GetQuery, true)
 			}
 
 			for k, v := range nuPolicy.ComputedFilters.Items {
