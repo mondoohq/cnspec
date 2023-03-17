@@ -765,7 +765,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 	// Filters will need to be aggregated into the pack's filters
 	// note: must happen after all MRNs (including variants) are computed
 	if policy != nil {
-		if err := policy.ComputedFilters.RegisterQuery(query, c.lookupQuery); err != nil {
+		if err := policy.ComputedFilters.AddQueryFilters(query, c.lookupQuery); err != nil {
 			c.errors = append(c.errors, errors.New("failed to register filters for query "+query.Mrn))
 			return nil
 		}

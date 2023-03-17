@@ -114,43 +114,16 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 	return found, nil
 }
 
-// RefreshLocalAssetFilters looks through the local policy asset filters and rolls them up
-func (p *Policy) RefreshLocalAssetFilters(lookupQueries map[string]*explorer.Mquery) {
-	p.ComputedFilters = &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
-	}
-
-	for i := range p.Groups {
-		group := p.Groups[i]
-		p.ComputedFilters.RegisterChild(group.Filters)
-
-		for j := range group.Checks {
-			check := group.Checks[j]
-			if base, ok := lookupQueries[check.Mrn]; ok {
-				check = check.Merge(base)
-			}
-
-			p.ComputedFilters.RegisterQuery(check, lookupQueries)
-		}
-
-		for j := range group.Queries {
-			query := group.Queries[j]
-			if base, ok := lookupQueries[query.Mrn]; ok {
-				query = query.Merge(base)
-			}
-
-			p.ComputedFilters.RegisterQuery(query, lookupQueries)
-		}
-	}
-}
-
+// Gather only the local asset filters, which means we don't descend into
+// dependent queries. Due to variants and referenced remote queries we may
+// still need to look up queries to get to their filters.
 func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQueryByMrn func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (*explorer.Filters, error) {
 	filters := &explorer.Filters{
 		Items: map[string]*explorer.Mquery{},
 	}
 
 	for _, group := range groups {
-		filters.RegisterChild(group.Filters)
+		filters.AddFilters(group.Filters)
 
 		for k, m := range group.Filters.GetItems() {
 			filters.Items[k] = m
@@ -165,7 +138,7 @@ func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQ
 				check = check.Merge(base)
 			}
 
-			if err := filters.RegisterQueryLookupFunc(ctx, check, lookupQueryByMrn); err != nil {
+			if err := filters.AddQueryFiltersFn(ctx, check, lookupQueryByMrn); err != nil {
 				return nil, err
 			}
 		}
@@ -179,7 +152,7 @@ func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQ
 				query = query.Merge(base)
 			}
 
-			if err := filters.RegisterQueryLookupFunc(ctx, query, lookupQueryByMrn); err != nil {
+			if err := filters.AddQueryFiltersFn(ctx, query, lookupQueryByMrn); err != nil {
 				return nil, err
 			}
 		}
@@ -193,7 +166,8 @@ func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQ
 func (p *Policy) ComputeAssetFilters(ctx context.Context,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
-	recursive bool) ([]*explorer.Mquery, error) {
+	recursive bool,
+) ([]*explorer.Mquery, error) {
 	filters := map[string]*explorer.Mquery{}
 
 	localFilters, err := gatherLocalAssetFilters(ctx, p.Groups, getQuery)
@@ -227,7 +201,8 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context,
 func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
-	recursive bool, tracker map[string]*explorer.Mquery) error {
+	recursive bool, tracker map[string]*explorer.Mquery,
+) error {
 	child, err := getPolicy(ctx, policyMrn)
 	if err != nil {
 		return err
