@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -20,7 +19,6 @@ import (
 	"go.mondoo.com/cnquery/sortx"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
 )
 
 const (
@@ -428,7 +426,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		return nil, err
 	}
 	if len(matchingFilters) == 0 {
-		return nil, NewPolicyAssetMatchError(assetFilters, policyObj)
+		return nil, explorer.NewAssetMatchError(policyMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
 	}
 
 	assetFiltersMap := make(map[string]struct{}, len(matchingFilters))
@@ -548,42 +546,6 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	return &resolvedPolicy, nil
-}
-
-func NewPolicyAssetMatchError(assetFilters []*explorer.Mquery, p *Policy) error {
-	if len(assetFilters) == 0 {
-		// send a proto error with details, so that the agent can render it properly
-		msg := "asset does not match any of the activated policies"
-		st := status.New(codes.InvalidArgument, msg)
-
-		std, err := st.WithDetails(&errdetails.ErrorInfo{
-			Domain: POLICY_SERVICE_NAME,
-			Reason: "no-matching-policy", // TODO: make those error codes global for policy service
-			Metadata: map[string]string{
-				"policy": p.Mrn,
-			},
-		})
-		if err != nil {
-			log.Error().Err(err).Msg("could not send status with additional information")
-			return st.Err()
-		}
-		return std.Err()
-	}
-
-	policyFilter := []string{}
-	if p.ComputedFilters != nil {
-		for k := range p.ComputedFilters.Items {
-			policyFilter = append(policyFilter, strings.TrimSpace(k))
-		}
-	}
-
-	filters := make([]string, len(assetFilters))
-	for i := range assetFilters {
-		filters[i] = strings.TrimSpace(assetFilters[i].Query)
-	}
-
-	msg := "asset does not support any policy\nfilter supported by policies:\n" + strings.Join(policyFilter, ",\n") + "\n\nasset supports the following filters:\n" + strings.Join(filters, ",\n")
-	return status.Error(codes.InvalidArgument, msg)
 }
 
 func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
