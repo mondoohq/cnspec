@@ -63,7 +63,7 @@ policies:
 		_, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
 		})
-		assert.EqualError(t, err, "rpc error: code = InvalidArgument desc = asset does not match any of the activated policies")
+		assert.EqualError(t, err, "rpc error: code = InvalidArgument desc = asset doesn't support any policies")
 	})
 
 	t.Run("resolve with empty filters", func(t *testing.T) {
@@ -79,7 +79,10 @@ policies:
 			PolicyMrn:    policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
-		assert.EqualError(t, err, "rpc error: code = InvalidArgument desc = asset does not support any policy\nfilter supported by policies:\n\n\nasset supports the following filters:\n")
+		assert.EqualError(t, err,
+			"rpc error: code = InvalidArgument desc = asset isn't supported by any policies\n"+
+				"policies didn't provide any filters\n"+
+				"asset supports: true\n")
 	})
 }
 
@@ -105,10 +108,47 @@ policies:
 	srv := initResolver(t, []*testAsset{
 		{"asset1", []string{policyMrn("policy1")}},
 	}, []*policy.Bundle{b})
-	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
-		PolicyMrn:    policyMrn("policy1"),
-		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+
+	checkResolvedPolicy := func(t *testing.T, rp *policy.ResolvedPolicy) {
+		require.Len(t, rp.ExecutionJob.Queries, 3)
+		require.Len(t, rp.Filters, 1)
+	}
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		checkResolvedPolicy(t, rp)
 	})
-	require.NoError(t, err)
-	require.NotNil(t, rp)
+
+	t.Run("resolve with many filters (one is correct)", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn: policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{
+				{Mql: "asset.family.contains(\"linux\")"},
+				{Mql: "true"},
+				{Mql: "asset.family.contains(\"windows\")"},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+	})
+
+	t.Run("resolve with incorrect filters", func(t *testing.T) {
+		_, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn: policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{
+				{Mql: "asset.family.contains(\"linux\")"},
+				{Mql: "false"},
+				{Mql: "asset.family.contains(\"windows\")"},
+			},
+		})
+		assert.EqualError(t, err,
+			"rpc error: code = InvalidArgument desc = asset isn't supported by any policies\n"+
+				"policies support: true\n"+
+				"asset supports: asset.family.contains(\"linux\"), asset.family.contains(\"windows\"), false\n")
+	})
 }
