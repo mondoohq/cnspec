@@ -46,22 +46,23 @@ queries:
   - uid: sshd-server-policy
     name: SSH Server Policy
     version: 1.0.0
-    groups:
-      - checks:
-          - uid: query1
-        filters: platform.family.contains(_ == 'unix')
     license: unspecified
-    authors:
-      - name: Jane Doe
-        email: jane@example.com
     tags:
       another-key: another-value
       key: value
+    authors:
+      - name: Jane Doe
+        email: jane@example.com
+    groups:
+      - filters: platform.family.contains(_ == 'unix')
+        checks:
+          - uid: query1
 queries:
-  - mql: |
-      command('mokutil --sb-state').stdout.downcase.contains('secureboot enabled')
-    uid: query1
+  - uid: query1
     title: Ensure Secure Boot is enabled
+    impact: 100
+    mql: |
+      command('mokutil --sb-state').stdout.downcase.contains('secureboot enabled')
     docs:
       desc: |
         Secure Boot is required in order to ensure that the booting kernel hasn't been modified. It needs to be enabled in your computer's firmware and be supported by your Linux distribution.
@@ -69,7 +70,6 @@ queries:
         Run the "mokutil --sb-state" command and check whether it prints "SecureBoot enabled"
       remediation: |
         Enable Secure Boot in your computer's firmware and use a Linux distribution supporting Secure Boot
-    impact: 100
 `
 	assert.Equal(t, expected, string(formatted))
 }

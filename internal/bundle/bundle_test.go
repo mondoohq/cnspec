@@ -41,6 +41,6 @@ func TestParser_DeprecatedV7(t *testing.T) {
 		Value: &ImpactValue{
 			Value: 30,
 		},
-		FileContext: FileContext{27, 13},
+		FileContext: FileContext{26, 13},
 	}, baseline.Queries[0].Impact)
 }

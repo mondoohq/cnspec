@@ -35,6 +35,7 @@ func New(conf YacItConfig) *YacIt {
 		io:              os.Stderr,
 		customUnmarshal: map[string]struct{}{},
 		pkg:             conf.Package,
+		fieldOrder:      conf.FieldOrder,
 	}
 
 	for _, v := range conf.SkipUnmarshal {
@@ -47,6 +48,7 @@ func New(conf YacItConfig) *YacIt {
 type YacItConfig struct {
 	SkipUnmarshal []string
 	Package       string
+	FieldOrder    map[string]int
 }
 
 type YacIt struct {
@@ -54,6 +56,7 @@ type YacIt struct {
 	io              io.Writer
 	customUnmarshal map[string]struct{}
 	pkg             string
+	fieldOrder      map[string]int
 }
 
 func (t *YacIt) Add(typ interface{}) {
@@ -112,6 +115,25 @@ func (t *YacIt) createStruct(typ reflect.Type) {
 		nuFields[len(nuFields)-1].Tag = (nuTag)
 	}
 
+	// sort nuFields
+	sort.SliceStable(nuFields, func(i, j int) bool {
+		name1 := nuFields[i].Name
+		name2 := nuFields[j].Name
+		// check weights
+		w1, ok1 := t.fieldOrder[name1]
+		w2, ok2 := t.fieldOrder[name2]
+		if ok1 && ok2 {
+			return w1 > w2
+		}
+		// the entry with a weight is always greater
+		if ok1 || ok2 {
+			return true
+		}
+
+		return false
+	})
+
+	// render fields
 	for i := range nuFields {
 		field := nuFields[i]
 
