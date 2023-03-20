@@ -93,7 +93,9 @@ func FormatFile(filename string) error {
 	}
 
 	b, err := ParseYaml(data)
-	if err != nil {
+	// we have v7 structs in v8 bundle, so it can happen that v7 parses properly
+	// for that case we need to make sure all the structs are properly converted
+	if err != nil || hasV7Structs(b) {
 		data, err = DeprecatedV7_ToV8(data)
 	} else {
 		data, err = Format(b)
@@ -108,4 +110,14 @@ func FormatFile(filename string) error {
 	}
 
 	return nil
+}
+
+func hasV7Structs(b *Bundle) bool {
+	for i := range b.Policies {
+		p := b.Policies[i]
+		if len(p.Specs) > 0 {
+			return true
+		}
+	}
+	return false
 }
