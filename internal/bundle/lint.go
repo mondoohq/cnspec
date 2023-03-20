@@ -223,9 +223,11 @@ func lintFile(file string) (*Results, error) {
 
 	// index global queries that are not embedded
 	globalQueriesUids := map[string]int{}
+	globalQueriesByUid := map[string]*Mquery{}
 	for i := range policyBundle.Queries {
 		query := policyBundle.Queries[i]
 		globalQueriesUids[query.Uid]++ // count the times the query uid is used
+		globalQueriesByUid[query.Uid] = query
 	}
 
 	// validate policies
@@ -379,7 +381,7 @@ func lintFile(file string) (*Results, error) {
 			for ic := range group.Checks {
 				check := group.Checks[ic]
 				uid := check.Uid
-				assignedQueries[uid] = struct{}{}
+				updateAssignedQueries(check, assignedQueries, globalQueriesByUid)
 
 				// check if the query is embedded
 				if isEmbeddedQuery(check) {
@@ -407,7 +409,7 @@ func lintFile(file string) (*Results, error) {
 			for iq := range group.Queries {
 				query := group.Queries[iq]
 				uid := query.Uid
-				assignedQueries[uid] = struct{}{}
+				updateAssignedQueries(query, assignedQueries, globalQueriesByUid)
 
 				// check if the query is embedded
 				if isEmbeddedQuery(query) {
@@ -524,4 +526,19 @@ func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, ass
 		})
 	}
 	return res
+}
+
+var emptyQueryTracker = map[string]*Mquery{}
+
+func updateAssignedQueries(query *Mquery, assignedTracker map[string]struct{}, queryTracker map[string]*Mquery) {
+	assignedTracker[query.Uid] = struct{}{}
+
+	for i := range query.Variants {
+		variant := query.Variants[i]
+		assignedTracker[variant.Uid] = struct{}{}
+	}
+
+	if base, ok := queryTracker[query.Uid]; ok {
+		updateAssignedQueries(base, assignedTracker, emptyQueryTracker)
+	}
 }
