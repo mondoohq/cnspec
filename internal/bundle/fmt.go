@@ -80,6 +80,9 @@ func DeprecatedV7_ToV8(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// sort content
+	v8yaci.SortContents()
+
 	// ... until we have it where we want it
 	return Format(v8yaci)
 }
@@ -98,6 +101,7 @@ func FormatFile(filename string) error {
 	if err != nil || hasV7Structs(b) {
 		data, err = DeprecatedV7_ToV8(data)
 	} else {
+		b.SortContents()
 		data, err = Format(b)
 	}
 	if err != nil {

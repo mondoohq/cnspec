@@ -1,12 +1,30 @@
 package bundle
 
 import (
+	"sort"
 	"strconv"
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/explorer"
 	"gopkg.in/yaml.v3"
 )
+
+// SortContents of this policy bundle sorts Queries and Policies by MRNs
+func (p *Bundle) SortContents() {
+	sort.SliceStable(p.Queries, func(i, j int) bool {
+		if p.Queries[i].Uid != "" && p.Queries[j].Uid != "" {
+			return p.Queries[i].Uid < p.Queries[j].Uid
+		}
+		return p.Queries[i].Mrn < p.Queries[j].Mrn
+	})
+
+	sort.SliceStable(p.Policies, func(i, j int) bool {
+		if p.Policies[i].Uid != "" && p.Policies[j].Uid != "" {
+			return p.Policies[i].Uid < p.Policies[j].Uid
+		}
+		return p.Policies[i].Mrn < p.Policies[j].Mrn
+	})
+}
 
 func (x *Impact) UnmarshalYAML(node *yaml.Node) error {
 	defer x.addFileContext(node)
