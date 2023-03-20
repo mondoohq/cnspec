@@ -221,11 +221,11 @@ func lintFile(file string) (*Results, error) {
 		return res, nil
 	}
 
-	// index queries
-	queryUids := map[string]int{}
+	// index global queries that are not embedded
+	globalQueriesUids := map[string]int{}
 	for i := range policyBundle.Queries {
 		query := policyBundle.Queries[i]
-		queryUids[query.Uid]++ // count the times the query uid is used
+		globalQueriesUids[query.Uid]++ // count the times the query uid is used
 	}
 
 	// validate policies
@@ -321,7 +321,7 @@ func lintFile(file string) (*Results, error) {
 			})
 		}
 
-		if len(policy.Specs) == 0 {
+		if len(policy.Groups) == 0 {
 			res.Entries = append(res.Entries, Entry{
 				RuleID:  policyMissingChecks,
 				Message: "Policy " + policy.Uid + " is missing checks",
@@ -334,22 +334,22 @@ func lintFile(file string) (*Results, error) {
 			})
 		}
 
-		// check that all assigned queries actually exist as queries
-		for j := range policy.Specs {
-			spec := policy.Specs[j]
+		// check that all assigned checks actually exist as full queries
+		for j := range policy.Groups {
+			group := policy.Groups[j]
 
-			if spec.AssetFilter == nil || spec.AssetFilter.Query == "" {
+			if group.Filters == nil || len(group.Filters.Items) == 0 {
 				location := Location{
 					File:   file,
-					Line:   spec.FileContext.Line,
-					Column: spec.FileContext.Column,
+					Line:   group.FileContext.Line,
+					Column: group.FileContext.Column,
 				}
 
-				if spec.AssetFilter != nil {
+				if group.Filters != nil {
 					location = Location{
 						File:   file,
-						Line:   spec.AssetFilter.FileContext.Line,
-						Column: spec.AssetFilter.FileContext.Column,
+						Line:   group.Filters.FileContext.Line,
+						Column: group.Filters.FileContext.Column,
 					}
 				}
 
@@ -362,7 +362,7 @@ func lintFile(file string) (*Results, error) {
 			}
 
 			// issue warning if no checks or data queries are assigned
-			if len(spec.ScoringQueries) == 0 && len(spec.DataQueries) == 0 {
+			if len(group.Checks) == 0 && len(group.Queries) == 0 {
 				res.Entries = append(res.Entries, Entry{
 					RuleID:  policyMissingChecks,
 					Message: "Policy " + policy.Uid + " is missing checks",
@@ -376,55 +376,88 @@ func lintFile(file string) (*Results, error) {
 			}
 
 			// check that all assigned queries actually exist as queries
-			for uid := range spec.ScoringQueries {
+			for ic := range group.Checks {
+				check := group.Checks[ic]
+				uid := check.Uid
 				assignedQueries[uid] = struct{}{}
 
-				_, ok := queryUids[uid]
-				if !ok {
-					res.Entries = append(res.Entries, Entry{
-						RuleID:  policyMissingAssignedQuery,
-						Message: fmt.Sprintf("policy %s assigned missing check query %s", policy.Uid, uid),
-						Level:   levelError,
-						Location: []Location{{
-							File:   file,
-							Line:   spec.FileContext.Line,
-							Column: spec.FileContext.Column,
-						}},
-					})
+				// check if the query is embedded
+				if isEmbeddedQuery(check) {
+					// NOTE: embedded queries do not need a uid
+					lintQuery(check, file, globalQueriesUids, assignedQueries, false)
+				} else {
+					// if the query is not embedded, then it needs to be available globally
+					_, ok := globalQueriesUids[uid]
+					if !ok {
+						res.Entries = append(res.Entries, Entry{
+							RuleID:  policyMissingAssignedQuery,
+							Message: fmt.Sprintf("policy %s assigned missing check query %s", policy.Uid, uid),
+							Level:   levelError,
+							Location: []Location{{
+								File:   file,
+								Line:   group.FileContext.Line,
+								Column: group.FileContext.Column,
+							}},
+						})
+					}
 				}
 			}
 
 			// check that all assigned data queries exist
-			for uid := range spec.DataQueries {
+			for iq := range group.Queries {
+				query := group.Queries[iq]
+				uid := query.Uid
 				assignedQueries[uid] = struct{}{}
 
-				_, ok := queryUids[uid]
-				if !ok {
-					res.Entries = append(res.Entries, Entry{
-						RuleID:  policyMissingAssignedQuery,
-						Message: fmt.Sprintf("policy %s assigned missing data query %s", policy.Uid, uid),
-						Level:   levelError,
-						Location: []Location{{
-							File:   file,
-							Line:   spec.FileContext.Line,
-							Column: spec.FileContext.Column,
-						}},
-					})
+				// check if the query is embedded
+				if isEmbeddedQuery(query) {
+					// NOTE: embedded queries do not need a uid
+					lintQuery(query, file, globalQueriesUids, assignedQueries, false)
+				} else {
+					// if the query is not embedded, then it needs to be available globally
+					_, ok := globalQueriesUids[uid]
+					if !ok {
+						res.Entries = append(res.Entries, Entry{
+							RuleID:  policyMissingAssignedQuery,
+							Message: fmt.Sprintf("policy %s assigned missing data query %s", policy.Uid, uid),
+							Level:   levelError,
+							Location: []Location{{
+								File:   file,
+								Line:   group.FileContext.Line,
+								Column: group.FileContext.Column,
+							}},
+						})
+					}
 				}
 			}
 		}
 	}
 
-	// validate the queries
+	// validate the global queries
 	for i := range policyBundle.Queries {
 		query := policyBundle.Queries[i]
-		queryId := strconv.Itoa(i)
-		uid := query.Uid
+		queryResults := lintQuery(query, file, globalQueriesUids, assignedQueries, true)
+		res.Entries = append(res.Entries, queryResults.Entries...)
+	}
+	return res, nil
+}
 
+func isEmbeddedQuery(query *Mquery) bool {
+	if query.Title != "" || query.Mql != "" {
+		return true
+	}
+	return false
+}
+
+func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, assignedQueries map[string]struct{}, requiresUID bool) *Results {
+	res := &Results{}
+	uid := query.Uid
+
+	if requiresUID {
 		if uid == "" {
 			res.Entries = append(res.Entries, Entry{
 				RuleID:  queryUid,
-				Message: fmt.Sprintf("query %s does not define a UID", queryId),
+				Message: fmt.Sprintf("query does not define a UID"),
 				Level:   levelError,
 				Location: []Location{{
 					File:   file,
@@ -433,13 +466,11 @@ func lintFile(file string) (*Results, error) {
 				}},
 			})
 		} else {
-			queryId = uid
-
 			// check that the uid is valid
 			if !reResourceID.MatchString(uid) {
 				res.Entries = append(res.Entries, Entry{
 					RuleID:  bundleInvalidUid,
-					Message: fmt.Sprintf("query %s UID does not meet the requirements", queryId),
+					Message: fmt.Sprintf("query %s UID does not meet the requirements", uid),
 					Level:   levelError,
 					Location: []Location{{
 						File:   file,
@@ -449,48 +480,48 @@ func lintFile(file string) (*Results, error) {
 				})
 			}
 		}
-
-		if query.Title == "" {
-			res.Entries = append(res.Entries, Entry{
-				RuleID:  queryTitle,
-				Message: fmt.Sprintf("query %s does not define a title", queryId),
-				Level:   levelError,
-				Location: []Location{{
-					File:   file,
-					Line:   query.FileContext.Line,
-					Column: query.FileContext.Column,
-				}},
-			})
-		}
-
-		// check if policy id was used already
-		if queryUids[uid] > 1 {
-			res.Entries = append(res.Entries, Entry{
-				RuleID:  queryUidUnique,
-				Message: fmt.Sprintf("query uid %s is used multiple times", uid),
-				Level:   levelError,
-				Location: []Location{{
-					File:   file,
-					Line:   query.FileContext.Line,
-					Column: query.FileContext.Column,
-				}},
-			})
-		}
-
-		// check if the query is assigned to a policy
-		_, ok := assignedQueries[uid]
-		if !ok {
-			res.Entries = append(res.Entries, Entry{
-				RuleID:  queryUnassigned,
-				Message: fmt.Sprintf("query uid %s is not assigned to a policy", uid),
-				Level:   levelWarning,
-				Location: []Location{{
-					File:   file,
-					Line:   query.FileContext.Line,
-					Column: query.FileContext.Column,
-				}},
-			})
-		}
 	}
-	return res, nil
+
+	if query.Title == "" {
+		res.Entries = append(res.Entries, Entry{
+			RuleID:  queryTitle,
+			Message: fmt.Sprintf("query %s does not define a title", uid),
+			Level:   levelError,
+			Location: []Location{{
+				File:   file,
+				Line:   query.FileContext.Line,
+				Column: query.FileContext.Column,
+			}},
+		})
+	}
+
+	// check if query id was used already
+	if globalQueriesUids[uid] > 1 {
+		res.Entries = append(res.Entries, Entry{
+			RuleID:  queryUidUnique,
+			Message: fmt.Sprintf("query uid %s is used multiple times", uid),
+			Level:   levelError,
+			Location: []Location{{
+				File:   file,
+				Line:   query.FileContext.Line,
+				Column: query.FileContext.Column,
+			}},
+		})
+	}
+
+	// check if the query is assigned to a policy
+	_, ok := assignedQueries[uid]
+	if !ok {
+		res.Entries = append(res.Entries, Entry{
+			RuleID:  queryUnassigned,
+			Message: fmt.Sprintf("query uid %s is not assigned to a policy", uid),
+			Level:   levelWarning,
+			Location: []Location{{
+				File:   file,
+				Line:   query.FileContext.Line,
+				Column: query.FileContext.Column,
+			}},
+		})
+	}
+	return res
 }
