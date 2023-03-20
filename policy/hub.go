@@ -376,6 +376,11 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 			}
 
 			if nuPolicy.ComputedFilters == nil {
+				// This should not happen, because `GetValidatedBundle` above should
+				// only retrieve a fully validated bundle from the backend, i.e.
+				// that bundle has all its computed asset filters included.
+				// However, we do this to avoid breaking the execution, while still
+				// logging the error.
 				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters; trying to refresh it")
 				nuPolicy.ComputeAssetFilters(ctx, s.DataLake.GetValidatedPolicy, s.DataLake.GetQuery, true)
 			}
