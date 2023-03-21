@@ -63,7 +63,7 @@ Find out more in each sub-commands help menu. Here are a few examples:
 
     $ cnspec scan aws --region us-east-1
     $ cnspec scan azure --subscription ID --group NAME
-    $ cnspec scan gcp --project ID
+    $ cnspec scan gcp project ID
 
 You can also access Docker containers and images. cnspec supports local containers
 and images as well as images in Docker registries:
@@ -206,7 +206,16 @@ configuration for the account scan. To scan Azure virtual machines, you must
 configure your Azure credentials and have SSH access to the virtual machines.`,
 			},
 			"gcp": {
-				Short: "Scan a Google Cloud Platform (GCP) organization or project.",
+				Short: "Scan a Google Cloud Platform (GCP) organization, project or folder.",
+			},
+			"gcp-org": {
+				Short: "Scan a Google Cloud Platform (GCP) organization.",
+			},
+			"gcp-project": {
+				Short: "Scan a Google Cloud Platform (GCP) project.",
+			},
+			"gcp-folder": {
+				Short: "Scan a Google Cloud Platform (GCP) folder.",
 			},
 			"gcp-gcr": {
 				Short: "Scan a Google Container Registry (GCR).",
