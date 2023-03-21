@@ -47,18 +47,37 @@ func TestParser_DeprecatedV7(t *testing.T) {
 }
 
 func TestRemediationDecoding(t *testing.T) {
-	desc := "remediation text"
-	var r Remediation
-	err := yaml.Unmarshal([]byte(desc), &r)
-	require.NoError(t, err)
-	assert.Equal(t, desc, r.Items[0].Desc)
+	t.Run("simple remediation text", func(t *testing.T) {
+		desc := "remediation text"
+		var r Remediation
+		err := yaml.Unmarshal([]byte(desc), &r)
+		require.NoError(t, err)
+		assert.Equal(t, desc, r.Items[0].Desc)
+		assert.Equal(t, "default", r.Items[0].Id)
+	})
 
-	descTyped := `
-- id: default
+	t.Run("list of ID + desc", func(t *testing.T) {
+		descTyped := `
+- id: something
   desc: remediation text
 `
+		var r Remediation
+		err := yaml.Unmarshal([]byte(descTyped), &r)
+		require.NoError(t, err)
+		assert.Equal(t, "remediation text", r.Items[0].Desc)
+		assert.Equal(t, "something", r.Items[0].Id)
+	})
 
-	err = yaml.Unmarshal([]byte(descTyped), &r)
-	require.NoError(t, err)
-	assert.Equal(t, desc, r.Items[0].Desc)
+	t.Run("items with list of ID + desc (not user-facing!)", func(t *testing.T) {
+		descTyped := `
+items:
+  - id: something
+    desc: remediation text
+`
+		var r Remediation
+		err := yaml.Unmarshal([]byte(descTyped), &r)
+		require.NoError(t, err)
+		assert.Equal(t, "remediation text", r.Items[0].Desc)
+		assert.Equal(t, "something", r.Items[0].Id)
+	})
 }
