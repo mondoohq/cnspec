@@ -124,8 +124,8 @@ func (x *Remediation) UnmarshalYAML(node *yaml.Node) error {
 		return nil
 	}
 
-	err = node.Decode(x.Items)
-	if err == nil {
+	// decode a slice of remediation types
+	if err := node.Decode(&x.Items); err == nil {
 		return nil
 	}
 
