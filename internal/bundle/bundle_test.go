@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestParser(t *testing.T) {
@@ -43,4 +44,21 @@ func TestParser_DeprecatedV7(t *testing.T) {
 		},
 		FileContext: FileContext{26, 13},
 	}, baseline.Queries[0].Impact)
+}
+
+func TestRemediationDecoding(t *testing.T) {
+	desc := "remediation text"
+	var r Remediation
+	err := yaml.Unmarshal([]byte(desc), &r)
+	require.NoError(t, err)
+	assert.Equal(t, desc, r.Items[0].Desc)
+
+	descTyped := `
+- id: default
+  desc: remediation text
+`
+
+	err = yaml.Unmarshal([]byte(descTyped), &r)
+	require.NoError(t, err)
+	assert.Equal(t, desc, r.Items[0].Desc)
 }

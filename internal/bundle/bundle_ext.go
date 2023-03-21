@@ -124,8 +124,20 @@ func (x *Remediation) UnmarshalYAML(node *yaml.Node) error {
 		return nil
 	}
 
-	err = node.Decode(x.Items)
+	// decode a slice of remediation types
+	type tmpTypedDoc TypedDoc
+	type items []*tmpTypedDoc
+	xItems := items{}
+	for i := range x.Items {
+		xItems = append(xItems, (*tmpTypedDoc)(x.Items[i]))
+	}
+
+	err = node.Decode(&xItems)
 	if err == nil {
+		x.Items = make([]*TypedDoc, len(xItems))
+		for i := range xItems {
+			x.Items[i] = (*TypedDoc)(xItems[i])
+		}
 		return nil
 	}
 
