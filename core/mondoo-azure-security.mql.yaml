@@ -34,7 +34,7 @@ policies:
       ```
       ### Prerequisites
 
-      Remote scans of Azure require API credentials with access to the subscription. 
+      Remote scans of Azure require API credentials with access to the subscription.
 
       ### Scan an Azure subscription
 
@@ -66,7 +66,7 @@ policies:
       mondoo-azure-security-ensure-security-defaults-is-enabled-on-azure-active-directory: null
       mondoo-azure-security-enable-azure-ad-identity-protection-sign-in-risk-policies: null
       mondoo-azure-security-enable-azure-ad-identity-protection-user-risk-policies: null
-      mondoo-azure-security-ensure-auditing-retention-greater-than-90-days: null 
+      mondoo-azure-security-ensure-auditing-retention-greater-than-30-days: null 
       mondoo-azure-security-ensure-auditing-on: null
       mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access: null
       mondoo-azure-security-ensure-register-with-ad-is-enabled-on-app-service: null
@@ -76,6 +76,17 @@ policies:
       mondoo-azure-security-ensure-logging-enabled-kv: null
       mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group: null
       mondoo-azure-security-ensure-that-notify-about-alerts-with-high-severity-is-on: null 
+      mondoo-azure-security-ensure-that-ssl-enabled-postgresql: null
+      mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mariadb: null
+      mondoo-azure-security-ensure-deny-public-access-mariadb: null
+      mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql: null
+      mondoo-azure-security-ensure-disabled-public-access-sql: null
+      mondoo-azure-security-keyvault-public-access-disabled: null 
+      mondoo-azure-security-sql-server-audit-on: null
+      mondoo-azure-security-sql-server-tde-on: null
+      mondoo-azure-security-diagnostic-settings-exist: null
+      mondoo-azure-security-diagnostic-settings-essential-categories: null
+      mondoo-azure-security-disable-udp-virtualmachines: null
 queries: 
   - uid: mondoo-azure-security-ensure-multifactor-authentication-is-enabled-for-all-users-in-all-roles
     title: Ensure that multi-factor authentication has been enabled for all users
@@ -87,11 +98,14 @@ queries:
         __cnspec run__
 
         To audit Microsoft Azure with `cnspec run`:
-   
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
+
+        Run the following query:
+
           ```bash
           cnspec run azure -c "microsoft.security.latestSecureScores.controlScores.one( _['controlName'] == 'MFARegistrationV2' &&  _['score'] == 9)" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
           ```
-          Note: It is also possible to use a client secret for app connection instead of a certificate. 
 
         __cnspec shell__
 
@@ -102,8 +116,6 @@ queries:
           ```bash
           cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
           ```
-          
-          Note: It is also possible to use a client secret for app connection instead of a certificate.
         
         2. Run the following query:
 
@@ -534,15 +546,18 @@ queries:
         }
         ```
     query: |
-      azure.network.securityGroups {
-        securityRules.where ( 
-          _.properties['access'] == 'Allow' && 
-          _.properties['direction'] == 'Inbound' &&
-          _.properties['protocol'] == /TCP|\*/ && 
-          _.properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ 
-        ) { 
-            destinationPortRange { _['fromPort'] > 22 || _['toPort'] < 22 
-          }
+      azure.network.securityGroups { 
+        securityRules.where( properties['access'] == 'Allow' && properties['direction'] == 'Inbound' && properties['protocol'] == /TCP|\*/ && properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ )
+        } { 
+          securityRules {
+            properties["destinationPortRange"] != "*"
+            properties["destinationPortRange"] != 22
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 22 && properties["destinationPortRange"].split("-")[1] < 22
+              b = properties["destinationPortRange"].split("-")[0] > 22 && properties["destinationPortRange"].split("-")[1] > 22
+              a || b
+            }
+            properties["destinationPortRanges"].all( _ != 22 )
         }
       }
   - uid: mondoo-azure-security-rdp-access-restricted-from-internet
@@ -604,17 +619,19 @@ queries:
         }
         ```
     query: |
-      azure.network.securityGroups {
-        securityRules.where ( 
-          _.properties['access'] == 'Allow' && 
-          _.properties['direction'] == 'Inbound' && 
-          _.properties['protocol'] == /TCP|\*/ && 
-          _.properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ 
-        ) {
-            destinationPortRange {
-              _['fromPort'] > 3389 || _['toPort'] < 3389
+      azure.network.securityGroups { 
+        securityRules.where( properties['access'] == 'Allow' && properties['direction'] == 'Inbound' && properties['protocol'] == /TCP|\*/ && properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ )
+        } { 
+          securityRules {
+            properties["destinationPortRange"] != "*"
+            properties["destinationPortRange"] != 3389
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 3389 && properties["destinationPortRange"].split("-")[1] < 3389
+              b = properties["destinationPortRange"].split("-")[0] > 3389 && properties["destinationPortRange"].split("-")[1] > 3389
+              a || b
             }
-          }
+            properties["destinationPortRanges"].all( _ != 3389 )
+        }
       }
   - uid: mondoo-azure-security-secure-transfer-required-enabled
     title: Ensure that 'Secure transfer required' is set to 'Enabled'
@@ -729,11 +746,7 @@ queries:
         --account-key <account_key>
         ```
     query: |
-      azure.storage.accounts {
-        containers {
-          properties['publicAccess'] == "None"
-        }
-      }
+      azure.storage.accounts.all( properties["allowBlobPublicAccess"] == "false" ) || azure.storage.accounts.all ( containers { properties["publicAccess"] == "None" } )
   - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
     title: Ensure the default network access rule for Storage Accounts is set to deny
     severity: 80
@@ -796,9 +809,7 @@ queries:
         }
         ```      
     query: |
-      azure.storage.accounts {
-        properties['networkAcls']['defaultAction'] == "Deny"
-      }
+      azure.storage.accounts.all( properties["networkAcls"]["defaultAction"] == "Deny" )
   - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
     title: Ensure 'Trusted Microsoft Services' is enabled for Storage Account access
     severity: 80
@@ -814,7 +825,7 @@ queries:
         2. Run the following query:
 
           ```bash
-          cnspec run azure -c "azure.storage.accounts { containers { properties['publicAccess'] == "None" } }"
+          cnspec run azure -c "azure.storage.accounts.all ( properties['networkAcls']['bypass'] == "AzureServices")"
           ```
 
         __cnspec shell__
@@ -831,7 +842,7 @@ queries:
         3. Run the following query:
 
           ```mql
-          azure.storage.accounts { containers { properties['publicAccess'] == "None" } }
+          azure.storage.accounts.all ( properties['networkAcls']['bypass'] == "AzureServices")
           ```
       remediation: |
         ###Terraform
@@ -847,9 +858,7 @@ queries:
         }
         ``` 
     query: |
-      azure.storage.accounts {
-        properties['networkAcls']['bypass'] == "AzureServices"
-      }
+      azure.storage.accounts.all ( properties['networkAcls']['bypass'] == "AzureServices")
   - uid: mondoo-azure-security-ensure-auditing-on
     title: Ensure that 'Auditing' is set to 'On' for SQL servers
     severity: 80
@@ -903,12 +912,12 @@ queries:
       azure.sql.servers {
         auditingPolicy['state'] == "Enabled"
       }
-  - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-90-days
-    title: Ensure that 'Auditing' Retention is 'greater than 90 days'
+  - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days
+    title: Ensure that 'Auditing' Retention is 'greater than 30 days'
     severity: 80
     docs:
       desc: |
-        This control checks that 'Auditing' Retention is 'greater than or equal to 90 days'
+        This control checks that 'Auditing' Retention is 'greater than or equal to 30 days'
       audit: |
         __cnspec run__
 
@@ -947,13 +956,13 @@ queries:
             storage_endpoint           = azure_storage_account.example.primary_blob_endpoint
             storage_account_access_key = azure_storage_account.example.primary_access_key
             storage_account_access_key_is_secondary = true
-            retention_in_days                       = 90
+            retention_in_days                       = 30
           }
         }
         ```     
     query: |
       azure.sql.servers {
-        auditingPolicy['retentionDays'] >= 90
+        auditingPolicy['retentionDays'] >= 30
       }
   - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0
     title: Ensure no SQL Databases allow ingress 0.0.0.0/0 (ANY IP)
@@ -1083,7 +1092,7 @@ queries:
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
 
         Run the following query:
 
@@ -1130,7 +1139,7 @@ queries:
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
 
         Run the following query:
 
@@ -1178,7 +1187,7 @@ queries:
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
 
         Run the following query:
 
@@ -1223,13 +1232,19 @@ queries:
     severity: 80
     docs:
       desc: |
-        Azure Key Vault can store keys, secrets, and certificates. Accidental unavailability of a Key Vault can cause serious problems in any organization. 
+        Azure Key Vault can store keys, secrets, and certificates. Accidental unavailability of a Key Vault can cause serious problems in any organization.
+
+        Soft Delete is a feature of Key Vault that retains Key Vaults and Key Vault items after initial deletion. By default, new Key Vaults created through the portal will have soft delete for 90 days configured.
+        Once enabled, soft delete can not be disabled. When soft delete is enabled, it is possible to purge soft deleted vaults and vault items.
+
+        Purge protection is another feature of Key Vaults that is used to protect deleted Key Vaults for a certain period, called the "retention period." Once enabled, purge protection prevents deleted key vaults from being purged until the retention period has been reached. This selection cannot be changed once the Key Vault is created. 
+        If a Key Vault is created with purge protection, you can still delete it, but you will not be able to purge it once it is deleted. In this case, the deleted Key Vaults will have to wait for 90 days to pass to be permanently purged.
       audit: |
         __cnspec run__
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
 
         Run the following query:
 
@@ -1278,7 +1293,7 @@ queries:
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
 
         Run the following query:
 
@@ -1305,7 +1320,7 @@ queries:
         ### Microsoft Azure Portal
 
         To update using the Microsoft Azure portal:
-        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com
         2. Navigate to **Key vaults**.
         3. Select "Properties" and ensure Soft delete has been enabled on this key vault
         4. At the bottom of the page, select "Enable Purge Protection"
@@ -1324,7 +1339,7 @@ queries:
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
 
         Run the following query:
 
@@ -1357,7 +1372,7 @@ queries:
         2. Navigate to the "Monitor" blade
           1. Select "Alerts"
           2. Select "Create" and then "Alert rule" 
-          3. Under the Scope tab, select "Select scope" 
+          3. Under the Scope tab, select "Select scope"
           4. In the "Select a resource" window, select the appropriate filters:
             - Filter by subscription: "< choose the subscription alerts are needed for >""
             - Filter by resource location: **"Network security groups"**
@@ -1394,7 +1409,7 @@ queries:
 
         To audit Microsoft Azure with `cnspec run`:
       
-        it is possible also to use client-secret for app connection instead of the certificate. 
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
 
         Run the following query:
 
@@ -1427,5 +1442,690 @@ queries:
         4. Select on `Email notifications` and ensure that the `Notify about alerts with the following severity (or higher)` setting is checked and set to `High`
     query: |
       azure.cloudDefender.securityContacts.all( alertNotifications["minimalSeverity"] == "High" && alertNotifications["state"] == "On" )
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql
+    title: Ensure SSL connection enabled for PostgreSQL Database Server
+    severity: 80
+    docs:
+      desc: |
+        All communications between the clients and the PostgreSQL server should be through SSL/TLS to add a layer of encryption to prevent any man in the middle attacks.
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.postgresql.servers.all( properties["sslEnforcement"] == "Enabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.postgresql.servers.all( properties["sslEnforcement"] == "Enabled" )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to Azure Database for `PostgreSQL server`
+        3. For each database, click on `Connection security`
+        4. In `SSL` settings, click on `ENABLED` to enforce SSL connections
+    query: |
+      azure.postgresql.servers.all( properties["sslEnforcement"] == "Enabled" )
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mariadb
+    title: Ensure SSL connection enabled for MariaDB Database Server with the latest version
+    severity: 80
+    docs:
+      desc: |
+        All communications between the clients and the Mariadb server should be through SSL/TLS to add a layer of encryption to prevent any man in the middle attacks.
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.mariaDb.servers.all( properties["sslEnforcement"] == "Enabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.mariaDb.servers.all( properties["sslEnforcement"] == "Enabled" )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to Azure Database for `MariaDB server`
+        3. For each database, click on `Connection security`
+        4. In `SSL` settings, click on `ENABLED` to enforce SSL connections
+        5. In TLS setting, make the latest version chosen as minimum tls version
+    query: |
+      azure.mariaDb.servers.all( properties["sslEnforcement"] == "Enabled" )
+      azure.mariaDb.servers.all( properties["minimalTlsVersion"] == "TLS1_2" )
+  - uid: mondoo-azure-security-ensure-deny-public-access-mariadb
+    title: Ensure Public Network access for MariaDB disabled
+    severity: 80
+    docs:
+      desc: |
+        All public access to MariaDB should be blocked, and only connections through private endpoints should be allowed to further enhance network security.
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.mariaDb.servers.all( properties["publicNetworkAccess"] == "Disabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.mariaDb.servers.all( properties["publicNetworkAccess"] == "Disabled" )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to Azure Database for `MariaDB server`
+        3. For each database, click on `Connection security`
+        4. In `Deny Public network access` settings, select **Yes**
+    query: |
+      azure.mariaDb.servers.all( properties["publicNetworkAccess"] == "Disabled" )
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql
+    title: Ensure SSL connection enabled for mySQL Database Server with the latest version
+    severity: 80
+    docs:
+      desc: |
+        All communications between the clients and the mySQL server should be through SSL/TLS to add a layer of encryption to prevent any man in the middle attacks.
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.mySql.servers.all ( properties["sslEnforcement"] == "Enabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          cnspec run azure -c "azure.mySql.servers.all ( properties["minimalTlsVersion"] == "TLS1_2" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.mySql.servers.all ( properties["sslEnforcement"] == "Enabled" )
+          azure.mySql.servers.all ( properties["minimalTlsVersion"] == "TLS1_2" )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to Azure Database for `mySQL server`
+        3. For each database, select `Connection security`
+        4. In `SSL` settings, select `ENABLED` to enforce SSL connections
+        5. At end, in TLS setting, choose the latest tls version
+    query: |
+      azure.mySql.servers.all ( properties["sslEnforcement"] == "Enabled" )
+      azure.mySql.servers.all ( properties["minimalTlsVersion"] == "TLS1_2" )
+  - uid: mondoo-azure-security-ensure-disabled-public-access-sql
+    title: Ensure Public Network access for SQL server disabled or only possible through firewall rules
+    severity: 80
+    docs:
+      desc: |
+        Customers can choose to connect to a database by using one of the following ways:
+          * public endpoints (with IP-based server-level firewall rules or with virtual-network firewall rules)
+          * private endpoints (by using Azure Private Link)
+
+        When Public network access is set to Disable, only connections from private endpoints are allowed. All connections from public endpoints will be denied.
+
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.sql.servers.all ( properties["publicNetworkAccess"] == "Disabled" || properties["publicNetworkAccess"] == "Enabled" && firewallRules.length > 0" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.sql.servers.all ( properties["publicNetworkAccess"] == "Disabled" || properties["publicNetworkAccess"] == "Enabled" && firewallRules.length > 0 )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to `SQL servers`
+        3. For each server, click on `Networking` under Security
+        4. In `Public network access` settings, click on Disabled or `Selected networks` with activated Firewall rules or Virtual networks
+    query: |
+      azure.sql.servers.all ( properties["publicNetworkAccess"] == "Disabled" || properties["publicNetworkAccess"] == "Enabled" && firewallRules.length > 0 )
+  - uid: mondoo-azure-security-keyvault-public-access-disabled
+    title: Ensure default Public Network access for key vault disabled
+    severity: 80
+    docs:
+      desc: |
+        The default Public Network Access to the Key Vault must be disabled in order to add a layer of security to one of the most important component in the Azure environment.
+        By default, when you create a new key vault, the Azure Key Vault firewall is disabled. All applications and Azure services can access the key vault and send requests to the key vault. This configuration doesn't mean that any user will be able to perform operations on your key vault. The key vault still restricts access to secrets, keys, and certificates stored in key vault by requiring Azure Active Directory authentication and access policy permissions.
+
+        To enhance network security, you can configure your vault to disable public access. This will deny all public configurations and allow only connections through private endpoints. It is also possible to allow public access from specific virtual networks and IP addresses. 
+
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.keyVault.vaults.all ( properties["publicNetworkAccess"] == "Disabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.keyVault.vaults.all ( properties["publicNetworkAccess"] == "Disabled" )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to `Key vaults`
+        3. For each key vault server, click on `Networking` under Settings
+        4. In `Firewalls and virtual networks` settings, click on "Disable public access" 
+    query: |
+      azure.keyVault.vaults.all ( properties["publicNetworkAccess"] == "Disabled" )
+  - uid: mondoo-azure-security-sql-server-audit-on
+    title: Ensure that all activities on SQL server is audited
+    severity: 60
+    docs:
+      desc: |
+        Auditing is a very important feature and should be configured for every database or server in your deployment in Azure.
+        When server level auditing is enabled, it’s enabled for all existing databases and new databases which will be created in future.
+
+        Enable Server audit when you must audit all databases for that logical server, enable database level audit when you want audit different action groups for a specific database or write to different target for a specific database.
+
+        If you are enabling both server and database level audit for a database, then you can choose predicate expression to filter the events to ensure you are not capturing duplicate data.
+
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate. 
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.sql.servers.all( auditingPolicy["state"] == "Enabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.sql.servers.all( auditingPolicy["state"] == "Enabled" )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to `SQL servers`
+        3. For each SQL server Click on `Auditing` and make sure `Enable Azure SQL Auditing` is set to `On`
+    query: |
+      azure.sql.servers.all( auditingPolicy["state"] == "Enabled" )
+  - uid: mondoo-azure-security-sql-server-tde-on
+    title: Ensure that transparent data encryption is enabled on sql server
+    severity: 60
+    docs:
+      desc: |
+        Transparent data encryption (TDE) encrypts SQL Server, Azure SQL Database, and Azure Synapse Analytics data files. This encryption is known as encrypting data at rest.
+
+        TDE does real-time I/O encryption and decryption of data and log files. The encryption uses a database encryption key (DEK). The database boot record stores the key for availability during recovery. The DEK is a symmetric key. It's secured by a certificate that the server's master database stores or by an asymmetric key that an EKM module protects.
+
+        TDE protects data at rest, which is the data and log files. It lets you follow many laws, regulations, and guidelines established in various industries. This ability lets software developers encrypt data by using AES and 3DES encryption algorithms without changing existing applications.
+
+        Note:  TDE is not available for system databases.
+
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.sql.servers { databases.where (name != "master").all( transparentDataEncryption["state"] == "Enabled" ) }" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.sql.servers { databases.where (name != "master").all( transparentDataEncryption["state"] == "Enabled" ) }
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to `SQL servers`
+        3. For each DB instance, select `Transparent data encryption` and make sure `Data encryption` is set to `On`
+    query: |
+      azure.sql.servers { databases.where (name != "master").all( transparentDataEncryption["state"] == "Enabled" ) }
+  - uid: mondoo-azure-security-diagnostic-settings-exist
+    title: Ensure that Diagnostic Setting exists in our setup
+    severity: 80
+    docs:
+      desc: |
+       The diagnostic settings is an important piece in the security puzzle, and it is highly recommended by Microsoft in Azure Security Center. 
+       
+       To understand what exactly the "diagnostic settings" is, we need to understand the data source on Monitor component in Azure. 
+
+       Azure Monitor is based on different Logs and Metrics that we can collect from multiple resources. These data can be analyzed using a set of tools provided in Azure Monitor.
+       Azure Resources generate a significant amount of monitoring data which categorized into two mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv:
+
+        * Metrics : Numerical values that describe some aspect of a system at a particular point of time.
+        * Logs  :  Provide detailed diagnostic and auditing information for Azure resources.
+      
+       The Logs itself can be categorized into two types: 
+
+        * Resource logs aren't collected until they're routed to a destination.
+        * Activity logs exist on their own but can be routed to other locations.
+
+       Each Azure resource requires its own diagnostic setting, which defines the following criteria:
+
+        * Sources: The type of metric and log data to send to the destinations defined in the setting. The available types vary by resource type.
+        * Destinations: One or more destinations to send to.
 
 
+       A diagnostic setting basically controls how logs are exported. By default, logs are retained only for 90 days. 
+       By having the diagnostic settings, we can export the logs and store them for longer period in order to analyze the activities and find any security related issues.
+       
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.monitor.diagnosticSettings.length > 0" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.monitor.diagnosticSettings.length > 0
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to `Monitor` and select `Activity Logs`
+        3. Select a subscription, and make sure there is already a "diagnostic settings" for that subscription
+    query: |
+      azure.monitor.diagnosticSettings.length > 0
+  - uid: mondoo-azure-security-diagnostic-settings-essential-categories
+    title: Ensure that Diagnostic Setting collect essential security categories
+    severity: 80
+    docs:
+      desc: |
+      
+        Diagnostic setting controls how the diagnostic logs are exported and what type of data need to be collected and be exported to the defined destination.
+        By default no log categories are selected when the Diagnostic Setting is created. Capturing the appropriate log categories for the activities performed within your subscriptions provides proper insight into the environment and will help the SOC team in analyzing.
+
+        We recommend at minimum collect following categories:
+
+          * Security
+          * Alert
+          * Administrative 
+
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Administrative" ) )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          cnspec run azure -c "azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Security" ) )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          cnspec run azure -c "azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Alert" )  )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Administrative" ) )
+          azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Security" ) )
+          azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Alert" )  )
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using the Microsoft Azure portal:
+        1. Log in to the Microsoft Azure portal at https://portal.azure.com 
+        2. Go to `Monitor` and select `Activity Logs`
+        3. Select a subscription, and make sure there is already a "diagnostic settings" for that subscription
+    query: |
+      azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Administrative" ) )
+      azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Security" ) )
+      azure.monitor.diagnosticSettings.all( properties["logs"].where( _["enabled"] == "true" ).any( _["category"] == "Alert" )  )
+  - uid: mondoo-azure-security-disable-udp-virtualmachines
+    title: Ensure direct UDP access to Azure Virtual Machines from the Internet is restricted
+    severity: 80
+    docs:
+      desc: |
+      
+        The main security issue with exposing UDP services over the Internet is the broad attack surface that allows attackers to use Reflection Amplification Attack against Virtual Machines.
+        
+        A reflection attack involves an attacker spoofing a target's IP address and sending a request for information, mainly using UDP. The server then responds by sending an answer. This is called "reflection" (using the same protocol in both directions) attack.
+        The main issue is related to the way UDP protocol has been designed. UDP is a connection-less protocol that does not validate source IP addresses. Unless the application layer protocol uses countermeasures, an attacker can easily forge the IP packet datagram to include an arbitrary source IP address.
+        When many UDP packets have their source IP address forged to the victim IP address, the destination server (or amplifier) responds to the victim (instead of the attacker), creating a reflected denial-of-service (DoS) attack.
+
+        Any server having Open UDP ports can be targeted as a reflector. One way of protecting against this attack is to make sure well known UDP port services are not disclosed to the internet. 
+
+        Some application-layer protocols that rely on the UDP can be seen here:
+
+          * Domain Name System (DNS)
+          * Network Time Protocol (NTP)
+          * Connection-less Lightweight Directory Access Protocol (CLDAP)
+          * Character Generator Protocol (CharGEN)
+          * Simple Service Discovery Protocol (SSDP)
+          * BitTorrent
+          * Simple Network Management Protocol version 2 (SNMPv2)
+          * Portmap/Remote Procedure Call (RPC)
+          * Network Basic Input/Output System (NetBIOS)
+          * Trivial File Transfer Protocol (TFTP)
+
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`:
+      
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        Run the following query:
+
+          ```bash
+          cnspec run azure -c "azure.network.securityGroups { 
+          securityRules.where( properties['access'] == 'Allow' && properties['direction'] == 'Inbound' && properties['protocol'] == /UDP/ && properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ ) 
+          } { 
+            securityRules {
+              properties["destinationPortRange"] != "*"
+              properties["destinationPortRange"] != "53"
+              properties["destinationPortRange"] != "123"
+              properties["destinationPortRange"] != "161"
+              properties["destinationPortRange"] != "389"
+              properties["destinationPortRange"] != "1900"
+              if (properties["destinationPortRange"].split("-").length > 1) {
+                a = properties["destinationPortRange"].split("-")[0] < 53 && properties["destinationPortRange"].split("-")[1] < 53
+                b = properties["destinationPortRange"].split("-")[0] > 53 && properties["destinationPortRange"].split("-")[1] > 53
+                a || b
+              }
+              if (properties["destinationPortRange"].split("-").length > 1) {
+                a = properties["destinationPortRange"].split("-")[0] < 123 && properties["destinationPortRange"].split("-")[1] < 123
+                b = properties["destinationPortRange"].split("-")[0] > 123 && properties["destinationPortRange"].split("-")[1] > 123
+                a || b
+              }
+              if (properties["destinationPortRange"].split("-").length > 1) {
+                a = properties["destinationPortRange"].split("-")[0] < 161 && properties["destinationPortRange"].split("-")[1] < 161
+                b = properties["destinationPortRange"].split("-")[0] > 161 && properties["destinationPortRange"].split("-")[1] > 161
+                a || b
+              }
+              if (properties["destinationPortRange"].split("-").length > 1) {
+                a = properties["destinationPortRange"].split("-")[0] < 389 && properties["destinationPortRange"].split("-")[1] < 389
+                b = properties["destinationPortRange"].split("-")[0] > 389 && properties["destinationPortRange"].split("-")[1] > 389
+                a || b
+              }
+              if (properties["destinationPortRange"].split("-").length > 1) {
+                a = properties["destinationPortRange"].split("-")[0] < 1900 && properties["destinationPortRange"].split("-")[1] < 1900
+                b = properties["destinationPortRange"].split("-")[0] > 1900 && properties["destinationPortRange"].split("-")[1] > 1900
+                a || b
+              }
+              properties["destinationPortRanges"].all(_ != 53 )
+              properties["destinationPortRanges"].all(_ != 123 )
+              properties["destinationPortRanges"].all(_ != 161 )
+              properties["destinationPortRanges"].all(_ != 389 )
+              properties["destinationPortRanges"].all(_ != 1900 ) 
+          }
+        }" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+        
+        2. Run the following query:
+
+          ```mql
+          azure.network.securityGroups { 
+            securityRules.where( properties['access'] == 'Allow' && properties['direction'] == 'Inbound' && properties['protocol'] == /UDP/ && properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ ) 
+            } { 
+              securityRules {
+                properties["destinationPortRange"] != "*"
+                properties["destinationPortRange"] != "53"
+                properties["destinationPortRange"] != "123"
+                properties["destinationPortRange"] != "161"
+                properties["destinationPortRange"] != "389"
+                properties["destinationPortRange"] != "1900"
+                if (properties["destinationPortRange"].split("-").length > 1) {
+                  a = properties["destinationPortRange"].split("-")[0] < 53 && properties["destinationPortRange"].split("-")[1] < 53
+                  b = properties["destinationPortRange"].split("-")[0] > 53 && properties["destinationPortRange"].split("-")[1] > 53
+                  a || b
+                }
+                if (properties["destinationPortRange"].split("-").length > 1) {
+                  a = properties["destinationPortRange"].split("-")[0] < 123 && properties["destinationPortRange"].split("-")[1] < 123
+                  b = properties["destinationPortRange"].split("-")[0] > 123 && properties["destinationPortRange"].split("-")[1] > 123
+                  a || b
+                }
+                if (properties["destinationPortRange"].split("-").length > 1) {
+                  a = properties["destinationPortRange"].split("-")[0] < 161 && properties["destinationPortRange"].split("-")[1] < 161
+                  b = properties["destinationPortRange"].split("-")[0] > 161 && properties["destinationPortRange"].split("-")[1] > 161
+                  a || b
+                }
+                if (properties["destinationPortRange"].split("-").length > 1) {
+                  a = properties["destinationPortRange"].split("-")[0] < 389 && properties["destinationPortRange"].split("-")[1] < 389
+                  b = properties["destinationPortRange"].split("-")[0] > 389 && properties["destinationPortRange"].split("-")[1] > 389
+                  a || b
+                }
+                if (properties["destinationPortRange"].split("-").length > 1) {
+                  a = properties["destinationPortRange"].split("-")[0] < 1900 && properties["destinationPortRange"].split("-")[1] < 1900
+                  b = properties["destinationPortRange"].split("-")[0] > 1900 && properties["destinationPortRange"].split("-")[1] > 1900
+                  a || b
+                }
+                properties["destinationPortRanges"].all(_ != 53 )
+                properties["destinationPortRanges"].all(_ != 123 )
+                properties["destinationPortRanges"].all(_ != 161 )
+                properties["destinationPortRanges"].all(_ != 389 )
+                properties["destinationPortRanges"].all(_ != 1900 ) 
+            }
+          }
+          ```
+      remediation: |
+        Disable direct UDP access to your Azure Virtual Machines from the Internet. There are other options you can be used to access UDP based services running on these virtual machines:
+        * Point-to-site VPN
+        * Site-to-site VPN
+        * ExpressRoute
+    query: |
+      azure.network.securityGroups { 
+        securityRules.where( properties['access'] == 'Allow' && properties['direction'] == 'Inbound' && properties['protocol'] == /UDP/ && properties['sourceAddressPrefix'] == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/ ) 
+        } { 
+          securityRules {
+            properties["destinationPortRange"] != "*"
+            properties["destinationPortRange"] != "53"
+            properties["destinationPortRange"] != "123"
+            properties["destinationPortRange"] != "161"
+            properties["destinationPortRange"] != "389"
+            properties["destinationPortRange"] != "1900"
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 53 && properties["destinationPortRange"].split("-")[1] < 53
+              b = properties["destinationPortRange"].split("-")[0] > 53 && properties["destinationPortRange"].split("-")[1] > 53
+              a || b
+            }
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 123 && properties["destinationPortRange"].split("-")[1] < 123
+              b = properties["destinationPortRange"].split("-")[0] > 123 && properties["destinationPortRange"].split("-")[1] > 123
+              a || b
+            }
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 161 && properties["destinationPortRange"].split("-")[1] < 161
+              b = properties["destinationPortRange"].split("-")[0] > 161 && properties["destinationPortRange"].split("-")[1] > 161
+              a || b
+            }
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 389 && properties["destinationPortRange"].split("-")[1] < 389
+              b = properties["destinationPortRange"].split("-")[0] > 389 && properties["destinationPortRange"].split("-")[1] > 389
+              a || b
+            }
+            if (properties["destinationPortRange"].split("-").length > 1) {
+              a = properties["destinationPortRange"].split("-")[0] < 1900 && properties["destinationPortRange"].split("-")[1] < 1900
+              b = properties["destinationPortRange"].split("-")[0] > 1900 && properties["destinationPortRange"].split("-")[1] > 1900
+              a || b
+            }
+            properties["destinationPortRanges"].all(_ != 53 )
+            properties["destinationPortRanges"].all(_ != 123 )
+            properties["destinationPortRanges"].all(_ != 161 )
+            properties["destinationPortRanges"].all(_ != 389 )
+            properties["destinationPortRanges"].all(_ != 1900 ) 
+        }
+      }
