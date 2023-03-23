@@ -14,6 +14,7 @@ import (
 	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
+	"go.mondoo.com/cnquery/shared/rangerclient"
 	"go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/authentication/statictoken"
@@ -63,6 +64,10 @@ func register(token string) {
 	apiEndpoint := viper.GetString("api_endpoint")
 	token = strings.TrimSpace(token)
 
+	rangerClient, err := rangerclient.NewRangerClient()
+	if err != nil {
+		log.Fatal().Err(err).Msg("error while setting up HTTP client")
+	}
 	// we handle three cases here:
 	// 1. user has a token provided
 	// 2. user has no token provided, but has a service account file is already there
@@ -92,7 +97,7 @@ func register(token string) {
 		plugins = append(plugins, defaultPlugins...)
 		plugins = append(plugins, statictoken.NewRangerPlugin(token))
 
-		client, err := upstream.NewAgentManagerClient(apiEndpoint, ranger.DefaultHttpClient(), plugins...)
+		client, err := upstream.NewAgentManagerClient(apiEndpoint, rangerClient, plugins...)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not connect to mondoo platform")
 		}
@@ -162,7 +167,7 @@ func register(token string) {
 			}
 			plugins = append(plugins, certAuth)
 
-			client, err := upstream.NewAgentManagerClient(apiEndpoint, ranger.DefaultHttpClient(), plugins...)
+			client, err := upstream.NewAgentManagerClient(apiEndpoint, rangerClient, plugins...)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not connect to Mondoo Platform")
 			}
@@ -211,7 +216,7 @@ func register(token string) {
 		os.Exit(cnquery_cmd.ConfigurationErrorCode)
 	}
 	plugins = append(plugins, certAuth)
-	client, err := upstream.NewAgentManagerClient(apiEndpoint, ranger.DefaultHttpClient(), plugins...)
+	client, err := upstream.NewAgentManagerClient(apiEndpoint, rangerClient, plugins...)
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not connect to mondoo platform")
 	}

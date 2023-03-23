@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"go.mondoo.com/cnquery/shared/rangerclient"
 	"go.mondoo.com/ranger-rpc"
 	"golang.org/x/sync/semaphore"
 )
@@ -50,7 +51,10 @@ func NewLocalServices(datalake DataLake, uuid string) *LocalServices {
 
 // NewRemoteServices initializes a services struct with a remote endpoint
 func NewRemoteServices(addr string, auth []ranger.ClientPlugin) (*Services, error) {
-	client := ranger.DefaultHttpClient()
+	client, err := rangerclient.NewRangerClient()
+	if err != nil {
+		return nil, err
+	}
 	// restrict parallel upstream connections to two connections
 	client.Transport = NewMaxParallelConnTransport(client.Transport, 2)
 

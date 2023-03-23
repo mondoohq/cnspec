@@ -19,6 +19,7 @@ import (
 	"go.mondoo.com/cnquery/motor"
 	"go.mondoo.com/cnquery/motor/platform"
 	"go.mondoo.com/cnquery/motor/providers/local"
+	"go.mondoo.com/cnquery/shared/rangerclient"
 	"go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/cnquery/upstream/health"
 	"go.mondoo.com/ranger-rpc"
@@ -103,7 +104,11 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 			plugins = append(plugins, certAuth)
 
 			// try to ping the server
-			client, err := upstream.NewAgentManagerClient(s.Upstream.API.Endpoint, ranger.DefaultHttpClient(), plugins...)
+			rangerClient, err := rangerclient.NewRangerClient()
+			if err != nil {
+				log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+			}
+			client, err := upstream.NewAgentManagerClient(s.Upstream.API.Endpoint, rangerClient, plugins...)
 			if err == nil {
 				_, err = client.PingPong(context.Background(), &upstream.Ping{})
 				if err != nil {

@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/logger"
-	"go.mondoo.com/ranger-rpc"
+	"go.mondoo.com/cnquery/shared/rangerclient"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"go.opentelemetry.io/otel"
@@ -278,7 +278,12 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 		registryEndpoint = defaultRegistryUrl
 	}
 
-	client, err := NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
+	rangerClient, err := rangerclient.NewRangerClient()
+	if err != nil {
+		log.Error().Err(err).Msg("error setting up HTTP client")
+		return nil, err
+	}
+	client, err := NewPolicyHubClient(registryEndpoint, rangerClient)
 	if err != nil {
 		return nil, err
 	}
