@@ -759,6 +759,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		}
 
 		// MODIFY
+		// FIXME: ??? This checks explorer.Action_MODIFY, but the Impact2ScoringSpec checks for explorer.Action_IGNORE
 		if policy.Action == explorer.Action_MODIFY {
 			policyJobs, ok := cache.childJobsByMrn[policy.Mrn]
 			if !ok {
