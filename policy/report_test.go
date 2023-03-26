@@ -72,3 +72,34 @@ func TestScoreDistributionRemove(t *testing.T) {
 	require.Equal(t, uint32(1), scoreDist.GetUnrated())
 	require.Equal(t, uint32(3), scoreDist.GetTotal())
 }
+
+func TestScoreDistributionAddScoreDist(t *testing.T) {
+	a := &policy.ScoreDistribution{
+		Total:   18,
+		A:       3,
+		B:       3,
+		C:       3,
+		D:       3,
+		F:       2,
+		Error:   2,
+		Unrated: 2,
+	}
+
+	b := &policy.ScoreDistribution{
+		Total:   10,
+		A:       3,
+		B:       3,
+		C:       3,
+		Unrated: 1,
+	}
+	c := a.AddScoreDistribution(b)
+
+	require.Equal(t, uint32(28), c.GetTotal())
+	require.Equal(t, uint32(6), c.GetA())
+	require.Equal(t, uint32(6), c.GetB())
+	require.Equal(t, uint32(6), c.GetC())
+	require.Equal(t, uint32(3), c.GetD())
+	require.Equal(t, uint32(2), c.GetF())
+	require.Equal(t, uint32(2), c.GetError())
+	require.Equal(t, uint32(3), c.GetUnrated())
+}

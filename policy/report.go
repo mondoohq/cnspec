@@ -93,6 +93,19 @@ func (sd *ScoreDistribution) AddRating(scoreRating ScoreRating) {
 	}
 }
 
+func (x *ScoreDistribution) AddScoreDistribution(y *ScoreDistribution) *ScoreDistribution {
+	return &ScoreDistribution{
+		Total:   x.GetTotal() + y.GetTotal(),
+		A:       x.GetA() + y.GetA(),
+		B:       x.GetB() + y.GetB(),
+		C:       x.GetC() + y.GetC(),
+		D:       x.GetD() + y.GetD(),
+		F:       x.GetF() + y.GetF(),
+		Error:   x.GetError() + y.GetError(),
+		Unrated: x.GetUnrated() + y.GetUnrated(),
+	}
+}
+
 func (sd *ScoreDistribution) RemoveRating(scoreRating ScoreRating) {
 	sd.Total--
 	switch scoreRating {
