@@ -66,9 +66,16 @@ func (s *Stats) Add(score *Score) {
 }
 
 func (sd *ScoreDistribution) Add(score *Score) {
-	sd.Total++
+	sd.AddRating(score.Rating())
+}
 
-	switch score.Rating() {
+func (sd *ScoreDistribution) Remove(score *Score) {
+	sd.RemoveRating(score.Rating())
+}
+
+func (sd *ScoreDistribution) AddRating(scoreRating ScoreRating) {
+	sd.Total++
+	switch scoreRating {
 	case ScoreRating_aPlus, ScoreRating_a, ScoreRating_aMinus:
 		sd.A++
 	case ScoreRating_bPlus, ScoreRating_b, ScoreRating_bMinus:
@@ -83,6 +90,26 @@ func (sd *ScoreDistribution) Add(score *Score) {
 		sd.Error++
 	case ScoreRating_unrated:
 		sd.Unrated++
+	}
+}
+
+func (sd *ScoreDistribution) RemoveRating(scoreRating ScoreRating) {
+	sd.Total--
+	switch scoreRating {
+	case ScoreRating_aPlus, ScoreRating_a, ScoreRating_aMinus:
+		sd.A--
+	case ScoreRating_bPlus, ScoreRating_b, ScoreRating_bMinus:
+		sd.B--
+	case ScoreRating_cPlus, ScoreRating_c, ScoreRating_cMinus:
+		sd.C--
+	case ScoreRating_dPlus, ScoreRating_d, ScoreRating_dMinus:
+		sd.D--
+	case ScoreRating_failed:
+		sd.F--
+	case ScoreRating_error:
+		sd.Error--
+	case ScoreRating_unrated:
+		sd.Unrated--
 	}
 }
 
