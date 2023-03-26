@@ -81,6 +81,8 @@ func (sd *ScoreDistribution) Add(score *Score) {
 		sd.F++
 	case ScoreRating_error:
 		sd.Error++
+	case ScoreRating_unrated:
+		sd.Unrated++
 	}
 }
 
