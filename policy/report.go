@@ -79,6 +79,10 @@ func (sd *ScoreDistribution) Add(score *Score) {
 		sd.D++
 	case ScoreRating_failed:
 		sd.F++
+	case ScoreRating_error:
+		sd.Error++
+	case ScoreRating_unrated:
+		sd.Unrated++
 	}
 }
 
