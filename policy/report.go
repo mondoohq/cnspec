@@ -65,10 +65,12 @@ func (s *Stats) Add(score *Score) {
 	}
 }
 
+// this function also handles nil scores and updates the score distribution accordingly
 func (sd *ScoreDistribution) Add(score *Score) {
 	sd.AddRating(score.Rating())
 }
 
+// this function also handles nil scores and updates the score distribution accordingly
 func (sd *ScoreDistribution) Remove(score *Score) {
 	sd.RemoveRating(score.Rating())
 }

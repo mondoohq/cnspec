@@ -24,6 +24,7 @@ func TestScoreDistributionAdd(t *testing.T) {
 	scoreDist.Add(&policy.Score{Value: 5, Type: policy.ScoreType_Result, ScoreCompletion: 100})
 	scoreDist.Add(&policy.Score{Type: policy.ScoreType_Error})
 	scoreDist.Add(&policy.Score{Type: policy.ScoreType_Unscored})
+	scoreDist.Add(nil)
 
 	require.Equal(t, uint32(3), scoreDist.GetA())
 	require.Equal(t, uint32(3), scoreDist.GetB())
@@ -31,21 +32,21 @@ func TestScoreDistributionAdd(t *testing.T) {
 	require.Equal(t, uint32(3), scoreDist.GetD())
 	require.Equal(t, uint32(1), scoreDist.GetF())
 	require.Equal(t, uint32(1), scoreDist.GetError())
-	require.Equal(t, uint32(1), scoreDist.GetUnrated())
+	require.Equal(t, uint32(2), scoreDist.GetUnrated())
 
-	require.Equal(t, uint32(15), scoreDist.GetTotal())
+	require.Equal(t, uint32(16), scoreDist.GetTotal())
 }
 
 func TestScoreDistributionRemove(t *testing.T) {
 	scoreDist := &policy.ScoreDistribution{
-		Total:   18,
+		Total:   19,
 		A:       3,
 		B:       3,
 		C:       3,
 		D:       3,
 		F:       2,
 		Error:   2,
-		Unrated: 2,
+		Unrated: 3,
 	}
 
 	scoreDist.Remove(&policy.Score{Value: 100, Type: policy.ScoreType_Result, ScoreCompletion: 100})
@@ -63,6 +64,8 @@ func TestScoreDistributionRemove(t *testing.T) {
 	scoreDist.Remove(&policy.Score{Value: 5, Type: policy.ScoreType_Result, ScoreCompletion: 100})
 	scoreDist.Remove(&policy.Score{Type: policy.ScoreType_Error})
 	scoreDist.Remove(&policy.Score{Type: policy.ScoreType_Unscored})
+	scoreDist.Remove(nil)
+
 	require.Equal(t, uint32(0), scoreDist.GetA())
 	require.Equal(t, uint32(0), scoreDist.GetB())
 	require.Equal(t, uint32(0), scoreDist.GetC())
