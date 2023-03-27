@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 
 	"github.com/cockroachdb/errors"
@@ -69,7 +70,9 @@ func DeprecatedV7_ToV8(data []byte) ([]byte, error) {
 	// this step will unfortunately not produce well-formatted YAML at all
 	// because the proto structures don't have the yaml tags (only the
 	// yac-it structures do) ...
-	interim, err := Format(v8)
+	// for the same reason we convert between the 2 types using JSON since both
+	// structs contain the JSON tags.
+	interim, err := json.Marshal(v8)
 	if err != nil {
 		return nil, err
 	}
