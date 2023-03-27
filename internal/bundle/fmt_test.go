@@ -24,6 +24,7 @@ policies:
         scoring_queries:
           query1:
     version: "1.0.0"
+    scoring_system: 2
 queries:
   - uid: query1
     docs:
@@ -57,6 +58,7 @@ queries:
       - filters: platform.family.contains(_ == 'unix')
         checks:
           - uid: query1
+    scoring_system: 2
 queries:
   - uid: query1
     title: Ensure Secure Boot is enabled
