@@ -6,6 +6,8 @@ This project contains security and operational best-practice policies (as code) 
 - [extra](extra) - Extra policies are a mix of community- and Mondoo-maintained policy bundles that are outside Mondoo's core support tier.
 - [community](community) - Community policies are primarily maintained by the community with the support of the Mondoo team. Community policies may move to extra or core over time. 
 
+> The latest version of the policies in this repository requires cnspec v8+
+
 ## Join the community!
 
 Join the [Mondoo Community GitHub Discussions](https://github.com/orgs/mondoohq/discussions) to collaborate on policy as code and security automation.
