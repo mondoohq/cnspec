@@ -58,10 +58,11 @@ type LocalScanner struct {
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string) ScannerOption {
+func WithUpstream(apiEndpoint string, spaceMrn string, httpClient *http.Client) ScannerOption {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
 		s.spaceMrn = spaceMrn
+		s.httpClient = httpClient
 	}
 }
 
@@ -538,6 +539,7 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 	}
 	endpoint := s.apiEndpoint
 	spaceMrn := s.spaceMrn
+	httpClient := s.httpClient
 
 	jobCredentials := job.Inventory.Spec.UpstreamCredentials
 	if s.allowJobCredentials && jobCredentials != nil {
@@ -558,12 +560,16 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 	if spaceMrn == "" {
 		return resources.UpstreamConfig{}, errors.New("missing space mrn")
 	}
+	if httpClient == nil {
+		return resources.UpstreamConfig{}, errors.New("empty httpclient")
+	}
 
 	return resources.UpstreamConfig{
 		SpaceMrn:    spaceMrn,
 		ApiEndpoint: endpoint,
 		Incognito:   false,
 		Plugins:     plugins,
+		HttpClient:  httpClient,
 	}, nil
 }
 

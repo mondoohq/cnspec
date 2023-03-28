@@ -506,11 +506,18 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 			log.Warn().Err(err).Msg("could not gather client information")
 		}
 		plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Error().Err(err).Msg("error setting up httpclient")
+			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+
+		}
 		log.Info().Msg("using service account credentials")
 		conf.UpstreamConfig = &resources.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
 			Plugins:     plugins,
+			HttpClient:  httpClient,
 		}
 	}
 
@@ -562,7 +569,7 @@ func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportColl
 	scannerOpts = append(scannerOpts, opts...)
 
 	if config.UpstreamConfig != nil {
-		scannerOpts = append(scannerOpts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn), scan.WithPlugins(config.UpstreamConfig.Plugins))
+		scannerOpts = append(scannerOpts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn, config.UpstreamConfig.HttpClient), scan.WithPlugins(config.UpstreamConfig.Plugins))
 	}
 
 	// show warning to the user of the policy filter container a bundle file name

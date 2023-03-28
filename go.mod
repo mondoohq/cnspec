@@ -27,10 +27,10 @@ require (
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
 	// joel's cnquery for now
-	go.mondoo.com/cnquery v0.0.0-20230327144612-70806f9f8f96
-	go.mondoo.com/ranger-rpc v0.0.0-20230326140211-135247b908c5
+	go.mondoo.com/cnquery v0.0.0-20230328140056-8a0d9fbee3d0
+	go.mondoo.com/ranger-rpc v0.0.0-20230328124904-31ca0d483009
 	go.opentelemetry.io/otel v1.14.0
-	golang.org/x/sync v0.1.0
+	golang.org/x/sync v0.1.0 // indirect
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/yaml.v3 v3.0.1
