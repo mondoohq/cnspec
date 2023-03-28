@@ -1,0 +1,123 @@
+policies:
+  - uid: linux-snmp-policy
+    name: Linux Server Operational Policy by Mondoo
+    version: 1.0.0
+    license: unspecified
+    tags:
+      mondoo.com/category: best-practices
+      mondoo.com/platform: linux,host
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        ## Overview
+
+        Linux Server SNMP Policy by Mondoo provides guidance for vulnerable SNMP configurations on Linux hosts.
+
+        ## Local scan
+
+        Local scan refer to scans of files and operating systems where `cnspec` is installed.
+
+        To scan the `localhost` against this policy:
+
+        ```bash
+        cnspec scan local
+        ```
+
+        ## Remote scan
+
+        Remote scans use native transports in `cnspec` to provide on demand scan results without the need to install any agents, or integration.
+
+        For a complete list of native transports run:
+
+        ```bash
+        cnspec scan --help
+        ```
+
+        ### Prerequisites
+
+        Remote scans of Linux hosts requires authentication such as SSH keys.
+
+        ### Scan a remote Linux host (SSH authentication)
+
+        ```bash
+        cnspec scan ssh <user>@<IP_ADDRESS> -i /path/to/ssh_key
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+        If you have any suggestions on how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
+    groups:
+      - title: SNMP Server Configuration
+        filters: |
+          asset.family.contains("linux")
+
+          packages.contains(name == /snmpd/)
+        checks:
+          - uid: linux-snmp-v3-user-file-protected
+          - uid: linux-snmp-contains-no-read-write-community-strings
+          - uid: linux-snmp-no-unauthenticated-access
+queries:
+  - uid: linux-snmp-v3-user-file-protected
+    title: Make sure the file containing SNMP user hashes is well protected
+    impact: 70
+    mql: |
+      file("/var/lib/snmp/snmpd.conf") {
+        user.name == 'Debian-snmp'
+        group.name == 'Debian-snmp'
+        permissions.user_executable == false
+        permissions.group_writeable == false
+        permissions.group_readable == false
+        permissions.group_executable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+        permissions.other_readable == false
+      }
+    docs:
+      desc: |
+        The file `/var/lib/snmp/snmpd.conf` contains user password hashes which can be as weak as MD5.
+        Note: So far this only work for Debian-based OS.
+      remediation: |
+        Make sure to set the file permissions of the file in question to 0600.
+  - uid: linux-snmp-contains-no-read-write-community-strings
+    title: Make the SNMP configuration does not contains any read-write community strings
+    impact: 100
+    mql: |
+      files.find(from: '/etc/snmp/snmpd.conf.d', type: "file").list
+        {files = _
+          path
+          if(path.length > 0) {
+            file(path).content.lines.none(/^(\s+)?rwcommunity|rwcommunity6(\s+)/)
+          }
+        }
+      file("/etc/snmp/snmpd.conf") {
+        _.content.lines.none(/^(\s+)?rwcommunity|rwcommunity6(\s+)/)
+      }
+    docs:
+      desc: |
+        No Read-Write community strings should be allowed.
+      remediation: |
+        Remove the `rwcommunity` or `rwcommunity6` strings from your SNMP configuration files.
+  - uid: linux-snmp-no-unauthenticated-access
+    title: Make sure there is no unauthenticated access to SNMP
+    impact: 100
+    mql: |-
+      files.find(from: '/etc/snmp/snmpd.conf.d', type: "file").list
+        {files = _
+          path
+          if(path.length > 0) {
+            file(path).content.lines.none(/^(\s+)?rwuser\s+noauth(\s+)?/)
+          }
+        }
+      file("/etc/snmp/snmpd.conf") {
+        _.content.lines.none(/^(\s+)?rwuser\s+noauth(\s+)?/)
+      }
+    docs:
+      desc: |
+        No unauthenticated access to SNMP should be allowed.
+        Note: So far this only work for Debian-based OS.
+      remediation: |
+        Remove the Read-Write community strings from the SNMP configuration files.
