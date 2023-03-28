@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -51,15 +52,17 @@ type LocalScanner struct {
 	apiEndpoint        string
 	spaceMrn           string
 	pluginsMap         map[string]ranger.ClientPlugin
+	httpClient         *http.Client
 	disableProgressBar bool
 }
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string) ScannerOption {
+func WithUpstream(apiEndpoint string, spaceMrn string, httpClient *http.Client) ScannerOption {
 	return func(s *LocalScanner) {
 		s.apiEndpoint = apiEndpoint
 		s.spaceMrn = spaceMrn
+		s.httpClient = httpClient
 	}
 }
 
@@ -302,7 +305,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	var err error
 	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 		log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-		upstream, err = policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins)
+		upstream, err = policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins, s.httpClient)
 		if err != nil {
 			log.Error().Err(err).Msg("could not connect to upstream")
 		}
@@ -399,7 +402,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			upstream, err := policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins)
+			upstream, err := policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins, s.httpClient)
 			if err != nil {
 				return err
 			}
@@ -480,7 +483,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 	for _, p := range s.pluginsMap {
 		plugins = append(plugins, p)
 	}
-	pClient, err := policy.NewRemoteServices(s.apiEndpoint, plugins)
+	pClient, err := policy.NewRemoteServices(s.apiEndpoint, plugins, s.httpClient)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not initialize asset synchronization")
 	}
@@ -536,6 +539,7 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 	}
 	endpoint := s.apiEndpoint
 	spaceMrn := s.spaceMrn
+	httpClient := s.httpClient
 
 	jobCredentials := job.Inventory.Spec.UpstreamCredentials
 	if s.allowJobCredentials && jobCredentials != nil {
@@ -556,12 +560,16 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 	if spaceMrn == "" {
 		return resources.UpstreamConfig{}, errors.New("missing space mrn")
 	}
+	if httpClient == nil {
+		return resources.UpstreamConfig{}, errors.New("empty httpclient")
+	}
 
 	return resources.UpstreamConfig{
 		SpaceMrn:    spaceMrn,
 		ApiEndpoint: endpoint,
 		Incognito:   false,
 		Plugins:     plugins,
+		HttpClient:  httpClient,
 	}, nil
 }
 

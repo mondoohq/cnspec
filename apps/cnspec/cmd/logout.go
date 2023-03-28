@@ -12,7 +12,6 @@ import (
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/upstream"
-	"go.mondoo.com/ranger-rpc"
 	"sigs.k8s.io/yaml"
 )
 
@@ -65,7 +64,11 @@ the credentials cannot be used in future anymore.
 		}
 		plugins = append(plugins, certAuth)
 
-		client, err := upstream.NewAgentManagerClient(opts.UpstreamApiEndpoint(), ranger.DefaultHttpClient(), plugins...)
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		client, err := upstream.NewAgentManagerClient(opts.UpstreamApiEndpoint(), httpClient, plugins...)
 		if err != nil {
 			log.Error().Err(err).Msg("could not initialize connection to Mondoo Platform")
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)

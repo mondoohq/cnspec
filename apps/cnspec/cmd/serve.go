@@ -75,7 +75,7 @@ var serveCmd = &cobra.Command{
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
 
 		if conf != nil && conf.UpstreamConfig != nil {
-			hc := backgroundjob.NewHealthPinger(ctx, conf.UpstreamConfig.ApiEndpoint, 5*time.Minute)
+			hc := backgroundjob.NewHealthPinger(ctx, conf.UpstreamConfig.HttpClient, conf.UpstreamConfig.ApiEndpoint, 5*time.Minute)
 			hc.Start()
 			defer hc.Stop()
 		}
@@ -159,7 +159,17 @@ func getServeConfig() (*scanConfig, error) {
 		}
 	}
 
-	var err error
+	// set up the http client to include proxy config
+	httpClient, err := opts.GetHttpClient()
+	if err != nil {
+		log.Error().Err(err).Msg("error while setting up httpclient")
+		os.Exit(ConfigurationErrorCode)
+	}
+	if conf.UpstreamConfig == nil {
+		conf.UpstreamConfig = &resources.UpstreamConfig{}
+	}
+	conf.UpstreamConfig.HttpClient = httpClient
+
 	conf.Inventory, err = inventoryloader.ParseOrUse(nil, viper.GetBool("insecure"))
 	if err != nil {
 		return nil, errors.Wrap(err, "could not load configuration")

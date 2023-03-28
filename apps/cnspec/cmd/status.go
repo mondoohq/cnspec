@@ -66,6 +66,11 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 			log.Fatal().Err(err).Send()
 		}
 
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to set up Mondoo API client")
+		}
+
 		sysInfo, err := sysinfo.GatherSystemInfo(sysinfo.WithMotor(m))
 		if err == nil {
 			s.Client.Platform = sysInfo.Platform
@@ -74,7 +79,7 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 		}
 
 		// check server health and clock skew
-		upstreamStatus, err := health.CheckApiHealth(opts.UpstreamApiEndpoint())
+		upstreamStatus, err := health.CheckApiHealth(httpClient, opts.UpstreamApiEndpoint())
 		if err != nil {
 			log.Error().Err(err).Msg("could not check upstream health")
 		}
@@ -103,7 +108,7 @@ Status sends a ping to Mondoo Platform to verify the credentials.
 			plugins = append(plugins, certAuth)
 
 			// try to ping the server
-			client, err := upstream.NewAgentManagerClient(s.Upstream.API.Endpoint, ranger.DefaultHttpClient(), plugins...)
+			client, err := upstream.NewAgentManagerClient(s.Upstream.API.Endpoint, httpClient, plugins...)
 			if err == nil {
 				_, err = client.PingPong(context.Background(), &upstream.Ping{})
 				if err != nil {

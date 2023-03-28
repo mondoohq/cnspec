@@ -278,6 +278,8 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 		registryEndpoint = defaultRegistryUrl
 	}
 
+	// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
+	// it is used without upstream config
 	client, err := NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
 	if err != nil {
 		return nil, err

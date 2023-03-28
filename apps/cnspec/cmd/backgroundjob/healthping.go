@@ -2,6 +2,7 @@ package backgroundjob
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -10,26 +11,28 @@ import (
 )
 
 type healthPinger struct {
-	ctx      context.Context
-	interval time.Duration
-	quit     chan struct{}
-	wg       sync.WaitGroup
-	endpoint string
+	ctx        context.Context
+	interval   time.Duration
+	quit       chan struct{}
+	wg         sync.WaitGroup
+	endpoint   string
+	httpClient *http.Client
 }
 
-func NewHealthPinger(ctx context.Context, endpoint string, interval time.Duration) *healthPinger {
+func NewHealthPinger(ctx context.Context, httpClient *http.Client, endpoint string, interval time.Duration) *healthPinger {
 	return &healthPinger{
-		ctx:      ctx,
-		interval: interval,
-		quit:     make(chan struct{}),
-		endpoint: endpoint,
+		ctx:        ctx,
+		interval:   interval,
+		quit:       make(chan struct{}),
+		endpoint:   endpoint,
+		httpClient: httpClient,
 	}
 }
 
 func (h *healthPinger) Start() {
 	h.wg.Add(1)
 	runHealthCheck := func() {
-		_, err := health.CheckApiHealth(h.endpoint)
+		_, err := health.CheckApiHealth(h.httpClient, h.endpoint)
 		if err != nil {
 			log.Info().Err(err).Msg("could not perform health check")
 		}

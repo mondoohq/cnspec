@@ -70,14 +70,20 @@ var serveApiCmd = &cobra.Command{
 			log.Warn().Err(err).Msg("could not gather client information")
 		}
 		plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Error().Err(err).Msg("error seting up http client")
+			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+		}
 		log.Info().Msg("using service account credentials")
 		upstreamConfig := resources.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
 			Plugins:     plugins,
+			HttpClient:  httpClient,
 		}
 
-		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn), scan.WithPlugins(plugins), scan.DisableProgressBar())
+		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn, upstreamConfig.HttpClient), scan.WithPlugins(plugins), scan.DisableProgressBar())
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
 		}
