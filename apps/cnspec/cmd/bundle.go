@@ -13,7 +13,6 @@ import (
 	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
-	"go.mondoo.com/cnquery/shared/rangerclient"
 	"go.mondoo.com/cnquery/upstream"
 	"go.mondoo.com/cnspec/internal/bundle"
 	"go.mondoo.com/cnspec/policy"
@@ -203,11 +202,11 @@ var policyPublishCmd = &cobra.Command{
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
 
-		rangerClient, err := rangerclient.NewRangerClient()
+		httpClient, err := opts.GetHttpClient()
 		if err != nil {
 			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
 		}
-		queryHubServices, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), rangerClient, certAuth)
+		queryHubServices, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not connect to policy hub")
 		}

@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/logger"
-	"go.mondoo.com/cnquery/shared/rangerclient"
+	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"go.opentelemetry.io/otel"
@@ -278,12 +278,9 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 		registryEndpoint = defaultRegistryUrl
 	}
 
-	rangerClient, err := rangerclient.NewRangerClient()
-	if err != nil {
-		log.Error().Err(err).Msg("error setting up HTTP client")
-		return nil, err
-	}
-	client, err := NewPolicyHubClient(registryEndpoint, rangerClient)
+	// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
+	// it is used without upstream config
+	client, err := NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
 	if err != nil {
 		return nil, err
 	}
