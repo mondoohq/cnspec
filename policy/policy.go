@@ -433,6 +433,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			}
 
 			executionChecksum = executionChecksum.Add(ref.Mrn)
+			executionChecksum = executionChecksum.AddUint(uint64(ref.Action))
 			graphExecutionChecksum = graphExecutionChecksum.
 				Add(p.GraphExecutionChecksum)
 			graphContentChecksum = graphContentChecksum.

@@ -679,9 +679,14 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		policy := group.Policies[i]
 
 		impact := policy.Impact
+		if policy.Action == explorer.Action_IGNORE {
+			impact = &explorer.Impact{
+				Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+			}
+		}
 
 		// ADD
-		if policy.Action == explorer.Action_UNSPECIFIED || policy.Action == explorer.Action_ACTIVATE {
+		if policy.Action == explorer.Action_UNSPECIFIED || policy.Action == explorer.Action_ACTIVATE || policy.Action == explorer.Action_IGNORE {
 			if _, ok := cache.parentPolicies[policy.Mrn]; ok {
 				return errors.New("trying to resolve policy spec twice, it is cyclical for MRN: " + policy.Mrn)
 			}
