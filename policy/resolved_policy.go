@@ -37,7 +37,7 @@ func (x *ResolvedPolicy) NumDataQueries() int {
 	return numDataQueries
 }
 
-// RootBundlePolicies retrieves the top policies frmo the resolved policy based on a given
+// RootBundlePolicies retrieves the top policies from the resolved policy based on a given
 // bundle. Typically this would be the asset, if it is in the bundle. Otherwise
 // it may be whatever first policies show up in the bundle.
 func (x *ResolvedPolicy) RootBundlePolicies(bundle *PolicyBundleMap, assetMrn string) ([]*Policy, error) {
