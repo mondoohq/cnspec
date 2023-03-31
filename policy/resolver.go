@@ -70,6 +70,7 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 	_, err := s.DataLake.MutatePolicy(ctx, &PolicyMutationDelta{
 		PolicyMrn:    assignment.AssetMrn,
 		PolicyDeltas: deltas,
+		Action:       assignment.Action,
 	}, true)
 	return globalEmpty, err
 }
