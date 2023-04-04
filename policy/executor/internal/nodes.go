@@ -530,22 +530,27 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		return s, nil
 	}
 
-	calculator, err := policy.NewScoreCalculator(nodeData.scoringSystem)
-	if err != nil {
-		return nil, err
+	s := &policy.Score{
+		Type: policy.ScoreType_Unscored,
 	}
-
-	for _, rjRes := range nodeData.childScores {
-		s := rjRes.score
-		if s == nil {
-			return nil, nil
+	if nodeData.scoringSystem != explorer.ScoringSystem_DATA_ONLY {
+		calculator, err := policy.NewScoreCalculator(nodeData.scoringSystem)
+		if err != nil {
+			return nil, err
 		}
-		policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.impact)
+
+		for _, rjRes := range nodeData.childScores {
+			s := rjRes.score
+			if s == nil {
+				return nil, nil
+			}
+			policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.impact)
+		}
+
+		policy.AddDataScore(calculator, len(nodeData.datapoints), finishedDatapoints)
+
+		s = calculator.Calculate()
 	}
-
-	policy.AddDataScore(calculator, len(nodeData.datapoints), finishedDatapoints)
-
-	s := calculator.Calculate()
 	s.QrId = nodeData.queryID
 	return s, nil
 }
