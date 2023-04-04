@@ -373,14 +373,17 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		r.out.Write([]byte(NewLineCharacter))
 	}
 
-	if len(report.Scores) > 0 {
+	foundControls := map[string]*policy.Score{}
+	for id, score := range report.Scores {
+		_, ok := resolved.CollectorJob.ReportingQueries[id]
+		if !ok {
+			continue
+		}
+		foundControls[id] = score
+	}
+	if len(foundControls) > 0 {
 		r.out.Write([]byte("Controls:" + NewLineCharacter))
-		for id, score := range report.Scores {
-			_, ok := resolved.CollectorJob.ReportingQueries[id]
-			if !ok {
-				continue
-			}
-
+		for id, score := range foundControls {
 			query, ok := queries[id]
 			if !ok {
 				r.out.Write([]byte("Couldn't find any queries for incoming value for " + id))

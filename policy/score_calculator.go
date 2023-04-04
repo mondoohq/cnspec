@@ -347,7 +347,7 @@ func (c *worstScoreCalculator) Calculate() *Score {
 func NewScoreCalculator(scoringSystem explorer.ScoringSystem) (ScoreCalculator, error) {
 	var res ScoreCalculator
 	switch scoringSystem {
-	case explorer.ScoringSystem_AVERAGE, explorer.ScoringSystem_SCORING_UNSPECIFIED:
+	case explorer.ScoringSystem_AVERAGE, explorer.ScoringSystem_SCORING_UNSPECIFIED, explorer.ScoringSystem_DATA_ONLY:
 		res = &averageScoreCalculator{}
 	case explorer.ScoringSystem_WEIGHTED:
 		res = &weightedScoreCalculator{}
