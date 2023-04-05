@@ -152,3 +152,55 @@ policies:
 				"asset supports: asset.family.contains(\"linux\"), asset.family.contains(\"windows\"), false\n")
 	})
 }
+
+func TestResolve_PolicyActionIgnore(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy-active
+    - uid: policy-ignored
+      action: 4
+- uid: policy-active
+  owner_mrn: //test.sth
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset{*}
+- uid: policy-ignored
+  owner_mrn: //test.sth
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset{*}
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{"asset1", []string{policyMrn("policy-active"), policyMrn("policy-ignored")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with ignored policy", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
+		ignoreJob := rp.CollectorJob.ReportingJobs["922m1Bwoa1Q="]
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, ignoreJob.ChildJobs["iVe9WQX2GXA="].Scoring)
+	})
+}
