@@ -415,6 +415,8 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	for i := range p.Groups {
 		group := p.Groups[i]
 
+		contentChecksum = contentChecksum.Add(group.Uid)
+
 		// POLICIES (must be sorted)
 		sort.Slice(group.Policies, func(i, j int) bool {
 			return group.Policies[i].Mrn < group.Policies[j].Mrn
@@ -541,6 +543,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		if group.Docs != nil {
 			contentChecksum = contentChecksum.
 				Add(group.Docs.Desc)
+			contentChecksum = contentChecksum.Add(group.Docs.Justification)
 		}
 	}
 
