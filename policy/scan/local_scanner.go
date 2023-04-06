@@ -547,6 +547,8 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 		pluginsCopyMap[certAuth.GetName()] = certAuth
 		endpoint = jobCredentials.GetApiEndpoint()
 		spaceMrn = jobCredentials.GetParentMrn()
+		// TODO: if we want proxy here it has to be defined on UpstreamCredentials proto level too
+		httpClient = ranger.DefaultHttpClient()
 	}
 
 	plugins := []ranger.ClientPlugin{}
