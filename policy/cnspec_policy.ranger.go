@@ -766,3 +766,99 @@ func (p *PolicyResolverServer) PurgeAssets(ctx context.Context, reqBytes *[]byte
 	}
 	return p.handler.PurgeAssets(ctx, &req)
 }
+
+// service interface definition
+
+type PublicReport interface {
+	StoreReport(context.Context, *ReportCollection) (*PublicReportID, error)
+}
+
+// client implementation
+
+type PublicReportClient struct {
+	ranger.Client
+	httpclient ranger.HTTPClient
+	prefix     string
+}
+
+func NewPublicReportClient(addr string, client ranger.HTTPClient, plugins ...ranger.ClientPlugin) (*PublicReportClient, error) {
+	base, err := url.Parse(ranger.SanitizeUrl(addr))
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := url.Parse("./PublicReport")
+	if err != nil {
+		return nil, err
+	}
+
+	serviceClient := &PublicReportClient{
+		httpclient: client,
+		prefix:     base.ResolveReference(u).String(),
+	}
+	serviceClient.AddPlugins(plugins...)
+	return serviceClient, nil
+}
+func (c *PublicReportClient) StoreReport(ctx context.Context, in *ReportCollection) (*PublicReportID, error) {
+	out := new(PublicReportID)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreReport"}, ""), in, out)
+	return out, err
+}
+
+// server implementation
+
+type PublicReportServerOption func(s *PublicReportServer)
+
+func WithUnknownFieldsForPublicReportServer() PublicReportServerOption {
+	return func(s *PublicReportServer) {
+		s.allowUnknownFields = true
+	}
+}
+
+func NewPublicReportServer(handler PublicReport, opts ...PublicReportServerOption) http.Handler {
+	srv := &PublicReportServer{
+		handler: handler,
+	}
+
+	for i := range opts {
+		opts[i](srv)
+	}
+
+	service := ranger.Service{
+		Name: "PublicReport",
+		Methods: map[string]ranger.Method{
+			"StoreReport": srv.StoreReport,
+		},
+	}
+	return ranger.NewRPCServer(&service)
+}
+
+type PublicReportServer struct {
+	handler            PublicReport
+	allowUnknownFields bool
+}
+
+func (p *PublicReportServer) StoreReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req ReportCollection
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.StoreReport(ctx, &req)
+}
