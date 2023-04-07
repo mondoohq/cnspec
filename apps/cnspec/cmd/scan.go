@@ -1,13 +1,13 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
+	isatty "github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -16,6 +16,7 @@ import (
 	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder/common"
+	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
@@ -29,11 +30,19 @@ import (
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
+	cnspec_components "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
 	"go.mondoo.com/ranger-rpc"
-	"google.golang.org/protobuf/proto"
+)
+
+const (
+	// set to "1" to enable
+	featureReportEnv = "FEATURE_REPORT"
+
+	// allow sending reports to alternative URLs
+	featureReportAlternateUrlEnv = "FEATURE_REPORT_URL"
 )
 
 func init() {
@@ -383,31 +392,22 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 
 		logger.DebugDumpJSON("report", report)
-		// TODO: ONLY FOR TESTING PURPOSES REMOVE ME
-		if fileName := os.Getenv("DEBUG_SAVE_REPORT_COLLECTION_FILE"); fileName != "" {
-			reportBytes, err := proto.Marshal(report)
-			if err != nil {
-				log.Fatal().Err(err).Msg("failed to marshal report")
-			}
-			filePath := "/tmp/" + fileName
-			if err := os.WriteFile(filePath, reportBytes, 0o660); err != nil {
-				log.Fatal().Err(err).Msg("failed to write out report collection")
-			}
-			log.Debug().Str("filePath", filePath).Msg("saved report collection")
-		}
-		// ^^
 		printReports(report, conf, cmd)
 
-		// if no config set, and wasn't explicitly incognito, offer to upload
-		// report for web UI viewing
+		// if we are in an interactive terminal, and no config, and not explicty incognito, and user responds "yes" to upload offer
 		opts, optsErr := cnspec_config.ReadConfig()
 		if optsErr != nil {
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
 		}
-		if opts.GetServiceCredential() == nil && !viper.GetBool("incognito") {
-			if askToUploadReport() {
-				fmt.Printf("NOW UPLOAD THE REPORT!")
+		if os.Getenv(featureReportEnv) == "1" && isatty.IsTerminal(os.Stdout.Fd()) && opts.GetServiceCredential() == nil &&
+			!viper.GetBool("incognito") && cnspec_components.AskToUploadReport() {
+			proxy, err := cnquery_config.GetAPIProxy()
+			if err != nil {
+				log.Error().Err(err).Msg("error getting proxy information")
+			} else {
+				cnspec_components.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
 			}
+
 		}
 
 		// if we had asset errors, we return a non-zero exit code
@@ -421,27 +421,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 	},
 })
-
-func askToUploadReport() bool {
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Printf("Do you want to view the report in the browser? [(y)es/(n)o]: ")
-
-		answer, err := reader.ReadString('\n')
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to read response")
-		}
-
-		answer = strings.ToLower(strings.TrimSpace(answer))
-
-		if answer == "y" || answer == "yes" {
-			return true
-		} else if answer == "n" || answer == "no" {
-			return false
-		}
-	}
-}
 
 // helper method to retrieve the list of policies for the policy flag
 func getPoliciesForCompletion() []string {
