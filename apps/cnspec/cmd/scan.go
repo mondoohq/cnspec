@@ -42,7 +42,7 @@ const (
 	featureReportEnv = "FEATURE_REPORT"
 
 	// allow sending reports to alternative URLs
-	featureReportAlternateUrlEnv = "FEATURE_REPORT_URL"
+	featureReportAlternateUrlEnv = "REPORT_URL"
 )
 
 func init() {
