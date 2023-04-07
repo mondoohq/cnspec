@@ -397,6 +397,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 
 func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
+	now := time.Now()
 
 	// phase 1: resolve asset filters and see if we can find a cached policy
 	// trying first with all asset filters
@@ -499,7 +500,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		childJobsByMrn:  map[string][]*ReportingJob{},
 		global:          cache,
 	}
-	err = s.policyToJobs(ctx, policyMrn, reportingJob, policyToJobsCache)
+	err = s.policyToJobs(ctx, policyMrn, reportingJob, policyToJobsCache, now)
 	if err != nil {
 		logCtx.Error().
 			Err(err).
@@ -594,7 +595,8 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 	}
 }
 
-func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, ownerJob *ReportingJob, parentCache *policyResolverCache) error {
+func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, ownerJob *ReportingJob,
+	parentCache *policyResolverCache, now time.Time) error {
 	ctx, span := tracer.Start(ctx, "resolver/policyToJobs")
 	defer span.End()
 
@@ -617,6 +619,14 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	matchingGroups := []*PolicyGroup{}
 	for i := range policyObj.Groups {
 		group := policyObj.Groups[i]
+
+		// Filter out groups that are not active
+		if group.EndDate != 0 {
+			endDate := time.Unix(group.EndDate, 0)
+			if endDate.Before(now) {
+				continue
+			}
+		}
 
 		if group.Filters == nil || len(group.Filters.Items) == 0 {
 			matchingGroups = append(matchingGroups, group)
@@ -659,7 +669,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	var err error
 	for i := range matchingGroups {
 		group := matchingGroups[i]
-		if err = s.policyGroupToJobs(ctx, group, ownerJob, cache); err != nil {
+		if err = s.policyGroupToJobs(ctx, group, ownerJob, cache, now); err != nil {
 			log.Error().Err(err).Msg("resolver> policyToJobs error")
 			return err
 		}
@@ -671,7 +681,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 	return nil
 }
 
-func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGroup, ownerJob *ReportingJob, cache *policyResolverCache) error {
+func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGroup, ownerJob *ReportingJob, cache *policyResolverCache, now time.Time) error {
 	ctx, span := tracer.Start(ctx, "resolver/policyGroupToJobs")
 	defer span.End()
 
@@ -757,7 +767,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			ownerJob.DeprecatedV7Spec[policyJob.Uuid] = Impact2ScoringSpec(impact)
 			// ^^
 
-			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache); err != nil {
+			if err := s.policyToJobs(ctx, policy.Mrn, policyJob, cache, now); err != nil {
 				return err
 			}
 
