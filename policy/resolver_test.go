@@ -3,10 +3,12 @@ package policy_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -202,5 +204,109 @@ policies:
 		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
 		ignoreJob := rp.CollectorJob.ReportingJobs["922m1Bwoa1Q="]
 		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, ignoreJob.ChildJobs["iVe9WQX2GXA="].Scoring)
+	})
+}
+
+func TestResolve_ExpiredGroups(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: "1 == 1"
+    - uid: check2
+      mql: "1 == 2"
+`)
+
+	_, srv, err := inmemory.NewServices(nil)
+	require.NoError(t, err)
+
+	_, err = srv.SetBundle(context.Background(), b)
+	require.NoError(t, err)
+
+	_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+		AssetMrn:   "asset1",
+		PolicyMrns: []string{policyMrn("policy1")},
+	})
+	require.NoError(t, err)
+
+	filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+	require.NoError(t, err)
+	assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+	require.NoError(t, err)
+
+	err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+	require.NoError(t, err)
+
+	t.Run("resolve with single group", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
+	})
+
+	t.Run("resolve with end dates", func(t *testing.T) {
+		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+		m, err := mrn.NewChildMRN(b.OwnerMrn, explorer.MRN_RESOURCE_QUERY, "check2")
+		require.NoError(t, err)
+
+		// Add a group with an end date in the future. This group deactivates a check
+		assetPolicy.Groups = append(assetPolicy.Groups, &policy.PolicyGroup{
+			Uid:     "not-expired",
+			EndDate: time.Now().Add(time.Hour).Unix(),
+			Checks: []*explorer.Mquery{
+				{
+					Mrn:    m.String(),
+					Action: explorer.Action_DEACTIVATE,
+					Impact: &explorer.Impact{
+						Action: explorer.Action_DEACTIVATE,
+					},
+				},
+			},
+		})
+
+		// Recompute the checksums so that the resolved policy is invalidated
+		assetPolicy.InvalidateAllChecksums()
+		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil)
+
+		// Set the asset policy
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 1)
+
+		// Set the end date of the group to the past. This group deactivates a check,
+		// but it should not be taken into account because it is expired
+		assetPolicy.Groups[1].EndDate = time.Now().Add(-time.Hour).Unix()
+
+		// Recompute the checksums so that the resolved policy is invalidated
+		assetPolicy.InvalidateAllChecksums()
+		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil)
+
+		// Set the asset policy
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
+
+		rp, err = srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
 	})
 }
