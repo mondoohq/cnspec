@@ -39,6 +39,7 @@ func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) 
 		Name:         asset.Name,
 		PlatformName: platformName,
 		Url:          asset.Url,
+		Platform:     asset.Platform,
 	}
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
