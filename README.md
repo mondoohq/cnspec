@@ -23,7 +23,7 @@ Install cnspec with our installation script:
 **Linux and macOS**
 
 ```bash
-bash -c "$(curl -sSL https://install.mondoo.com/sh/cnspec)"
+bash -c "$(curl -sSL https://install.mondoo.com/sh)"
 ```
 
 **Windows**
@@ -31,11 +31,11 @@ bash -c "$(curl -sSL https://install.mondoo.com/sh/cnspec)"
 ```powershell
 Set-ExecutionPolicy Unrestricted -Scope Process -Force;
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072;
-iex ((New-Object System.Net.WebClient).DownloadString('https://install.mondoo.com/ps1/cnquery'));
-Install-Mondoo -Product cnspec;
+iex ((New-Object System.Net.WebClient).DownloadString('https://install.mondoo.com/ps1'));
+Install-Mondoo;
 ```
 
-If you prefer a package, find it on [GitHub releases](https://github.com/mondoohq/cnspec/releases).
+If you prefer manual installation, you find the cnspec packages on [GitHub releases](https://github.com/mondoohq/cnspec/releases).
 
 ## Run a scan with policies
 
