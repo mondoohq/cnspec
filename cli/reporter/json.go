@@ -31,6 +31,30 @@ func printScore(score *policy.Score, mrn string, out shared.OutputHelper, prefix
 	return true
 }
 
+// asssetPrintable is a snapshot of the fields that get exported
+// when doing things like JSON output
+type assetPrintable struct {
+	Mrn          string `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty"`
+	Name         string `protobuf:"bytes,18,opt,name=name,proto3" json:"name,omitempty"`
+	Url          string `protobuf:"bytes,19,opt,name=url,proto3" json:"url,omitempty"`
+	PlatformName string `protobuf:"bytes,20,opt,name=platformName,proto3" json:"platformName,omitempty"`
+}
+
+func prepareAssetsForPrinting(assets map[string]*policy.Asset) map[string]*assetPrintable {
+	printableAssets := map[string]*assetPrintable{}
+	for k, a := range assets {
+		pAsset := &assetPrintable{
+			Mrn:          a.Mrn,
+			Name:         a.Name,
+			Url:          a.Url,
+			PlatformName: a.PlatformName,
+		}
+		printableAssets[k] = pAsset
+	}
+
+	return printableAssets
+}
+
 func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelper) error {
 	if data == nil {
 		return nil
@@ -50,7 +74,10 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 	out.WriteString(
 		"{" +
 			"\"assets\":")
-	assets, err := json.Marshal(data.Assets)
+	// preserve json output to ignore recently introduce fields
+	printableAssets := prepareAssetsForPrinting(data.Assets)
+	// assets, err := json.Marshal(data.Assets)
+	assets, err := json.Marshal(printableAssets)
 	if err != nil {
 		return err
 	}
