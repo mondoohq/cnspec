@@ -47,7 +47,7 @@ func prepareAssetsForPrinting(assets map[string]*policy.Asset) map[string]*asset
 			Mrn:          a.Mrn,
 			Name:         a.Name,
 			Url:          a.Url,
-			PlatformName: a.PlatformName,
+			PlatformName: getPlatforNameForAsset(a),
 		}
 		printableAssets[k] = pAsset
 	}
