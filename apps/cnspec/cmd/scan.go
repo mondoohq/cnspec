@@ -34,6 +34,7 @@ import (
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
+	cnspec_upstream "go.mondoo.com/cnspec/upstream"
 	"go.mondoo.com/ranger-rpc"
 )
 
@@ -400,14 +401,13 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
 		}
 		if os.Getenv(featureReportEnv) == "1" && isatty.IsTerminal(os.Stdout.Fd()) && opts.GetServiceCredential() == nil &&
-			!viper.GetBool("incognito") && cnspec_components.AskToUploadReport() {
+			!viper.GetBool("incognito") && cnspec_components.AskAYesNoQuestion("Do you want to view the report in the browser?") {
 			proxy, err := cnquery_config.GetAPIProxy()
 			if err != nil {
 				log.Error().Err(err).Msg("error getting proxy information")
 			} else {
-				cnspec_components.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
+				cnspec_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
 			}
-
 		}
 
 		// if we had asset errors, we return a non-zero exit code
