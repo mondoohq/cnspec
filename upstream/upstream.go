@@ -4,7 +4,6 @@ package upstream
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 
 	"github.com/rs/zerolog/log"
@@ -14,7 +13,7 @@ import (
 
 const sharedReportUrl = "https://report.api.mondoo.com"
 
-func UploadSharedReport(report *policy.ReportCollection, reportUrl string, proxy *url.URL) error {
+func UploadSharedReport(report *policy.ReportCollection, reportUrl string, proxy *url.URL) (*ReportID, error) {
 	if reportUrl == "" {
 		reportUrl = sharedReportUrl
 	}
@@ -22,16 +21,9 @@ func UploadSharedReport(report *policy.ReportCollection, reportUrl string, proxy
 	httpClient := ranger.NewHttpClient(ranger.WithProxy(proxy))
 	sharedReportClient, err := NewReportingClient(reportUrl, httpClient)
 	if err != nil {
-		log.Error().Err(err).Msg("error initializating shared report client")
-		return err
+		log.Error().Err(err).Msg("error initializing shared report client")
+		return nil, err
 	}
 
-	reportId, err := sharedReportClient.StoreReport(context.Background(), report)
-	if err != nil {
-		log.Error().Err(err).Msg("error uploading shared report")
-		return err
-	}
-
-	fmt.Printf("View your report at https://TBD.COM/space/overview?spaceId=%s\n", reportId.Id)
-	return nil
+	return sharedReportClient.StoreReport(context.Background(), report)
 }

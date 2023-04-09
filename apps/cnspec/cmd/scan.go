@@ -395,18 +395,19 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		logger.DebugDumpJSON("report", report)
 		printReports(report, conf, cmd)
 
-		// if we are in an interactive terminal, and no config, and not explicty incognito, and user responds "yes" to upload offer
-		opts, optsErr := cnspec_config.ReadConfig()
-		if optsErr != nil {
-			log.Fatal().Err(optsErr).Msg("could not load configuration")
-		}
-		if os.Getenv(featureReportEnv) == "1" && isatty.IsTerminal(os.Stdout.Fd()) && opts.GetServiceCredential() == nil &&
-			!viper.GetBool("incognito") && cnspec_components.AskAYesNoQuestion("Do you want to view the report in the browser?") {
+		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
+		if os.Getenv(featureReportEnv) == "1" && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito &&
+			cnspec_components.AskAYesNoQuestion("Do you want to view the report in the browser?") {
 			proxy, err := cnquery_config.GetAPIProxy()
 			if err != nil {
 				log.Error().Err(err).Msg("error getting proxy information")
 			} else {
-				cnspec_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
+				reportId, err := cnspec_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
+				if err != nil {
+					log.Fatal().Err(err).Msg("error uploading shared report")
+				}
+
+				fmt.Printf("View report at %s\n", reportId.Url)
 			}
 		}
 
