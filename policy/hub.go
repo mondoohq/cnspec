@@ -139,7 +139,7 @@ func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundl
 
 	for mrn, query := range bundleMap.Queries {
 		if err := s.setQuery(ctx, mrn, query); err != nil {
-			return nil
+			return err
 		}
 	}
 
