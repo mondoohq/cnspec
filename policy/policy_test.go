@@ -200,3 +200,141 @@ func TestPolicyChecksums(t *testing.T) {
 		})
 	}
 }
+
+func TestPolicyChecksummingWithVariantQueries(t *testing.T) {
+	bundleInitial, err := BundleFromYAML([]byte(`
+policies:
+  - uid: variants-test
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        queries:
+          - uid: testqueryvariants
+
+queries:
+  - uid: testqueryvariants
+    title: testqueryvariants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    mql: 1 == 1
+    filters: asset.family.contains("unix")
+  - uid: variant2
+    mql: 1 == 2
+    filters: asset.family.contains("windows")
+`))
+	require.NoError(t, err)
+	pInitial := bundleInitial.Policies[0]
+	pInitial.InvalidateLocalChecksums()
+	initialBundleMap, err := bundleInitial.Compile(context.Background(), nil)
+	require.NoError(t, err)
+	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap)
+	assert.NoError(t, err, "computing checksums")
+
+	bundleUpdated, err := BundleFromYAML([]byte(`
+policies:
+  - uid: variants-test
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        queries:
+          - uid: testqueryvariants
+
+queries:
+  - uid: testqueryvariants
+    title: testqueryvariants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    mql: 1 == 3
+    filters: asset.family.contains("unix")
+  - uid: variant2
+    mql: 1 == 2
+    filters: asset.family.contains("windows")
+`))
+	require.NoError(t, err)
+	pUpdated := bundleUpdated.Policies[0]
+	pUpdated.InvalidateLocalChecksums()
+	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), nil)
+	require.NoError(t, err)
+	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap)
+	assert.NoError(t, err, "computing checksums")
+
+	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
+	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalExecutionChecksum)
+	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.GraphExecutionChecksum)
+	require.NotEqual(t, pInitial.GraphContentChecksum, pUpdated.GraphContentChecksum)
+}
+
+func TestPolicyChecksummingWithVariantChecks(t *testing.T) {
+	bundleInitial, err := BundleFromYAML([]byte(`
+policies:
+  - uid: variants-test
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        checks:
+          - uid: testqueryvariants
+
+queries:
+  - uid: testqueryvariants
+    title: testqueryvariants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    mql: 1 == 1
+    filters: asset.family.contains("unix")
+  - uid: variant2
+    mql: 1 == 2
+    filters: asset.family.contains("windows")
+`))
+	require.NoError(t, err)
+	pInitial := bundleInitial.Policies[0]
+	pInitial.InvalidateLocalChecksums()
+	initialBundleMap, err := bundleInitial.Compile(context.Background(), nil)
+	require.NoError(t, err)
+	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap)
+	assert.NoError(t, err, "computing checksums")
+
+	bundleUpdated, err := BundleFromYAML([]byte(`
+policies:
+  - uid: variants-test
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        checks:
+          - uid: testqueryvariants
+
+queries:
+  - uid: testqueryvariants
+    title: testqueryvariants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    mql: 1 == 3
+    filters: asset.family.contains("unix")
+  - uid: variant2
+    mql: 1 == 2
+    filters: asset.family.contains("windows")
+`))
+	require.NoError(t, err)
+	pUpdated := bundleUpdated.Policies[0]
+	pUpdated.InvalidateLocalChecksums()
+	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), nil)
+	require.NoError(t, err)
+	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap)
+	assert.NoError(t, err, "computing checksums")
+
+	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
+	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalExecutionChecksum)
+	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.GraphExecutionChecksum)
+	require.NotEqual(t, pInitial.GraphContentChecksum, pUpdated.GraphContentChecksum)
+}
