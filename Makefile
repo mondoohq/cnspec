@@ -66,7 +66,7 @@ prep/tools:
 
 #   🌙 cnspec   #
 
-cnspec/generate: clean/proto cli/generate policy/generate
+cnspec/generate: clean/proto cli/generate policy/generate upstream/generate
 
 .PHONY: cli
 cli/generate:
@@ -76,6 +76,9 @@ cli/generate:
 policy/generate:
 	go generate ./policy
 	go generate ./policy/scan
+
+upstream/generate:
+	go generate ./upstream
 
 #   🏗 Binary   #
 

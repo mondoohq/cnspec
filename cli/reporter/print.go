@@ -64,3 +64,15 @@ func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {
 	}
 	return s
 }
+
+func getPlatforNameForAsset(asset *policy.Asset) string {
+	platformName := ""
+	if asset.Platform != nil {
+		if asset.Platform.Title == "" {
+			platformName = asset.Platform.Name
+		} else {
+			platformName = asset.Platform.Title
+		}
+	}
+	return platformName
+}

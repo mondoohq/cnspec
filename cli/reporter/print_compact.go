@@ -81,8 +81,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		if asset.Url != "" {
 			assetUrl = asset.Url
 		}
-		if asset.PlatformName != "" {
-			assetsByPlatform[asset.PlatformName] = append(assetsByPlatform[asset.PlatformName], asset)
+		platformName := getPlatforNameForAsset(asset)
+		if platformName != "" {
+			assetsByPlatform[platformName] = append(assetsByPlatform[platformName], asset)
 		}
 		if _, ok := r.data.Reports[assetMrn]; ok {
 			assetScore := r.data.Reports[assetMrn].Score.Rating().Letter()

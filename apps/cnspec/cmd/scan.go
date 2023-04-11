@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	isatty "github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder/common"
+	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
@@ -28,10 +30,20 @@ import (
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
+	cnspec_components "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
+	cnspec_upstream "go.mondoo.com/cnspec/upstream"
 	"go.mondoo.com/ranger-rpc"
+)
+
+const (
+	// set to "1" to enable
+	featureReportEnv = "FEATURE_REPORT"
+
+	// allow sending reports to alternative URLs
+	featureReportAlternateUrlEnv = "REPORT_URL"
 )
 
 func init() {
@@ -382,6 +394,22 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
 		logger.DebugDumpJSON("report", report)
 		printReports(report, conf, cmd)
+
+		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
+		if os.Getenv(featureReportEnv) == "1" && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito &&
+			cnspec_components.AskAYesNoQuestion("Do you want to view the report in the browser?") {
+			proxy, err := cnquery_config.GetAPIProxy()
+			if err != nil {
+				log.Error().Err(err).Msg("error getting proxy information")
+			} else {
+				reportId, err := cnspec_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
+				if err != nil {
+					log.Fatal().Err(err).Msg("error uploading shared report")
+				}
+
+				fmt.Printf("View report at %s\n", reportId.Url)
+			}
+		}
 
 		// if we had asset errors, we return a non-zero exit code
 		// asset errors are only connection issues

@@ -27,18 +27,12 @@ func NewAggregateReporter() *AggregateReporter {
 
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
-	platformName := ""
-	if asset.Platform.Title == "" {
-		platformName = asset.Platform.Name
-	} else {
-		platformName = asset.Platform.Title
-	}
 
 	r.assets[asset.Mrn] = &policy.Asset{
-		Mrn:          asset.Mrn,
-		Name:         asset.Name,
-		PlatformName: platformName,
-		Url:          asset.Url,
+		Mrn:      asset.Mrn,
+		Name:     asset.Name,
+		Url:      asset.Url,
+		Platform: asset.Platform,
 	}
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
@@ -52,18 +46,10 @@ func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) 
 func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan error to report")
 	r.assets[asset.Mrn] = &policy.Asset{
-		Mrn:  asset.Mrn,
-		Name: asset.Name,
-		Url:  asset.Url,
-	}
-	if asset.Platform != nil {
-		platformName := ""
-		if asset.Platform.Title == "" {
-			platformName = asset.Platform.Name
-		} else {
-			platformName = asset.Platform.Title
-		}
-		r.assets[asset.Mrn].PlatformName = platformName
+		Mrn:      asset.Mrn,
+		Name:     asset.Name,
+		Url:      asset.Url,
+		Platform: asset.Platform,
 	}
 	r.assetErrors[asset.Mrn] = err
 }
