@@ -3,20 +3,35 @@ package policy
 import (
 	"context"
 	"os"
+	"path"
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/logger"
+	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"go.opentelemetry.io/otel"
 )
 
-const defaultRegistryUrl = "https://registry.api.mondoo.com"
+const (
+	defaultRegistryUrl    = "https://registry.api.mondoo.com"
+	RegistryServiceName   = "registry.mondoo.com"
+	CollectionIDNamespace = "namespace"
+	CollectionIDPolicies  = "policies"
+)
 
 var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
+
+func NewPolicyMrn(namespace string, uid string) string {
+	m := &mrn.MRN{
+		ServiceName:          RegistryServiceName,
+		RelativeResourceName: path.Join(CollectionIDNamespace, namespace, CollectionIDPolicies, uid),
+	}
+	return m.String()
+}
 
 // ValidateBundle and check queries, relationships, MRNs, and versions
 func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
