@@ -15,6 +15,7 @@ import (
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/stringx"
 	"go.mondoo.com/cnquery/upstream/mvd"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
@@ -73,7 +74,7 @@ func (r *defaultReporter) print() error {
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	assetUrl := ""
-	assetsByPlatform := make(map[string][]*policy.Asset)
+	assetsByPlatform := make(map[string][]*asset.Asset)
 	assetsByScore := make(map[string]int)
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
@@ -206,7 +207,7 @@ func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []s
 	return scores
 }
 
-func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*policy.Asset) []string {
+func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*asset.Asset) []string {
 	assets := []string{}
 
 	maxPlatformLength := 0
@@ -225,7 +226,7 @@ func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*po
 	return assets
 }
 
-func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*policy.Asset) {
+func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*asset.Asset) {
 	availablePlatforms := make([]string, 0, len(assetsByPlatform))
 	for k := range assetsByPlatform {
 		availablePlatforms = append(availablePlatforms, k)
@@ -352,7 +353,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 // Remove all this code and migrate it to tap or something
 // ============================= vv ============================================
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *policy.Asset) {
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *asset.Asset) {
 	results := report.RawResults()
 
 	dataQueriesOutput := ""
@@ -391,7 +392,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				continue
 			}
 
-			r.printControl(score, query, asset, resolved, report, results)
+			r.printControl(score, query, resolved, report, results)
 		}
 	}
 }
@@ -425,7 +426,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *e
 	return passfail + scoreIndicator + title + NewLineCharacter
 }
 
-func (r *defaultReporter) printControl(score *policy.Score, query *explorer.Mquery, asset *policy.Asset, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+func (r *defaultReporter) printControl(score *policy.Score, query *explorer.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	title := query.Title
 	if title == "" {
 		title = query.Mrn

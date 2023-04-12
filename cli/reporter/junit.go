@@ -8,6 +8,7 @@ import (
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"github.com/mitchellh/mapstructure"
 	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/policy"
@@ -76,7 +77,7 @@ func ReportCollectionToJunit(r *policy.ReportCollection, out shared.OutputHelper
 }
 
 // assetPolicyTests converts asset scoring queries to Junit test cases
-func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *policy.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
+func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
 	ts := junit.Testsuite{
 		Time:      "",
 		Testcases: []junit.Testcase{},
@@ -151,7 +152,7 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *pol
 }
 
 // assetPolicyTests converts asset vulnerability results to Junit test cases
-func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *policy.Asset) *junit.Testsuite {
+func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.Asset) *junit.Testsuite {
 	// check if we have a vulnerability report
 	results, ok := r.Reports[assetMrn]
 	if !ok {

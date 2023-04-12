@@ -7,6 +7,7 @@ import (
 
 	cr "go.mondoo.com/cnquery/cli/reporter"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -40,7 +41,7 @@ type assetPrintable struct {
 	PlatformName string `protobuf:"bytes,20,opt,name=platformName,proto3" json:"platformName,omitempty"`
 }
 
-func prepareAssetsForPrinting(assets map[string]*policy.Asset) map[string]*assetPrintable {
+func prepareAssetsForPrinting(assets map[string]*asset.Asset) map[string]*assetPrintable {
 	printableAssets := map[string]*assetPrintable{}
 	for k, a := range assets {
 		pAsset := &assetPrintable{
