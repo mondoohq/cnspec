@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
+	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -65,7 +66,7 @@ func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {
 	return s
 }
 
-func getPlatforNameForAsset(asset *policy.Asset) string {
+func getPlatforNameForAsset(asset *asset.Asset) string {
 	platformName := ""
 	if asset.Platform != nil {
 		if asset.Platform.Title == "" {

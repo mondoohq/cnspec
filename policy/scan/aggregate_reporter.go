@@ -8,7 +8,7 @@ import (
 )
 
 type AggregateReporter struct {
-	assets           map[string]*policy.Asset
+	assets           map[string]*asset.Asset
 	assetReports     map[string]*policy.Report
 	assetErrors      map[string]error
 	bundle           *policy.Bundle
@@ -18,7 +18,7 @@ type AggregateReporter struct {
 
 func NewAggregateReporter() *AggregateReporter {
 	return &AggregateReporter{
-		assets:           make(map[string]*policy.Asset),
+		assets:           make(map[string]*asset.Asset),
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
@@ -28,12 +28,7 @@ func NewAggregateReporter() *AggregateReporter {
 func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
 
-	r.assets[asset.Mrn] = &policy.Asset{
-		Mrn:      asset.Mrn,
-		Name:     asset.Name,
-		Url:      asset.Url,
-		Platform: asset.Platform,
-	}
+	r.assets[asset.Mrn] = asset
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
 
@@ -45,12 +40,7 @@ func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) 
 
 func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan error to report")
-	r.assets[asset.Mrn] = &policy.Asset{
-		Mrn:      asset.Mrn,
-		Name:     asset.Name,
-		Url:      asset.Url,
-		Platform: asset.Platform,
-	}
+	r.assets[asset.Mrn] = asset
 	r.assetErrors[asset.Mrn] = err
 }
 
