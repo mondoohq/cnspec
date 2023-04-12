@@ -338,3 +338,69 @@ queries:
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.GraphExecutionChecksum)
 	require.NotEqual(t, pInitial.GraphContentChecksum, pUpdated.GraphContentChecksum)
 }
+
+func TestPolicyChecksummingWithVariantChecksWithCycles(t *testing.T) {
+	{
+		bundleInitial, err := BundleFromYAML([]byte(`
+policies:
+  - uid: variants-test
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        checks:
+          - uid: testqueryvariants
+
+queries:
+  - uid: testqueryvariants
+    title: testqueryvariants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    variants:
+    - uid: variant2
+  - uid: variant2
+    variants:
+    - uid: variant1
+    filters: asset.family.contains("windows")
+`))
+		require.NoError(t, err)
+		pInitial := bundleInitial.Policies[0]
+		pInitial.InvalidateLocalChecksums()
+		_, err = bundleInitial.Compile(context.Background(), nil)
+		require.Equal(t, ErrVariantCycleDetected, err)
+	}
+
+	{
+		bundleInitial, err := BundleFromYAML([]byte(`
+policies:
+  - uid: variants-test
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        queries:
+          - uid: testqueryvariants
+
+queries:
+  - uid: testqueryvariants
+    title: testqueryvariants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    variants:
+    - uid: variant2
+  - uid: variant2
+    variants:
+    - uid: variant1
+    filters: asset.family.contains("windows")
+`))
+		require.NoError(t, err)
+		pInitial := bundleInitial.Policies[0]
+		pInitial.InvalidateLocalChecksums()
+		_, err = bundleInitial.Compile(context.Background(), nil)
+		require.Equal(t, ErrVariantCycleDetected, err)
+	}
+}

@@ -513,6 +513,108 @@ func (p *Bundle) ExtractDocs(out io.Writer, noIDs bool, noCode bool) {
 	}
 }
 
+func (p *Bundle) ensureNoCyclesInVariants() error {
+	// Gather all top-level queries with variants
+	topLevelQueries := map[string]*explorer.Mquery{}
+	for _, q := range p.Queries {
+		if len(q.Variants) > 0 || q.Mql == "" {
+			topLevelQueries[q.Uid] = q
+		}
+	}
+	// Gather all checks and queries with variants
+	checks := map[string]*explorer.Mquery{}
+	queries := map[string]*explorer.Mquery{}
+	for _, p := range p.Policies {
+		for _, g := range p.Groups {
+			for _, c := range g.Checks {
+				if len(c.Variants) > 0 || c.Mql == "" {
+					checks[c.Uid] = c
+				}
+			}
+			for _, q := range g.Queries {
+				if len(q.Variants) > 0 || q.Mql == "" {
+					queries[q.Uid] = q
+				}
+			}
+		}
+	}
+
+	// Maps a uid to a query. It searches first the top level queries, and then the ones
+	// in the policy groups.
+	queryFinderFunc := func(queryMap map[string]*explorer.Mquery) func(string) *explorer.Mquery {
+		return func(mrn string) *explorer.Mquery {
+			base := topLevelQueries[mrn]
+			if base != nil {
+				return base
+			}
+			return queryMap[mrn]
+		}
+	}
+
+	checkFinder := queryFinderFunc(checks)
+	if err := detectVariantCycles(checks, checkFinder); err != nil {
+		return err
+	}
+
+	queryFinder := queryFinderFunc(queries)
+	if err := detectVariantCycles(queries, queryFinder); err != nil {
+		return err
+	}
+	return nil
+}
+
+type nodeVisitStatus byte
+
+const (
+	// NEW is the initial state of visiting a node. It means that the node has not been visited yet.
+	NEW nodeVisitStatus = iota
+	// ACTIVE means that the node is currently being visited. If we encounter a node that is in
+	// ACTIVE state, it means that we have a cycle.
+	ACTIVE
+	// VISITED means that the node has been visited.
+	VISITED
+)
+
+var ErrVariantCycleDetected = errors.New("variant cycle detected")
+
+func detectVariantCycles(queries map[string]*explorer.Mquery, getQuery func(string) *explorer.Mquery) error {
+	statusMap := map[string]nodeVisitStatus{}
+	for _, query := range queries {
+		err := detectVariantCyclesDFS(query.Uid, statusMap, getQuery)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func detectVariantCyclesDFS(uid string, statusMap map[string]nodeVisitStatus,
+	getQuery func(string) *explorer.Mquery) error {
+	q := getQuery(uid)
+	if q == nil {
+		return nil
+	}
+	s := statusMap[uid]
+	if s == VISITED {
+		return nil
+	} else if s == ACTIVE {
+		return ErrVariantCycleDetected
+	}
+	statusMap[q.Uid] = ACTIVE
+	for _, variant := range q.Variants {
+		v := getQuery(variant.Uid)
+		if v == nil {
+			continue
+		}
+		err := detectVariantCyclesDFS(v.Uid, statusMap, getQuery)
+		if err != nil {
+			return err
+		}
+	}
+	statusMap[q.Uid] = VISITED
+	return nil
+}
+
 // Compile PolicyBundle into a PolicyBundleMap
 // Does 4 things:
 // 1. turns policy bundle into a map for easier access
@@ -539,6 +641,11 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		lookupProp:  map[string]explorer.PropertyRef{},
 		lookupQuery: map[string]*explorer.Mquery{},
 		codeBundles: map[string]*llx.CodeBundle{},
+	}
+
+	// Check for cycles in variants
+	if err := p.ensureNoCyclesInVariants(); err != nil {
+		return nil, err
 	}
 
 	// TODO: Make this compatible as a store for shared properties across queries.
