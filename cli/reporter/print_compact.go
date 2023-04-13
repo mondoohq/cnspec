@@ -75,12 +75,16 @@ func (r *defaultReporter) print() error {
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	assetUrl := ""
 	assetsByPlatform := make(map[string][]*asset.Asset)
+	projectId := ""
 	assetsByScore := make(map[string]int)
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
 		asset := r.data.Assets[assetMrn]
 		if asset.Url != "" {
 			assetUrl = asset.Url
+		}
+		if val, ok := asset.Labels["mondoo.com/project-id"]; ok {
+			projectId = val
 		}
 		platformName := getPlatforNameForAsset(asset)
 		if platformName != "" {
@@ -164,9 +168,15 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				// we do not have a space url, so we extract it form the asset url
 				// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
 				// an individual asset url wouldn't make sense here
-				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/[a-zA-Z0-9-]+(\?.+)$`)
+				// when runnin inside cicd, we create an url for the cicd project
+				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/fleet/[a-zA-Z0-9-]+(\?.+)$`)
 				m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
-				url = m[1] + m[2]
+				if projectId != "" {
+					url = m[1] + "/cicd/jobs" + m[2] + "&projectId=" + projectId
+				} else {
+					url = m[1] + "/fleet" + m[2]
+				}
+
 			} else {
 				url = assetUrl
 			}

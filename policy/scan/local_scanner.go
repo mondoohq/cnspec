@@ -393,6 +393,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 				platformId := job.Asset.PlatformIds[0]
 				job.Asset.Mrn = resp.Details[platformId].AssetMrn
 				job.Asset.Url = resp.Details[platformId].Url
+				job.Asset.Labels["mondoo.com/project-id"] = resp.Details[platformId].ProjectId
 			}
 
 			job.connection = m
