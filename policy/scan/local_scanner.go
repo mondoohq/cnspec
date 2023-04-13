@@ -551,7 +551,7 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 
 func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.UpstreamConfig, error) {
 	if incognito {
-		return resources.UpstreamConfig{Incognito: true}, nil
+		return resources.UpstreamConfig{Incognito: true, HttpClient: ranger.DefaultHttpClient()}, nil
 	}
 
 	// Make a copy here, we do not want to add to the original plugins map if we're connecting upstream with credentials from a job.
