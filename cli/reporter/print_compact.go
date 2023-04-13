@@ -83,8 +83,8 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		if asset.Url != "" {
 			assetUrl = asset.Url
 		}
-		if asset.ProjectId != "" {
-			projectId = asset.ProjectId
+		if val, ok := asset.Labels["mondoo.com/project-id"]; ok {
+			projectId = val
 		}
 		platformName := getPlatforNameForAsset(asset)
 		if platformName != "" {
