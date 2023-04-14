@@ -909,6 +909,9 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 	// ^^
 
 	if len(check.Variants) != 0 {
+		// Its easier to deal with things if we dont mix query code ids with
+		// query mrns.
+		queryJob.QrId = check.CodeId
 		err := cache.addCheckJobVariants(ctx, check, queryJob)
 		if err != nil {
 			log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")

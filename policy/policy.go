@@ -472,12 +472,9 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			}
 
 			contentChecksum = contentChecksum.Add(check.Checksum)
-
-			var err error
-			executionChecksum, err = variantsExecutionChecksum(check, executionChecksum, true, getQuery)
-			if err != nil {
-				return err
-			}
+			executionChecksum = executionChecksum.
+				Add(check.CodeId).
+				AddUint(check.Impact.Checksum())
 		}
 
 		// DATA (must be sorted)
@@ -510,12 +507,8 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			}
 
 			contentChecksum = contentChecksum.Add(query.Checksum)
-
-			var err error
-			executionChecksum, err = variantsExecutionChecksum(query, executionChecksum, false, getQuery)
-			if err != nil {
-				return err
-			}
+			executionChecksum = executionChecksum.
+				Add(query.CodeId)
 		}
 
 		// FILTERs (also sorted)
@@ -688,25 +681,4 @@ func (s *GroupType) UnmarshalJSON(data []byte) error {
 	}
 
 	return errors.New("failed to unmarshal group type: " + str)
-}
-
-func variantsExecutionChecksum(q *explorer.Mquery, c checksums.Fast, includeImpact bool, getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (checksums.Fast, error) {
-	// This code assumes there are no cycles in the variant graph.
-	c = c.
-		Add(q.CodeId)
-	if includeImpact {
-		c = c.AddUint(q.Impact.Checksum())
-	}
-
-	for _, ref := range q.Variants {
-		if v, err := getQuery(context.Background(), ref.Mrn); err == nil {
-			c, err = variantsExecutionChecksum(v, c, includeImpact, getQuery)
-			if err != nil {
-				return 0, err
-			}
-		} else {
-			return 0, errors.New("cannot find dependent composed query '" + ref.Mrn + "'")
-		}
-	}
-	return c, nil
 }
