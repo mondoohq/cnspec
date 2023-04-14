@@ -550,10 +550,6 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 }
 
 func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.UpstreamConfig, error) {
-	if incognito {
-		return resources.UpstreamConfig{Incognito: true, HttpClient: ranger.DefaultHttpClient()}, nil
-	}
-
 	// Make a copy here, we do not want to add to the original plugins map if we're connecting upstream with credentials from a job.
 	pluginsCopyMap := map[string]ranger.ClientPlugin{}
 	for k, v := range s.pluginsMap {
@@ -578,20 +574,21 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 		plugins = append(plugins, p)
 	}
 
-	if endpoint == "" {
-		return resources.UpstreamConfig{}, errors.New("missing upstream endpoint")
+	if endpoint == "" && !incognito {
+		return resources.UpstreamConfig{}, errors.New("missing endpoint")
 	}
-	if spaceMrn == "" {
+	if spaceMrn == "" && !incognito {
 		return resources.UpstreamConfig{}, errors.New("missing space mrn")
 	}
+
 	if httpClient == nil {
-		return resources.UpstreamConfig{}, errors.New("empty httpclient")
+		httpClient = ranger.DefaultHttpClient()
 	}
 
 	return resources.UpstreamConfig{
 		SpaceMrn:    spaceMrn,
 		ApiEndpoint: endpoint,
-		Incognito:   false,
+		Incognito:   incognito,
 		Plugins:     plugins,
 		HttpClient:  httpClient,
 	}, nil
