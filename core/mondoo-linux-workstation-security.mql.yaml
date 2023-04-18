@@ -84,6 +84,7 @@ policies:
           - uid: mondoo-linux-workstation-security-bios-uptodate
         queries:
           - uid: mondoo-linux-workstation-security-bios-data
+          - uid: mondoo-linux-workstation-security-system-data
     scoring_system: 2
 props:
   - uid: kexAlgos
@@ -107,6 +108,7 @@ queries:
     mql: |
       if (file("/boot/grub/grub.cfg").exists) {
         file("/boot/grub/grub.cfg") {
+          path
           user.name == 'root'
           group.name == 'root'
           permissions.group_readable == false
@@ -120,6 +122,7 @@ queries:
 
       if (file("/boot/grub/menu.lst").exists) {
         file("/boot/grub/menu.lst") {
+          path
           user.name == 'root'
           group.name == 'root'
           permissions.group_readable == false
@@ -133,6 +136,7 @@ queries:
 
       if (file("/boot/grub2/grub.cfg").exists) {
          file("/boot/grub2/grub.cfg") {
+          path
           user.name == 'root'
           group.name == 'root'
           permissions.group_readable == false
@@ -146,6 +150,7 @@ queries:
 
       if (file("/boot/grub/user.cfg").exists) {
         file("/boot/grub/user.cfg") {
+          path
           user.name == 'root'
           group.name == 'root'
           permissions.group_readable == false
@@ -159,6 +164,7 @@ queries:
 
       if (file("/boot/grub2/user.cfg").exists) {
          file("/boot/grub2/user.cfg") {
+          path
           user.name == 'root'
           group.name == 'root'
           permissions.group_readable == false
@@ -170,8 +176,9 @@ queries:
          }
       }
 
-      if ( file("/boot/loader/loader.conf").exists ) {
+      if (file("/boot/loader/loader.conf").exists) {
         file("/boot/loader/loader.conf") {
+          path
           user.name == 'root'
           group.name == 'root'
           permissions.group_readable == false
@@ -185,6 +192,7 @@ queries:
 
       if(mount.list.where( fstype == 'vfat' && path == /boot/) != []) {
         mount.list.where( fstype == 'vfat' && path == /boot/) {
+          device
           options['fmask'] == "0077"
         }
       }
@@ -258,7 +266,13 @@ queries:
     title: Ensure AES encryption algorithm is used
     impact: 90
     mql: |
-      lsblk.list.where( fstype == /crypt/) { parse.json(content: command('cryptsetup --dump-json-metadata luksDump /dev/disk/by-uuid/' + uuid).stdout).params['segments']['0']['encryption'].contains('aes-xts') }
+      lsblk.list.where( fstype == /crypt/).length >= 1
+      lsblk.list.where( fstype == /crypt/).all(
+        parse.json(
+          content: command('cryptsetup --dump-json-metadata luksDump /dev/disk/by-uuid/' + uuid).stdout
+        ).params['segments']['0']['encryption'].contains('aes-xts') ||
+        command('cryptsetup luksDump /dev/disk/by-uuid/' + uuid).stdout.lines.where( _ == /Cipher\:/).all(/aes/)
+      )
     docs:
       desc: |
         It is mandatory to encrypt the / and /home with the aes-xts-plain64 or aes-xts-benbi algorithm.
@@ -295,6 +309,9 @@ queries:
         ```
 
         Alternatively, use your manufacturer's manual update process.
+  - uid: mondoo-linux-workstation-security-system-data
+    title: Gather system information
+    mql: machine.system { * }
   - uid: mondoo-linux-workstation-security-bios-data
     title: Gather BIOS Information
     mql: machine.bios { version vendor releaseDate }
@@ -305,14 +322,15 @@ queries:
   - uid: mondoo-linux-workstation-security-permissions-on-bootloader-config-metadata
     title: Gather metadata on current bootloader config
     mql: |
-      if (file("/boot/grub/grub.cfg").exists) file("/boot/grub/grub.cfg") {dirname basename permissions}
-      if (file("/boot/grub2/grub.cfg").exists) file("/boot/grub2/grub.cfg") {dirname basename permissions}
-      if (file("/boot/grub/user.cfg").exists) file("/boot/grub/user.cfg") {dirname basename permissions}
-      if (file("/boot/grub2/user.cfg").exists) file("/boot/grub2/user.cfg") {dirname basename permissions}
+      if (file("/boot/grub/grub.cfg").exists) { file("/boot/grub/grub.cfg") {dirname basename permissions} }
+      if (file("/boot/grub2/grub.cfg").exists) { file("/boot/grub2/grub.cfg") {dirname basename permissions} }
+      if (file("/boot/grub/user.cfg").exists) { file("/boot/grub/user.cfg") {dirname basename permissions} }
+      if (file("/boot/grub2/user.cfg").exists) { file("/boot/grub2/user.cfg") {dirname basename permissions} }
   - uid: mondoo-linux-workstation-security-secure-boot-is-enabled-metadata
     title: Print out the results of 'mokutil --sb-state' for troubleshooting purposes
     mql: |
       command('mokutil --sb-state').stdout
   - uid: mondoo-linux-workstation-security-aes-encryption-algo-metadata
     title: Print out the ciphersuite used for disk encryption
-    mql: "lsblk.list.where( fstype == /crypt/) {name} { command ('cryptsetup luksDump /dev/' + name).stdout }      \n"
+    mql: |
+      lsblk.list.where( fstype == /crypt/) { command('cryptsetup luksDump /dev/' + name).stdout }
