@@ -39,9 +39,6 @@ import (
 )
 
 const (
-	// set to "1" to enable
-	featureReportEnv = "FEATURE_REPORT"
-
 	// allow sending reports to alternative URLs
 	featureReportAlternateUrlEnv = "REPORT_URL"
 )
@@ -396,7 +393,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		printReports(report, conf, cmd)
 
 		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
-		if os.Getenv(featureReportEnv) == "1" && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
+		if isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
 			answer := cnspec_components.AskAYesNoQuestion("Do you want to view the report in the browser?")
 			if answer {
 				proxy, err := cnquery_config.GetAPIProxy()
