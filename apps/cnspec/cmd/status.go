@@ -193,7 +193,9 @@ func (s Status) RenderCliStatus() {
 	if s.Client.Registered && s.Client.PingPongError == nil {
 		log.Info().Msg(theme.DefaultTheme.Success("client authenticated successfully"))
 	} else {
-		log.Error().Err(s.Client.PingPongError).Msg("could not connect to mondoo platform")
+		log.Error().Err(s.Client.PingPongError).
+			Msgf("The Mondoo Platform credentials provided at %s didn't successfully authenticate with Mondoo Platform. Please re-authenticate with the Mondoo Platform. To learn how, read: https://mondoo.com/docs/cnspec/cnspec-adv-install/registration",
+				viper.ConfigFileUsed())
 	}
 
 	for i := range s.Upstream.Warnings {
