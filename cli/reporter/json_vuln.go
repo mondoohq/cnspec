@@ -43,7 +43,7 @@ type packagePrintable struct {
 	Cves      []string `json:"cves"`
 }
 
-func VulnReportCollectionToJSON(target string, data *mvd.VulnReport, out shared.OutputHelper) error {
+func VulnReportToJSON(target string, data *mvd.VulnReport, out shared.OutputHelper) error {
 	if data == nil {
 		return nil
 	}

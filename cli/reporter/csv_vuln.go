@@ -26,7 +26,7 @@ func (c csvStruct) toSlice() []string {
 }
 
 // ReportCollectionToCSV writes the given report collection to the given output directory
-func VulnReportCollectionToCSV(data *mvd.VulnReport, out shared.OutputHelper) error {
+func VulnReportToCSV(data *mvd.VulnReport, out shared.OutputHelper) error {
 	w := csv.NewWriter(out)
 
 	// write header

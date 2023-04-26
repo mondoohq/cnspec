@@ -146,11 +146,11 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case CSV:
 		writer := shared.IOWriter{Writer: out}
-		return VulnReportCollectionToCSV(data, &writer)
+		return VulnReportToCSV(data, &writer)
 	case YAML:
 		raw := bytes.Buffer{}
 		writer := shared.IOWriter{Writer: &raw}
-		err := VulnReportCollectionToJSON(target, data, &writer)
+		err := VulnReportToJSON(target, data, &writer)
 		if err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string
 		return err
 	case JSON:
 		writer := shared.IOWriter{Writer: out}
-		return VulnReportCollectionToJSON(target, data, &writer)
+		return VulnReportToJSON(target, data, &writer)
 	default:
 		return errors.New("unknown reporter type, don't recognize this Format")
 	}

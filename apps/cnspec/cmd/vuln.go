@@ -20,6 +20,7 @@ import (
 	"go.mondoo.com/cnquery/cli/shell"
 	"go.mondoo.com/cnquery/cli/theme"
 	"go.mondoo.com/cnquery/explorer/executor"
+	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	discovery_common "go.mondoo.com/cnquery/motor/discovery/common"
@@ -358,6 +359,7 @@ func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {
 		log.Fatal().Msg(err.Error())
 	}
 
+	logger.DebugDumpJSON("vulnReport", report)
 	if err = r.PrintVulns(report, os.Stdout, target); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
