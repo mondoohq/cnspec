@@ -9,6 +9,7 @@ import (
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/shared"
+	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor"
 	"sigs.k8s.io/yaml"
@@ -107,4 +108,43 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 	default:
 		return errors.New("unknown reporter type, don't recognize this Format")
 	}
+}
+
+func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string) error {
+	switch r.Format {
+	case Compact:
+		rr := &defaultVulnReporter{
+			Reporter:  r,
+			isCompact: true,
+			out:       out,
+			data:      data,
+			target:    target,
+		}
+		return rr.print()
+	case Summary:
+		rr := &defaultVulnReporter{
+			Reporter:  r,
+			isCompact: true,
+			isSummary: true,
+			out:       out,
+			data:      data,
+			target:    target,
+		}
+		return rr.print()
+	case Full:
+		rr := &defaultVulnReporter{
+			Reporter:  r,
+			isCompact: false,
+			out:       out,
+			data:      data,
+			target:    target,
+		}
+		return rr.print()
+	case JSON:
+		writer := shared.IOWriter{Writer: out}
+		return VulnReportCollectionToJSON(target, data, &writer)
+	default:
+		return errors.New("unknown reporter type, don't recognize this Format")
+	}
+	return nil
 }
