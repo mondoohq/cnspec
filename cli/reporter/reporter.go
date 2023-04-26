@@ -146,5 +146,4 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string
 	default:
 		return errors.New("unknown reporter type, don't recognize this Format")
 	}
-	return nil
 }

@@ -33,7 +33,8 @@ func (r *defaultVulnReporter) print() error {
 	summaryDivider := strings.Repeat("=", utf8.RuneCountInString(header))
 	r.out.Write([]byte(termenv.String(summaryDivider + "\n\n").Foreground(theme.DefaultTheme.Colors.Secondary).String()))
 	r.out.Write([]byte(RenderVulnerabilityStats(r.data)))
-	r.out.Write([]byte(RenderVulnReport(r.data)))
-	fmt.Println(r.out)
+	if !r.isSummary {
+		r.out.Write([]byte(RenderVulnReportDetailed(r.data, !r.isCompact)))
+	}
 	return nil
 }
