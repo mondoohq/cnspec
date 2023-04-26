@@ -127,7 +127,7 @@ func renderVulnerabilitiesAsJson(r *mvd.VulnReport) string {
 		platformAdvisory = append(platformAdvisory, advisory)
 	}
 
-	printables := []*advisoryPrintable{}
+	printAdvisories := []*advisoryPrintable{}
 	if len(platformAdvisory) > 0 {
 		// sort advisories by score
 		sort.Sort(sort.Reverse(mvd.BySeverity(platformAdvisory)))
@@ -159,7 +159,7 @@ func renderVulnerabilitiesAsJson(r *mvd.VulnReport) string {
 				Fixed:    fixedVersion,
 				Patch:    patch,
 			}
-			printables = append(printables, outAdvisory)
+			printAdvisories = append(printAdvisories, outAdvisory)
 		}
 	}
 
@@ -183,7 +183,7 @@ func renderVulnerabilitiesAsJson(r *mvd.VulnReport) string {
 		}
 	}
 
-	outJson, err := json.Marshal(printables)
+	advisoriesJson, err := json.Marshal(printAdvisories)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to marshal json")
 	}
@@ -195,7 +195,7 @@ func renderVulnerabilitiesAsJson(r *mvd.VulnReport) string {
 
 	out := "{" +
 		"\"platform\": " +
-		string(outJson) +
+		string(advisoriesJson) +
 		"," +
 		"\"packages\": " +
 		string(packagesJson) +

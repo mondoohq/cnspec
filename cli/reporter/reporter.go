@@ -140,6 +140,9 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string
 			target:    target,
 		}
 		return rr.print()
+	case CSV:
+		writer := shared.IOWriter{Writer: out}
+		return VulnReportCollectionToCSV(data, &writer)
 	case YAML:
 		raw := bytes.Buffer{}
 		writer := shared.IOWriter{Writer: &raw}
