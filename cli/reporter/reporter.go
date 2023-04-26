@@ -140,19 +140,10 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string
 			target:    target,
 		}
 		return rr.print()
-		/*
-			case Report:
-				rr := &reportRenderer{
-					printer:  r.Printer,
-					pager:    r.Pager,
-					usePager: r.UsePager,
-					out:      out,
-					data:     data,
-				}
-				return rr.print()
-		*/
+	case Report:
+		return errors.New("'report' is not supported for vuln reports, please use one of the other formats")
 	case JUnit:
-		return errors.New("junit is not supported for vuln reports, please use one of the other formats")
+		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case CSV:
 		writer := shared.IOWriter{Writer: out}
 		return VulnReportCollectionToCSV(data, &writer)
