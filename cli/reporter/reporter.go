@@ -140,6 +140,20 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, out io.Writer, target string
 			target:    target,
 		}
 		return rr.print()
+	case YAML:
+		raw := bytes.Buffer{}
+		writer := shared.IOWriter{Writer: &raw}
+		err := VulnReportCollectionToJSON(target, data, &writer)
+		if err != nil {
+			return err
+		}
+
+		json, err := yaml.JSONToYAML(raw.Bytes())
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(json)
+		return err
 	case JSON:
 		writer := shared.IOWriter{Writer: out}
 		return VulnReportCollectionToJSON(target, data, &writer)
