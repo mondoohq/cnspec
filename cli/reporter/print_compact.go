@@ -426,7 +426,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *e
 		passfail = termenv.String("✕ Fail:  ").Foreground(color).String()
 	}
 
-	var scoreIndicator string
+	scoreIndicator := "       "
 	if query.Impact != nil {
 		scoreIndicator = termenv.String(
 			fmt.Sprintf("%s %3d  ", rating.Letter(), score.Value),
@@ -444,21 +444,21 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out.Write([]byte(termenv.String("! Error: ").Foreground(r.Colors.Error).String()))
+		r.out.Write([]byte(termenv.String("! Error:        ").Foreground(r.Colors.Error).String()))
 		r.out.Write([]byte(title))
 		r.out.Write([]byte(NewLineCharacter))
 		if !r.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out.Write([]byte(termenv.String("  Message: " + errorMessage).Foreground(r.Colors.Error).String()))
+			r.out.Write([]byte(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String()))
 			r.out.Write([]byte(NewLineCharacter))
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out.Write([]byte(termenv.String(". Unknown: ").Foreground(r.Colors.Disabled).String()))
+		r.out.Write([]byte(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String()))
 		r.out.Write([]byte(title))
 		r.out.Write([]byte(NewLineCharacter))
 
 	case policy.ScoreType_Skip:
-		r.out.Write([]byte(termenv.String(". Skipped: ").Foreground(r.Colors.Disabled).String()))
+		r.out.Write([]byte(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String()))
 		r.out.Write([]byte(title))
 		r.out.Write([]byte(NewLineCharacter))
 
