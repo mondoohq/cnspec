@@ -385,24 +385,24 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		r.out.Write([]byte(NewLineCharacter))
 	}
 
-	foundControls := map[string]*policy.Score{}
+	foundChecks := map[string]*policy.Score{}
 	for id, score := range report.Scores {
 		_, ok := resolved.CollectorJob.ReportingQueries[id]
 		if !ok {
 			continue
 		}
-		foundControls[id] = score
+		foundChecks[id] = score
 	}
-	if len(foundControls) > 0 {
-		r.out.Write([]byte("Controls:" + NewLineCharacter))
-		for id, score := range foundControls {
+	if len(foundChecks) > 0 {
+		r.out.Write([]byte("Checks:" + NewLineCharacter))
+		for id, score := range foundChecks {
 			query, ok := queries[id]
 			if !ok {
 				r.out.Write([]byte("Couldn't find any queries for incoming value for " + id))
 				continue
 			}
 
-			r.printControl(score, query, resolved, report, results)
+			r.printCheck(score, query, resolved, report, results)
 		}
 	}
 }
@@ -436,7 +436,7 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *e
 	return passfail + scoreIndicator + title + NewLineCharacter
 }
 
-func (r *defaultReporter) printControl(score *policy.Score, query *explorer.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	title := query.Title
 	if title == "" {
 		title = query.Mrn

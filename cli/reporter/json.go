@@ -105,7 +105,7 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 			if mrn == "" {
 				continue
 			}
-			// controls
+			// checks
 			if _, ok := report.Scores[qid]; ok {
 				continue
 			}
