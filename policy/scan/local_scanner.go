@@ -559,9 +559,12 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.Up
 	spaceMrn := s.spaceMrn
 	httpClient := s.httpClient
 
-	jobCredentials := job.Inventory.Spec.UpstreamCredentials
+	jobCredentials := job.GetInventory().GetSpec().GetUpstreamCredentials()
 	if s.allowJobCredentials && jobCredentials != nil {
-		certAuth, _ := upstream.NewServiceAccountRangerPlugin(jobCredentials)
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(jobCredentials)
+		if err != nil {
+			return resources.UpstreamConfig{}, err
+		}
 		pluginsCopyMap[certAuth.GetName()] = certAuth
 		endpoint = jobCredentials.GetApiEndpoint()
 		spaceMrn = jobCredentials.GetParentMrn()
