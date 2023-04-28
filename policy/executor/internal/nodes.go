@@ -424,6 +424,8 @@ type ReportingJobNodeData struct {
 	datapoints  map[NodeID]*reportingJobDatapoint
 	completed   bool
 	invalidated bool
+
+	featureFlagFailErrors bool
 }
 
 func (nodeData *ReportingJobNodeData) initialize() {
@@ -530,7 +532,11 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		return s, nil
 	}
 
-	calculator, err := policy.NewScoreCalculator(nodeData.scoringSystem)
+	scoreCalculatorOptions := []policy.ScoreCalculatorOption{}
+	if nodeData.featureFlagFailErrors {
+		scoreCalculatorOptions = append(scoreCalculatorOptions, policy.WithScoreCalculatorFeatureFlagFailErrors())
+	}
+	calculator, err := policy.NewScoreCalculator(nodeData.scoringSystem, scoreCalculatorOptions...)
 	if err != nil {
 		return nil, err
 	}

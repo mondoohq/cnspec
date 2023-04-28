@@ -61,6 +61,8 @@ type GraphExecutor struct {
 	executionManager *executionManager
 	resultChan       chan *llx.RawResult
 	doneChan         chan struct{}
+
+	featureFlagFailErrors bool
 }
 
 // Execute executes the graph

@@ -1154,6 +1154,40 @@ func TestReportingJobNode(t *testing.T) {
 						assert.Equal(t, 95, int(data.score.DataCompletion))
 						assert.Equal(t, 20, int(data.score.DataTotal))
 					})
+
+					t.Run("when score with error", func(t *testing.T) {
+						nodeData := newNodeData()
+
+						nodeData.childScores = map[NodeID]*reportingJobResult{
+							"rjID1": {
+								score: &policy.Score{
+									QrId:            "qrid1",
+									Type:            policy.ScoreType_Result,
+									Value:           100,
+									ScoreCompletion: 100,
+									DataTotal:       100,
+									DataCompletion:  100,
+								},
+							},
+							"rjID2": {
+								score: &policy.Score{
+									QrId:            "qrid2",
+									Type:            policy.ScoreType_Error,
+									Value:           50,
+									ScoreCompletion: 100,
+								},
+							},
+						}
+						nodeData.featureFlagFailErrors = true
+						nodeData.initialize()
+						data := nodeData.recalculate()
+
+						assert.Equal(t, "testqueryid", data.score.QrId)
+						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
+						assert.Equal(t, 75, int(data.score.Value))
+						assert.Equal(t, 100, int(data.score.ScoreCompletion))
+					})
+
 					t.Run("when result", func(t *testing.T) {
 						nodeData := newNodeData()
 

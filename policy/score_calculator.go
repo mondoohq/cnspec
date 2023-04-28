@@ -16,15 +16,16 @@ type ScoreCalculator interface {
 }
 
 type averageScoreCalculator struct {
-	value           uint32
-	weight          uint32
-	scoreTotal      uint32
-	scoreCompletion uint32
-	scoreCnt        uint32
-	dataTotal       uint32
-	dataCompletion  uint32
-	hasResults      bool
-	hasErrors       bool
+	value                 uint32
+	weight                uint32
+	scoreTotal            uint32
+	scoreCompletion       uint32
+	scoreCnt              uint32
+	dataTotal             uint32
+	dataCompletion        uint32
+	hasResults            bool
+	hasErrors             bool
+	featureFlagFailErrors bool
 }
 
 func (c *averageScoreCalculator) Init() {
@@ -130,7 +131,30 @@ func (c *averageScoreCalculator) Add(score *Score) {
 
 	case ScoreType_Error:
 		c.hasErrors = true
-		fallthrough
+
+		if c.featureFlagFailErrors {
+			// This case is the same as ScoreType_Result. Once the feature flag
+			// is removed, this case can be merged with the ScoreType_Result
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.weight += score.Weight
+
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+
+			if score.ScoreCompletion != 0 {
+				c.scoreCnt++
+				c.value += score.Value
+			}
+			c.hasResults = true
+		} else {
+			// This case is the same as ScoreType_Unscored. Once the feature flag
+			// is removed, this case can be removed
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+		}
 
 	default:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
@@ -172,15 +196,16 @@ func (c *averageScoreCalculator) Calculate() *Score {
 }
 
 type weightedScoreCalculator struct {
-	value           uint32
-	weight          uint32
-	scoreTotal      uint32
-	scoreCompletion uint32
-	scoreCnt        uint32
-	dataTotal       uint32
-	dataCompletion  uint32
-	hasResults      bool
-	hasErrors       bool
+	value                 uint32
+	weight                uint32
+	scoreTotal            uint32
+	scoreCompletion       uint32
+	scoreCnt              uint32
+	dataTotal             uint32
+	dataCompletion        uint32
+	hasResults            bool
+	hasErrors             bool
+	featureFlagFailErrors bool
 }
 
 func (c *weightedScoreCalculator) Init() {
@@ -219,8 +244,29 @@ func (c *weightedScoreCalculator) Add(score *Score) {
 
 	case ScoreType_Error:
 		c.hasErrors = true
-		fallthrough
+		if c.featureFlagFailErrors {
+			// This case is the same as ScoreType_Result. Once the feature flag
+			// is removed, this case can be merged with the ScoreType_Result
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.weight += score.Weight
 
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+
+			if score.ScoreCompletion != 0 {
+				c.scoreCnt += score.Weight
+				c.value += score.Value * score.Weight
+			}
+			c.hasResults = true
+		} else {
+			// This case is the same as ScoreType_Unscored. Once the feature flag
+			// is removed, this case can be removed
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+		}
 	default:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
@@ -258,14 +304,15 @@ func (c *weightedScoreCalculator) Calculate() *Score {
 }
 
 type worstScoreCalculator struct {
-	value           uint32
-	weight          uint32
-	scoreTotal      uint32
-	scoreCompletion uint32
-	dataTotal       uint32
-	dataCompletion  uint32
-	hasResults      bool
-	hasErrors       bool
+	value                 uint32
+	weight                uint32
+	scoreTotal            uint32
+	scoreCompletion       uint32
+	dataTotal             uint32
+	dataCompletion        uint32
+	hasResults            bool
+	hasErrors             bool
+	featureFlagFailErrors bool
 }
 
 func (c *worstScoreCalculator) Init() {
@@ -302,7 +349,29 @@ func (c *worstScoreCalculator) Add(score *Score) {
 
 	case ScoreType_Error:
 		c.hasErrors = true
-		fallthrough
+
+		if c.featureFlagFailErrors {
+			// This case is the same as ScoreType_Result. Once the feature flag
+			// is removed, this case can be merged with the ScoreType_Result
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.weight += score.Weight
+
+			c.scoreTotal++
+			c.scoreCompletion += score.ScoreCompletion
+
+			if score.ScoreCompletion != 0 && score.Weight != 0 && score.Value < c.value {
+				c.value = score.Value
+			}
+			c.hasResults = true
+		} else {
+			// This case is the same as ScoreType_Unscored. Once the feature flag
+			// is removed, this case can be removed
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+		}
 
 	default:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
@@ -343,16 +412,42 @@ func (c *worstScoreCalculator) Calculate() *Score {
 	return res
 }
 
+type scoreCalculatorOptions struct {
+	featureFlagFailErrors bool
+}
+
+// ScoreCalculatorOption is a function that sets some option on a score calculator
+type ScoreCalculatorOption func(*scoreCalculatorOptions)
+
+// WithScoreCalculatorFeatureFlagFailErrors sets the feature flag fail errors option
+func WithScoreCalculatorFeatureFlagFailErrors() ScoreCalculatorOption {
+	return func(o *scoreCalculatorOptions) {
+		o.featureFlagFailErrors = true
+	}
+}
+
 // NewScoreCalculator returns a score calculator based on a scoring system
-func NewScoreCalculator(scoringSystem explorer.ScoringSystem) (ScoreCalculator, error) {
+func NewScoreCalculator(scoringSystem explorer.ScoringSystem, opts ...ScoreCalculatorOption) (ScoreCalculator, error) {
 	var res ScoreCalculator
+
+	options := scoreCalculatorOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	switch scoringSystem {
 	case explorer.ScoringSystem_AVERAGE, explorer.ScoringSystem_SCORING_UNSPECIFIED, explorer.ScoringSystem_DATA_ONLY:
-		res = &averageScoreCalculator{}
+		res = &averageScoreCalculator{
+			featureFlagFailErrors: options.featureFlagFailErrors,
+		}
 	case explorer.ScoringSystem_WEIGHTED:
-		res = &weightedScoreCalculator{}
+		res = &weightedScoreCalculator{
+			featureFlagFailErrors: options.featureFlagFailErrors,
+		}
 	case explorer.ScoringSystem_WORST:
-		res = &worstScoreCalculator{}
+		res = &worstScoreCalculator{
+			featureFlagFailErrors: options.featureFlagFailErrors,
+		}
 	default:
 		return nil, errors.New("don't know how to create scoring calculator for system " + strconv.Itoa(int(scoringSystem)))
 	}

@@ -51,6 +51,10 @@ type GraphBuilder struct {
 	// queryTimeout is the amount of time to wait for the underlying lumi
 	// runtime to send all the expected datapoints.
 	queryTimeout time.Duration
+
+	// featureFlagFailErrors is a feature flag to count errors as failures
+	// See https://www.notion.so/mondoo/Errors-and-Scoring-5dc554348aad4118a1dbf35123368329
+	featureFlagFailErrors bool
 }
 
 func NewBuilder() *GraphBuilder {
@@ -131,6 +135,11 @@ func (b *GraphBuilder) WithQueryTimeout(timeout time.Duration) {
 	b.queryTimeout = timeout
 }
 
+// WithFeatureFlagFailErrors sets the feature flag to count errors as failures
+func (b *GraphBuilder) WithFeatureFlagFailErrors() {
+	b.featureFlagFailErrors = true
+}
+
 func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtime, assetMrn string) (*GraphExecutor, error) {
 	resultChan := make(chan *llx.RawResult, 128)
 
@@ -148,6 +157,8 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 			resultChan, b.queryTimeout),
 		resultChan: resultChan,
 		doneChan:   make(chan struct{}),
+
+		featureFlagFailErrors: b.featureFlagFailErrors,
 	}
 
 	ge.nodes[DatapointCollectorID] = &Node{
@@ -392,10 +403,11 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 	}
 
 	nodeData := &ReportingJobNodeData{
-		queryID:     queryID,
-		isQuery:     isQuery,
-		childScores: map[string]*reportingJobResult{},
-		datapoints:  map[string]*reportingJobDatapoint{},
+		queryID:               queryID,
+		isQuery:               isQuery,
+		childScores:           map[string]*reportingJobResult{},
+		datapoints:            map[string]*reportingJobDatapoint{},
+		featureFlagFailErrors: ge.featureFlagFailErrors,
 	}
 	n = &Node{
 		id:       NodeID(reportingJobID),
