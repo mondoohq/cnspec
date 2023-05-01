@@ -340,7 +340,8 @@ func lintFile(file string) (*Results, error) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 
-			if group.Filters == nil || len(group.Filters.Items) == 0 {
+			// issue warning if no filters are assigned, but do not show the warning if the policy has variants
+			if (group.Filters == nil || len(group.Filters.Items) == 0) && !hasVariants(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
 					Line:   group.FileContext.Line,
@@ -358,7 +359,7 @@ func lintFile(file string) (*Results, error) {
 				res.Entries = append(res.Entries, Entry{
 					RuleID:   policyMissingAssetFilter,
 					Message:  "Policy " + policy.Uid + " doesn't define an asset filter.",
-					Level:    levelError,
+					Level:    levelWarning,
 					Location: []Location{location},
 				})
 			}
@@ -447,6 +448,22 @@ func lintFile(file string) (*Results, error) {
 func isEmbeddedQuery(query *Mquery) bool {
 	if query.Title != "" || query.Mql != "" {
 		return true
+	}
+	return false
+}
+
+func hasVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
+	for _, check := range group.Checks {
+		// check embedded query
+		if check.Variants != nil {
+			return true
+		}
+
+		// check referenced query
+		q := queryMap[check.Uid]
+		if q.Variants != nil {
+			return true
+		}
 	}
 	return false
 }
