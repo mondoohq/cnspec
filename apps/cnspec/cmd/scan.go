@@ -339,6 +339,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
 		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination.")
 		cmd.Flags().String("pager", "", "Enable scan output pagination with custom pagination command. The default is 'less -R'.")
+		cmd.Flags().Bool("share-report", false, "Share report results via Mondoo's reporting service")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping
@@ -362,6 +363,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// the logic is that noPager takes precedence over pager if both are sent
 		viper.BindPFlag("no_pager", cmd.Flags().Lookup("no-pager"))
 		viper.BindPFlag("pager", cmd.Flags().Lookup("pager"))
+		viper.BindPFlag("share-report", cmd.Flags().Lookup("share-report"))
 	},
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// Special handling for users that want to see what output options are
@@ -392,21 +394,31 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		logger.DebugDumpJSON("report", report)
 		printReports(report, conf, cmd)
 
-		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
-		if isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
-			answer := cnspec_components.AskAYesNoQuestion("Do you want to upload this report to Mondoo's web-based reporting service to view the results in a browser?")
-			if answer {
-				proxy, err := cnquery_config.GetAPIProxy()
-				if err != nil {
-					log.Error().Err(err).Msg("error getting proxy information")
-				} else {
-					reportId, err := cnspec_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
-					if err != nil {
-						log.Fatal().Err(err).Msg("error uploading shared report")
-					}
+		// handle report sharing
+		var shareReport *bool
 
-					fmt.Printf("View report at %s\n", reportId.Url)
+		if viper.IsSet("share-report") {
+			shareReportFlag := viper.GetBool("share-report")
+			shareReport = &shareReportFlag
+		}
+
+		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
+		if shareReport == nil && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
+			response := cnspec_components.AskAYesNoQuestion("Do you want to view or share this report results via Mondoo's reporting service in a browser?")
+			shareReport = &response
+		}
+
+		// if report sharing was requested, share the report and print the URL
+		if conf.IsIncognito && shareReport != nil && *shareReport == true {
+			proxy, err := cnquery_config.GetAPIProxy()
+			if err != nil {
+				log.Error().Err(err).Msg("error getting proxy information")
+			} else {
+				reportId, err := cnspec_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
+				if err != nil {
+					log.Fatal().Err(err).Msg("could not upload report results")
 				}
+				fmt.Printf("View report at %s\n", reportId.Url)
 			}
 		}
 
@@ -570,6 +582,14 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 
 	if conf.DoRecord {
 		log.Info().Msg("enable recording of platform calls")
+	}
+
+	if opts.ShareReport != nil && !viper.IsSet("share-report") {
+		flagValue := "false"
+		if *opts.ShareReport {
+			flagValue = "true"
+		}
+		cmd.Flags().Set("share-report", flagValue)
 	}
 
 	return &conf, nil
