@@ -514,6 +514,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		SpaceMrn:        s.spaceMrn,
 		ManagedBy:       garbageCollectOpts.ManagedBy,
 		PlatformRuntime: garbageCollectOpts.PlatformRuntime,
+		Labels:          garbageCollectOpts.Labels,
 	}
 
 	if garbageCollectOpts.OlderThan != "" {
