@@ -2,8 +2,6 @@ module go.mondoo.com/cnspec
 
 go 1.19
 
-replace github.com/slack-go/slack v0.12.1 => github.com/imilchev/slack v0.0.0-20230324120548-5380d7dd00a5
-
 require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/cockroachdb/errors v1.9.1
@@ -28,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
-	go.mondoo.com/cnquery v0.0.0-20230425104656-c5d87f33a533
+	go.mondoo.com/cnquery v0.0.0-20230501155430-899d68601b24
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.14.0
 	golang.org/x/sync v0.1.0 // indirect
@@ -423,7 +421,7 @@ require (
 	github.com/sivchari/containedctx v1.0.2 // indirect
 	github.com/sivchari/nosnakecase v1.7.0 // indirect
 	github.com/sivchari/tenv v1.7.1 // indirect
-	github.com/slack-go/slack v0.12.1 // indirect
+	github.com/slack-go/slack v0.12.2 // indirect
 	github.com/sonatard/noctx v0.0.1 // indirect
 	github.com/sourcegraph/go-diff v0.7.0 // indirect
 	github.com/spf13/afero v1.9.5 // indirect
