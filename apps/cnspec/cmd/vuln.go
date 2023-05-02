@@ -6,16 +6,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/mapstructure"
-	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	cnquery_app "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder/common"
 	"go.mondoo.com/cnquery/cli/components"
@@ -23,6 +20,7 @@ import (
 	"go.mondoo.com/cnquery/cli/shell"
 	"go.mondoo.com/cnquery/cli/theme"
 	"go.mondoo.com/cnquery/explorer/executor"
+	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor/asset"
 	"go.mondoo.com/cnquery/motor/discovery"
 	discovery_common "go.mondoo.com/cnquery/motor/discovery/common"
@@ -215,7 +213,7 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 		},
 	},
 	Run: func(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) {
-		conf, err := cnquery_app.GetCobraShellConfig(cmd, args, provider, assetType)
+		conf, err := getCobraScanConfig(cmd, args, provider, assetType)
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to prepare config")
 		}
@@ -333,13 +331,7 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 			target = connectAsset.Mrn
 		}
 
-		header := fmt.Sprintf("\nTarget:     %s\n", target)
-		b.WriteString(termenv.String(header).Foreground(theme.DefaultTheme.Colors.Primary).String())
-		summaryDivider := strings.Repeat("=", utf8.RuneCountInString(header))
-		b.WriteString(termenv.String(summaryDivider + "\n\n").Foreground(theme.DefaultTheme.Colors.Secondary).String())
-		b.WriteString(reporter.RenderVulnerabilityStats(&vulnReport))
-		b.WriteString(reporter.RenderVulnReport(&vulnReport))
-		fmt.Println(b.String())
+		printVulns(&vulnReport, conf, target)
 	},
 })
 
@@ -358,4 +350,17 @@ func filterAssetByPlatformID(assetList []*asset.Asset, selectionID string) (*ass
 		return nil, errors.New("could not find an asset with the provided identifier: " + selectionID)
 	}
 	return foundAsset, nil
+}
+
+func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {
+	// print the output using the specified output format
+	r, err := reporter.New(conf.Output)
+	if err != nil {
+		log.Fatal().Msg(err.Error())
+	}
+
+	logger.DebugDumpJSON("vulnReport", report)
+	if err = r.PrintVulns(report, os.Stdout, target); err != nil {
+		log.Fatal().Err(err).Msg("failed to print")
+	}
 }

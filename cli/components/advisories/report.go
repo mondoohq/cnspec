@@ -44,6 +44,19 @@ func RenderReport(report *mvd.VulnReport, writer RowWriter, opts RowWriterOpts) 
 		return err
 	}
 
+	rows := ReportAffectedPackages(report, opts)
+	for i := range rows {
+		err = writer.Write(*rows[i])
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ReportAffectedPackages(report *mvd.VulnReport, opts RowWriterOpts) []*ReportFindingRow {
+	rows := make([]*ReportFindingRow, 0)
 	advisoriesByPackage := advisoriesByPackage(report.Advisories)
 
 	// iterate over all affected packages, therefore we filter the package list by affected
@@ -79,10 +92,7 @@ func RenderReport(report *mvd.VulnReport, writer RowWriter, opts RowWriterOpts) 
 				Advisory:  "",
 				Cves:      nil,
 			}
-			err = writer.Write(row)
-			if err != nil {
-				return err
-			}
+			rows = append(rows, &row)
 
 			if opts.AdvisoryDetails {
 				// iterate over all advisories and print details
@@ -105,10 +115,7 @@ func RenderReport(report *mvd.VulnReport, writer RowWriter, opts RowWriterOpts) 
 						Cves:      cvesToString(advisory.Cves),
 					}
 
-					err = writer.Write(row)
-					if err != nil {
-						return err
-					}
+					rows = append(rows, &row)
 				}
 			}
 		} else {
@@ -123,13 +130,10 @@ func RenderReport(report *mvd.VulnReport, writer RowWriter, opts RowWriterOpts) 
 				Cves:      nil,
 			}
 
-			err = writer.Write(row)
-			if err != nil {
-				return err
-			}
+			rows = append(rows, &row)
 		}
 	}
-	return nil
+	return rows
 }
 
 // filters a leading 0: for rpm versions

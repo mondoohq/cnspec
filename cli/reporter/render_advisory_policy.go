@@ -272,6 +272,10 @@ func RenderVulnerabilityStats(vulnReport *mvd.VulnReport) string {
 }
 
 func RenderVulnReport(vulnReport *mvd.VulnReport) string {
+	return RenderVulnReportDetailed(vulnReport, false)
+}
+
+func RenderVulnReportDetailed(vulnReport *mvd.VulnReport, detailed bool) string {
 	var b bytes.Buffer
 	if vulnReport == nil || vulnReport.Stats == nil || vulnReport.Stats.Advisories.Total == 0 {
 		color := components.DefaultRatingColors.Color(policy.ScoreRating_aPlus)
@@ -284,6 +288,9 @@ func RenderVulnReport(vulnReport *mvd.VulnReport) string {
 	} else {
 		// render advisory table
 		renderer := components.NewAdvisoryResultTable()
+		if detailed {
+			renderer.DetailedPackageRisks = true
+		}
 		output, err := renderer.Render(vulnReport)
 		if err != nil {
 			return err.Error()

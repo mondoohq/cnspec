@@ -479,9 +479,14 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		log.Info().Strs("features", opts.Features).Msg("user activated features")
 	}
 
-	props, err := cmd.Flags().GetStringToString("props")
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to parse props")
+	props := map[string]string{}
+	var err error
+	propsFlag := cmd.Flags().Lookup("props")
+	if propsFlag != nil {
+		props, err = cmd.Flags().GetStringToString("props")
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to parse props")
+		}
 	}
 
 	conf := scanConfig{
