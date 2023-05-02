@@ -29,7 +29,7 @@ func TestLintPass(t *testing.T) {
 	assert.True(t, len(data) > 0)
 }
 
-func TestLintComplexPass(t *testing.T) {
+func TestLintPassComplex(t *testing.T) {
 	file := "../../examples/complex.mql.yaml"
 	rootDir := "../../examples"
 	results, err := Lint(file)
