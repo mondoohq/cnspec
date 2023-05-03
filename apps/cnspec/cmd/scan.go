@@ -404,7 +404,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 
 		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
 		if shareReport == nil && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
-			response := cnspec_components.AskAYesNoQuestion("Do you want to view or share this report results via Mondoo's reporting service in a browser?")
+			response := cnspec_components.AskAYesNoQuestion("Do you want to view or share these scan results in a browser using Mondoo's reporting service?")
 			shareReport = &response
 		}
 
