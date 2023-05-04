@@ -28,6 +28,8 @@ import (
 func init() {
 	serveApiCmd.Flags().String("address", "127.0.0.1", "address to listen on")
 	serveApiCmd.Flags().Uint("port", 8080, "port to listen on")
+	serveApiCmd.Flags().Uint("http-timeout", 30, "timeout for http requests in seconds")
+	serveApiCmd.Flags().MarkHidden("http-timeout")
 	rootCmd.AddCommand(serveApiCmd)
 }
 
@@ -38,6 +40,7 @@ var serveApiCmd = &cobra.Command{
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("port", cmd.Flags().Lookup("port"))
 		viper.BindPFlag("address", cmd.Flags().Lookup("address"))
+		viper.BindPFlag("http-timeout", cmd.Flags().Lookup("http-timeout"))
 
 		logger.StandardZerologLogger()
 
@@ -75,6 +78,9 @@ var serveApiCmd = &cobra.Command{
 			log.Error().Err(err).Msg("error seting up http client")
 			os.Exit(cnquery_cmd.ConfigurationErrorCode)
 		}
+
+		httpTimeout := viper.GetUint("http-timeout")
+		httpClient.Timeout = time.Duration(httpTimeout) * time.Second
 		log.Info().Msg("using service account credentials")
 		upstreamConfig := resources.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
