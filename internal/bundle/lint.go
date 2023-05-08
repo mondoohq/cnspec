@@ -460,8 +460,8 @@ func hasVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
 		}
 
 		// check referenced query
-		q := queryMap[check.Uid]
-		if q.Variants != nil {
+		q, ok := queryMap[check.Uid]
+		if ok && q.Variants != nil {
 			return true
 		}
 	}
