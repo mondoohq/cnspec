@@ -30,6 +30,10 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 		builder.WithProgressReporter(progressReporter)
 	}
 
+	if features.IsActive(cnquery.ErrorsAsFailures) {
+		builder.WithFeatureFlagFailErrors()
+	}
+
 	ge, err := builder.Build(schema, runtime, assetMrn)
 	if err != nil {
 		return err
