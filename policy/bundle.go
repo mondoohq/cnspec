@@ -713,7 +713,62 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 	}
 
+	// Process variants and inherit attributes filled from their parents
+	for _, query := range bundleMap.Queries {
+		if len(query.Variants) == 0 {
+			continue
+		}
+		for i := range query.Variants {
+			ref := query.Variants[i]
+			variant := bundleMap.Queries[ref.Mrn]
+			addBaseToVariant(query, variant)
+		}
+	}
+
 	return bundleMap, cache.error()
+}
+
+// this uses a subset of the calls of Mquery.AddBase(), because we don't want
+// to push all the fields into the variant, only a select few that are
+// needed for context and execution.
+func addBaseToVariant(base *explorer.Mquery, variant *explorer.Mquery) {
+	if variant == nil {
+		return
+	}
+
+	if variant.Title == "" {
+		variant.Title = base.Title
+	}
+	if variant.Desc == "" {
+		variant.Desc = base.Desc
+	}
+	if variant.Docs == nil {
+		variant.Docs = base.Docs
+	} else if base.Docs != nil {
+		if variant.Docs.Desc == "" {
+			variant.Docs.Desc = base.Docs.Desc
+		}
+		if variant.Docs.Audit == "" {
+			variant.Docs.Audit = base.Docs.Audit
+		}
+		if variant.Docs.Remediation == nil {
+			variant.Docs.Remediation = base.Docs.Remediation
+		}
+		if variant.Docs.Refs == nil {
+			variant.Docs.Refs = base.Docs.Refs
+		}
+	}
+	if variant.Impact == nil {
+		variant.Impact = base.Impact
+	}
+	if len(variant.Props) == 0 {
+		variant.Props = base.Props
+	}
+
+	// We are not copying filters, variants should have their own.
+
+	// We can't copy Tags because the parent query can have way more tags
+	// than are applicable to the variant.
 }
 
 type bundleCache struct {
