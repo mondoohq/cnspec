@@ -47,6 +47,7 @@ var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 		viper.BindPFlag("policies", cmd.Flags().Lookup("policy"))
 		viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
 
+		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 
 		viper.BindPFlag("vault.name", cmd.Flags().Lookup("vault"))

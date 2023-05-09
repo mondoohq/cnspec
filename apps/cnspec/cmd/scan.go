@@ -358,6 +358,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
 
 		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
+		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		// the logic is that noPager takes precedence over pager if both are sent
