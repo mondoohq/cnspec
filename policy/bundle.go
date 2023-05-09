@@ -615,6 +615,24 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		codeBundles: map[string]*llx.CodeBundle{},
 	}
 
+	// Process variants and inherit attributes filled from their parents
+	for _, query := range p.Queries {
+		if len(query.Variants) == 0 {
+			continue
+		}
+		// we do not have a bundle map yet. we need to do the check here
+		// so props are copied down before we compile props and queries
+		for i := range query.Variants {
+			ref := query.Variants[i]
+
+			for _, variant := range p.Queries {
+				if variant.Uid == ref.Uid || variant.Mrn == ref.Mrn {
+					addBaseToVariant(query, variant)
+				}
+			}
+		}
+	}
+
 	// TODO: Make this compatible as a store for shared properties across queries.
 	// Also pre-compile as many as possible before returning any errors.
 	for i := range p.Props {
@@ -710,18 +728,6 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		err = bundleMap.ValidatePolicy(ctx, policy)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
-		}
-	}
-
-	// Process variants and inherit attributes filled from their parents
-	for _, query := range bundleMap.Queries {
-		if len(query.Variants) == 0 {
-			continue
-		}
-		for i := range query.Variants {
-			ref := query.Variants[i]
-			variant := bundleMap.Queries[ref.Mrn]
-			addBaseToVariant(query, variant)
 		}
 	}
 
