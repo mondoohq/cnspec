@@ -160,7 +160,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	if r.isCompact {
 		r.out.Write([]byte(NewLineCharacter))
 		if len(assetsByScore) > 0 {
-			r.out.Write([]byte("For detailed output, run this scan with \"-o full\"." + NewLineCharacter + "\n"))
+			r.out.Write([]byte("For detailed CLI output, run this scan with \"-o full\"." + NewLineCharacter + "\n"))
 		}
 		if !r.IsIncognito && assetUrl != "" {
 			url := ""
