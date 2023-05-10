@@ -285,6 +285,9 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			"arista": {
 				Short: "Scan an Arista endpoint.",
 			},
+			"oci": {
+				Short: "Scan a Oracle Cloud Infrastructure (OCI) tenancy.",
+			},
 		},
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
