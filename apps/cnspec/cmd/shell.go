@@ -217,6 +217,9 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			"arista": {
 				Short: "Connect to an Arista endpoint.",
 			},
+			"oci": {
+				Short: "Connect to Oracle Cloud Infrastructure (OCI) tenancy.",
+			},
 		},
 	},
 	Run: func(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) {
