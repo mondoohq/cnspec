@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
-	go.mondoo.com/cnquery v0.0.0-20230509085527-5e7aee4980b4
+	go.mondoo.com/cnquery v0.0.0-20230511090153-a53acdf72129
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.14.0
 	golang.org/x/sync v0.1.0 // indirect
@@ -67,7 +67,9 @@ require (
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/microsoft/kiota-serialization-form-go v0.9.0 // indirect
 	github.com/nunnatsa/ginkgolinter v0.9.0 // indirect
+	github.com/oracle/oci-go-sdk/v65 v65.37.0 // indirect
 	github.com/sethvargo/go-retry v0.2.3 // indirect
+	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/t-yuki/gocover-cobertura v0.0.0-20180217150009-aaee18c8195c // indirect
 	github.com/timonwong/loggercheck v0.9.4 // indirect
 	github.com/toravir/csd v0.0.0-20200911003203-13ae77ad849c // indirect
