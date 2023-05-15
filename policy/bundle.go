@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -517,6 +518,9 @@ func (p *bundleCache) ensureNoCyclesInVariants(queries []*explorer.Mquery) error
 	// Gather all top-level queries with variants
 	queriesMap := map[string]*explorer.Mquery{}
 	for _, q := range queries {
+		if q == nil {
+			continue
+		}
 		if q.Mrn == "" {
 			// This should never happen. This function is called after all
 			// queries have their MRNs set.
@@ -906,7 +910,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 	// note: must happen after all MRNs (including variants) are computed
 	if policy != nil {
 		if err := policy.ComputedFilters.AddQueryFilters(query, c.lookupQuery); err != nil {
-			c.errors = append(c.errors, errors.New("failed to register filters for query "+query.Mrn))
+			c.errors = append(c.errors, fmt.Errorf("failed to register filters for query %s: %v", query.Mrn, err))
 			return nil
 		}
 	}
