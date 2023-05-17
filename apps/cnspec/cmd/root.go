@@ -2,12 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
-	"os"
-	"regexp"
-	"runtime"
-	"strings"
-
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -22,6 +16,11 @@ import (
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
+	"net/http"
+	"os"
+	"regexp"
+	"runtime"
+	"strings"
 )
 
 const (
