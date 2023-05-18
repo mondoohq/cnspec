@@ -36,6 +36,7 @@ func init() {
 	policyBundlesCmd.AddCommand(policyDocsCmd)
 
 	// publish
+	policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
 	policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
 	policyBundlesCmd.AddCommand(policyPublishCmd)
 
@@ -150,6 +151,7 @@ var policyPublishCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
+		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, optsErr := cnquery_config.ReadConfig()
@@ -165,18 +167,22 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not find bundle files")
 		}
 
-		result, err := bundle.Lint(files...)
-		if err != nil {
-			log.Fatal().Err(err).Msg("could not lint bundle files")
-		}
+		noLint := viper.GetBool("no-lint")
+		if !noLint {
+			result, err := bundle.Lint(files...)
+			if err != nil {
+				log.Fatal().Err(err).Msg("could not lint bundle files")
+			}
 
-		// render cli output
-		os.Stdout.Write(result.ToCli())
+			// render cli output
+			os.Stdout.Write(result.ToCli())
 
-		if result.HasError() {
-			log.Fatal().Msg("invalid policy bundle")
+			if result.HasError() {
+				log.Fatal().Msg("invalid policy bundle")
+			} else {
+				log.Info().Msg("valid policy bundle")
+			}
 		}
-		log.Info().Msg("valid policy bundle")
 
 		// compile manipulates the bundle, therefore we read it again
 		policyBundle, err := policy.BundleFromPaths(filename)
