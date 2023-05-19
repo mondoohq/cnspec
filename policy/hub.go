@@ -402,8 +402,12 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 				nuPolicy.ComputeAssetFilters(ctx, s.DataLake.GetValidatedPolicy, s.DataLake.GetQuery, true)
 			}
 
-			for k, v := range nuPolicy.ComputedFilters.Items {
-				mpolicyObj.ComputedFilters.Items[k] = v
+			if nuPolicy.ComputedFilters != nil {
+				for k, v := range nuPolicy.ComputedFilters.Items {
+					mpolicyObj.ComputedFilters.Items[k] = v
+				}
+			} else {
+				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters; filters are nil even after refresh")
 			}
 		}
 	}
