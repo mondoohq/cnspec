@@ -224,10 +224,35 @@ func lintFile(file string) (*Results, error) {
 	// index global queries that are not embedded
 	globalQueriesUids := map[string]int{}
 	globalQueriesByUid := map[string]*Mquery{}
+	// child to parent mapping
+	variantMapping := map[string]string{}
 	for i := range policyBundle.Queries {
 		query := policyBundle.Queries[i]
 		globalQueriesUids[query.Uid]++ // count the times the query uid is used
 		globalQueriesByUid[query.Uid] = query
+		if len(query.Variants) > 0 {
+			for _, variant := range query.Variants {
+				variantMapping[variant.Uid] = query.Uid
+			}
+		}
+	}
+	for _, p := range policyBundle.Policies {
+		for _, pg := range p.Groups {
+			for _, query := range pg.Checks {
+				if len(query.Variants) > 0 {
+					for _, variant := range query.Variants {
+						variantMapping[variant.Uid] = query.Uid
+					}
+				}
+			}
+			for _, query := range pg.Queries {
+				if len(query.Variants) > 0 {
+					for _, variant := range query.Variants {
+						variantMapping[variant.Uid] = query.Uid
+					}
+				}
+			}
+		}
 	}
 
 	// validate policies
@@ -341,7 +366,7 @@ func lintFile(file string) (*Results, error) {
 			group := policy.Groups[j]
 
 			// issue warning if no filters are assigned, but do not show the warning if the policy has variants
-			if (group.Filters == nil || len(group.Filters.Items) == 0) && !hasVariants(group, globalQueriesByUid) {
+			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
 					Line:   group.FileContext.Line,
@@ -365,7 +390,7 @@ func lintFile(file string) (*Results, error) {
 			}
 
 			// issue warning if no checks or data queries are assigned
-			if len(group.Checks) == 0 && len(group.Queries) == 0 {
+			if len(group.Checks) == 0 && len(group.Queries) == 0 && len(group.Policies) == 0 {
 				res.Entries = append(res.Entries, Entry{
 					RuleID:  policyMissingChecks,
 					Message: "Policy " + policy.Uid + " is missing checks",
@@ -387,7 +412,7 @@ func lintFile(file string) (*Results, error) {
 				// check if the query is embedded
 				if isEmbeddedQuery(check) {
 					// NOTE: embedded queries do not need a uid
-					lintQuery(check, file, globalQueriesUids, assignedQueries, false)
+					lintQuery(check, file, globalQueriesUids, assignedQueries, variantMapping, false)
 				} else {
 					// if the query is not embedded, then it needs to be available globally
 					_, ok := globalQueriesUids[uid]
@@ -415,7 +440,7 @@ func lintFile(file string) (*Results, error) {
 				// check if the query is embedded
 				if isEmbeddedQuery(query) {
 					// NOTE: embedded queries do not need a uid
-					lintQuery(query, file, globalQueriesUids, assignedQueries, false)
+					lintQuery(query, file, globalQueriesUids, assignedQueries, variantMapping, false)
 				} else {
 					// if the query is not embedded, then it needs to be available globally
 					_, ok := globalQueriesUids[uid]
@@ -439,14 +464,14 @@ func lintFile(file string) (*Results, error) {
 	// validate the global queries
 	for i := range policyBundle.Queries {
 		query := policyBundle.Queries[i]
-		queryResults := lintQuery(query, file, globalQueriesUids, assignedQueries, true)
+		queryResults := lintQuery(query, file, globalQueriesUids, assignedQueries, variantMapping, true)
 		res.Entries = append(res.Entries, queryResults.Entries...)
 	}
 	return res, nil
 }
 
 func isEmbeddedQuery(query *Mquery) bool {
-	if query.Title != "" || query.Mql != "" {
+	if query.Title != "" || query.Mql != "" || len(query.Variants) > 0 {
 		return true
 	}
 	return false
@@ -468,7 +493,7 @@ func hasVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
 	return false
 }
 
-func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, assignedQueries map[string]struct{}, requiresUID bool) *Results {
+func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, assignedQueries map[string]struct{}, variantMapping map[string]string, requiresUID bool) *Results {
 	res := &Results{}
 	uid := query.Uid
 
@@ -502,16 +527,19 @@ func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, ass
 	}
 
 	if query.Title == "" {
-		res.Entries = append(res.Entries, Entry{
-			RuleID:  queryTitle,
-			Message: fmt.Sprintf("query %s does not define a title", uid),
-			Level:   levelError,
-			Location: []Location{{
-				File:   file,
-				Line:   query.FileContext.Line,
-				Column: query.FileContext.Column,
-			}},
-		})
+		_, hasParent := variantMapping[query.Uid]
+		if !hasParent {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryTitle,
+				Message: fmt.Sprintf("query %s does not define a title", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
 	}
 
 	// check if query id was used already
