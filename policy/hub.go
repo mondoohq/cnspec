@@ -399,7 +399,17 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 				// However, we do this to avoid breaking the execution, while still
 				// logging the error.
 				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters; trying to refresh it")
-				nuPolicy.ComputeAssetFilters(ctx, s.DataLake.GetValidatedPolicy, s.DataLake.GetQuery, true)
+				filters, err := nuPolicy.ComputeAssetFilters(ctx, s.DataLake.GetValidatedPolicy, s.DataLake.GetQuery, true)
+				if err != nil {
+					return nil, err
+				}
+
+				nuPolicy.ComputedFilters = &explorer.Filters{
+					Items: make(map[string]*explorer.Mquery, len(filters)),
+				}
+				for _, f := range filters {
+					nuPolicy.ComputedFilters.Items[f.CodeId] = f
+				}
 			}
 
 			for k, v := range nuPolicy.ComputedFilters.Items {
