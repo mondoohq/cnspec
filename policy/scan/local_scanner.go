@@ -699,7 +699,6 @@ func (s *localAssetScanner) prepareAsset() error {
 		return noPolicyErr(availablePolicies, s.job.PolicyFilters)
 	}
 
-	// FIXME: we do not currently respect policy filters!
 	_, err := hub.SetBundle(s.job.Ctx, s.job.Bundle)
 	if err != nil {
 		return err
@@ -710,10 +709,16 @@ func (s *localAssetScanner) prepareAsset() error {
 		policyMrns[i] = s.job.Bundle.Policies[i].Mrn
 	}
 
+	frameworkMrns := make([]string, len(s.job.Bundle.Frameworks))
+	for i := range s.job.Bundle.Frameworks {
+		frameworkMrns[i] = s.job.Bundle.Frameworks[i].Mrn
+	}
+
 	var resolver policy.PolicyResolver = s.services
 	_, err = resolver.Assign(s.job.Ctx, &policy.PolicyAssignment{
-		AssetMrn:   s.job.Asset.Mrn,
-		PolicyMrns: policyMrns,
+		AssetMrn:      s.job.Asset.Mrn,
+		PolicyMrns:    policyMrns,
+		FrameworkMrns: frameworkMrns,
 	})
 	if err != nil {
 		return err

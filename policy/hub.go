@@ -60,10 +60,6 @@ func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, 
 //
 // Note1: The bundle must have been pre-compiled and validated!
 // Note2: The bundle may be nil, in which case we will try to find what is needed for the policy
-// Note3: We create the ent.PolicyBundle in this function, not in the `SetPolicyBundle`
-//
-// Reason: SetPolicyBundle may be setting 1 outer and 3 embedded policies.
-// But we need to create ent.PolicyBundles for all 4 of those.
 func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*explorer.Mquery, error) {
 	logCtx := logger.FromContext(ctx)
 	var err error
@@ -119,6 +115,45 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	return policyObj, filters, nil
 }
 
+// PrepareFramework takes a framework and an optional bundle and gets it
+// ready to be saved in the DB.
+//
+// Note1: The bundle must have been pre-compiled and validated!
+// Note2: The bundle may be nil, in which case we will try to find what is needed
+func (s *LocalServices) PrepareFramework(ctx context.Context, frameworkObj *Framework, bundle *PolicyBundleMap) (*Framework, error) {
+	logCtx := logger.FromContext(ctx)
+	var err error
+
+	if frameworkObj == nil || len(frameworkObj.Mrn) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "framework mrn is required")
+	}
+
+	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
+	// e.g. ApplyScoringMutation changes the group. Right now we assume the caller invalidates the checksum
+	//
+	// the only reason we make this conditional is because in a bundle we may have
+	// already done the work for a policy that is a dependency of another
+	// in that case we don't want to recalculate the graph and use it instead
+	// Note 1: It relies on the fact that the compile step clears out the checksums
+	// to make sure users don't override them
+	// Note 2: We don't need to compute the checksum since the GraphChecksum depends
+	// on it and will force it in case it is missing (no graph checksum => no checksum)
+
+	// NOTE: its important to update the checksum AFTER the queries have been changed,
+	// otherwise we generate the old GraphChecksum
+	if frameworkObj.GraphExecutionChecksum == "" || frameworkObj.GraphContentChecksum == "" {
+		logCtx.Trace().Str("framework", frameworkObj.Mrn).Msg("update graphchecksum")
+		err = frameworkObj.UpdateChecksums(ctx,
+			s.DataLake.GetFramework,
+			bundle)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return frameworkObj, nil
+}
+
 // SetPolicyFromBundle takes a policy and stores it in the datalake. The
 // bundle is used as an optional local reference.
 func (s *LocalServices) SetPolicyFromBundle(ctx context.Context, policyObj *Policy, bundleMap *PolicyBundleMap) error {
@@ -170,6 +205,16 @@ func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundl
 		policyObj.OwnerMrn = bundleMap.OwnerMrn
 
 		if err = s.SetPolicyFromBundle(ctx, policyObj, bundleMap); err != nil {
+			return err
+		}
+	}
+
+	for i := range bundleMap.Frameworks {
+		framework := bundleMap.Frameworks[i]
+		if err := s.DataLake.SetFramework(ctx, framework); err != nil {
+			return err
+		}
+		if err := s.DataLake.SetFrameworkMaps(ctx, framework.Mrn, framework.FrameworkMaps); err != nil {
 			return err
 		}
 	}
@@ -302,16 +347,76 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 	return client.DefaultPolicies(ctx, req)
 }
 
+func (s *LocalServices) GetFramework(ctx context.Context, req *Mrn) (*Framework, error) {
+	panic("NOT YET IMPLEMENTED")
+}
+
+func (s *LocalServices) DeleteFramework(ctx context.Context, req *Mrn) (*Empty, error) {
+	panic("NOT YET IMPLEMENTED")
+	return globalEmpty, nil
+}
+
+func (s *LocalServices) ListFrameworks(ctx context.Context, req *ListReq) (*Frameworks, error) {
+	panic("NOT YET IMPLEMENTED")
+}
+
 // HELPER METHODS
 // =================
 
 // ComputeBundle creates a policy bundle (with queries and dependencies) for a given policy
-func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (*Bundle, error) {
+func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy, mframeworkObj *Framework) (*Bundle, error) {
 	bundleMap := PolicyBundleMap{
-		OwnerMrn: mpolicyObj.OwnerMrn,
-		Policies: map[string]*Policy{},
-		Queries:  map[string]*explorer.Mquery{},
-		Props:    map[string]*explorer.Property{},
+		OwnerMrn:   mpolicyObj.OwnerMrn,
+		Policies:   map[string]*Policy{},
+		Frameworks: map[string]*Framework{},
+		Queries:    map[string]*explorer.Mquery{},
+		Props:      map[string]*explorer.Property{},
+	}
+
+	if err := s.computePolicyBundle(ctx, &bundleMap, mpolicyObj); err != nil {
+		return nil, err
+	}
+	if err := s.computeFrameworkBundle(ctx, &bundleMap, mframeworkObj); err != nil {
+		return nil, err
+	}
+
+	list := bundleMap.ToList().Clean()
+	return list, nil
+}
+
+func (s *LocalServices) computeFrameworkBundle(ctx context.Context, bundleMap *PolicyBundleMap, frameworkObj *Framework) error {
+	if frameworkObj == nil {
+		return nil
+	}
+
+	maps, err := s.DataLake.GetFrameworkMaps(ctx, frameworkObj.Mrn)
+	if err != nil {
+		return errors.New("failed to get framework maps for: " + frameworkObj.Mrn)
+	}
+	frameworkObj.FrameworkMaps = maps
+
+	bundleMap.Frameworks[frameworkObj.Mrn] = frameworkObj
+
+	for i := range frameworkObj.Dependencies {
+		dep := frameworkObj.Dependencies[i]
+
+		depObj, err := s.DataLake.GetFramework(ctx, dep.Mrn)
+		if err != nil {
+			return err
+		}
+		bundleMap.Frameworks[dep.Mrn] = depObj
+
+		if err := s.computeFrameworkBundle(ctx, bundleMap, depObj); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *PolicyBundleMap, mpolicyObj *Policy) error {
+	if mpolicyObj == nil {
+		return nil
 	}
 
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
@@ -319,7 +424,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 	// we need to re-compute the asset filters
 	localFilters, err := gatherLocalAssetFilters(ctx, mpolicyObj.Groups, s.DataLake.GetQuery)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	mpolicyObj.ComputedFilters = localFilters
@@ -371,7 +476,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, policy.Mrn)
 			if err != nil {
-				return nil, err
+				return err
 			}
 
 			for i := range nuBundle.Policies {
@@ -389,7 +494,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 
 			nuPolicy := bundleMap.Policies[policy.Mrn]
 			if nuPolicy == nil {
-				return nil, errors.New("pulled policy bundle for " + policy.Mrn + " but couldn't find the policy in the bundle")
+				return errors.New("pulled policy bundle for " + policy.Mrn + " but couldn't find the policy in the bundle")
 			}
 
 			if nuPolicy.ComputedFilters == nil {
@@ -418,10 +523,7 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy) (
 		}
 	}
 
-	// phew, done collecting. let's save and return
-
-	list := bundleMap.ToList().Clean()
-	return list, nil
+	return nil
 }
 
 // cacheUpstreamPolicy by storing a copy of the upstream policy bundle in this db

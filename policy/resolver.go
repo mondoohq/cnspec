@@ -25,6 +25,12 @@ const (
 	POLICY_SERVICE_NAME = "policy.api.mondoo.com"
 )
 
+type AssetMutation struct {
+	AssetMrn         string
+	PolicyActions    map[string]explorer.AssignmentDelta_Action
+	FrameworkActions map[string]explorer.AssignmentDelta_Action
+}
+
 // Assign a policy to an asset
 //
 // We need to handle multiple cases:
@@ -55,22 +61,24 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 		}
 	}
 
-	// assign policy locally
-	deltas := map[string]*PolicyDelta{}
-	for i := range assignment.PolicyMrns {
-		policyMrn := assignment.PolicyMrns[i]
-		deltas[policyMrn] = &PolicyDelta{
-			PolicyMrn: policyMrn,
-			Action:    PolicyDelta_ADD,
-		}
-	}
-
 	s.DataLake.EnsureAsset(ctx, assignment.AssetMrn)
 
-	_, err := s.DataLake.MutatePolicy(ctx, &PolicyMutationDelta{
-		PolicyMrn:    assignment.AssetMrn,
-		PolicyDeltas: deltas,
-		Action:       assignment.Action,
+	policyActions := map[string]explorer.AssignmentDelta_Action{}
+	for i := range assignment.PolicyMrns {
+		policyMrn := assignment.PolicyMrns[i]
+		policyActions[policyMrn] = explorer.AssignmentDelta_ADD
+	}
+
+	frameworkActions := map[string]explorer.AssignmentDelta_Action{}
+	for i := range assignment.FrameworkMrns {
+		frameworkMrn := assignment.FrameworkMrns[i]
+		frameworkActions[frameworkMrn] = explorer.AssignmentDelta_ADD
+	}
+
+	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
+		AssetMrn:         assignment.AssetMrn,
+		PolicyActions:    policyActions,
+		FrameworkActions: frameworkActions,
 	}, true)
 	return globalEmpty, err
 }
@@ -86,18 +94,22 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 		return s.Upstream.PolicyResolver.Unassign(ctx, assignment)
 	}
 
-	deltas := map[string]*PolicyDelta{}
+	policyActions := map[string]explorer.AssignmentDelta_Action{}
 	for i := range assignment.PolicyMrns {
 		policyMrn := assignment.PolicyMrns[i]
-		deltas[policyMrn] = &PolicyDelta{
-			PolicyMrn: policyMrn,
-			Action:    PolicyDelta_DELETE,
-		}
+		policyActions[policyMrn] = explorer.AssignmentDelta_ADD
 	}
 
-	_, err := s.DataLake.MutatePolicy(ctx, &PolicyMutationDelta{
-		PolicyMrn:    assignment.AssetMrn,
-		PolicyDeltas: deltas,
+	frameworkActions := map[string]explorer.AssignmentDelta_Action{}
+	for i := range assignment.FrameworkMrns {
+		frameworkMrn := assignment.FrameworkMrns[i]
+		frameworkActions[frameworkMrn] = explorer.AssignmentDelta_ADD
+	}
+
+	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
+		AssetMrn:         assignment.AssetMrn,
+		PolicyActions:    policyActions,
+		FrameworkActions: frameworkActions,
 	}, true)
 	return globalEmpty, err
 }
@@ -223,6 +235,12 @@ func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Re
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
 }
 
+// GetReport retrieves a report for a given asset and policy
+func (s *LocalServices) GetComplianceReport(ctx context.Context, req *EntityScoreReq) (*ComplianceReport, error) {
+	panic("NOT YET IMPLEMENTED")
+	// return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
+}
+
 // GetScore retrieves one score for an asset
 func (s *LocalServices) GetScore(ctx context.Context, req *EntityScoreReq) (*Report, error) {
 	score, err := s.DataLake.GetScore(ctx, req.EntityMrn, req.ScoreMrn)
@@ -265,7 +283,7 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 		name = policyMrn
 	}
 
-	policyObj := Policy{
+	return &Policy{
 		Mrn:     policyMrn,
 		Name:    name, // placeholder
 		Version: "",   // no version, semver otherwise
@@ -277,8 +295,30 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 		ComputedFilters: &explorer.Filters{},
 		OwnerMrn:        ownerMrn,
 	}
+}
 
-	return &policyObj
+// CreateFrameworkObject creates a framework object without saving it and returns it
+func (s *LocalServices) CreateFrameworkObject(frameworkMrn string, ownerMrn string) *Framework {
+	// TODO: this should be handled better, similar to CreatePolicyObject.
+	// we need to ensure a good owner MRN exists for all objects, including orgs and spaces
+	// this is the case when we are in incognito mode
+	if ownerMrn == "" {
+		log.Debug().Str("frameworkMrn", frameworkMrn).Msg("resolver> ownerMrn is missing")
+		ownerMrn = "//policy.api.mondoo.app"
+	}
+
+	name, _ := mrn.GetResource(frameworkMrn, MRN_RESOURCE_ASSET)
+	if name == "" {
+		name = frameworkMrn
+	}
+
+	return &Framework{
+		Mrn:     frameworkMrn,
+		Name:    name, // placeholder
+		Version: "",   // no version, semver otherwise
+		// no Groups; this call usually creates frameworks for assets, where we
+		// don't need groups since dependencies are handled in the Dependencies field
+	}
 }
 
 // POLICY RESOLUTION
@@ -299,9 +339,9 @@ type policyResolutionError struct {
 }
 
 type resolverCache struct {
-	graphExecutionChecksum string
-	assetFiltersChecksum   string
-	assetFilters           map[string]struct{}
+	baseChecksum         string
+	assetFiltersChecksum string
+	assetFilters         map[string]struct{}
 
 	// assigned queries, listed by their UUID (i.e. policy context)
 	executionQueries map[string]*ExecutionQuery
@@ -339,7 +379,7 @@ func checksumStrings(strings ...string) string {
 }
 
 func (r *resolverCache) relativeChecksum(s string) string {
-	return checksumStrings(r.graphExecutionChecksum, r.assetFiltersChecksum, "v2", s)
+	return checksumStrings(r.baseChecksum, r.assetFiltersChecksum, "v2", s)
 }
 
 func (p *policyResolverCache) clone() *policyResolverCache {
@@ -395,7 +435,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 	return nil, errors.New("concurrent policy resolve")
 }
 
-func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
+func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
 	now := time.Now()
 
@@ -407,7 +447,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	var rp *ResolvedPolicy
-	rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, allFiltersChecksum, V2Code)
+	rp, err = s.DataLake.CachedResolvedPolicy(ctx, bundleMrn, allFiltersChecksum, V2Code)
 	if err != nil {
 		return nil, err
 	}
@@ -416,19 +456,21 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 	}
 
 	// next we will try to only use the matching asset filters for the given policy...
-	bundle, err := s.DataLake.GetValidatedBundle(ctx, policyMrn)
+	bundle, err := s.DataLake.GetValidatedBundle(ctx, bundleMrn)
 	if err != nil {
 		return nil, err
 	}
 	bundleMap := bundle.ToMap()
 
-	policyObj := bundleMap.Policies[policyMrn]
-	matchingFilters, err := MatchingAssetFilters(policyMrn, assetFilters, policyObj)
+	frameworkObj := bundleMap.Frameworks[bundleMrn]
+	policyObj := bundleMap.Policies[bundleMrn]
+
+	matchingFilters, err := MatchingAssetFilters(bundleMrn, assetFilters, policyObj)
 	if err != nil {
 		return nil, err
 	}
 	if len(matchingFilters) == 0 {
-		return nil, explorer.NewAssetMatchError(policyMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
 	}
 
 	assetFiltersMap := make(map[string]struct{}, len(matchingFilters))
@@ -443,7 +485,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 
 	// ... and if the filters changed, try to look up the resolved policy again
 	if assetFiltersChecksum != allFiltersChecksum {
-		rp, err = s.DataLake.CachedResolvedPolicy(ctx, policyMrn, assetFiltersChecksum, V2Code)
+		rp, err = s.DataLake.CachedResolvedPolicy(ctx, bundleMrn, assetFiltersChecksum, V2Code)
 		if err != nil {
 			return nil, err
 		}
@@ -454,22 +496,22 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 
 	// intermission: prep for the other phases
 	logCtx.Debug().
-		Str("policy mrn", policyMrn).
+		Str("bundle mrn", bundleMrn).
 		Interface("asset filters", matchingFilters).
-		Msg("resolver> phase 1: no cached result, resolve the policy now")
+		Msg("resolver> phase 1: no cached result, resolve the bundle now")
 
 	cache := &resolverCache{
-		graphExecutionChecksum: policyObj.GraphExecutionChecksum,
-		assetFiltersChecksum:   assetFiltersChecksum,
-		assetFilters:           assetFiltersMap,
-		executionQueries:       map[string]*ExecutionQuery{},
-		dataQueries:            map[string]struct{}{},
-		propsCache:             explorer.NewPropsCache(),
-		queriesByMsum:          map[string]*explorer.Mquery{},
-		reportingJobsByUUID:    map[string]*ReportingJob{},
-		reportingJobsByMsum:    map[string][]*ReportingJob{},
-		reportingJobsActive:    map[string]bool{},
-		bundleMap:              bundleMap,
+		baseChecksum:         BundleExecutionChecksum(policyObj, frameworkObj),
+		assetFiltersChecksum: assetFiltersChecksum,
+		assetFilters:         assetFiltersMap,
+		executionQueries:     map[string]*ExecutionQuery{},
+		dataQueries:          map[string]struct{}{},
+		propsCache:           explorer.NewPropsCache(),
+		queriesByMsum:        map[string]*explorer.Mquery{},
+		reportingJobsByUUID:  map[string]*ReportingJob{},
+		reportingJobsByMsum:  map[string][]*ReportingJob{},
+		reportingJobsActive:  map[string]bool{},
+		bundleMap:            bundleMap,
 	}
 
 	rjUUID := cache.relativeChecksum(policyObj.GraphExecutionChecksum)
@@ -479,6 +521,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		QrId:       "root",
 		ChildJobs:  map[string]*explorer.Impact{},
 		Datapoints: map[string]bool{},
+		Type:       ReportingJob_POLICY,
 		// FIXME: DEPRECATED, remove in v9.0 vv
 		DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
 		// ^^
@@ -500,32 +543,45 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		childJobsByMrn:  map[string][]*ReportingJob{},
 		global:          cache,
 	}
-	err = s.policyToJobs(ctx, policyMrn, reportingJob, policyToJobsCache, now)
+	err = s.policyToJobs(ctx, bundleMrn, reportingJob, policyToJobsCache, now)
 	if err != nil {
 		logCtx.Error().
 			Err(err).
-			Str("policy", policyMrn).
+			Str("policy", bundleMrn).
 			Msg("resolver> phase 3: internal error, trying to turn policy mrn into jobs")
 		return nil, err
 	}
 	logCtx.Debug().
-		Str("policy", policyMrn).
+		Str("policy", bundleMrn).
 		Msg("resolver> phase 3: turn policy into jobs [ok]")
 
 	// phase 4: get all queries + assign them reporting jobs + update scoring jobs
-	executionJob, collectorJob, err := s.jobsToQueries(ctx, policyMrn, cache)
+	executionJob, collectorJob, err := s.jobsToQueries(ctx, bundleMrn, cache)
 	if err != nil {
 		logCtx.Error().
 			Err(err).
-			Str("policy", policyMrn).
+			Str("policy", bundleMrn).
 			Msg("resolver> phase 4: internal error, trying to turn policy jobs into queries")
 		return nil, err
 	}
 	logCtx.Debug().
-		Str("policy", policyMrn).
+		Str("policy", bundleMrn).
 		Msg("resolver> phase 4: aggregate queries and jobs [ok]")
 
-	// phase 5: refresh all checksums
+	// phase 5: add controls
+	resolvedFramework := ResolveFramework(bundleMrn, bundleMap.Frameworks)
+	queries := bundleMap.QueryMap()
+	if err := s.jobsToControls(cache, resolvedFramework, collectorJob, queries); err != nil {
+		logCtx.Error().
+			Err(err).
+			Str("bundle", bundleMrn).
+			Msg("resolver> phase 5: internal error, trying to attach controls to resolved policy [ok]")
+	}
+	logCtx.Debug().
+		Str("bundle", bundleMrn).
+		Msg("resolver> phase 5: resolve controls [ok]")
+
+	// phase 6: refresh all checksums
 	s.refreshChecksums(executionJob, collectorJob)
 
 	// the final phases are done in the DataLake
@@ -542,7 +598,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, policyMrn string, assetF
 		ReportingJobUuid:       reportingJob.Uuid,
 	}
 
-	err = s.DataLake.SetResolvedPolicy(ctx, policyMrn, &resolvedPolicy, V2Code, false)
+	err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, &resolvedPolicy, V2Code, false)
 	if err != nil {
 		return nil, err
 	}
@@ -596,7 +652,8 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 }
 
 func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, ownerJob *ReportingJob,
-	parentCache *policyResolverCache, now time.Time) error {
+	parentCache *policyResolverCache, now time.Time,
+) error {
 	ctx, span := tracer.Start(ctx, "resolver/policyToJobs")
 	defer span.End()
 
@@ -746,6 +803,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 					ChildJobs:     map[string]*explorer.Impact{},
 					Datapoints:    map[string]bool{},
 					ScoringSystem: policyObj.ScoringSystem,
+					Type:          ReportingJob_POLICY,
 					// FIXME: DEPRECATED, remove in v9.0 vv
 					DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
 					// ^^
@@ -891,6 +949,7 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 			QrId:       check.Mrn,
 			ChildJobs:  map[string]*explorer.Impact{},
 			Datapoints: map[string]bool{},
+			Type:       ReportingJob_CHECK,
 			// FIXME: DEPRECATED, remove in v9.0 vv
 			DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
 			// ^^
@@ -972,7 +1031,10 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 			QrId:       query.Mrn,
 			ChildJobs:  map[string]*explorer.Impact{},
 			Datapoints: map[string]bool{},
-			IsData:     true,
+			Type:       ReportingJob_DATA_QUERY,
+			// FIXME: DEPRECATED, remove in v10.0 vv
+			DeprecatedV8IsData: true,
+			// ^^
 			// FIXME: DEPRECATED, remove in v9.0 vv
 			DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
 			// ^^
@@ -1303,6 +1365,77 @@ func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, pro
 	}
 
 	return &res, dataChecksum, nil
+}
+
+func ensureControlJob(cache *resolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework) *ReportingJob {
+	uuid := cache.relativeChecksum(controlMrn)
+
+	if found, ok := jobs[uuid]; ok {
+		return found
+	}
+
+	controlJob := &ReportingJob{
+		Uuid:          uuid,
+		QrId:          controlMrn,
+		ChildJobs:     map[string]*explorer.Impact{},
+		ScoringSystem: explorer.ScoringSystem_WORST,
+		Type:          ReportingJob_CONTROL,
+	}
+	jobs[uuid] = controlJob
+
+	parents := framework.ReportTargets[controlMrn]
+	for _, parentMrn := range parents {
+		parentUuid := cache.relativeChecksum(parentMrn)
+
+		frameworkJob, ok := jobs[parentUuid]
+		if !ok {
+			frameworkJob = &ReportingJob{
+				Uuid:          parentUuid,
+				QrId:          parentMrn,
+				ChildJobs:     map[string]*explorer.Impact{},
+				ScoringSystem: explorer.ScoringSystem_WORST,
+				Type:          ReportingJob_FRAMEWORK,
+			}
+			jobs[parentUuid] = frameworkJob
+		}
+
+		// FIXME: we need to take user exceptions into account!
+		frameworkJob.ChildJobs[uuid] = &explorer.Impact{}
+		controlJob.Notify = append(controlJob.Notify, parentUuid)
+	}
+
+	return controlJob
+}
+
+func (s *LocalServices) jobsToControls(cache *resolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
+	nuJobs := map[string]*ReportingJob{}
+
+	for _, rj := range job.ReportingJobs {
+		query, ok := querymap[rj.QrId]
+		if !ok {
+			log.Warn().Str("mrn", framework.Mrn)
+			continue
+		}
+
+		targets, ok := framework.ReportTargets[query.Mrn]
+		if !ok {
+			continue
+		}
+
+		for i := range targets {
+			controlMrn := targets[i]
+			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework)
+
+			controlJob.ChildJobs[rj.Uuid] = nil
+			rj.Notify = append(rj.Notify, controlJob.Uuid)
+		}
+	}
+
+	for k, v := range nuJobs {
+		job.ReportingJobs[k] = v
+	}
+
+	return nil
 }
 
 func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, resolvedPolicy *ResolvedPolicy) error {

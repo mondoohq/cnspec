@@ -282,7 +282,8 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 		getQuery = getQueryNoop
 	}
 
-	// conditionals first: do we have local checksums set or not
+	// if we have local checksums set, we can take an optimized route;
+	// if not, we have to update all checksums
 	if p.LocalContentChecksum == "" || p.LocalExecutionChecksum == "" {
 		return p.updateAllChecksums(ctx, getPolicy, getQuery, bundle)
 	}

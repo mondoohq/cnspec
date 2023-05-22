@@ -60,6 +60,8 @@ const (
 	dbIDData           = "d\x00"
 	dbIDAsset          = "a\x00"
 	dbIDResolvedPolicy = "rp\x00"
+	dbIDFramework      = "f\x00"
+	dbIDFrameworkMap   = "fm\x00"
 )
 
 func (db *Db) SetNowProvider(f func() time.Time) {
