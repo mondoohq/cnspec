@@ -506,7 +506,7 @@ func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *Poli
 				log.Error().Str("new-policy-mrn", policy.Mrn).Str("caller", mpolicyObj.Mrn).Msg("received a policy with nil ComputedFilters; trying to refresh it")
 				filters, err := nuPolicy.ComputeAssetFilters(ctx, s.DataLake.GetValidatedPolicy, s.DataLake.GetQuery, true)
 				if err != nil {
-					return nil, err
+					return err
 				}
 
 				nuPolicy.ComputedFilters = &explorer.Filters{
