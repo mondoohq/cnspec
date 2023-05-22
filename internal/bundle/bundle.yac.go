@@ -6,6 +6,8 @@
 package bundle
 
 import (
+	"encoding/json"
+	"errors"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnspec/policy"
 	"gopkg.in/yaml.v3"
@@ -14,6 +16,31 @@ import (
 type FileContext struct {
 	Line   int
 	Column int
+}
+
+type Action explorer.Action
+
+func (s *Action) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded interface{}
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v explorer.Action
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = Action(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal Action")
 }
 
 type Author struct {
@@ -206,7 +233,7 @@ func (x *DeprecatedV7_Policy) UnmarshalYAML(node *yaml.Node) error {
 
 type DeprecatedV7_PolicySpec struct {
 	ScoringQueries map[string]*DeprecatedV7_ScoringSpec `protobuf:"bytes,2,rep,name=scoring_queries,json=scoringQueries,proto3" json:"scoring_queries,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"scoring_queries,omitempty"`
-	DataQueries    map[string]policy.QueryAction        `protobuf:"bytes,3,rep,name=data_queries,json=dataQueries,proto3" json:"data_queries,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3,enum=cnspec.policy.v1.QueryAction" yaml:"data_queries,omitempty"`
+	DataQueries    map[string]QueryAction               `protobuf:"bytes,3,rep,name=data_queries,json=dataQueries,proto3" json:"data_queries,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3,enum=cnspec.policy.v1.QueryAction" yaml:"data_queries,omitempty"`
 	AssetFilter    *DeprecatedV7_Mquery                 `protobuf:"bytes,20,opt,name=asset_filter,json=assetFilter,proto3" json:"asset_filter,omitempty" yaml:"asset_filter,omitempty"`
 	StartDate      int64                                `protobuf:"varint,21,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty" yaml:"start_date,omitempty"`
 	EndDate        int64                                `protobuf:"varint,22,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty" yaml:"end_date,omitempty"`
@@ -237,7 +264,7 @@ type DeprecatedV7_ScoringSpec struct {
 	Weight             uint32                      `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty" yaml:"weight,omitempty"`
 	WeightIsPercentage bool                        `protobuf:"varint,3,opt,name=weight_is_percentage,json=weightIsPercentage,proto3" json:"weight_is_percentage,omitempty" yaml:"weight_is_percentage,omitempty"`
 	ScoringSystem      explorer.ScoringSystem      `protobuf:"varint,4,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
-	Action             policy.QueryAction          `protobuf:"varint,6,opt,name=action,proto3,enum=cnspec.policy.v1.QueryAction" json:"action,omitempty" yaml:"action,omitempty"`
+	Action             QueryAction                 `protobuf:"varint,6,opt,name=action,proto3,enum=cnspec.policy.v1.QueryAction" json:"action,omitempty" yaml:"action,omitempty"`
 	Severity           *DeprecatedV7_SeverityValue `protobuf:"bytes,7,opt,name=severity,proto3" json:"severity,omitempty" yaml:"severity,omitempty"`
 	FileContext        FileContext                 `json:"-" yaml:"-"`
 }
@@ -283,11 +310,36 @@ func (x *Filters) addFileContext(node *yaml.Node) {
 	x.FileContext.Line = node.Line
 }
 
+type GroupType policy.GroupType
+
+func (s *GroupType) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded interface{}
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v policy.GroupType
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = GroupType(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal GroupType")
+}
+
 type Impact struct {
 	Value       *ImpactValue           `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty" yaml:"value,omitempty"`
 	Scoring     explorer.ScoringSystem `protobuf:"varint,2,opt,name=scoring,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring,omitempty" yaml:"scoring,omitempty"`
 	Weight      int32                  `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty" yaml:"weight,omitempty"`
-	Action      explorer.Action        `protobuf:"varint,4,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action      Action                 `protobuf:"varint,4,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	FileContext FileContext            `json:"-" yaml:"-"`
 }
 
@@ -324,7 +376,7 @@ type Mquery struct {
 	Context     string            `protobuf:"bytes,7,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
 	Desc        string            `protobuf:"bytes,35,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	Variants    []*ObjectRef      `protobuf:"bytes,39,rep,name=variants,proto3" json:"variants,omitempty" yaml:"variants,omitempty"`
-	Action      explorer.Action   `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
 }
 
@@ -459,7 +511,8 @@ func (x *PolicyDocs) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type PolicyGroup struct {
-	Type         policy.GroupType `protobuf:"varint,4,opt,name=type,proto3,enum=cnspec.policy.v1.GroupType" json:"type,omitempty" yaml:"type,omitempty"`
+	Uid          string           `protobuf:"bytes,5,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Type         GroupType        `protobuf:"varint,4,opt,name=type,proto3,enum=cnspec.policy.v1.GroupType" json:"type,omitempty" yaml:"type,omitempty"`
 	StartDate    int64            `protobuf:"varint,21,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty" yaml:"start_date,omitempty"`
 	EndDate      int64            `protobuf:"varint,22,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty" yaml:"end_date,omitempty"`
 	ReminderDate int64            `protobuf:"varint,23,opt,name=reminder_date,json=reminderDate,proto3" json:"reminder_date,omitempty" yaml:"reminder_date,omitempty"`
@@ -470,6 +523,7 @@ type PolicyGroup struct {
 	Filters      *Filters         `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
 	Checks       []*Mquery        `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
 	Queries      []*Mquery        `protobuf:"bytes,3,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	Authors      []*Author        `protobuf:"bytes,26,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
 	Docs         *PolicyGroupDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext  FileContext      `json:"-" yaml:"-"`
 }
@@ -488,8 +542,9 @@ func (x *PolicyGroup) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type PolicyGroupDocs struct {
-	Desc        string      `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
-	FileContext FileContext `json:"-" yaml:"-"`
+	Desc          string      `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
+	Justification string      `protobuf:"bytes,2,opt,name=justification,proto3" json:"justification,omitempty" yaml:"justification,omitempty"`
+	FileContext   FileContext `json:"-" yaml:"-"`
 }
 
 func (x *PolicyGroupDocs) UnmarshalYAML(node *yaml.Node) error {
@@ -506,12 +561,12 @@ func (x *PolicyGroupDocs) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type PolicyRef struct {
-	Action      explorer.Action `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
-	Checksum    string          `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
-	Uid         string          `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	Mrn         string          `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Impact      *Impact         `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
-	FileContext FileContext     `json:"-" yaml:"-"`
+	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Checksum    string      `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
+	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Impact      *Impact     `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
 }
 
 func (x *PolicyRef) UnmarshalYAML(node *yaml.Node) error {
@@ -552,6 +607,31 @@ func (x *Property) UnmarshalYAML(node *yaml.Node) error {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
 	return nil
+}
+
+type QueryAction policy.QueryAction
+
+func (s *QueryAction) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded interface{}
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v policy.QueryAction
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = QueryAction(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal QueryAction")
 }
 
 type QueryCounts struct {

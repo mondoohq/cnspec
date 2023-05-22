@@ -1,6 +1,7 @@
 package main
 
 import (
+	"go/format"
 	"os"
 
 	yacit "go.mondoo.com/cnspec/internal/yac-it"
@@ -55,5 +56,11 @@ func main() {
 	res.Add(&policy.Bundle{})
 	res.Add(&policy.DeprecatedV7_Bundle{})
 
-	os.WriteFile("../bundle.yac.go", []byte(res.String()), 0o644)
+	code := res.String()
+	formatted, err := format.Source([]byte(code))
+	if err != nil {
+		panic(err)
+	}
+
+	os.WriteFile("../bundle.yac.go", formatted, 0o644)
 }
