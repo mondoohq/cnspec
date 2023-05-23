@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
-	go.mondoo.com/cnquery v0.0.0-20230516161103-0d8fb28fa904
+	go.mondoo.com/cnquery v0.0.0-20230523141529-3a14d3038f20
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.15.1
 	golang.org/x/sync v0.1.0 // indirect
@@ -60,7 +60,7 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
-	github.com/cloudflare/circl v1.1.0 // indirect
+	github.com/cloudflare/circl v1.3.3 // indirect
 	github.com/google/go-github/v49 v49.1.0 // indirect
 	github.com/junk1tm/musttag v0.5.0 // indirect
 	github.com/kkHAIKE/contextcheck v1.1.4 // indirect
@@ -135,16 +135,16 @@ require (
 	github.com/ashanbrown/makezero v1.1.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go v1.44.137 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.17.7 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.18.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.10 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.18.19 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.18 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.13.1 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.31 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.25 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.33 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.27 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.32 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.0.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/accessanalyzer v1.19.8 // indirect
+	github.com/aws/aws-sdk-go-v2/service/accessanalyzer v1.19.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/acm v1.17.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.16.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.19.1 // indirect
@@ -184,7 +184,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3control v1.31.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.72.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.19.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/securityhub v1.30.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/securityhub v1.31.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.20.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.36.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.12.6 // indirect
