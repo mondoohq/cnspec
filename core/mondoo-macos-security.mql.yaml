@@ -18,7 +18,6 @@ policies:
           - uid: mondoo-macos-security-disable-bluetooth-sharing
           - uid: mondoo-macos-security-disable-bonjour-advertising-service
           - uid: mondoo-macos-security-disable-content-caching
-          - uid: mondoo-macos-security-disable-dvd-or-cd-sharing
           - uid: mondoo-macos-security-disable-file-sharing
           - uid: mondoo-macos-security-disable-internet-sharing
           - uid: mondoo-macos-security-disable-media-sharing
@@ -57,8 +56,8 @@ policies:
 queries:
   - uid: mondoo-macos-security-disable-remote-apple-events
     title: Disable Remote Apple Events
-    mql: |
-      macos.systemsetup.remoteAppleEvents == "Off"
+    impact: 50
+    mql: macos.systemsetup.remoteAppleEvents == "Off"
     docs:
       desc: Apple Events is a technology that allows one program to communicate with other programs. Remote Apple Events allows a program on one computer to communicate with a program on a different computer.
       remediation: |-
@@ -85,7 +84,8 @@ queries:
         With remote Apple events turned on, an AppleScript program running on another Mac can interact with the local computer.
   - uid: mondoo-macos-security-disable-internet-sharing
     title: Disable Internet Sharing
-    mql: "file(\"/Library/Preferences/com.apple.nat.plist\").exists == false \n|| parse.plist('/Library/Preferences/SystemConfiguration/com.apple.nat.plist').params['NAT']['Enabled'] == 0\n"
+    impact: 30
+    mql: file('/Library/Preferences/com.apple.nat.plist').exists == false || parse.plist('/Library/Preferences/SystemConfiguration/com.apple.nat.plist').params['NAT']['Enabled'] == 0
     docs:
       desc: Internet Sharing uses the open source `natd` process to share an internet connection with other computers and devices on a local network. This allows the Mac to function as a router and share the connection to other, possibly unauthorized, devices.
       remediation: |-
@@ -113,11 +113,8 @@ queries:
         Internet Sharing allows the computer to function as a router and other computers to use it for access. This can expose both the computer itself and the networks it is accessing to unacceptable access from unapproved devices.
   - uid: mondoo-macos-security-disable-screen-sharing
     title: Disable Screen Sharing
-    mql: |
-      service("com.apple.screensharing" ) {
-        enabled == false
-        running == false
-      }
+    impact: 30
+    mql: services.where( name == "com.apple.screensharing" ).all( enabled == false && running == false )
     docs:
       desc: Screen Sharing allows a computer to connect to another computer on a network and display the computer's screen. While sharing the computer's screen, the user can control what happens on that computer, such as opening documents or applications, opening, moving, or closing windows, and even shutting down the computer.
       remediation: |-
@@ -138,8 +135,8 @@ queries:
         ```
   - uid: mondoo-macos-security-disable-printer-sharing
     title: Disable Printer Sharing
-    mql: |
-      command('cupsctl | grep _share_printers' ) { stdout == /_share_printers=0/ }
+    impact: 20
+    mql: command('cupsctl | grep _share_printers' ).stdout.contains("_share_printers=0")
     docs:
       desc: By enabling Printer Sharing, the computer is set up as a print server to accept print jobs from other computers. Dedicated print servers or direct IP printing should be used instead.
       remediation: |-
@@ -160,8 +157,8 @@ queries:
         ```
   - uid: mondoo-macos-security-disable-remote-login
     title: Disable Remote Login
-    mql: |
-      macos.systemsetup.remoteLogin == "Off"
+    mql: macos.systemsetup.remoteLogin == "Off"
+    impact: 60
     docs:
       desc: Remote Login allows an interactive terminal connection to a computer.
       remediation: |-
@@ -194,46 +191,10 @@ queries:
         - Do not open an SSH server to the internet without controls in place to mitigate SSH brute force attacks. This is particularly important for systems bound to Directory environments. It is great to have controls in place to protect the system, but if they trigger after the user is already locked out of their account, they are not optimal. If authorization happens after authentication directory accounts for users that don't even use the system can be locked out.
         - Do not use SSH key pairs when there is no insight to the security of the client system that will authenticate into the server with a private key. If an attacker gets access to the remote system and can find the key they may not need a password or a key logger to access the SSH server.
         - Detailed instructions on hardening an SSH server, if needed, are available in the CIS Linux Benchmarks, but it is beyond the scope of this benchmark.
-  - uid: mondoo-macos-security-disable-dvd-or-cd-sharing
-    title: Disable DVD or CD Sharing
-    mql: "service(\"com.apple.ODSAgent\" ) { \n  enabled == false\n  running == false\n}\n"
-    docs:
-      desc: DVD or CD Sharing allows users to access the system's optical drive remotely. While Apple does not ship Macs with built-in optical drives any longer, external optical drives are still recognized when connected. In testing the sharing of an external optical drive persists when a drive is reconnected.
-      remediation: |-
-        Perform the following to disable DVD or CD Sharing:
-
-        _Graphical Method:_
-
-        1. Open System Preferences
-        2. Select Sharing
-        3. Uncheck DVD or CD sharing
-
-        _Terminal Method:_
-
-        Run the following command to disable DVD or CD Sharing:
-
-        ```
-        sudo launchctl disable system/com.apple.ODSAgent
-        ```
-
-        **Note:**
-        If using the Terminal method, the GUI will still show the service checked until after a reboot.
-
-        **Impact:**
-
-        Many Apple devices are now sold without optical drives, and drive sharing may be needed for legacy optical media. The media should be explicitly re-shared as needed rather than using a persistent share. Optical drives should not be used for long term storage. To store necessary data from an optical drive, it should be copied to another form of external storage. Optionally, an image can be made of the optical drive so that it is stored in it's original form on another form of external storage
   - uid: mondoo-macos-security-disable-bluetooth-sharing
     title: Disable Bluetooth Sharing
-    mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).list {
-        if (file(home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist").exists) {
-          parse.plist( home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist") {
-            params['PrefKeyServicesEnabled'] == null || params['PrefKeyServicesEnabled'] == false
-          }
-        } else {
-          true
-        }
-      }
+    impact: 50
+    mql: users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).all( parse.plist( home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist") { params['PrefKeyServicesEnabled'] !=  true })
     docs:
       desc: Bluetooth Sharing allows files to be exchanged with Bluetooth-enabled devices.
       remediation: |-
@@ -260,11 +221,8 @@ queries:
         Control 2.1.1 discusses disabling Bluetooth if no paired devices exist. There is a general expectation that Bluetooth peripherals will be used by most users in Apple's ecosystem. It is possible that sharing is required and Bluetooth peripherals are not. Bluetooth must be enabled if sharing is an acceptable use case.
   - uid: mondoo-macos-security-disable-file-sharing
     title: Disable File Sharing
-    mql: |
-      service('com.apple.smbd') {
-        enabled == false
-        running == false
-      }
+    impact: 60
+    mql: services.where( name == 'com.apple.smbd' ).all( enabled == false && running == false ) 
     docs:
       desc: Server Message Block (SMB), Common Internet File System (CIFS) When Windows (or possibly Linux) computers need to access file shared on a Mac, SMB/CIFS file sharing is commonly used. Apple warns that SMB sharing stores passwords is a less secure fashion than AFP sharing and anyone with system access can gain access into the password for that account. When sharing with SMB, each user that will access the Mac must have SMB enabled.
       remediation: |-
@@ -289,8 +247,8 @@ queries:
         File Sharing can be used to share documents with other users but hardened servers should be used rather than user endpoints. Turning on file sharing increases the visibility and attack surface of a system unnecessarily.
   - uid: mondoo-macos-security-disable-remote-management
     title: Disable Remote Management
-    mql: |
-      processes.none ( command == /ARDAgent/)
+    impact: 50
+    mql: processes.none( command == /ARDAgent/)
     docs:
       desc: |-
         Remote Management is the client portion of Apple Remote Desktop (ARD). Remote Management can be used by remote administrators to view the current screen, install software, report on, and generally manage client Macs.
@@ -326,8 +284,8 @@ queries:
         Many organizations utilize ARD for client management.
   - uid: mondoo-macos-security-disable-content-caching
     title: Disable Content Caching
-    mql: |
-      parse.plist('/Library/Preferences/com.apple.AssetCache.plist').params['Activated'] == false
+    impact: 50
+    mql: parse.plist('/Library/Preferences/com.apple.AssetCache.plist').params['Activated'] == false
     docs:
       desc: |-
         Starting with 10.13 (macOS High Sierra) Apple introduced a service to make it easier to deploy data from Apple, including software updates, where there are bandwidth constraints to the Internet and fewer constraints and greater bandwidth on the local subnet. This capability can be very valuable for organizations that have throttled and possibly metered Internet connections. In heterogeneous enterprise networks with multiple subnets the effectiveness of this capability would be determined on how many Macs were on each subnet at the time new large updates were made available upstream.
@@ -358,10 +316,8 @@ queries:
         This setting will adversely affect bandwidth usage between local subnets and the Internet.
   - uid: mondoo-macos-security-disable-media-sharing
     title: Disable Media Sharing
-    mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).list {
-        parse.plist(home + '/Library/Preferences/com.apple.amp.mediasharingd.plist').params['home-sharing-enabled'] == 0
-      }
+    impact: 50
+    mql: users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).all( parse.plist(home + '/Library/Preferences/com.apple.amp.mediasharingd.plist').params['home-sharing-enabled'] == 0 )
     docs:
       desc: |-
         Starting with macOS 10.15 Apple has provided a control to allow a user to share Apple downloaded content on all Apple devices that are signed in with the same Apple ID. This allows a user to share downloaded Movies, Music or TV shows with other controlled macOS, iOS and iPadOS devices as well as photos with Apple TVs.
@@ -404,14 +360,8 @@ queries:
         Media Sharing allows for pre-downloaded content on a Mac to be available to other Apple devices on the same network. Leaving this disabled forces device users to stream or download content from each Apple authorized device. This sharing could even allow unauthorized devices on the same network media access.
   - uid: mondoo-macos-security-ensure-airdrop-is-disabled
     title: Ensure AirDrop Is Disabled
-    mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).list {
-        if (file(home + '/Library/Preferences/com.apple.NetworkBrowser.plist').exists) {
-          parse.plist(home + '/Library/Preferences/com.apple.NetworkBrowser.plist').params['DisableAirDrop'] == true
-        } else {
-          false
-        }
-      }
+    impact: 50
+    mql: users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).all( parse.plist( home + '/Library/Preferences/com.apple.NetworkBrowser.plist').params['DisableAirDrop'] == true )
     docs:
       desc: |-
         AirDrop is Apple's built-in on demand ad hoc file exchange system that is compatible with both macOS and iOS. It uses Bluetooth LE for discovery that limits connectivity to Mac or iOS users that are in close proximity. Depending on the setting it allows everyone or only Contacts to share files when they are nearby to each other.
@@ -449,8 +399,8 @@ queries:
         Disabling AirDrop can limit the ability to move files quickly over the network without using file shares.
   - uid: mondoo-macos-security-enable-filevault
     title: Enable FileVault
-    mql: |
-      command('fdesetup status') { stdout == /FileVault is On/ }
+    impact: 80
+    mql: command('fdesetup status').stdout.contains("FileVault is On")
     docs:
       desc: |-
         FileVault secures a system's data by automatically encrypting its boot volume and requiring a password or recovery key to access it.
@@ -474,8 +424,8 @@ queries:
         Mounting a FileVaulted volume from an alternate boot source will require a valid password to decrypt it.
   - uid: mondoo-macos-security-enable-gatekeeper
     title: Enable Gatekeeper
-    mql: |
-      command('spctl --status') { stdout == /assessments enabled/ }
+    impact: 50
+    mql: command('spctl --status').stdout.contains("assessments enabled" )
     docs:
       desc: Gatekeeper is Apple's application white-listing control that restricts downloaded applications from launching. It functions as a control to limit applications from unverified sources from running without authorization.
       remediation: |-
@@ -497,6 +447,7 @@ queries:
         ```
   - uid: mondoo-macos-security-enable-firewall
     title: Enable Firewall
+    impact: 50
     mql: parse.plist('/Library/Preferences/com.apple.alf.plist').params['globalstate'] == 1
     docs:
       desc: |-
@@ -531,8 +482,8 @@ queries:
         The firewall may block legitimate traffic. Applications that are unsigned will require special handling.
   - uid: mondoo-macos-security-enable-firewall-stealth-mode
     title: Enable Firewall Stealth Mode
-    mql: |
-      command('/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode') { stdout == /Stealth mode enabled/ }
+    impact: 60
+    mql: command('/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode').stdout.contains("Stealth mode enabled" )
     docs:
       desc: |-
         While in Stealth mode the computer will not respond to unsolicited probes, dropping that traffic.
@@ -565,6 +516,7 @@ queries:
         This check aligns with the primary macOS use case of a laptop that is often connected to untrusted networks where host segregation may not be configured. In this use case, hiding from the other inmates is likely to be important. In use cases where the device is only on trusted LANs with static IP addresses, you might not want stealth mode.
   - uid: mondoo-macos-security-enable-security-auditing
     title: Enable security auditing
+    impact: 50
     mql: |
       service('com.apple.auditd').enabled == true
     docs:
@@ -584,6 +536,7 @@ queries:
         ```
   - uid: mondoo-macos-security-retain-install-log-for-365-or-more-days
     title: Retain install.log for 365 or more days with no maximum size
+    impact: 30
     mql: |
       file('/etc/asl/com.apple.install') {
         content != /all_max/
@@ -619,6 +572,7 @@ queries:
         Without log files system maintenance and security forensics cannot be properly performed.
   - uid: mondoo-macos-security-ensure-security-auditing-retention
     title: Ensure security auditing retention
+    impact: 30
     mql: |
       file("/etc/security/audit_control").content.lines.where( _ == /^expire-after/) {
         _.split(":")[1] == /[6-9]\dd|\d{3,}d/ || _.split(":")[1] == /\d+0G|[1-9G]/
@@ -643,6 +597,7 @@ queries:
         The recommendation is that at least 60 days or 1 gigabyte of audit records are retained. Systems that have very little remaining disk space may have issues retaining sufficient data.
   - uid: mondoo-macos-security-control-access-to-audit-records
     title: Control access to audit records
+    impact: 50
     mql: |
       file('/etc/security/audit_control').permissions {
         user_readable
@@ -679,7 +634,8 @@ queries:
         This check ensures that unwanted access to audit records is not available.
   - uid: mondoo-macos-security-ensure-firewall-is-configured-to-log
     title: Ensure Firewall is configured to log
-    mql: command('/usr/libexec/ApplicationFirewall/socketfilterfw --getloggingmode') { stdout == /Log mode is on/ }
+    impact: 50
+    mql: command('/usr/libexec/ApplicationFirewall/socketfilterfw --getloggingmode').stdout.contains("Log mode is on")
     docs:
       desc: The socketfilter firewall is what is used when the firewall is turned on in the Security Preference Pane. In order to appropriately monitor what access is allowed and denied logging must be enabled.
       remediation: |-
@@ -696,6 +652,7 @@ queries:
         Detailed logging may result in excessive storage.
   - uid: mondoo-macos-security-disable-bonjour-advertising-service
     title: Disable Bonjour advertising service
+    impact: 50
     mql: |
       if (file('/Library/Preferences/com.apple.mDNSResponder.plist').exists) {
         parse.plist('/Library/Preferences/com.apple.mDNSResponder.plist').params['NoMulticastAdvertisements'] != 0
@@ -715,10 +672,9 @@ queries:
         is turned off.
   - uid: mondoo-macos-security-enable-show-wifi-status
     title: Enable "Show Wi-Fi status in menu bar"
+    impact: 20
     mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).list {
-        parse.plist( home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist").params["WiFi"] == 18 || 2
-      }
+      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).all( parse.plist( home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist").params["WiFi"] == 18 || 2 )
     docs:
       desc: The Wi-Fi status in the menu bar indicates if the system's wireless internet capabilities are enabled. If so, the system will scan for available wireless networks to connect to. At the time of this revision all computers Apple builds have wireless network capability, which has not always been the case. This check only pertains to systems that have a wireless NIC available. Operating systems running in a virtual environment may not score as expected either.
       remediation: |-
@@ -753,11 +709,10 @@ queries:
         The user of the system should have a quick check on their wireless network status available.
   - uid: mondoo-macos-security-ensure-http-server-is-not-running
     title: Ensure http server is not running
+    impact: 50
     mql: |
-      service('org.apache.httpd') {
-        enabled == false
-        running == false
-      }
+      service('org.apache.httpd').enabled == false
+      service('org.apache.httpd').running == false 
     docs:
       desc: macOS used to have a graphical front-end to the embedded Apache web server in the Operating System. Personal web sharing could be enabled to allow someone on another computer to download files or information from the user's computer. Personal web sharing from a user endpoint has long been considered questionable, and Apple has removed that capability from the GUI. Apache however is still part of the Operating System and can be easily turned on to share files and provide remote connectivity to an end-user computer. Web sharing should only be done through hardened web servers and appropriate cloud services.
       remediation: |-
@@ -772,11 +727,10 @@ queries:
         The web server is both a point of attack for the system and a means for unauthorized file transfers.
   - uid: mondoo-macos-security-ensure-nfs-server-is-not-running
     title: Ensure NFS server is not running
+    impact: 50
     mql: |
-      service('com.apple.nfsd') {
-        enabled == false
-        running == false
-      }
+      service('com.apple.nfsd').enabled == false
+      service('com.apple.nfsd').running == false
     docs:
       desc: macOS can act as an NFS file server. NFS sharing could be enabled to allow someone on another computer to mount shares and gain access to information from the user's computer. File sharing from a user endpoint has long been considered questionable, and Apple has removed that capability from the GUI. NFSD is still part of the Operating System and can be easily turned on to export shares and provide remote connectivity to an end-user computer.
       remediation: |-
@@ -798,9 +752,8 @@ queries:
         The NFS server is both a point of attack for the system and a means for unauthorized file transfers.
   - uid: mondoo-macos-security-set-a-minimum-password-length
     title: Set a minimum password length
-    mql: |
-      macos.globalAccountPolicies['policyCategoryPasswordContent'] != null
-      macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['minimumLength'] >= 15 )
+    impact: 80
+    mql: macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['minimumLength'] >= 15 )
     docs:
       desc: |-
         A minimum password length is the fewest number of characters a password can contain to meet a system's requirements.
@@ -827,9 +780,8 @@ queries:
         Short passwords can be easily attacked.
   - uid: mondoo-macos-security-password-age
     title: Password Age
-    mql: |
-      macos.globalAccountPolicies['policyCategoryPasswordChange'] != null
-      macos.globalAccountPolicies['policyCategoryPasswordChange'].any( _['policyParameters']['policyAttributeDaysUntilExpiration'] <= 365 )
+    impact: 50
+    mql: macos.globalAccountPolicies['policyCategoryPasswordChange'].any( _['policyParameters']['policyAttributeDaysUntilExpiration'] <= 365 )
     docs:
       desc: |-
         Over time passwords can be captured by third-parties through mistakes, phishing attacks, third party breaches or merely brute force attacks. To reduce the risk of exposure and to decrease the incentives of password reuse (passwords that are not forced to be changed periodically generally are not ever changed) users should reset passwords periodically.
@@ -853,9 +805,8 @@ queries:
         Required password changes will lead to some locked computers requiring admin assistance.
   - uid: mondoo-macos-security-password-history
     title: Password History
-    mql: |
-      macos.globalAccountPolicies['policyCategoryPasswordContent'] != null
-      macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['policyAttributePasswordHistoryDepth'] >= 15 )
+    impact: 50
+    mql: macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['policyAttributePasswordHistoryDepth'] >= 15 )
     docs:
       desc: |-
         Over time passwords can be captured by third-parties through mistakes, phishing attacks, third party breaches or merely brute force attacks. To reduce the risk of exposure and to decrease the incentives of password reuse (passwords that are not forced to be changed periodically generally are not ever changed) users must reset passwords periodically. This check ensures that previous passwords are not reused immediately by keeping a history of previous password hashes. Ensure that password history checks are part of the password policy on the computer. This check ensures the new password is different than the previous 15.
@@ -879,6 +830,7 @@ queries:
         Required password changes will lead to some locked computers requiring admin assistance.
   - uid: mondoo-macos-security-reduce-the-sudo-timeout-period
     title: Reduce the sudo timeout period
+    impact: 50
     mql: file('/etc/sudoers').content == /Defaults\s+timestamp_timeout=0/
     docs:
       desc: The sudo command allows the user to run programs as the root user. Working as the root user allows the user an extremely high level of configurability within the system. This check along with the control to use a separate timestamp for each tty limits the window where an unauthorized user, process or attacker could utilize legitimate credentials that are valid for longer than required.
@@ -901,7 +853,7 @@ queries:
   - uid: mondoo-macos-security-do-not-enable-the-root-account
     title: Do not enable the "root" account
     mql: |
-      command('dscl . -read /Users/root AuthenticationAuthority') { stderr == /No such key: AuthenticationAuthority/ }
+      command('dscl . -read /Users/root AuthenticationAuthority').stderr.contains("No such key: AuthenticationAuthority")
     docs:
       desc: The root account is a superuser account that has access privileges to perform any actions and read/write to any file on the computer. With some Linux distros the system administrator may commonly use the root account to perform administrative functions.
       remediation: |-
@@ -931,9 +883,8 @@ queries:
         Some legacy POSIX software might expect an available root account.
   - uid: mondoo-macos-security-software-updates-automatic-check-enabled
     title: Ensure automatic checking of software updates enabled
-    mql: |
-      parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').
-        params['AutomaticCheckEnabled'] != false
+    impact: 80
+    mql: parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['AutomaticCheckEnabled'] != false
     docs:
       desc: |
         This check determines where automatic checking for software updates is enabled
@@ -956,9 +907,8 @@ queries:
         ```
   - uid: mondoo-macos-security-software-updates-automatic-download
     title: Ensure automatic download of software updates enabled
-    mql: |
-      parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').
-        params['AutomaticDownload'] != false
+    impact: 80
+    mql: parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['AutomaticDownload'] != false
     docs:
       desc: |
         This check determines whether automatic downloads of software updates is enabled
@@ -981,9 +931,8 @@ queries:
         ```
   - uid: mondoo-macos-security-software-updates-install-critical-updates
     title: Ensure critical updates are installed automatically
-    mql: |
-      parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').
-        params['CriticalUpdateInstall'] != false
+    impact: 80
+    mql: parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['CriticalUpdateInstall'] != false
     docs:
       desc: |
         This check determines whether critical software updates are installed automatically
