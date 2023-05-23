@@ -407,6 +407,10 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			}
 
 			job.Reporter.AddReport(job.Asset, results)
+
+			if m.IsRecording() {
+				m.StoreRecording("") // if no filename is provided it generates one
+			}
 		}(connections[c])
 	}
 
