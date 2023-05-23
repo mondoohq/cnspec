@@ -202,8 +202,8 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
-		ignoreJob := rp.CollectorJob.ReportingJobs["922m1Bwoa1Q="]
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, ignoreJob.ChildJobs["iVe9WQX2GXA="].Scoring)
+		ignoreJob := rp.CollectorJob.ReportingJobs["jGWUFIvetOg="]
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, ignoreJob.ChildJobs["lgJDqBZEz+M="].Scoring)
 	})
 }
 
