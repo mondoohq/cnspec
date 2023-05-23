@@ -4,13 +4,17 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"strconv"
 
+	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	"github.com/muesli/termenv"
 	zlog "github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnquery/shared/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func addColorConfig(cmd *exec.Cmd) {
@@ -54,19 +58,21 @@ func RunQuery(conf *proto.RunQueryConfig) error {
 			plugin.ProtocolNetRPC, plugin.ProtocolGRPC,
 		},
 		Logger: pluginLogger,
+		Stderr: os.Stderr,
 	})
 	defer client.Kill()
 
 	// Connect via RPC
 	rpcClient, err := client.Client()
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to initialize plugin client")
 	}
 
 	// Request the plugin
-	raw, err := rpcClient.Dispense("cnquery")
+	pluginName := "cnquery"
+	raw, err := rpcClient.Dispense(pluginName)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to call "+pluginName+" plugin")
 	}
 
 	cnquery := raw.(shared.CNQuery)
@@ -74,6 +80,18 @@ func RunQuery(conf *proto.RunQueryConfig) error {
 	writer := shared.IOWriter{Writer: os.Stdout}
 	err = cnquery.RunQuery(conf, &writer)
 	if err != nil {
+		if status, ok := status.FromError(err); ok {
+			code := status.Code()
+			switch code {
+			case codes.Unavailable, codes.Internal:
+				return errors.New(pluginName + " plugin crashed, please report any stack trace you see with this error")
+			case codes.Unimplemented:
+				return errors.New(pluginName + " plugin failed, the call is not implemented, please report this error")
+			default:
+				return errors.New(pluginName + " plugin failed, error " + strconv.Itoa(int(code)) + ": " + status.Message())
+			}
+		}
+
 		return err
 	}
 
