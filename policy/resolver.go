@@ -235,10 +235,9 @@ func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Re
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
 }
 
-// GetReport retrieves a report for a given asset and policy
-func (s *LocalServices) GetComplianceReport(ctx context.Context, req *EntityScoreReq) (*ComplianceReport, error) {
+// GetFrameworkReport retrieves a report for a given asset and framework
+func (s *LocalServices) GetFrameworkReport(ctx context.Context, req *EntityScoreReq) (*FrameworkReport, error) {
 	panic("NOT YET IMPLEMENTED")
-	// return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
 }
 
 // GetScore retrieves one score for an asset

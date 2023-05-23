@@ -435,7 +435,7 @@ type PolicyResolver interface {
 	GetResolvedPolicy(context.Context, *Mrn) (*ResolvedPolicy, error)
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
-	GetComplianceReport(context.Context, *EntityScoreReq) (*ComplianceReport, error)
+	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
 	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
@@ -512,9 +512,9 @@ func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) GetComplianceReport(ctx context.Context, in *EntityScoreReq) (*ComplianceReport, error) {
-	out := new(ComplianceReport)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetComplianceReport"}, ""), in, out)
+func (c *PolicyResolverClient) GetFrameworkReport(ctx context.Context, in *EntityScoreReq) (*FrameworkReport, error) {
+	out := new(FrameworkReport)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetFrameworkReport"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq) (*Report, error) {
@@ -564,7 +564,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetResolvedPolicy":    srv.GetResolvedPolicy,
 			"StoreResults":         srv.StoreResults,
 			"GetReport":            srv.GetReport,
-			"GetComplianceReport":  srv.GetComplianceReport,
+			"GetFrameworkReport":   srv.GetFrameworkReport,
 			"GetScore":             srv.GetScore,
 			"SynchronizeAssets":    srv.SynchronizeAssets,
 			"PurgeAssets":          srv.PurgeAssets,
@@ -794,7 +794,7 @@ func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) 
 	}
 	return p.handler.GetReport(ctx, &req)
 }
-func (p *PolicyResolverServer) GetComplianceReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+func (p *PolicyResolverServer) GetFrameworkReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
 	var err error
 
@@ -816,7 +816,7 @@ func (p *PolicyResolverServer) GetComplianceReport(ctx context.Context, reqBytes
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.GetComplianceReport(ctx, &req)
+	return p.handler.GetFrameworkReport(ctx, &req)
 }
 func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
