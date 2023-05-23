@@ -25,7 +25,7 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.8.3
 	go.mondoo.com/cnquery v0.0.0-20230523141529-3a14d3038f20
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.15.1
