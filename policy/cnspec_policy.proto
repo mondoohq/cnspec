@@ -12,7 +12,10 @@ enum GroupType {
   UNCATEGORIZED = 0;
   CHAPTER = 1;
   IMPORT = 2;
-  OVERRIDE = 3;
+  OVERRIDE = 3; // generic overrides to existing checks/controls
+  IGNORED = 4; // ignore scoring, snooze it
+  DISABLE = 5; // disable execution, turn it off
+  PROPERTIES = 6; // modify properties
 }
 
 /*
@@ -32,7 +35,7 @@ message PolicyGroup {
   // filter for the assets this applies to
   cnquery.explorer.Filters filters = 20;
 
-  // the timeline during which this scoring spec is active and reminders will be sent
+  // the timeline during which overrides are active and reminders will be sent
   int64 start_date = 21;
   int64 end_date = 22;
   int64 reminder_date = 23;
@@ -224,6 +227,7 @@ message Bundle {
   repeated Policy policies = 7;
   repeated cnquery.explorer.Property props = 3;
   repeated cnquery.explorer.Mquery queries = 6;
+  repeated Framework frameworks = 8;
   PolicyDocs docs = 5;
 
   // FIXME: DEPRECATED, remove in v9.0 vv
@@ -279,6 +283,109 @@ message DeprecatedV7_MqueryRef {
   string url = 2;
 }
 // ^^
+
+message Framework {
+  string mrn = 1; // will be filled from UID on upload
+  string uid = 36; // uid is only used initially to generate the MRN
+  string name = 2;
+  string version = 3;
+  string owner_mrn = 8;
+
+  repeated FrameworkGroup groups = 11;
+
+  string license = 21;
+  PolicyDocs docs = 41;
+  string summary = 46;
+
+  repeated cnquery.explorer.Author authors = 30;
+  int64 created = 32;
+  int64 modified = 33;
+  map<string,string> tags = 34;
+
+  // checksums are grouped into:
+  // local... meaning this policy, not policy dependencies
+  // graph... meaning this and all dependent policies
+  // content... meaning all the content in the policy, everything there is
+  // execution... meaning everything that changes the resolved policy
+  string local_content_checksum = 37;
+  string graph_content_checksum = 38;
+  string local_execution_checksum = 39;
+  string graph_execution_checksum = 40;
+
+  // user-facing; this field and the embedded references are untangled
+  // when the framework is compiled
+  repeated cnquery.explorer.ObjectRef referenced_policies = 50;
+  // only used when creating a standalone framework map
+  string referenced_framework = 51;
+  // dependent frameworks
+  repeated FrameworkRef dependencies = 52;
+
+  // framework maps describe how frameworks and controls map to
+  // checks, policies, and other controls; auto-generated from embedded content
+  repeated FrameworkMap framework_maps = 53;
+}
+
+message Frameworks {
+  repeated Framework items = 2;
+}
+
+message FrameworkGroup {
+  repeated Control controls = 1;
+  GroupType type = 4;
+  string uid = 5;
+
+  // metadata
+  string title = 24;
+  PolicyGroupDocs docs = 25;
+
+  int64 created = 32;
+  int64 modified = 33;
+}
+
+message FrameworkRef {
+  string mrn = 1;
+  string uid = 2;
+  cnquery.explorer.Action action = 41;
+}
+
+message Control {
+  string checksum = 3;
+  string mrn = 4;
+  // UID is only needed on Mquery upload, when the MRN is computed.
+  // It is not be persisted.
+  string uid = 5;
+  repeated ControlRef checks = 7;
+  repeated ControlRef policies = 8;
+  repeated ControlRef controls = 9;
+  string title = 20;
+  ControlDocs docs = 21;
+  map<string,string> tags = 34;
+  bool manual = 50; // indicates that this is a manual control
+}
+
+message FrameworkMap {
+  string mrn = 1;
+  repeated cnquery.explorer.ObjectRef referenced_policies = 2;
+  repeated ControlMap controls = 3;
+}
+
+message ControlMap {
+  string mrn = 4;
+  repeated ControlRef checks = 7;
+  repeated ControlRef policies = 8;
+  repeated ControlRef controls = 9;
+}
+
+message ControlDocs {
+  string desc = 1;
+  repeated cnquery.explorer.MqueryRef refs = 4;
+}
+
+message ControlRef {
+  string mrn = 1;
+  string uid = 2;
+  cnquery.explorer.Action action = 41;
+}
 
 // **********  Resolution / Execution **************
 
@@ -377,6 +484,19 @@ message ReportingJob {
   // This is replaced by the new spec, which now references cnquery
   map<string,DeprecatedV7_ScoringSpec> deprecated_v7_spec = 4;
   // ^^
+  // FIXME: DEPRECATED, remove in v10.0 vv
+  // This is replaced by the new type field, which now carries more info
+  bool deprecated_v8_is_data = 8;
+  // ^^
+
+  enum Type {
+    UNSPECIFIED = 0;
+    CHECK = 1;
+    DATA_QUERY = 2;
+    CONTROL = 3;
+    POLICY = 4;
+    FRAMEWORK = 5;
+  }
 
   string checksum = 1;
   string qr_id = 2;
@@ -384,8 +504,8 @@ message ReportingJob {
   repeated string notify = 5;
   cnquery.explorer.ScoringSystem scoring_system = 6;
   map<string,bool> datapoints = 7;
-  bool is_data = 8;
   map<string,cnquery.explorer.Impact> child_jobs = 9;
+  Type type = 10;
 }
 
 // **********       Reporting         **************
@@ -420,6 +540,26 @@ message ReportCollection {
   map<string, Report> reports = 3;
   map<string, string> errors = 4;
   map<string, ResolvedPolicy> resolved_policies = 5;
+}
+
+message FrameworkReport {
+  string scoring_mrn = 1;
+  string entity_mrn = 2;
+  ControlScore score = 3;
+  repeated ControlScore controls = 4;
+}
+
+message ControlScore {
+  string mrn = 1;
+  uint32 completion = 2;            // completion of the control in %; 100% = passed
+  uint32 compliant = 3;             // # of compliant referenced scores (checks/policies)
+  uint32 failed = 4;                // # of failed referenced scores (checks/policies)
+  uint32 total = 5;                 // # of referenced scores (checks/policies)
+  // total - compliant - failed = remaining exceptions, skipped or disabled
+  uint32 asset_count = 6;           // # of assets reporting into this score
+  repeated ControlScore assets = 7;       // control score for each asset
+  repeated ScoreDistribution scores = 8;  // referenced scores (checks/policies)
+  uint32 manual = 20;               // # of manual controls that report into this score
 }
 
 /*
@@ -496,6 +636,9 @@ service PolicyHub {
   rpc GetPolicyFilters(Mrn) returns (Mqueries) {}
   rpc List(ListReq) returns (Policies) {}
   rpc DefaultPolicies(DefaultPoliciesReq) returns (URLs) {}
+  rpc GetFramework(Mrn) returns (Framework) {}
+  rpc DeleteFramework(Mrn) returns (Empty) {}
+  rpc ListFrameworks(ListReq) returns (Frameworks) {}
 }
 
 message Empty {}
@@ -550,6 +693,7 @@ service PolicyResolver {
   rpc StoreResults(StoreResultsReq) returns (Empty) {}
 
   rpc GetReport(EntityScoreReq) returns (Report) {}
+  rpc GetFrameworkReport(EntityScoreReq) returns (FrameworkReport) {}
   rpc GetScore(EntityScoreReq) returns (Report) {}
 
   rpc SynchronizeAssets(SynchronizeAssetsReq) returns (SynchronizeAssetsResp) {}
@@ -559,6 +703,7 @@ service PolicyResolver {
 message PolicyAssignment {
   string asset_mrn = 1;
   repeated string policy_mrns = 2;
+  repeated string framework_mrns = 4;
   cnquery.explorer.Action action = 3;
 }
 

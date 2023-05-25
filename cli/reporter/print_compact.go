@@ -313,8 +313,10 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 	}
 
 	var queries map[string]*explorer.Mquery
+	var controls map[string]*policy.Control
 	if r.bundle != nil {
 		queries = r.bundle.QueryMap()
+		controls = r.bundle.ControlsMap()
 	}
 
 	for _, assetMrnName := range orderedAssets {
@@ -350,6 +352,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			continue
 		}
 
+		r.printAssetControls(resolved, report, controls, assetMrn, asset)
 		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
 		r.out.Write([]byte(NewLineCharacter))
 		// TODO: we should re-use the report results
@@ -362,6 +365,86 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 // TODO: this should be done during the execution, as queries come in, not at the end!
 // Remove all this code and migrate it to tap or something
 // ============================= vv ============================================
+
+func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control, assetMrn string, asset *asset.Asset) {
+	var scores []*policy.Score
+	for _, rj := range resolved.CollectorJob.ReportingJobs {
+		if rj.Type != policy.ReportingJob_CONTROL {
+			continue
+		}
+
+		score, ok := report.Scores[rj.QrId]
+		if !ok {
+			log.Warn().Str("control", rj.QrId).Msg("missing score for control")
+		}
+
+		scores = append(scores, score)
+	}
+
+	if len(scores) == 0 {
+		return
+	}
+
+	sort.Slice(scores, func(i, j int) bool {
+		return scores[i].QrId < scores[j].QrId
+	})
+
+	r.out.Write([]byte("Controls:" + NewLineCharacter))
+
+	for i := range scores {
+		score := scores[i]
+		control, ok := controls[score.QrId]
+		if !ok {
+			r.out.Write([]byte("Couldn't find any controls for " + score.QrId))
+			continue
+		}
+
+		r.printControl(score, control, resolved, report)
+	}
+
+	r.out.Write([]byte(NewLineCharacter))
+}
+
+func (r *defaultReporter) printControl(score *policy.Score, control *policy.Control, resolved *policy.ResolvedPolicy, report *policy.Report) {
+	title := control.Title
+	if title == "" {
+		title = control.Mrn
+	}
+
+	switch score.Type {
+	case policy.ScoreType_Error:
+		r.out.Write([]byte(termenv.String("! Error:        ").Foreground(r.Colors.Error).String()))
+		r.out.Write([]byte(title))
+		r.out.Write([]byte(NewLineCharacter))
+		if !r.isCompact {
+			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
+			r.out.Write([]byte(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String()))
+			r.out.Write([]byte(NewLineCharacter))
+		}
+	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
+		r.out.Write([]byte(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String()))
+		r.out.Write([]byte(title))
+		r.out.Write([]byte(NewLineCharacter))
+
+	case policy.ScoreType_Skip:
+		r.out.Write([]byte(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String()))
+		r.out.Write([]byte(title))
+		r.out.Write([]byte(NewLineCharacter))
+
+	case policy.ScoreType_Result:
+		var passfail string
+		if score.Value == 100 {
+			passfail = termenv.String("✓ Pass:  ").Foreground(r.Colors.Success).String()
+		} else {
+			passfail = termenv.String("✕ Fail:  ").Foreground(r.Colors.High).String()
+		}
+
+		r.out.Write([]byte(passfail + title + NewLineCharacter))
+
+	default:
+		r.out.Write([]byte("unknown result for " + title + NewLineCharacter))
+	}
+}
 
 func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *asset.Asset) {
 	results := report.RawResults()

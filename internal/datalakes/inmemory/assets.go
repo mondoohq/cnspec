@@ -16,33 +16,52 @@ type wrapAsset struct {
 
 // EnsureAsset makes sure an asset exists
 func (db *Db) EnsureAsset(ctx context.Context, mrn string) error {
-	_, _, err := db.ensureAsset(ctx, mrn)
+	_, _, _, err := db.ensureAsset(ctx, mrn)
 	return err
 }
 
-func (db *Db) ensureAsset(ctx context.Context, mrn string) (wrapAsset, wrapPolicy, error) {
-	assetw, created, err := db.ensureAssetObject(ctx, mrn)
+func (db *Db) ensureAsset(ctx context.Context, mrn string) (wrapAsset, wrapPolicy, wrapFramework, error) {
+	assetw, assetIsNew, err := db.ensureAssetObject(ctx, mrn)
 	if err != nil {
-		return wrapAsset{}, wrapPolicy{}, err
+		return wrapAsset{}, wrapPolicy{}, wrapFramework{}, err
 	}
 
 	var policyw wrapPolicy
-	if !created {
-		x, ok := db.cache.Get(dbIDPolicy + mrn)
-		if ok {
-			return assetw, policyw, nil
+	var frameworkw wrapFramework
+	createPolicy := true
+	createFramework := true
+
+	if !assetIsNew {
+		if x, ok := db.cache.Get(dbIDPolicy + mrn); ok {
+			policyw = x.(wrapPolicy)
+			createPolicy = false
+		} else {
+			log.Warn().Str("asset", mrn).Msg("assets> asset did not have a policy set, this should not happen, fixing")
 		}
-		policyw = x.(wrapPolicy)
 
-		log.Warn().Str("asset", mrn).Msg("assets> asset did not have a policy set, this should not happen, fixing")
+		if x, ok := db.cache.Get(dbIDFramework + mrn); ok {
+			frameworkw = x.(wrapFramework)
+			createFramework = false
+		} else {
+			log.Warn().Str("asset", mrn).Msg("assets> asset did not have a policy set, this should not happen, fixing")
+		}
 	}
 
-	policyw, err = db.ensureAssetPolicy(ctx, mrn)
-	if err != nil {
-		return wrapAsset{}, wrapPolicy{}, err
+	if createPolicy {
+		policyw, err = db.ensureAssetPolicy(ctx, mrn)
+		if err != nil {
+			return wrapAsset{}, wrapPolicy{}, wrapFramework{}, err
+		}
 	}
 
-	return assetw, policyw, nil
+	if createFramework {
+		frameworkw, err = db.ensureAssetFramework(ctx, mrn)
+		if err != nil {
+			return wrapAsset{}, wrapPolicy{}, wrapFramework{}, err
+		}
+	}
+
+	return assetw, policyw, frameworkw, nil
 }
 
 func (db *Db) ensureAssetPolicy(ctx context.Context, mrn string) (wrapPolicy, error) {
@@ -58,6 +77,16 @@ func (db *Db) ensureAssetPolicy(ctx context.Context, mrn string) (wrapPolicy, er
 	}
 
 	return policyw, nil
+}
+
+func (db *Db) ensureAssetFramework(ctx context.Context, mrn string) (wrapFramework, error) {
+	obj := db.services.CreateFrameworkObject(mrn, "")
+	frameworkw, err := db.setFramework(ctx, obj)
+	if err != nil {
+		return wrapFramework{}, err
+	}
+
+	return frameworkw, nil
 }
 
 func (db *Db) ensureAssetObject(ctx context.Context, mrn string) (wrapAsset, bool, error) {

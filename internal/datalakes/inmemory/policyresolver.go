@@ -11,23 +11,99 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/ranger-rpc/codes"
-	"go.mondoo.com/ranger-rpc/status"
 )
 
-// MutatePolicy modifies a policy. If it does not find the policy, and if the
-// caller chooses to, it will treat the MRN as an asset and create it + its policy
-func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationDelta, createIfMissing bool) (*policy.Policy, error) {
-	targetMRN := mutation.PolicyMrn
-
-	policyw, err := db.ensurePolicy(ctx, targetMRN, createIfMissing)
+// return true if the framework was changed
+func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[string]explorer.AssignmentDelta_Action, createIfMissing bool) (wrapFramework, bool, error) {
+	frameworkw, err := db.ensureFramework(ctx, mrn, createIfMissing)
 	if err != nil {
-		return nil, err
+		return frameworkw, false, err
+	}
+
+	deps := make(map[string]*policy.FrameworkRef, len(frameworkw.Dependencies))
+	for i := range frameworkw.Dependencies {
+		dep := frameworkw.Dependencies[i]
+		deps[dep.Mrn] = dep
+	}
+
+	changed := false
+
+	for frameworkMrn, action := range actions {
+		switch action {
+		case explorer.AssignmentDelta_DELETE:
+			x, ok := db.cache.Get(dbIDFramework + frameworkMrn)
+			if !ok {
+				return frameworkw, false, errors.New("cannot find child framework '" + frameworkMrn + "' when trying to unassign it")
+			}
+			childw := x.(wrapPolicy)
+
+			delete(deps, frameworkMrn)
+			delete(frameworkw.children, frameworkMrn)
+			delete(childw.parents, mrn)
+			if ok := db.cache.Set(dbIDFramework+frameworkMrn, childw, 2); !ok {
+				return frameworkw, false, errors.New("failed to update child-parent relationship for framework '" + frameworkMrn + "'")
+			}
+
+			changed = true
+
+		default:
+			x, ok := db.cache.Get(dbIDFramework + frameworkMrn)
+			if !ok {
+				return frameworkw, false, errors.New("cannot find child framework '" + frameworkMrn + "' when trying to assign it")
+			}
+			childw := x.(wrapFramework)
+
+			deps[frameworkMrn] = &policy.FrameworkRef{
+				Mrn: frameworkMrn,
+			}
+			frameworkw.children[frameworkMrn] = struct{}{}
+			childw.parents[mrn] = struct{}{}
+			if ok := db.cache.Set(dbIDFramework+frameworkMrn, childw, 2); !ok {
+				return frameworkw, false, errors.New("failed to update child-parent relationship for framework '" + frameworkMrn + "'")
+			}
+
+			changed = true
+		}
+	}
+
+	if !changed {
+		return frameworkw, false, nil
+	}
+
+	// since the map was only used for faster create/delete, we now have to translate it back
+	frameworkw.Dependencies = make([]*policy.FrameworkRef, len(deps))
+	i := 0
+	for _, v := range deps {
+		frameworkw.Dependencies[i] = v
+		i++
+	}
+
+	ok := db.cache.Set(dbIDFramework+mrn, frameworkw, 2)
+	if !ok {
+		return frameworkw, true, errors.New("failed to store updated framework in cache")
+	}
+
+	frameworkw.Framework.ClearExecutionChecksums()
+	err = frameworkw.Framework.UpdateChecksums(ctx,
+		func(ctx context.Context, mrn string) (*policy.Framework, error) { return db.GetFramework(ctx, mrn) },
+		nil,
+	)
+	if err != nil {
+		return frameworkw, true, err
+	}
+
+	return frameworkw, true, nil
+}
+
+func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]explorer.AssignmentDelta_Action, createIfMissing bool) (wrapPolicy, bool, error) {
+	policyw, err := db.ensurePolicy(ctx, mrn, createIfMissing)
+	if err != nil {
+		return policyw, false, err
 	}
 
 	if len(policyw.Policy.Groups) == 0 {
-		log.Error().Str("policy", targetMRN).Msg("resolver.db> failed to modify policy, it has no specs")
-		return nil, errors.New("cannot modify policy, it has no specs (invalid state)")
+		log.Error().Str("policy", mrn).Msg("resolver.db> failed to modify policy, it has no specs")
+		return policyw, false, errors.New("cannot modify policy, it has no specs (invalid state)")
 	}
 
 	group := policyw.Policy.Groups[0]
@@ -40,9 +116,25 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 		policies[cur.Mrn] = cur
 	}
 
-	for policyMrn, delta := range mutation.PolicyDeltas {
-		switch delta.Action {
-		case policy.PolicyDelta_ADD:
+	for policyMrn, action := range actions {
+		switch action {
+		case explorer.AssignmentDelta_DELETE:
+			x, ok := db.cache.Get(dbIDPolicy + policyMrn)
+			if !ok {
+				return policyw, false, errors.New("cannot find child policy '" + policyMrn + "' when trying to unassign it")
+			}
+			childw := x.(wrapPolicy)
+
+			delete(policies, policyMrn)
+			delete(policyw.children, policyMrn)
+			delete(childw.parents, mrn)
+			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
+				return policyw, false, errors.New("failed to update child-parent relationship for policy '" + policyMrn + "'")
+			}
+
+			changed = true
+
+		default:
 			if _, ok := policies[policyMrn]; ok {
 				continue
 			}
@@ -51,7 +143,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 
 			x, ok := db.cache.Get(dbIDPolicy + policyMrn)
 			if !ok {
-				return nil, errors.New("cannot find child policy '" + policyMrn + "' when trying to assign it")
+				return policyw, false, errors.New("cannot find child policy '" + policyMrn + "' when trying to assign it")
 			}
 			childw := x.(wrapPolicy)
 
@@ -59,36 +151,17 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 				Mrn: policyMrn,
 			}
 			policyw.children[policyMrn] = struct{}{}
-			childw.parents[targetMRN] = struct{}{}
+			childw.parents[mrn] = struct{}{}
 			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
-				return nil, errors.New("failed to update child-parent relationship for policy '" + policyMrn + "'")
+				return policyw, false, errors.New("failed to update child-parent relationship for policy '" + policyMrn + "'")
 			}
 
 			changed = true
-
-		case policy.PolicyDelta_DELETE:
-			x, ok := db.cache.Get(dbIDPolicy + policyMrn)
-			if !ok {
-				return nil, errors.New("cannot find child policy '" + policyMrn + "' when trying to assign it")
-			}
-			childw := x.(wrapPolicy)
-
-			delete(policies, policyMrn)
-			delete(policyw.children, policyMrn)
-			delete(childw.parents, targetMRN)
-			if ok := db.cache.Set(dbIDPolicy+policyMrn, childw, 2); !ok {
-				return nil, errors.New("failed to update child-parent relationship for policy '" + policyMrn + "'")
-			}
-
-			changed = true
-
-		default:
-			return nil, status.Error(codes.InvalidArgument, "unsupported change  is required")
 		}
 	}
 
 	if !changed {
-		return policyw.Policy, nil
+		return policyw, false, nil
 	}
 
 	// since the map was only used for faster create/delete, we now have to translate it back
@@ -101,7 +174,7 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 
 	err = db.refreshAssetFilters(ctx, &policyw)
 	if err != nil {
-		return nil, err
+		return policyw, true, err
 	}
 
 	policyw.Policy.InvalidateExecutionChecksums()
@@ -111,15 +184,70 @@ func (db *Db) MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationD
 		nil,
 	)
 	if err != nil {
+		return policyw, true, err
+	}
+
+	ok := db.cache.Set(dbIDPolicy+mrn, policyw, 2)
+	if !ok {
+		return policyw, true, errors.New("failed to store updated policy in cache")
+	}
+
+	return policyw, true, nil
+}
+
+func (db *Db) MutateAssignments(ctx context.Context, mutation *policy.AssetMutation, createIfMissing bool) error {
+	targetMRN := mutation.AssetMrn
+	frameworkw, changedFramework, err := db.mutateFramework(ctx, targetMRN, mutation.FrameworkActions, createIfMissing)
+	if err != nil {
+		return err
+	}
+
+	policyw, changedPolicy, err := db.mutatePolicy(ctx, targetMRN, mutation.PolicyActions, createIfMissing)
+	if err != nil {
+		return err
+	}
+
+	if !changedFramework && !changedPolicy {
+		return nil
+	}
+
+	err = db.checkAndInvalidatePolicyBundle(ctx, targetMRN, &policyw, &frameworkw)
+	if err != nil {
+		return err
+	}
+
+	err = db.refreshDependentAssetFilters(ctx, policyw)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// DeprecatedV8_MutatePolicy modifies a policy. If it does not find the policy, and if the
+// caller chooses to, it will treat the MRN as an asset and create it + its policy
+// Replaced by MutateAssignments
+func (db *Db) DeprecatedV8_MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationDelta, createIfMissing bool) (*policy.Policy, error) {
+	targetMRN := mutation.PolicyMrn
+
+	actions := make(map[string]explorer.AssignmentDelta_Action, len(mutation.PolicyDeltas))
+	for k, v := range mutation.PolicyDeltas {
+		if v.Action == policy.PolicyDelta_DELETE {
+			actions[k] = explorer.AssignmentDelta_DELETE
+		} else {
+			actions[k] = explorer.AssignmentDelta_ADD
+		}
+	}
+
+	policyw, changed, err := db.mutatePolicy(ctx, targetMRN, actions, createIfMissing)
+	if err != nil {
 		return nil, err
 	}
-
-	ok := db.cache.Set(dbIDPolicy+targetMRN, policyw, 2)
-	if !ok {
-		return nil, errors.New("")
+	if !changed {
+		return policyw.Policy, nil
 	}
 
-	err = db.checkAndInvalidatePolicyBundle(ctx, &policyw)
+	err = db.checkAndInvalidatePolicyBundle(ctx, targetMRN, &policyw, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +270,22 @@ func (db *Db) ensurePolicy(ctx context.Context, mrn string, createIfMissing bool
 		return wrapPolicy{}, errors.New("failed to modify policy '" + mrn + "', could not find it")
 	}
 
-	_, policyw, err := db.ensureAsset(ctx, mrn)
+	_, policyw, _, err := db.ensureAsset(ctx, mrn)
 	return policyw, err
+}
+
+func (db *Db) ensureFramework(ctx context.Context, mrn string, createIfMissing bool) (wrapFramework, error) {
+	x, ok := db.cache.Get(dbIDFramework + mrn)
+	if ok {
+		return x.(wrapFramework), nil
+	}
+
+	if !createIfMissing {
+		return wrapFramework{}, errors.New("failed to modify framework '" + mrn + "', could not find it")
+	}
+
+	_, _, frameworkw, err := db.ensureAsset(ctx, mrn)
+	return frameworkw, err
 }
 
 func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) error {
@@ -218,7 +360,7 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 			}
 
 			db.cache.Set(dbIDPolicy+policyw.Policy.Mrn, policyw, 2)
-			err = db.checkAndInvalidatePolicyBundle(ctx, &policyw)
+			err = db.checkAndInvalidatePolicyBundle(ctx, policyw.Policy.Mrn, &policyw, nil)
 			if err != nil {
 				return err
 			}
@@ -376,13 +518,13 @@ func (db *Db) GetResolvedPolicy(ctx context.Context, assetMrn string) (*policy.R
 }
 
 // CachedResolvedPolicy returns the resolved policy if it exists
-func (db *Db) CachedResolvedPolicy(ctx context.Context, policyMrn string, assetFilterChecksum string, version policy.ResolvedPolicyVersion) (*policy.ResolvedPolicy, error) {
-	policyObj, err := db.GetValidatedPolicy(ctx, policyMrn)
+func (db *Db) CachedResolvedPolicy(ctx context.Context, entityMrn string, assetFilterChecksum string, version policy.ResolvedPolicyVersion) (*policy.ResolvedPolicy, error) {
+	sum, err := db.entityGraphExecutionChecksum(ctx, entityMrn)
 	if err != nil {
-		return nil, errors.New("cannot find policy for resolver: '" + policyMrn + "'")
+		return nil, errors.New("cannot determine execution checksum for: '" + entityMrn + "'")
 	}
 
-	res, ok := db.resolvedPolicyCache.Get(dbIDResolvedPolicy + policyObj.GraphExecutionChecksum + "\x00" + assetFilterChecksum)
+	res, ok := db.resolvedPolicyCache.Get(dbIDResolvedPolicy + sum + "\x00" + assetFilterChecksum)
 	if !ok {
 		return nil, nil
 	}
@@ -721,7 +863,7 @@ func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
 		return errors.New("")
 	}
 
-	err = db.checkAndInvalidatePolicyBundle(ctx, &policyw)
+	err = db.checkAndInvalidatePolicyBundle(ctx, policyw.Policy.Mrn, &policyw, nil)
 	if err != nil {
 		return err
 	}

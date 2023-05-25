@@ -14,23 +14,25 @@ import (
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
 type PolicyBundleMap struct {
-	OwnerMrn string                        `json:"owner_mrn,omitempty"`
-	Policies map[string]*Policy            `json:"policies,omitempty"`
-	Queries  map[string]*explorer.Mquery   `json:"queries,omitempty"`
-	Props    map[string]*explorer.Property `json:"props,omitempty"`
-	Code     map[string]*llx.CodeBundle    `json:"code,omitempty"`
-	Library  Library                       `json:"library,omitempty"`
+	OwnerMrn   string                        `json:"owner_mrn,omitempty"`
+	Policies   map[string]*Policy            `json:"policies,omitempty"`
+	Frameworks map[string]*Framework         `json:"frameworks,omitempty"`
+	Queries    map[string]*explorer.Mquery   `json:"queries,omitempty"`
+	Props      map[string]*explorer.Property `json:"props,omitempty"`
+	Code       map[string]*llx.CodeBundle    `json:"code,omitempty"`
+	Library    Library                       `json:"library,omitempty"`
 }
 
 // NewPolicyBundleMap creates a new empty initialized map
 // dataLake (optional) connects an additional data layer which may provide queries/policies
 func NewPolicyBundleMap(ownerMrn string) *PolicyBundleMap {
 	return &PolicyBundleMap{
-		OwnerMrn: ownerMrn,
-		Policies: make(map[string]*Policy),
-		Queries:  make(map[string]*explorer.Mquery),
-		Props:    make(map[string]*explorer.Property),
-		Code:     make(map[string]*llx.CodeBundle),
+		OwnerMrn:   ownerMrn,
+		Policies:   make(map[string]*Policy),
+		Frameworks: make(map[string]*Framework),
+		Queries:    make(map[string]*explorer.Mquery),
+		Props:      make(map[string]*explorer.Property),
+		Code:       make(map[string]*llx.CodeBundle),
 	}
 }
 
@@ -77,21 +79,28 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 
 	// policies
 	ids = sortx.Keys(p.Policies)
-	res.Policies = make([]*Policy, len(p.Policies))
+	res.Policies = make([]*Policy, len(ids))
 	for i := range ids {
 		res.Policies[i] = p.Policies[ids[i]]
 	}
 
+	// frameworks
+	ids = sortx.Keys(p.Frameworks)
+	res.Frameworks = make([]*Framework, len(ids))
+	for i := range ids {
+		res.Frameworks[i] = p.Frameworks[ids[i]]
+	}
+
 	// queries
 	ids = sortx.Keys(p.Queries)
-	res.Queries = make([]*explorer.Mquery, len(p.Queries))
+	res.Queries = make([]*explorer.Mquery, len(ids))
 	for i := range ids {
 		res.Queries[i] = p.Queries[ids[i]]
 	}
 
 	// props
 	ids = sortx.Keys(p.Props)
-	res.Props = make([]*explorer.Property, len(p.Props))
+	res.Props = make([]*explorer.Property, len(ids))
 	for i := range ids {
 		res.Props[i] = p.Props[ids[i]]
 	}
@@ -286,6 +295,21 @@ func (bundle *PolicyBundleMap) QueryMap() map[string]*explorer.Mquery {
 			res[v.CodeId] = v
 		} else {
 			res[v.Mrn] = v
+		}
+	}
+	return res
+}
+
+// ControlsMap extracts all the controls from frameworks in this bundle map
+func (bundle *PolicyBundleMap) ControlsMap() map[string]*Control {
+	res := map[string]*Control{}
+	for _, framework := range bundle.Frameworks {
+		for i := range framework.Groups {
+			group := framework.Groups[i]
+			for j := range group.Controls {
+				ctl := group.Controls[j]
+				res[ctl.Mrn] = ctl
+			}
 		}
 	}
 	return res

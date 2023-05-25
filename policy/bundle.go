@@ -22,10 +22,25 @@ import (
 )
 
 const (
-	MRN_RESOURCE_QUERY  = "queries"
-	MRN_RESOURCE_POLICY = "policies"
-	MRN_RESOURCE_ASSET  = "assets"
+	MRN_RESOURCE_QUERY     = "queries"
+	MRN_RESOURCE_POLICY    = "policies"
+	MRN_RESOURCE_ASSET     = "assets"
+	MRN_RESOURCE_FRAMEWORK = "framework"
+	MRN_RESOURCE_CONTROL   = "controls"
 )
+
+// BundleExecutionChecksum creates a combined execution checksum from a policy
+// and framework. Either may be nil.
+func BundleExecutionChecksum(policy *Policy, framework *Framework) string {
+	res := checksums.New
+	if policy != nil {
+		res = res.Add(policy.GraphExecutionChecksum)
+	}
+	if framework != nil {
+		res = res.Add(framework.GraphExecutionChecksum)
+	}
+	return res.String()
+}
 
 // BundleFromPaths loads a single policy bundle file or a bundle that
 // was split into multiple files into a single PolicyBundle struct
@@ -128,34 +143,36 @@ func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
 
 	// merge in a
 	for i := range a.Policies {
-		p := a.Policies[i]
-		res.Policies = append(res.Policies, p)
+		res.Policies = append(res.Policies, a.Policies[i])
 	}
 
 	for i := range a.Props {
-		p := a.Props[i]
-		res.Props = append(res.Props, p)
+		res.Props = append(res.Props, a.Props[i])
 	}
 
 	for i := range a.Queries {
-		q := a.Queries[i]
-		res.Queries = append(res.Queries, q)
+		res.Queries = append(res.Queries, a.Queries[i])
+	}
+
+	for i := range a.Frameworks {
+		res.Frameworks = append(res.Frameworks, a.Frameworks[i])
 	}
 
 	// merge in b
 	for i := range b.Policies {
-		p := b.Policies[i]
-		res.Policies = append(res.Policies, p)
+		res.Policies = append(res.Policies, b.Policies[i])
 	}
 
 	for i := range b.Props {
-		p := b.Props[i]
-		res.Props = append(res.Props, p)
+		res.Props = append(res.Props, b.Props[i])
 	}
 
 	for i := range b.Queries {
-		q := b.Queries[i]
-		res.Queries = append(res.Queries, q)
+		res.Queries = append(res.Queries, b.Queries[i])
+	}
+
+	for i := range b.Frameworks {
+		res.Frameworks = append(res.Frameworks, b.Frameworks[i])
 	}
 
 	return res
@@ -229,6 +246,11 @@ func (p *Bundle) ToMap() *PolicyBundleMap {
 	for i := range p.Policies {
 		c := p.Policies[i]
 		res.Policies[c.Mrn] = c
+	}
+
+	for i := range p.Frameworks {
+		c := p.Frameworks[i]
+		res.Frameworks[c.Mrn] = c
 	}
 
 	for i := range p.Queries {
@@ -733,6 +755,15 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
+	}
+
+	for i := range p.Frameworks {
+		framework := p.Frameworks[i]
+		if err := framework.compile(ctx, ownerMrn, cache, library); err != nil {
+			return nil, errors.New("failed to validate framework: " + err.Error())
+		}
+
+		bundleMap.Frameworks[framework.Mrn] = framework
 	}
 
 	return bundleMap, cache.error()

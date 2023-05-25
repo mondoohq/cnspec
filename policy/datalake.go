@@ -36,6 +36,22 @@ type DataLake interface {
 	// Note: the checksum and graphchecksum of the policy must be computed to the right number
 	GetValidatedBundle(ctx context.Context, mrn string) (*Bundle, error)
 
+	// SetFramework stores a given framework in the data lake. Note: it does not
+	// store any framework maps, there is a separate call for them.
+	SetFramework(ctx context.Context, framework *Framework) error
+	// SetFrameworkMaps stores a list of framework maps connecting frameworks
+	// to policies.
+	SetFrameworkMaps(ctx context.Context, ownerFramework string, maps []*FrameworkMap) error
+	// GetFramework retrieves a framework from storage. This does not include
+	// framework maps!
+	GetFramework(ctx context.Context, mrn string) (*Framework, error)
+	// GetFrameworkMaps retrieves a set of framework maps for a given framework
+	// from the data lake. This doesn't include controls metadata. If there
+	// are no framework maps for this MRN, it returns nil (no error).
+	GetFrameworkMaps(ctx context.Context, mrn string) ([]*FrameworkMap, error)
+	// MutateAssignments modifies a framework of a given asset.
+	MutateAssignments(ctx context.Context, mutation *AssetMutation, createIfMissing bool) error
+
 	// GetRawPolicy retrieves the policy without fixing any invalidations (fast)
 	GetRawPolicy(ctx context.Context, mrn string) (*Policy, error)
 	// SetPolicy stores a given policy in the data lake
@@ -45,9 +61,10 @@ type DataLake interface {
 	// Note: Owner MRN is required
 	ListPolicies(ctx context.Context, ownerMrn string, name string) ([]*Policy, error)
 
-	// MutatePolicy modifies a policy. If it does not find the policy, and if the
-	// caller chooses to, it will treat the MRN as an asset and create it + its policy
-	MutatePolicy(ctx context.Context, mutation *PolicyMutationDelta, createIfMissing bool) (*Policy, error)
+	// DeprecatedV8_MutatePolicy modifies a policy. If it does not find the policy, and if the
+	// caller chooses to, it will treat the MRN as an asset and create it + its policy.
+	// Deprecated for MutateAssignment.
+	DeprecatedV8_MutatePolicy(ctx context.Context, mutation *PolicyMutationDelta, createIfMissing bool) (*Policy, error)
 	// SetProps will override properties for a given entity (asset, space, org)
 	SetProps(ctx context.Context, req *explorer.PropsReq) error
 	// SetAssetResolvedPolicy sets and initialized all fields for an asset's resolved policy

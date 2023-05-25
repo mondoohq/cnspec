@@ -28,6 +28,9 @@ type PolicyHub interface {
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
 	List(context.Context, *ListReq) (*Policies, error)
 	DefaultPolicies(context.Context, *DefaultPoliciesReq) (*URLs, error)
+	GetFramework(context.Context, *Mrn) (*Framework, error)
+	DeleteFramework(context.Context, *Mrn) (*Empty, error)
+	ListFrameworks(context.Context, *ListReq) (*Frameworks, error)
 }
 
 // client implementation
@@ -96,6 +99,21 @@ func (c *PolicyHubClient) DefaultPolicies(ctx context.Context, in *DefaultPolici
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DefaultPolicies"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyHubClient) GetFramework(ctx context.Context, in *Mrn) (*Framework, error) {
+	out := new(Framework)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetFramework"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyHubClient) DeleteFramework(ctx context.Context, in *Mrn) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeleteFramework"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyHubClient) ListFrameworks(ctx context.Context, in *ListReq) (*Frameworks, error) {
+	out := new(Frameworks)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ListFrameworks"}, ""), in, out)
+	return out, err
+}
 
 // server implementation
 
@@ -127,6 +145,9 @@ func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.H
 			"GetPolicyFilters": srv.GetPolicyFilters,
 			"List":             srv.List,
 			"DefaultPolicies":  srv.DefaultPolicies,
+			"GetFramework":     srv.GetFramework,
+			"DeleteFramework":  srv.DeleteFramework,
+			"ListFrameworks":   srv.ListFrameworks,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -329,6 +350,78 @@ func (p *PolicyHubServer) DefaultPolicies(ctx context.Context, reqBytes *[]byte)
 	}
 	return p.handler.DefaultPolicies(ctx, &req)
 }
+func (p *PolicyHubServer) GetFramework(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Mrn
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetFramework(ctx, &req)
+}
+func (p *PolicyHubServer) DeleteFramework(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Mrn
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.DeleteFramework(ctx, &req)
+}
+func (p *PolicyHubServer) ListFrameworks(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req ListReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.ListFrameworks(ctx, &req)
+}
 
 // service interface definition
 
@@ -342,6 +435,7 @@ type PolicyResolver interface {
 	GetResolvedPolicy(context.Context, *Mrn) (*ResolvedPolicy, error)
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
+	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
 	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
@@ -418,6 +512,11 @@ func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) GetFrameworkReport(ctx context.Context, in *EntityScoreReq) (*FrameworkReport, error) {
+	out := new(FrameworkReport)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetFrameworkReport"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
@@ -465,6 +564,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetResolvedPolicy":    srv.GetResolvedPolicy,
 			"StoreResults":         srv.StoreResults,
 			"GetReport":            srv.GetReport,
+			"GetFrameworkReport":   srv.GetFrameworkReport,
 			"GetScore":             srv.GetScore,
 			"SynchronizeAssets":    srv.SynchronizeAssets,
 			"PurgeAssets":          srv.PurgeAssets,
@@ -693,6 +793,30 @@ func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) 
 		return nil, err
 	}
 	return p.handler.GetReport(ctx, &req)
+}
+func (p *PolicyResolverServer) GetFrameworkReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req EntityScoreReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetFrameworkReport(ctx, &req)
 }
 func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
