@@ -97,13 +97,13 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 	policyActions := map[string]explorer.Action{}
 	for i := range assignment.PolicyMrns {
 		policyMrn := assignment.PolicyMrns[i]
-		policyActions[policyMrn] = explorer.Action_ACTIVATE
+		policyActions[policyMrn] = explorer.Action_DEACTIVATE
 	}
 
 	frameworkActions := map[string]explorer.Action{}
 	for i := range assignment.FrameworkMrns {
 		frameworkMrn := assignment.FrameworkMrns[i]
-		frameworkActions[frameworkMrn] = explorer.Action_ACTIVATE
+		frameworkActions[frameworkMrn] = explorer.Action_DEACTIVATE
 	}
 
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
