@@ -97,13 +97,13 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 	policyActions := map[string]explorer.AssignmentDelta_Action{}
 	for i := range assignment.PolicyMrns {
 		policyMrn := assignment.PolicyMrns[i]
-		policyActions[policyMrn] = explorer.AssignmentDelta_ADD
+		policyActions[policyMrn] = explorer.AssignmentDelta_DELETE
 	}
 
 	frameworkActions := map[string]explorer.AssignmentDelta_Action{}
 	for i := range assignment.FrameworkMrns {
 		frameworkMrn := assignment.FrameworkMrns[i]
-		frameworkActions[frameworkMrn] = explorer.AssignmentDelta_ADD
+		frameworkActions[frameworkMrn] = explorer.AssignmentDelta_DELETE
 	}
 
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
