@@ -1,6 +1,6 @@
 module go.mondoo.com/cnspec
 
-go 1.19
+go 1.20
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.3
-	go.mondoo.com/cnquery v0.0.0-20230523141529-3a14d3038f20
+	go.mondoo.com/cnquery v0.0.0-20230530174253-1b39a90d7f67
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.15.1
 	golang.org/x/sync v0.1.0 // indirect
@@ -62,12 +62,14 @@ require (
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/cloudflare/circl v1.3.3 // indirect
 	github.com/google/go-github/v49 v49.1.0 // indirect
+	github.com/gopcua/opcua v0.3.13 // indirect
 	github.com/junk1tm/musttag v0.5.0 // indirect
 	github.com/kkHAIKE/contextcheck v1.1.4 // indirect
+	github.com/kofalt/go-memoize v0.0.0-20220914132407-0b5d6a304579 // indirect
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/microsoft/kiota-serialization-form-go v0.9.0 // indirect
 	github.com/nunnatsa/ginkgolinter v0.9.0 // indirect
-	github.com/oracle/oci-go-sdk/v65 v65.37.0 // indirect
+	github.com/oracle/oci-go-sdk/v65 v65.39.0 // indirect
 	github.com/sethvargo/go-retry v0.2.3 // indirect
 	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/t-yuki/gocover-cobertura v0.0.0-20180217150009-aaee18c8195c // indirect
@@ -182,7 +184,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/redshift v1.27.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.31.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3control v1.31.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.72.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.78.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.19.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/securityhub v1.31.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.20.6 // indirect
@@ -383,11 +385,11 @@ require (
 	github.com/nishanths/exhaustive v0.9.5 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/oklog/run v1.0.0 // indirect
-	github.com/okta/okta-sdk-golang/v2 v2.17.0 // indirect
+	github.com/okta/okta-sdk-golang/v2 v2.18.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0-rc2 // indirect
-	github.com/packethost/packngo v0.25.0 // indirect
-	github.com/patrickmn/go-cache v0.0.0-20180815053127-5633e0862627 // indirect
+	github.com/packethost/packngo v0.29.0 // indirect
+	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pelletier/go-toml/v2 v2.0.7 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/peterhellberg/link v1.1.0 // indirect
@@ -457,7 +459,7 @@ require (
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
-	golang.org/x/crypto v0.5.0 // indirect
+	golang.org/x/crypto v0.7.0 // indirect
 	golang.org/x/exp v0.0.0-20230306221820-f0f767cdffd6 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230306221820-f0f767cdffd6 // indirect
 	golang.org/x/mod v0.9.0 // indirect
