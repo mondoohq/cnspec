@@ -27,8 +27,8 @@ const (
 
 type AssetMutation struct {
 	AssetMrn         string
-	PolicyActions    map[string]explorer.AssignmentDelta_Action
-	FrameworkActions map[string]explorer.AssignmentDelta_Action
+	PolicyActions    map[string]explorer.Action
+	FrameworkActions map[string]explorer.Action
 }
 
 // Assign a policy to an asset
@@ -63,16 +63,16 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 
 	s.DataLake.EnsureAsset(ctx, assignment.AssetMrn)
 
-	policyActions := map[string]explorer.AssignmentDelta_Action{}
+	policyActions := map[string]explorer.Action{}
 	for i := range assignment.PolicyMrns {
 		policyMrn := assignment.PolicyMrns[i]
-		policyActions[policyMrn] = explorer.AssignmentDelta_ADD
+		policyActions[policyMrn] = assignment.Action
 	}
 
-	frameworkActions := map[string]explorer.AssignmentDelta_Action{}
+	frameworkActions := map[string]explorer.Action{}
 	for i := range assignment.FrameworkMrns {
 		frameworkMrn := assignment.FrameworkMrns[i]
-		frameworkActions[frameworkMrn] = explorer.AssignmentDelta_ADD
+		frameworkActions[frameworkMrn] = assignment.Action
 	}
 
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
@@ -94,16 +94,16 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 		return s.Upstream.PolicyResolver.Unassign(ctx, assignment)
 	}
 
-	policyActions := map[string]explorer.AssignmentDelta_Action{}
+	policyActions := map[string]explorer.Action{}
 	for i := range assignment.PolicyMrns {
 		policyMrn := assignment.PolicyMrns[i]
-		policyActions[policyMrn] = explorer.AssignmentDelta_ADD
+		policyActions[policyMrn] = explorer.Action_ACTIVATE
 	}
 
-	frameworkActions := map[string]explorer.AssignmentDelta_Action{}
+	frameworkActions := map[string]explorer.Action{}
 	for i := range assignment.FrameworkMrns {
 		frameworkMrn := assignment.FrameworkMrns[i]
-		frameworkActions[frameworkMrn] = explorer.AssignmentDelta_ADD
+		frameworkActions[frameworkMrn] = explorer.Action_ACTIVATE
 	}
 
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{

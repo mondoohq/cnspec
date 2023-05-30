@@ -14,7 +14,7 @@ import (
 )
 
 // return true if the framework was changed
-func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[string]explorer.AssignmentDelta_Action, createIfMissing bool) (wrapFramework, bool, error) {
+func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[string]explorer.Action, createIfMissing bool) (wrapFramework, bool, error) {
 	frameworkw, err := db.ensureFramework(ctx, mrn, createIfMissing)
 	if err != nil {
 		return frameworkw, false, err
@@ -30,7 +30,7 @@ func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[strin
 
 	for frameworkMrn, action := range actions {
 		switch action {
-		case explorer.AssignmentDelta_DELETE:
+		case explorer.Action_DEACTIVATE:
 			x, ok := db.cache.Get(dbIDFramework + frameworkMrn)
 			if !ok {
 				return frameworkw, false, errors.New("cannot find child framework '" + frameworkMrn + "' when trying to unassign it")
@@ -95,7 +95,7 @@ func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[strin
 	return frameworkw, true, nil
 }
 
-func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]explorer.AssignmentDelta_Action, createIfMissing bool) (wrapPolicy, bool, error) {
+func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]explorer.Action, createIfMissing bool) (wrapPolicy, bool, error) {
 	policyw, err := db.ensurePolicy(ctx, mrn, createIfMissing)
 	if err != nil {
 		return policyw, false, err
@@ -118,7 +118,7 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]e
 
 	for policyMrn, action := range actions {
 		switch action {
-		case explorer.AssignmentDelta_DELETE:
+		case explorer.Action_DEACTIVATE:
 			x, ok := db.cache.Get(dbIDPolicy + policyMrn)
 			if !ok {
 				return policyw, false, errors.New("cannot find child policy '" + policyMrn + "' when trying to unassign it")
@@ -230,12 +230,12 @@ func (db *Db) MutateAssignments(ctx context.Context, mutation *policy.AssetMutat
 func (db *Db) DeprecatedV8_MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationDelta, createIfMissing bool) (*policy.Policy, error) {
 	targetMRN := mutation.PolicyMrn
 
-	actions := make(map[string]explorer.AssignmentDelta_Action, len(mutation.PolicyDeltas))
+	actions := make(map[string]explorer.Action, len(mutation.PolicyDeltas))
 	for k, v := range mutation.PolicyDeltas {
 		if v.Action == policy.PolicyDelta_DELETE {
-			actions[k] = explorer.AssignmentDelta_DELETE
+			actions[k] = explorer.Action_DEACTIVATE
 		} else {
-			actions[k] = explorer.AssignmentDelta_ADD
+			actions[k] = explorer.Action_ACTIVATE
 		}
 	}
 
