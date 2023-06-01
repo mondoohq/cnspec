@@ -21,6 +21,7 @@ import (
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/inventoryloader"
+	"go.mondoo.com/cnquery/cli/prof"
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/motor/asset"
@@ -380,6 +381,8 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string, provider providers.ProviderType, assetType builder.AssetType) {
+		prof.InitProfiler()
+
 		conf, err := getCobraScanConfig(cmd, args, provider, assetType)
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to prepare config")
