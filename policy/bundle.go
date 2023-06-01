@@ -753,9 +753,9 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			return nil, errors.New("failed to validate framework map: " + err.Error())
 		}
 
-		framework, ok := bundleMap.Frameworks[fm.Framework]
+		framework, ok := bundleMap.Frameworks[fm.FrameworkOwner]
 		if !ok {
-			return nil, errors.New("failed to get framework in bundle (not yet supported) for " + fm.Framework)
+			return nil, errors.New("failed to get framework in bundle (not yet supported) for " + fm.FrameworkOwner)
 		}
 		framework.FrameworkMaps = append(framework.FrameworkMaps, fm)
 	}

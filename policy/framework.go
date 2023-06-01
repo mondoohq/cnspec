@@ -64,8 +64,8 @@ func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bun
 		return err
 	}
 
-	if nu, ok := cache.uid2mrn[fm.Framework]; ok {
-		fm.Framework = nu
+	if nu, ok := cache.uid2mrn[fm.FrameworkOwner]; ok {
+		fm.FrameworkOwner = nu
 	}
 
 	for i := range fm.FrameworkDependencies {
