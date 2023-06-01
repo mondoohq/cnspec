@@ -31,8 +31,7 @@ type ResolvedFramework struct {
 // framework maps.
 func (f *Framework) compile(ctx context.Context, ownerMrn string, cache *bundleCache, library Library) error {
 	// 1. we start by turning frameworks and controls from UIDs to MRNs.
-	// We cannot yet process the embedded controls that may be cross-referenced,
-	// until we have done the first pass to index all existing controls.
+	// First, we need all MRNs for existing controls.
 	if err := f.refreshMRN(ownerMrn, cache); err != nil {
 		return err
 	}
@@ -47,64 +46,59 @@ func (f *Framework) compile(ctx context.Context, ownerMrn string, cache *bundleC
 		}
 	}
 
-	// 2. The second pass now processes all embedded and explicitly mapped
-	// checks, policies, and controls
-	for i := range f.Groups {
-		group := f.Groups[i]
-		for j := range group.Controls {
-			control := group.Controls[j]
-			if err := control.refreshEmbeddedMRNs(cache); err != nil {
-				return err
-			}
+	// 2. Now we pass through all the framework maps and update their MRNs,
+	// in case they were provided
+	for i := range f.FrameworkMaps {
+		if err := f.FrameworkMaps[i].compile(ctx, ownerMrn, cache, library); err != nil {
+			return err
 		}
 	}
-
-	// TODO: pass through the framework maps and replace UIDs
-
-	// with all MRNs established, we are taking 2 steps for the wiring of
-	// all the mappings:
-	// 3. Move all user-embedded mappings into a separate map for this framework.
-	//    We want to track changes to it and make it more accessible.
-	f.isolateMaps()
 
 	return nil
 }
 
-func (f *Framework) isolateMaps() {
-	res := FrameworkMap{
-		Mrn:                f.ReferencedFramework,
-		ReferencedPolicies: f.ReferencedPolicies,
+func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bundleCache, library Library) error {
+	var ok bool
+
+	if err := fm.refreshMRN(ownerMrn, cache); err != nil {
+		return err
 	}
 
-	for i := range f.Groups {
-		group := f.Groups[i]
-		for j := range group.Controls {
-			control := group.Controls[j]
-			if len(control.Checks) == 0 && len(control.Policies) == 0 && len(control.Controls) == 0 {
-				continue
-			}
+	if nu, ok := cache.uid2mrn[fm.FrameworkOwner]; ok {
+		fm.FrameworkOwner = nu
+	}
 
-			res.Controls = append(res.Controls, &ControlMap{
-				Mrn:      control.Mrn,
-				Checks:   control.Checks,
-				Policies: control.Policies,
-				Controls: control.Controls,
-			})
-			control.Checks = nil
-			control.Policies = nil
-			control.Controls = nil
+	for i := range fm.FrameworkDependencies {
+		ref := fm.FrameworkDependencies[i]
+		if ref.Uid == "" {
+			continue
+		}
+		ref.Mrn, ok = cache.uid2mrn[ref.Uid]
+		if !ok {
+			return errors.New("cannot find framework dependency '" + ref.Uid + "' in this bundle, which is referenced by framework map " + fm.Mrn)
+		}
+		ref.Uid = ""
+	}
+
+	for i := range fm.PolicyDependencies {
+		ref := fm.PolicyDependencies[i]
+		if ref.Uid == "" {
+			continue
+		}
+		ref.Mrn, ok = cache.uid2mrn[ref.Uid]
+		if !ok {
+			return errors.New("cannot find policy dependency '" + ref.Uid + "' in this bundle, which is referenced by framework map " + fm.Mrn)
+		}
+		ref.Uid = ""
+	}
+
+	for j := range fm.Controls {
+		control := fm.Controls[j]
+		if err := control.refreshMRNs(ownerMrn, cache); err != nil {
+			return err
 		}
 	}
-
-	if len(res.Controls) == 0 {
-		return
-	}
-
-	if res.Mrn == "" {
-		res.Mrn = f.Mrn
-	}
-
-	f.FrameworkMaps = append(f.FrameworkMaps, &res)
+	return nil
 }
 
 func getFrameworkNoop(ctx context.Context, mrn string) (*Framework, error) {
@@ -304,19 +298,6 @@ func (c *Control) updateChecksum() (string, string) {
 		executionChecksum = executionChecksum.AddUint(0)
 	}
 
-	for i := range c.Checks {
-		ref := c.Checks[i]
-		executionChecksum = executionChecksum.Add(ref.Mrn).AddUint(uint64(ref.Action))
-	}
-	for i := range c.Policies {
-		ref := c.Policies[i]
-		executionChecksum = executionChecksum.Add(ref.Mrn).AddUint(uint64(ref.Action))
-	}
-	for i := range c.Controls {
-		ref := c.Controls[i]
-		executionChecksum = executionChecksum.Add(ref.Mrn).AddUint(uint64(ref.Action))
-	}
-
 	contentChecksum = contentChecksum.AddUint(uint64(executionChecksum))
 	return executionChecksum.String(), contentChecksum.String()
 }
@@ -326,6 +307,21 @@ func (f *Framework) refreshMRN(ownerMRN string, cache *bundleCache) error {
 	if err != nil {
 		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", f.Uid).Msg("failed to refresh framework mrn")
 		return errors.Wrap(err, "failed to refresh mrn for framework "+f.Name)
+	}
+
+	if f.Uid != "" {
+		cache.uid2mrn[f.Uid] = nu
+	}
+	f.Mrn = nu
+	f.Uid = ""
+	return nil
+}
+
+func (f *FrameworkMap) refreshMRN(ownerMRN string, cache *bundleCache) error {
+	nu, err := RefreshMRN(ownerMRN, f.Mrn, MRN_RESOURCE_FRAMEWORKMAP, f.Uid)
+	if err != nil {
+		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", f.Uid).Msg("failed to refresh framework mrn")
+		return errors.Wrap(err, "failed to refresh mrn for framework map "+f.Uid)
 	}
 
 	if f.Uid != "" {
@@ -353,7 +349,19 @@ func (c *Control) refreshMRN(ownerMRN string, cache *bundleCache) error {
 	return nil
 }
 
-func (c *Control) refreshEmbeddedMRNs(cache *bundleCache) error {
+func (c *ControlMap) refreshMRNs(ownerMRN string, cache *bundleCache) error {
+	nu, err := RefreshMRN(ownerMRN, c.Mrn, MRN_RESOURCE_CONTROL, c.Uid)
+	if err != nil {
+		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", c.Uid).Msg("failed to refresh control mrn")
+		return errors.Wrap(err, "failed to refresh mrn for control "+c.Uid)
+	}
+
+	if c.Uid != "" {
+		cache.uid2mrn[c.Uid] = nu
+	}
+	c.Mrn = nu
+	c.Uid = ""
+
 	var ok bool
 	for i := range c.Checks {
 		check := c.Checks[i]

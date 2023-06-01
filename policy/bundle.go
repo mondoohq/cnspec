@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	MRN_RESOURCE_QUERY     = "queries"
-	MRN_RESOURCE_POLICY    = "policies"
-	MRN_RESOURCE_ASSET     = "assets"
-	MRN_RESOURCE_FRAMEWORK = "framework"
-	MRN_RESOURCE_CONTROL   = "controls"
+	MRN_RESOURCE_QUERY        = "queries"
+	MRN_RESOURCE_POLICY       = "policies"
+	MRN_RESOURCE_ASSET        = "assets"
+	MRN_RESOURCE_FRAMEWORK    = "framework"
+	MRN_RESOURCE_FRAMEWORKMAP = "frameworkmap"
+	MRN_RESOURCE_CONTROL      = "controls"
 )
 
 // BundleExecutionChecksum creates a combined execution checksum from a policy
@@ -142,38 +143,18 @@ func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
 	}
 
 	// merge in a
-	for i := range a.Policies {
-		res.Policies = append(res.Policies, a.Policies[i])
-	}
-
-	for i := range a.Props {
-		res.Props = append(res.Props, a.Props[i])
-	}
-
-	for i := range a.Queries {
-		res.Queries = append(res.Queries, a.Queries[i])
-	}
-
-	for i := range a.Frameworks {
-		res.Frameworks = append(res.Frameworks, a.Frameworks[i])
-	}
+	res.Policies = append(res.Policies, a.Policies...)
+	res.Props = append(res.Props, a.Props...)
+	res.Queries = append(res.Queries, a.Queries...)
+	res.Frameworks = append(res.Frameworks, a.Frameworks...)
+	res.FrameworkMaps = append(res.FrameworkMaps, a.FrameworkMaps...)
 
 	// merge in b
-	for i := range b.Policies {
-		res.Policies = append(res.Policies, b.Policies[i])
-	}
-
-	for i := range b.Props {
-		res.Props = append(res.Props, b.Props[i])
-	}
-
-	for i := range b.Queries {
-		res.Queries = append(res.Queries, b.Queries[i])
-	}
-
-	for i := range b.Frameworks {
-		res.Frameworks = append(res.Frameworks, b.Frameworks[i])
-	}
+	res.Policies = append(res.Policies, b.Policies...)
+	res.Props = append(res.Props, b.Props...)
+	res.Queries = append(res.Queries, b.Queries...)
+	res.Frameworks = append(res.Frameworks, b.Frameworks...)
+	res.FrameworkMaps = append(res.FrameworkMaps, b.FrameworkMaps...)
 
 	return res
 }
@@ -764,6 +745,19 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 
 		bundleMap.Frameworks[framework.Mrn] = framework
+	}
+
+	for i := range p.FrameworkMaps {
+		fm := p.FrameworkMaps[i]
+		if err := fm.compile(ctx, ownerMrn, cache, library); err != nil {
+			return nil, errors.New("failed to validate framework map: " + err.Error())
+		}
+
+		framework, ok := bundleMap.Frameworks[fm.FrameworkOwner]
+		if !ok {
+			return nil, errors.New("failed to get framework in bundle (not yet supported) for " + fm.FrameworkOwner)
+		}
+		framework.FrameworkMaps = append(framework.FrameworkMaps, fm)
 	}
 
 	return bundleMap, cache.error()
