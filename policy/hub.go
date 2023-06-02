@@ -211,6 +211,13 @@ func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundl
 
 	for i := range bundleMap.Frameworks {
 		framework := bundleMap.Frameworks[i]
+		framework.OwnerMrn = bundleMap.OwnerMrn
+
+		framework, err = s.PrepareFramework(ctx, framework, bundleMap)
+		if err != nil {
+			return err
+		}
+
 		if err := s.DataLake.SetFramework(ctx, framework); err != nil {
 			return err
 		}
