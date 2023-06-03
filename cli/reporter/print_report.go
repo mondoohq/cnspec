@@ -36,9 +36,7 @@ type reportRenderer struct {
 }
 
 func (r *reportRenderer) print() error {
-	// TODO: render to a buffer and print later, to enable pager printing
 	// TODO: sort assets by reverse score
-
 	var res bytes.Buffer
 	var scanSummary string
 
@@ -163,8 +161,6 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 	// print policy details
 	// NOTE: asset policies and space policies have no filter set but we want to render them too
 	if len(filters) > 0 || policyObj.ComputedFilters == nil || len(policyObj.ComputedFilters.Items) == 0 {
-		var scoringData []reportRow
-		scoringData, queryActionsForChildren = r.generateScoringResults(policyObj, report, bundle, resolved, parentQueryActions)
 
 		// determine renderer for policy
 		var render policyRenderer
@@ -182,11 +178,13 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 			render = renderMetaPolicy
 		}
 
+		var scoringData []reportRow
+		scoringData, queryActionsForChildren = r.generateScoringResults(policyObj, report, bundle, resolved, parentQueryActions)
 		result := render(r.printer, policyObj, report, bundle, resolved, scoringData)
 		res.WriteString(result)
 	}
 
-	policies := r.policyReportChildren(&res, policyObj, bundle)
+	policies := r.policyReportChildren(policyObj, bundle)
 
 	sort.Slice(policies, func(i, j int) bool {
 		return policies[i].Name < policies[j].Name
@@ -206,7 +204,7 @@ func (r *reportRenderer) renderPolicyReport(policyObj *policy.Policy, report *po
 	return res.String(), nil
 }
 
-func (r *reportRenderer) policyReportChildren(res *bytes.Buffer, policyObj *policy.Policy, bundle *policy.PolicyBundleMap) []*policy.Policy {
+func (r *reportRenderer) policyReportChildren(policyObj *policy.Policy, bundle *policy.PolicyBundleMap) []*policy.Policy {
 	policies := map[string]struct{}{}
 	for i := range policyObj.Groups {
 		group := policyObj.Groups[i]
@@ -252,7 +250,10 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 
 		// we only render query additions, all others need to be passed-through to the child policy
 		// NOTE: we need to copy the map when we pass eg. Remove to Children, since multiple children can add the same query
-		if action != explorer.Action_ACTIVATE {
+		// FIXME: DEPRECATED, remove in v9.0 vv
+		// Remove Action_UNSPECIFIED in v9.0
+		if action != explorer.Action_ACTIVATE && action != explorer.Action_UNSPECIFIED {
+			// ^^
 			actionsForChilds[qid] = check.Action
 			continue
 		}

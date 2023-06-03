@@ -81,7 +81,6 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 			data:     data,
 		}
 		return rr.print()
-
 	case YAML:
 		raw := bytes.Buffer{}
 		writer := shared.IOWriter{Writer: &raw}

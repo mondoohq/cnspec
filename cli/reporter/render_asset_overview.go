@@ -5,11 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/stringx"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -45,20 +42,6 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 		Value string
 	}
 
-	stringResult := func(bundle *llx.CodeBundle, results map[string]*llx.RawResult) string {
-		var res strings.Builder
-		for k := range results {
-			v := results[k]
-			if v == nil {
-				log.Warn().Str("checksum", k).Msg("missing result")
-				continue
-			}
-			r := v.Data
-			res.WriteString(print.Data(r.Type, r.Value, v.CodeID, bundle, ""))
-		}
-		return res.String()
-	}
-
 	res.WriteString(print.H2(policyObj.Name))
 	results := report.RawResults()
 
@@ -89,7 +72,8 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 		maxKeyWidth := 0
 
 		for j := range group.Queries {
-			query := group.Queries[j]
+			q := group.Queries[j]
+			query := bundle.Queries[q.Mrn]
 
 			if len(query.Title) > maxKeyWidth {
 				maxKeyWidth = len(query.Title)
@@ -102,18 +86,8 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 			}
 
 			// print data results
-			// copy all contents where we have labels
-			filteredResults := map[string]*llx.RawResult{}
-			for i := range codeBundle.CodeV2.Checksums {
-				checksum := codeBundle.CodeV2.Checksums[i]
-
-				res, ok := results[checksum]
-				if ok {
-					filteredResults[checksum] = res
-				}
-			}
-
-			value := stringResult(codeBundle, filteredResults)
+			filteredResults := codeBundle.FilterResults(results)
+			value := print.Results(codeBundle, filteredResults)
 
 			table = append(table, row{
 				Title: query.Title,
@@ -132,15 +106,7 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 			whitespace := maxKeyWidth - len(row.Title)
 			res.WriteString("  " + row.Title + ":")
 			res.WriteString(strings.Repeat(" ", whitespace+1))
-
-			if strings.Contains(row.Value, "\n") {
-				res.WriteString(NewLineCharacter)
-				rowValue := strings.ReplaceAll(stringx.Indent(2, row.Value), "\n", NewLineCharacter)
-				res.WriteString(rowValue)
-			} else {
-				res.WriteString(row.Value)
-				res.WriteString(NewLineCharacter)
-			}
+			writeQueryCompact(&res, row.Value)
 		}
 		res.WriteString(NewLineCharacter)
 	}
