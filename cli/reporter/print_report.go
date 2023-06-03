@@ -9,7 +9,6 @@ import (
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/cli/pager"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/explorer"
@@ -76,17 +75,7 @@ func (r *reportRenderer) print() error {
 		}
 	}
 
-	if r.usePager && pager.Supported(r.pager) {
-		err := pager.Display(res.String(), r.pager)
-		if err != nil {
-			log.Error().Err(err).Send()
-		}
-		// we print the summary again to make it visible after the pager is closed of the page
-		fmt.Fprintln(r.out, NewLineCharacter+scanSummary)
-	} else {
-		fmt.Fprintln(r.out, res.String())
-	}
-
+	fmt.Fprintln(r.out, res.String())
 	return nil
 }
 

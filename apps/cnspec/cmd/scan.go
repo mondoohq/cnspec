@@ -341,8 +341,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// output rendering
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
-		cmd.Flags().Bool("no-pager", false, "Disable interactive scan output pagination.")
-		cmd.Flags().String("pager", "", "Enable scan output pagination with custom pagination command. The default is 'less -R'.")
 		cmd.Flags().Bool("share-report", false, "Overrides the prompt to share web-based reports when cnspec is unauthenticated. Defaults to true.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
@@ -365,9 +363,6 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
-		// the logic is that noPager takes precedence over pager if both are sent
-		viper.BindPFlag("no_pager", cmd.Flags().Lookup("no-pager"))
-		viper.BindPFlag("pager", cmd.Flags().Lookup("pager"))
 		viper.BindPFlag("share-report", cmd.Flags().Lookup("share-report"))
 	},
 	PreRun: func(cmd *cobra.Command, args []string) {
@@ -689,10 +684,7 @@ func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.
 		log.Fatal().Msg(err.Error())
 	}
 
-	r.UsePager, _ = cmd.Flags().GetBool("pager")
-	r.Pager, _ = cmd.Flags().GetString("pager")
 	r.IsIncognito = conf.IsIncognito
-
 	if err = r.Print(report, os.Stdout); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
