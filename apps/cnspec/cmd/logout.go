@@ -41,6 +41,10 @@ the credentials cannot be used in future anymore.
 		}
 
 		// print the used config to the user
+		err = config.ValidateUserProvidedConfigPath()
+		if err != nil {
+			log.Fatal().Err(err).Msg("Could not load user provided config")
+		}
 		config.DisplayUsedConfig()
 
 		// determine information about the client

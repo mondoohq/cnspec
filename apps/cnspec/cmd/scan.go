@@ -476,6 +476,11 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	if optsErr != nil {
 		log.Fatal().Err(optsErr).Msg("could not load configuration")
 	}
+	var err error
+	err = config.ValidateUserProvidedConfigPath()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Could not load user provided config")
+	}
 	config.DisplayUsedConfig()
 
 	// display activated features
@@ -484,7 +489,6 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 	}
 
 	props := map[string]string{}
-	var err error
 	propsFlag := cmd.Flags().Lookup("props")
 	if propsFlag != nil {
 		props, err = cmd.Flags().GetStringToString("props")

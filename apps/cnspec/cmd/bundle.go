@@ -158,6 +158,10 @@ var policyPublishCmd = &cobra.Command{
 		if optsErr != nil {
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
 		}
+		err := config.ValidateUserProvidedConfigPath()
+		if err != nil {
+			log.Fatal().Err(err).Msg("Could not load user provided config")
+		}
 		config.DisplayUsedConfig()
 
 		filename := args[0]
