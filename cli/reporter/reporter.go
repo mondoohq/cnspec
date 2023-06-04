@@ -21,10 +21,6 @@ var (
 )
 
 type Reporter struct {
-	// Pager set to true will use a pager for the output. Only relevant for all
-	// non-json/yaml/junit/csv reports (for now)
-	UsePager    bool
-	Pager       string
 	Format      Format
 	Printer     *printer.Printer
 	Colors      *colors.Theme
@@ -74,11 +70,9 @@ func (r *Reporter) Print(data *policy.ReportCollection, out io.Writer) error {
 		return rr.print()
 	case Report:
 		rr := &reportRenderer{
-			printer:  r.Printer,
-			pager:    r.Pager,
-			usePager: r.UsePager,
-			out:      out,
-			data:     data,
+			printer: r.Printer,
+			out:     out,
+			data:    data,
 		}
 		return rr.print()
 

@@ -27,15 +27,12 @@ const (
 type policyRenderer func(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, data []reportRow) string
 
 type reportRenderer struct {
-	printer  *printer.Printer
-	pager    string
-	usePager bool
-	out      io.Writer
-	data     *policy.ReportCollection
+	printer *printer.Printer
+	out     io.Writer
+	data    *policy.ReportCollection
 }
 
 func (r *reportRenderer) print() error {
-	// TODO: render to a buffer and print later, to enable pager printing
 	// TODO: sort assets by reverse score
 
 	var res bytes.Buffer
