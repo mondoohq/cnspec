@@ -71,7 +71,7 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 
 		codeBundle := resolvedPolicy.GetCodeBundle(query)
 		if codeBundle == nil {
-			res.WriteString(NewLineCharacter + print.Error("failed to find code bundle for query '"+qid+"' in bundle"))
+			// this happens if the query was not executed because the target does not match
 			continue
 		}
 
@@ -83,7 +83,8 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 		res.WriteString(NewLineCharacter)
 		queryString := print.Disabled(query.Query)
 		queryString = strings.ReplaceAll(queryString, "\n", NewLineCharacter)
-		writeQueryCompact(res, "  Query: ", queryString)
+		res.WriteString("  Query: ")
+		writeQueryCompact(res, queryString)
 
 		// print data results
 		// copy all contents where we have labels
@@ -99,19 +100,18 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 
 		result := print.Results(codeBundle, filteredResults)
 		result = strings.ReplaceAll(result, "\n", NewLineCharacter)
-		writeQueryCompact(res, "  Result:", result)
-
+		res.WriteString("  Result:")
+		writeQueryCompact(res, result)
 		res.WriteString(NewLineCharacter)
 	}
 }
 
 // if we have a multi-line query, place the query in newline
-func writeQueryCompact(res *bytes.Buffer, title string, value string) {
-	res.WriteString(title)
+func writeQueryCompact(res *bytes.Buffer, value string) {
 	if strings.Contains(value, "\n") {
 		res.WriteString(NewLineCharacter)
-		valueString := strings.ReplaceAll(value, "\n", NewLineCharacter)
-		res.WriteString(valueString)
+		rowValue := strings.ReplaceAll(stringx.Indent(4, value), "\n", NewLineCharacter)
+		res.WriteString(rowValue)
 	} else {
 		res.WriteString(value)
 		res.WriteString(NewLineCharacter)
@@ -214,7 +214,8 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 			continue
 		}
 
-		writeQueryCompact(res, "  Query:  ", print.Disabled(row.Query.Query))
+		res.WriteString("  Query:  ")
+		writeQueryCompact(res, print.Disabled(row.Query.Query))
 
 		// print error if we got one
 		errorMsg := row.Score.MessageLine()
@@ -249,7 +250,8 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 
 					filteredResults := codeBundle.FilterResults(results)
 					result := print.Results(codeBundle, filteredResults)
-					writeQueryCompact(res, "  Result: ", result)
+					res.WriteString("  Result: ")
+					writeQueryCompact(res, result)
 
 				}
 			}
