@@ -27,6 +27,11 @@ func (s SortResults) Less(i, j int) bool {
 }
 
 func (r *Results) ToCli() []byte {
+	// lets not render the result table if no findings are present
+	if r == nil || len(r.Entries) == 0 {
+		return []byte{}
+	}
+
 	sort.Sort(SortResults(r.Entries))
 
 	// render platform advisories
