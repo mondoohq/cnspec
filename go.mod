@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.3
-	go.mondoo.com/cnquery v0.0.0-20230611212207-ad47ada19cc1
+	go.mondoo.com/cnquery v0.0.0-20230612202249-40fa4a3af1cc
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.15.1
 	golang.org/x/sync v0.1.0 // indirect
@@ -81,7 +81,7 @@ require (
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/nunnatsa/ginkgolinter v0.9.0 // indirect
 	github.com/oracle/oci-go-sdk/v65 v65.39.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.15 // indirect
+	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/sethvargo/go-retry v0.2.3 // indirect
 	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/t-yuki/gocover-cobertura v0.0.0-20180217150009-aaee18c8195c // indirect
