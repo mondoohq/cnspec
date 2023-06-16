@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	isatty "github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -31,7 +30,6 @@ import (
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
-	cnspec_components "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
@@ -341,7 +339,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// output rendering
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
-		cmd.Flags().Bool("share-report", false, "Overrides the prompt to share web-based reports when cnspec is unauthenticated. Defaults to true.")
+		cmd.Flags().Bool("share-report", false, "create sharable web-based reports when cnspec is unauthenticated. Defaults to false.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping
@@ -397,21 +395,28 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		printReports(report, conf, cmd)
 
 		// handle report sharing
-		var shareReport *bool
+		var shareReport bool
 
 		if viper.IsSet("share-report") {
 			shareReportFlag := viper.GetBool("share-report")
-			shareReport = &shareReportFlag
+			shareReport = shareReportFlag
 		}
 
-		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
-		if shareReport == nil && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
-			response := cnspec_components.AskAYesNoQuestion("Do you want to view or share these scan results in a browser using Mondoo's reporting service?")
-			shareReport = &response
+		otherReportOptionsMsg := ""
+		if conf.Output == "compact" {
+			otherReportOptionsMsg += "For detailed CLI output, use `--output full`. "
+		}
+
+		if conf.IsIncognito && shareReport == false {
+			otherReportOptionsMsg += "To share the report with others use the `--share-report`. "
+		}
+
+		if otherReportOptionsMsg != "" {
+			log.Info().Msg(otherReportOptionsMsg)
 		}
 
 		// if report sharing was requested, share the report and print the URL
-		if conf.IsIncognito && shareReport != nil && *shareReport == true {
+		if conf.IsIncognito && shareReport == true {
 			proxy, err := cnquery_config.GetAPIProxy()
 			if err != nil {
 				log.Error().Err(err).Msg("error getting proxy information")
