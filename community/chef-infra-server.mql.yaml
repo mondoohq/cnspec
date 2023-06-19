@@ -1,7 +1,7 @@
 policies:
   - uid: chef-infra-server
     name: Chef Infra Server Policy
-    version: 1.0.0
+    version: 1.1.0
     license: MPL-2.0
     tags:
       mondoo.com/category: security
@@ -14,7 +14,7 @@ policies:
     groups:
       - filters: |
           platform.family.contains(_ == 'linux')
-          file("/opt/opscode/").exists
+          file("/opt/opscode").exists
         checks:
           - uid: chef-server-rb-permissions
           - uid: disable-insecure-addon-compat
@@ -28,6 +28,7 @@ policies:
           - uid: secrets-file-permissions
           - uid: secure-tls-only
           - uid: webui-pem-permissions
+          - uid: remediate-cve-2023-28864
 queries:
   - uid: etc-opscode-directory-permissions
     title: Ensure /etc/opscode/ is owned by root:root with 755 permissions
@@ -114,18 +115,20 @@ queries:
     title: Ensure /etc/opscode/webui_priv.pem is owned by opscode:root with 600 permissions
     impact: 100
     mql: |
-      file("/etc/opscode/webui_priv.pem") {
-        user.name == 'opscode'
-        group.name == 'root'
-        permissions.user_readable == true
-        permissions.user_writeable == true
-        permissions.user_executable == false
-        permissions.group_readable == false
-        permissions.group_writeable == false
-        permissions.group_executable == false
-        permissions.other_readable == false
-        permissions.other_writeable == false
-        permissions.other_executable == false
+      if (file("/etc/opscode/webui_priv.pem").exists) {
+        file("/etc/opscode/webui_priv.pem") {
+          user.name == 'opscode'
+          group.name == 'root'
+          permissions.user_readable == true
+          permissions.user_writeable == true
+          permissions.user_executable == false
+          permissions.group_readable == false
+          permissions.group_writeable == false
+          permissions.group_executable == false
+          permissions.other_readable == false
+          permissions.other_writeable == false
+          permissions.other_executable == false
+        }
       }
     docs:
       desc: |
@@ -219,3 +222,35 @@ queries:
     docs:
       desc: Chef Infra Server provides backwards compatibility for legacy Infra Server add-ons that require less secure secrets storage. All currently supported add-ons currently support secure secrets management.
       remediation: Upgrade to Chef Manage 2.5+ and set `insecure_addon_compat false` in the `chef-server.rb` config.
+  - uid: remediate-cve-2023-28864
+    title: Remediate against CVE-2023-28864
+    impact: 100
+    mql: |
+      file("/var/opt/opscode/local-mode-cache/backup") {
+        user.name == 'root'
+        group.name == 'root'
+        permissions.user_readable == true
+        permissions.user_writeable == true
+        permissions.group_readable == false
+        permissions.group_writeable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+      }
+    docs:
+      desc: | 
+        Remediate against Chef Infra Server CVE-2023-28864 present in Chef Infra Server 12.0 - 15.6.2. This vulnerability allows a local attacker to exploit an insecure temporary backup path to access information that would otherwise be restricted, resulting in the disclosure of all indexed node data on the server.
+
+        If a Chef Infra Server admin runs `chef-server-ctl reconfigure` to change any setting in their server, Chef Infra Client is executed to make the change on disk. This execution of Chef Infra Client makes backups of configuration files that were updated as part of the configuration update. These backups are stored in a world-readable directory, retaining the original file permissions from their original, pre-backup, path. Chef Infra Server relies on parent directory permissions to secure the Erchef configuration file, which has 644 file permissions. When backed up, this file can be read by any user in the insecure backup directory.
+
+        The Erchef configuration file contains the credentials for the embedded Elasticsearch or OpenSearch servers used by Chef Infra Server to store information on all nodes under management. This data includes information on servers such as local users/groups, IP addresses, installed packages, running processes, and cloud metadata such as roles.
+      remediation: |
+         Use secure permissions on the configuration backup path `/var/opt/opscode/local-mode-cache/backup` to secure the server against local attacks.
+
+         ```bash
+         sudo chmod 700 /var/opt/opscode/local-mode-cache/backup
+         ```
+
+         Note: Chef Infra Server 15.7 and later automatically set the configuration backup path to `600` permissions on each `chef-server-ctl` execution.
+    refs:
+      - url: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-28864
+        title: CVE-2023-28864
