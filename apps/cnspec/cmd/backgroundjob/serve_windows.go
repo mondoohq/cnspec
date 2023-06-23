@@ -42,9 +42,10 @@ type windowsService struct {
 func (m *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
-	initTick := time.Tick(1 * time.Second)
-	defaulttick := time.Tick(m.Timer)
-	tick := initTick
+
+	t := time.NewTimer(time.Duration(rand.Int63n(int64(time.Minute))))
+	defer t.Stop()
+
 	log.Info().Msg("schedule background scan")
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
@@ -68,15 +69,15 @@ func (m *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, chan
 loop:
 	for {
 		select {
-		case <-tick:
-			if tick == initTick {
-				tick = defaulttick
-			}
+		case <-t.C:
 			select {
 			case runChan <- struct{}{}:
 			default:
 				log.Error().Msg("scan not started. may be stuck")
 			}
+			nextRun := timer + time.Duration(rand.Int63n(int64(splay)))
+			log.Info().Msgf("next scan in %v", nextRun)
+			t.Reset(nextRun)
 		case c := <-r:
 			switch c.Cmd {
 			case svc.Interrogate:

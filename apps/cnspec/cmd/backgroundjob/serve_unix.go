@@ -4,6 +4,7 @@
 package backgroundjob
 
 import (
+	"math/rand"
 	"os"
 	"os/signal"
 	"sync"
@@ -13,9 +14,9 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func Serve(timer time.Duration, handler JobRunner) {
+func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 	log.Info().Msg("start cnspec background service")
-	log.Info().Msgf("scan interval is %d minute(s)", int(timer.Minutes()))
+	log.Info().Msgf("scan interval is %d minute(s) with a splay of %d minutes(s)", int(timer.Minutes()), int(splay.Minutes()))
 
 	quitChannel := make(chan os.Signal)
 	signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)
@@ -23,9 +24,9 @@ func Serve(timer time.Duration, handler JobRunner) {
 	shutdownChannel := make(chan struct{})
 	waitGroup := &sync.WaitGroup{}
 
-	initTick := time.Tick(1 * time.Second)
-	defaultTick := time.Tick(timer)
-	tick := initTick
+	t := time.NewTimer(time.Duration(rand.Int63n(int64(time.Minute))))
+	defer t.Stop()
+
 	waitGroup.Add(1)
 
 	go func(shutdownChannel chan struct{}, wg *sync.WaitGroup) {
@@ -40,14 +41,14 @@ func Serve(timer time.Duration, handler JobRunner) {
 			}
 
 			select {
-			case <-tick:
-				if tick == initTick {
-					tick = defaultTick
-				}
+			case <-t.C:
 				err := handler()
 				if err != nil {
 					log.Error().Err(err).Send()
 				}
+				nextRun := timer + time.Duration(rand.Int63n(int64(splay)))
+				log.Info().Msgf("next scan in %v", nextRun)
+				t.Reset(nextRun)
 			case <-shutdownChannel:
 				log.Info().Msg("stop worker")
 				return

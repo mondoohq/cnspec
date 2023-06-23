@@ -20,6 +20,9 @@ func New() (*BackgroundScanner, error) {
 type BackgroundScanner struct{}
 
 func (bs *BackgroundScanner) Run(runScanFn JobRunner) error {
-	Serve(time.Duration(viper.GetInt64("timer"))*time.Minute, runScanFn)
+	Serve(
+		time.Duration(viper.GetInt64("timer"))*time.Minute,
+		time.Duration(viper.GetInt64("splay"))*time.Minute,
+		runScanFn)
 	return nil
 }
