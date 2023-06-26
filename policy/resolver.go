@@ -576,6 +576,16 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 			Str("bundle", bundleMrn).
 			Msg("resolver> phase 5: internal error, trying to attach controls to resolved policy [ok]")
 	}
+
+	for _, rj := range collectorJob.ReportingJobs {
+		if rj.Type == ReportingJob_FRAMEWORK && len(rj.Notify) == 0 {
+			rj.Notify = append(rj.Notify, reportingJob.Uuid)
+			reportingJob.ChildJobs[rj.Uuid] = &explorer.Impact{
+				Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+			}
+		}
+	}
+
 	logCtx.Debug().
 		Str("bundle", bundleMrn).
 		Msg("resolver> phase 5: resolve controls [ok]")

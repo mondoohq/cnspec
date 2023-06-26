@@ -24,6 +24,8 @@ type ResolvedFramework struct {
 	// E.g. ReportSources[controlA] = [check123, check45]
 	// E.g. ReportSources[frameworkX] = [controlA, ...]
 	ReportSources map[string][]string
+
+	Frameworks map[string]*Framework
 }
 
 // Compile takes a framework and prepares it to be stored and further
@@ -406,6 +408,7 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 		Mrn:           mrn,
 		ReportTargets: map[string][]string{},
 		ReportSources: map[string][]string{},
+		Frameworks:    map[string]*Framework{},
 	}
 
 	for _, framework := range frameworks {
