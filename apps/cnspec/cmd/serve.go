@@ -36,7 +36,9 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 	// background scan flags
 	serveCmd.Flags().Int("timer", 60, "scan interval in minutes")
+	serveCmd.Flags().Int("splay", 60, "randomize the timer by up to this many minutes")
 	serveCmd.Flags().MarkHidden("timer")
+	serveCmd.Flags().MarkHidden("splay")
 	// set inventory
 	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 }
@@ -47,6 +49,7 @@ var serveCmd = &cobra.Command{
 
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("timer", cmd.Flags().Lookup("timer"))
+		viper.BindPFlag("splay", cmd.Flags().Lookup("splay"))
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
