@@ -25,8 +25,8 @@ const (
 	MRN_RESOURCE_QUERY        = "queries"
 	MRN_RESOURCE_POLICY       = "policies"
 	MRN_RESOURCE_ASSET        = "assets"
-	MRN_RESOURCE_FRAMEWORK    = "framework"
-	MRN_RESOURCE_FRAMEWORKMAP = "frameworkmap"
+	MRN_RESOURCE_FRAMEWORK    = "frameworks"
+	MRN_RESOURCE_FRAMEWORKMAP = "frameworkmaps"
 	MRN_RESOURCE_CONTROL      = "controls"
 )
 
