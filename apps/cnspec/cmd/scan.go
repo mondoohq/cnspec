@@ -340,6 +340,8 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
 		cmd.Flags().Bool("share-report", false, "create sharable web-based reports when cnspec is unauthenticated. Defaults to false.")
+		cmd.Flags().MarkHidden("share-report")
+		cmd.Flags().Bool("share", false, "create sharable web-based reports when cnspec is unauthenticated. Defaults to false.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping
@@ -361,7 +363,10 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+
+		// share-report is deprecated in favor of share
 		viper.BindPFlag("share-report", cmd.Flags().Lookup("share-report"))
+		viper.BindPFlag("share", cmd.Flags().Lookup("share"))
 	},
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// Special handling for users that want to see what output options are
@@ -397,8 +402,8 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// handle report sharing
 		var shareReport bool
 
-		if viper.IsSet("share-report") {
-			shareReportFlag := viper.GetBool("share-report")
+		if viper.IsSet("share-report") || viper.IsSet("share") {
+			shareReportFlag := viper.GetBool("share-report") || viper.GetBool("share")
 			shareReport = shareReportFlag
 		}
 
@@ -408,7 +413,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 
 		if conf.IsIncognito && shareReport == false {
-			otherReportOptionsMsg += "To share the report with others use the `--share-report`. "
+			otherReportOptionsMsg += "To share the report with others use the `--share`. "
 		}
 
 		if otherReportOptionsMsg != "" {
@@ -596,12 +601,12 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		log.Info().Msg("enable recording of platform calls")
 	}
 
-	if opts.ShareReport != nil && !viper.IsSet("share-report") {
+	if opts.ShareReport != nil && (!viper.IsSet("share-report") && !viper.IsSet("share")) {
 		flagValue := "false"
 		if *opts.ShareReport {
 			flagValue = "true"
 		}
-		cmd.Flags().Set("share-report", flagValue)
+		cmd.Flags().Set("share", flagValue)
 	}
 
 	return &conf, nil
