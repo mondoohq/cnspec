@@ -339,9 +339,9 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// output rendering
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
-		cmd.Flags().Bool("share-report", false, "create sharable web-based reports when cnspec is unauthenticated. Defaults to false.")
+		cmd.Flags().Bool("share-report", false, "create a web-based private report when cnspec is unauthenticated. Defaults to false.")
 		cmd.Flags().MarkHidden("share-report")
-		cmd.Flags().Bool("share", false, "create sharable web-based reports when cnspec is unauthenticated. Defaults to false.")
+		cmd.Flags().Bool("share", false, "create a web-based private reports when cnspec is unauthenticated. Defaults to false.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping
@@ -413,7 +413,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 
 		if conf.IsIncognito && shareReport == false {
-			otherReportOptionsMsg += "To share the report with others use the `--share`. "
+			otherReportOptionsMsg += "To generate a private web-based report use `--share`. "
 		}
 
 		if otherReportOptionsMsg != "" {
