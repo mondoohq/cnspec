@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	isatty "github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -31,7 +30,6 @@ import (
 	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
-	cnspec_components "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
@@ -341,7 +339,9 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		// output rendering
 		cmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 		cmd.Flags().BoolP("json", "j", false, "Set output to JSON (shorthand).")
-		cmd.Flags().Bool("share-report", false, "Overrides the prompt to share web-based reports when cnspec is unauthenticated. Defaults to true.")
+		cmd.Flags().Bool("share-report", false, "create a web-based private report when cnspec is unauthenticated. Defaults to false.")
+		cmd.Flags().MarkHidden("share-report")
+		cmd.Flags().Bool("share", false, "create a web-based private reports when cnspec is unauthenticated. Defaults to false.")
 	},
 	CommonPreRun: func(cmd *cobra.Command, args []string) {
 		// multiple assets mapping
@@ -363,7 +363,10 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+
+		// share-report is deprecated in favor of share
 		viper.BindPFlag("share-report", cmd.Flags().Lookup("share-report"))
+		viper.BindPFlag("share", cmd.Flags().Lookup("share"))
 	},
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// Special handling for users that want to see what output options are
@@ -397,21 +400,28 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		printReports(report, conf, cmd)
 
 		// handle report sharing
-		var shareReport *bool
+		var shareReport bool
 
-		if viper.IsSet("share-report") {
-			shareReportFlag := viper.GetBool("share-report")
-			shareReport = &shareReportFlag
+		if viper.IsSet("share-report") || viper.IsSet("share") {
+			shareReportFlag := viper.GetBool("share-report") || viper.GetBool("share")
+			shareReport = shareReportFlag
 		}
 
-		// if we are in an interactive terminal, running in incognito mode, and user responds "yes" then offer report viewer
-		if shareReport == nil && isatty.IsTerminal(os.Stdout.Fd()) && conf.IsIncognito {
-			response := cnspec_components.AskAYesNoQuestion("Do you want to view or share these scan results in a browser using Mondoo's reporting service?")
-			shareReport = &response
+		otherReportOptionsMsg := ""
+		if conf.Output == "compact" {
+			otherReportOptionsMsg += "For detailed CLI output, use `--output full`. "
+		}
+
+		if conf.IsIncognito && shareReport == false {
+			otherReportOptionsMsg += "To create a web-based report with a private URL using Mondoo's reporting service, use `--share`."
+		}
+
+		if otherReportOptionsMsg != "" {
+			log.Info().Msg(otherReportOptionsMsg)
 		}
 
 		// if report sharing was requested, share the report and print the URL
-		if conf.IsIncognito && shareReport != nil && *shareReport == true {
+		if conf.IsIncognito && shareReport == true {
 			proxy, err := cnquery_config.GetAPIProxy()
 			if err != nil {
 				log.Error().Err(err).Msg("error getting proxy information")
@@ -591,12 +601,12 @@ func getCobraScanConfig(cmd *cobra.Command, args []string, provider providers.Pr
 		log.Info().Msg("enable recording of platform calls")
 	}
 
-	if opts.ShareReport != nil && !viper.IsSet("share-report") {
+	if opts.ShareReport != nil && (!viper.IsSet("share-report") && !viper.IsSet("share")) {
 		flagValue := "false"
 		if *opts.ShareReport {
 			flagValue = "true"
 		}
-		cmd.Flags().Set("share-report", flagValue)
+		cmd.Flags().Set("share", flagValue)
 	}
 
 	return &conf, nil
