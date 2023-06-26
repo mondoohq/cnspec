@@ -413,7 +413,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		}
 
 		if conf.IsIncognito && shareReport == false {
-			otherReportOptionsMsg += "To generate a private web-based report use `--share`. "
+			otherReportOptionsMsg += "To create a web-based report with a private URL using Mondoo's reporting service, use `--share`."
 		}
 
 		if otherReportOptionsMsg != "" {
