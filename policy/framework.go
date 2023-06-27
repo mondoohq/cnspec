@@ -24,8 +24,6 @@ type ResolvedFramework struct {
 	// E.g. ReportSources[controlA] = [check123, check45]
 	// E.g. ReportSources[frameworkX] = [controlA, ...]
 	ReportSources map[string][]string
-
-	Frameworks map[string]*Framework
 }
 
 // Compile takes a framework and prepares it to be stored and further
@@ -408,18 +406,20 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 		Mrn:           mrn,
 		ReportTargets: map[string][]string{},
 		ReportSources: map[string][]string{},
-		Frameworks:    map[string]*Framework{},
 	}
 
 	for _, framework := range frameworks {
 		for i := range framework.FrameworkMaps {
 			fmap := framework.FrameworkMaps[i]
 
-			for j := range fmap.Controls {
-				ctl := fmap.Controls[j]
+			for _, ctl := range fmap.Controls {
 				res.addReportLink(framework.Mrn, ctl.Mrn)
 				res.addControl(ctl)
 			}
+		}
+		// FIXME: why do these not show up in the framework map
+		for _, depFramework := range framework.Dependencies {
+			res.addReportLink(framework.Mrn, depFramework.Mrn)
 		}
 	}
 

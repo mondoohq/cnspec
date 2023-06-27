@@ -567,23 +567,25 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Str("policy", bundleMrn).
 		Msg("resolver> phase 4: aggregate queries and jobs [ok]")
 
-	// phase 5: add controls
+	// phase 5: add frameworks and controls
 	resolvedFramework := ResolveFramework(bundleMrn, bundleMap.Frameworks)
+	cacheFrameworkJobs := &frameworkResolverCache{
+		resolverCache:      cache,
+		frameworkJobsByMrn: make(map[string]*ReportingJob),
+	}
+	if err := s.jobsToFrameworks(cacheFrameworkJobs, resolvedFramework, collectorJob, bundleMrn, reportingJob); err != nil {
+		logCtx.Error().Err(err).
+			Str("bundle", bundleMrn).
+			Msg("resolver> phase 5: internal error, trying to attach framework to resolved policy")
+		return nil, err
+	}
+
 	queries := bundleMap.QueryMap()
-	if err := s.jobsToControls(cache, resolvedFramework, collectorJob, queries); err != nil {
+	if err := s.jobsToControls(cacheFrameworkJobs, resolvedFramework, collectorJob, queries); err != nil {
 		logCtx.Error().
 			Err(err).
 			Str("bundle", bundleMrn).
 			Msg("resolver> phase 5: internal error, trying to attach controls to resolved policy [ok]")
-	}
-
-	for _, rj := range collectorJob.ReportingJobs {
-		if rj.Type == ReportingJob_FRAMEWORK && len(rj.Notify) == 0 {
-			rj.Notify = append(rj.Notify, reportingJob.Uuid)
-			reportingJob.ChildJobs[rj.Uuid] = &explorer.Impact{
-				Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-			}
-		}
 	}
 
 	logCtx.Debug().
@@ -1376,7 +1378,7 @@ func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, pro
 	return &res, dataChecksum, nil
 }
 
-func ensureControlJob(cache *resolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework) *ReportingJob {
+func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework) *ReportingJob {
 	uuid := cache.relativeChecksum(controlMrn)
 
 	if found, ok := jobs[uuid]; ok {
@@ -1396,16 +1398,9 @@ func ensureControlJob(cache *resolverCache, jobs map[string]*ReportingJob, contr
 	for _, parentMrn := range parents {
 		parentUuid := cache.relativeChecksum(parentMrn)
 
-		frameworkJob, ok := jobs[parentUuid]
+		frameworkJob, ok := cache.frameworkJobsByMrn[parentMrn]
 		if !ok {
-			frameworkJob = &ReportingJob{
-				Uuid:          parentUuid,
-				QrId:          parentMrn,
-				ChildJobs:     map[string]*explorer.Impact{},
-				ScoringSystem: explorer.ScoringSystem_WORST,
-				Type:          ReportingJob_FRAMEWORK,
-			}
-			jobs[parentUuid] = frameworkJob
+			continue
 		}
 
 		// FIXME: we need to take user exceptions into account!
@@ -1416,7 +1411,65 @@ func ensureControlJob(cache *resolverCache, jobs map[string]*ReportingJob, contr
 	return controlJob
 }
 
-func (s *LocalServices) jobsToControls(cache *resolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
+type frameworkResolverCache struct {
+	*resolverCache
+	frameworkJobsByMrn map[string]*ReportingJob
+}
+
+func (s *LocalServices) jobsToFrameworks(cache *frameworkResolverCache, resolvedFramework *ResolvedFramework, job *CollectorJob, frameworkMrn string, parent *ReportingJob) error {
+	for k, rj := range job.ReportingJobs {
+		if frameworkJob := cache.bundleMap.Frameworks[rj.QrId]; frameworkJob != nil {
+			cache.frameworkJobsByMrn[rj.QrId] = job.ReportingJobs[k]
+		}
+	}
+	return s.jobsToFrameworksInner(cache, resolvedFramework, job, frameworkMrn, parent)
+}
+
+func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, resolvedFramework *ResolvedFramework, job *CollectorJob, frameworkMrn string, parent *ReportingJob) error {
+	for _, source := range resolvedFramework.ReportSources[frameworkMrn] {
+		if childFramework, ok := cache.bundleMap.Frameworks[source]; ok {
+			var reportingJob *ReportingJob
+			if found, ok := cache.frameworkJobsByMrn[childFramework.Mrn]; ok {
+				// Look for an existing job. This will happen for asset and space frameworks.
+				// Creating a new job for these would likely cause confusion, as then we'd
+				// end up with multiple jobs with the same QrId
+				reportingJob = found
+			} else {
+				uuid := cache.relativeChecksum(childFramework.Mrn)
+				reportingJob = &ReportingJob{
+					Uuid:          uuid,
+					QrId:          childFramework.Mrn,
+					ChildJobs:     map[string]*explorer.Impact{},
+					ScoringSystem: explorer.ScoringSystem_WORST,
+					Type:          ReportingJob_FRAMEWORK,
+				}
+			}
+
+			if _, exist := parent.ChildJobs[reportingJob.Uuid]; !exist {
+				// If we already have a child job, we don't need to do anything
+				// In the case that its a space or asset, we defiently don't want to
+				// overwrite it as that would change the scoring system
+				impact := &explorer.Impact{}
+				if parent.Type == ReportingJob_FRAMEWORK {
+					impact.Scoring = explorer.ScoringSystem_WORST
+				} else {
+					impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
+				}
+				parent.ChildJobs[reportingJob.Uuid] = impact
+			}
+			reportingJob.Notify = append(reportingJob.Notify, parent.Uuid)
+			job.ReportingJobs[reportingJob.Uuid] = reportingJob
+			cache.frameworkJobsByMrn[childFramework.Mrn] = reportingJob
+			if err := s.jobsToFrameworksInner(cache, resolvedFramework, job, source, reportingJob); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
 	nuJobs := map[string]*ReportingJob{}
 
 	for _, rj := range job.ReportingJobs {
