@@ -4,6 +4,7 @@
 package backgroundjob
 
 import (
+	"math/rand"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -12,7 +13,7 @@ import (
 	"golang.org/x/sys/windows/svc/debug"
 )
 
-func Serve(timer time.Duration, handler JobRunner) {
+func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 	isIntSess, err := svc.IsAnInteractiveSession()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to determine if we are running in an interactive session")
@@ -27,15 +28,16 @@ func Serve(timer time.Duration, handler JobRunner) {
 		log.Logger = log.Output(w)
 
 		// run service
-		runService(false, timer, handler)
+		runService(false, timer, splay, handler)
 		return
 	}
-	runService(true, timer, handler)
+	runService(true, timer, splay, handler)
 }
 
 type windowsService struct {
 	Timer   time.Duration
 	Handler JobRunner
+	Splay   time.Duration
 }
 
 // NOTE: we do not support svc.AcceptPauseAndContinue yet, we may reconsider this later
@@ -75,7 +77,7 @@ loop:
 			default:
 				log.Error().Msg("scan not started. may be stuck")
 			}
-			nextRun := timer + time.Duration(rand.Int63n(int64(splay)))
+			nextRun := m.Timer + time.Duration(rand.Int63n(int64(m.Splay)))
 			log.Info().Msgf("next scan in %v", nextRun)
 			t.Reset(nextRun)
 		case c := <-r:
@@ -95,7 +97,7 @@ loop:
 	return
 }
 
-func runService(isDebug bool, timer time.Duration, handler JobRunner) {
+func runService(isDebug bool, timer time.Duration, splay time.Duration, handler JobRunner) {
 	var err error
 
 	log.Info().Msgf("starting %s service", SvcName)
@@ -106,6 +108,7 @@ func runService(isDebug bool, timer time.Duration, handler JobRunner) {
 	err = run(SvcName, &windowsService{
 		Handler: handler,
 		Timer:   timer,
+		Splay:   splay,
 	})
 	if err != nil {
 		log.Info().Msgf("%s service failed: %v", SvcName, err)
