@@ -48,7 +48,7 @@ func init() {
 
 var policyScanCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "scan",
-	Short: "Scan assets with one or more policies",
+	Short: "Scan assets with one or more policies.",
 	Long: `
 This command triggers a new policy scan for an asset. By default, cnspec scans the local
 system with its pre-configured policies:
@@ -156,7 +156,7 @@ You can also explicitly request the scan of an image or a container registry:
 			},
 			"container-registry": {
 				Short: "Scan a container registry.",
-				Long: `Scan a container registry. Supports more parameters for different registries:
+				Long: `Scan a container registry. This supports more parameters for different registries:
 
     cnspec scan container registry harbor.lunalectric.com/project/repository
     cnspec scan container registry yourname.azurecr.io

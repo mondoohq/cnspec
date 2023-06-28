@@ -45,7 +45,7 @@ func init() {
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Start cnspec in background mode",
+	Short: "Start cnspec in background mode.",
 
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("timer", cmd.Flags().Lookup("timer"))
