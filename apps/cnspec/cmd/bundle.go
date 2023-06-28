@@ -147,7 +147,7 @@ var policyFmtCmd = &cobra.Command{
 var policyPublishCmd = &cobra.Command{
 	Use:     "publish [path]",
 	Aliases: []string{"upload"},
-	Short:   "Add a user-owned policy to Mondoo Security Registry.",
+	Short:   "Add a user-owned policy to the Mondoo Security Registry.",
 	Args:    cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))

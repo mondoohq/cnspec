@@ -246,7 +246,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 				Short: "Connect to a mounted file system target.",
 			},
 			"opcua": {
-				Short: "Connect to a OPC UA endpoint.",
+				Short: "Connect to an OPC UA endpoint.",
 			},
 		},
 	},
