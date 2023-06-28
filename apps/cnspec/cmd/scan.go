@@ -120,7 +120,7 @@ Provide the recording with mock data as an argument:
 				Short: "Scan a Vagrant host.",
 			},
 			"terraform": {
-				Short: "Scan all Terraform files in a path (.tf files).",
+				Short: "Scan Terraform HCL (files.tf and directories), plan files (json), and state files (json).",
 			},
 			"ssh": {
 				Short: "Scan an SSH target.",
@@ -205,11 +205,13 @@ scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-volume": {
 				Short: "Scan a specific AWS volume using an EBS volume scan. This requires an AWS host.",
-				Long:  `Scan a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long: `Scan a specific AWS volume using an EBS volume scan. This requires that the
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-snapshot": {
 				Short: "Scan a specific AWS snapshot using an EBS volume scan. This requires an AWS host.",
-				Long:  `Scan a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long: `Scan a specific AWS snapshot using an EBS volume scan. This requires that the
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ssm": {
 				Short: "Scan an AWS instance using the AWS Systems Manager to connect.",
@@ -234,6 +236,12 @@ configure your Azure credentials and have SSH access to the virtual machines.`,
 			},
 			"gcp-gcr": {
 				Short: "Scan a Google Container Registry (GCR).",
+			},
+			"gcp-compute-instance": {
+				Short: "Scan a Google Cloud Platform (GCP) VM instance.",
+			},
+			"oci": {
+				Short: "Scan a Oracle Cloud Infrastructure (OCI) tenancy.",
 			},
 			"vsphere": {
 				Short: "Scan a VMware vSphere API endpoint.",
@@ -262,6 +270,9 @@ configure your Azure credentials and have SSH access to the virtual machines.`,
 			"github-repo": {
 				Short: "Scan a GitHub repository.",
 			},
+			"github-user": {
+				Short: "Scan a GitHub user.",
+			},
 			"gitlab": {
 				Short: "Scan a GitLab group.",
 			},
@@ -284,8 +295,11 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			"arista": {
 				Short: "Scan an Arista endpoint.",
 			},
-			"oci": {
-				Short: "Scan a Oracle Cloud Infrastructure (OCI) tenancy.",
+			"filesystem": {
+				Short: "Scan a mounted file system target.",
+			},
+			"opcua": {
+				Short: "Scan a OPC UA endpoint.",
 			},
 		},
 	},
