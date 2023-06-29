@@ -129,7 +129,7 @@ var policyLintCmd = &cobra.Command{
 var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
-	Short:   "Apply style formatting to a policy bundle.",
+	Short:   "Apply style formatting to one or more policy bundles.",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		for _, path := range args {
@@ -214,7 +214,7 @@ var policyPublishCmd = &cobra.Command{
 		}
 		queryHubServices, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
 		if err != nil {
-			log.Fatal().Err(err).Msg("could not connect to Security Registry")
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
 		}
 
 		// set the owner mrn for spaces
