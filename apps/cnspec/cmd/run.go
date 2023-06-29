@@ -89,7 +89,7 @@ var execCmd = builder.NewProviderCommand(builder.CommandOpts{
 				Short: "Run an MQL query against a Microsoft Azure subscription or virtual machine.",
 			},
 			"gcp": {
-				Short: "Run an MQL query against a Google Cloud Platform (GCP) organization, project or folder.",
+				Short: "Run an MQL query against a Google Cloud Platform (GCP) organization, project, or folder.",
 			},
 			"gcp-org": {
 				Short: "Run an MQL query against a Google Cloud Platform (GCP) organization.",
