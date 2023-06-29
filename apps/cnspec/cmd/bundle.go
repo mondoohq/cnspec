@@ -45,7 +45,7 @@ func init() {
 
 var policyBundlesCmd = &cobra.Command{
 	Use:   "bundle",
-	Short: "Manage policy bundles",
+	Short: "Manage policy bundles.",
 }
 
 //go:embed policy-example.mql.yaml
@@ -77,7 +77,7 @@ var policyInitCmd = &cobra.Command{
 var policyLintCmd = &cobra.Command{
 	Use:     "lint [path]",
 	Aliases: []string{"validate"},
-	Short:   "Lint a policy bundle",
+	Short:   "Lint a policy bundle.",
 	Args:    cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
@@ -129,7 +129,7 @@ var policyLintCmd = &cobra.Command{
 var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
-	Short:   "Apply style formatting to policy bundles.",
+	Short:   "Apply style formatting to one or more policy bundles.",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		for _, path := range args {
@@ -147,7 +147,7 @@ var policyFmtCmd = &cobra.Command{
 var policyPublishCmd = &cobra.Command{
 	Use:     "publish [path]",
 	Aliases: []string{"upload"},
-	Short:   "Add a user-owned policy to Mondoo Query Hub.",
+	Short:   "Add a user-owned policy to the Mondoo Security Registry.",
 	Args:    cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
@@ -199,7 +199,7 @@ var policyPublishCmd = &cobra.Command{
 
 		serviceAccount := opts.GetServiceCredential()
 		if serviceAccount == nil {
-			log.Fatal().Msg("cnquery has no credentials. Log in with `cnquery login`")
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
 		}
 
 		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
@@ -214,7 +214,7 @@ var policyPublishCmd = &cobra.Command{
 		}
 		queryHubServices, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
 		if err != nil {
-			log.Fatal().Err(err).Msg("could not connect to policy hub")
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
 		}
 
 		// set the owner mrn for spaces

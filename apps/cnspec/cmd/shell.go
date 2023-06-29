@@ -19,18 +19,18 @@ func init() {
 
 var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 	Use:   "shell",
-	Short: "Interactive query shell for MQL",
-	Long:  `Run the interactive shell so you can explore MQL queries.`,
+	Short: "Interactive query shell for MQL.",
+	Long:  `Run an interactive shell in which you can explore MQL queries.`,
 	CommonFlags: func(cmd *cobra.Command) {
 		cmd.Flags().StringP("password", "p", "", "Set the connection password, such as for SSH/WinRM.")
-		cmd.Flags().Bool("ask-pass", false, "Prompt for connection password")
+		cmd.Flags().Bool("ask-pass", false, "Prompt for connection password.")
 
-		cmd.Flags().StringP("command", "c", "", "MQL query to execute in the shell")
+		cmd.Flags().StringP("command", "c", "", "MQL query to execute in the shell.")
 		cmd.Flags().StringP("identity-file", "i", "", "Select a file from which to read the identity (private key) for public key authentication.")
 		cmd.Flags().Bool("insecure", false, "Disable TLS/SSL checks or SSH hostkey config.")
 		cmd.Flags().Bool("sudo", false, "Elevate privileges with sudo.")
-		cmd.Flags().String("platform-id", "", "Select an specific target asset by providing its platform ID.")
-		cmd.Flags().Bool("instances", false, "Also scan instances. This only applies to API targets like AWS, Azure or GCP.")
+		cmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
+		cmd.Flags().Bool("instances", false, "Also scan instances. This only applies to API targets like AWS, Azure, or GCP.")
 		cmd.Flags().Bool("host-machines", false, "Also scan host machines like ESXi server.")
 		cmd.Flags().Bool("record", false, "Record all backend calls.")
 		cmd.Flags().MarkHidden("record")
@@ -62,7 +62,7 @@ var shellCmd = builder.NewProviderCommand(builder.CommandOpts{
 				Short: "Connect to your local system.",
 			},
 			"mock": {
-				Short: "Connect to mock target (a simulated asset)",
+				Short: "Connect to mock target (a simulated asset).",
 				Long: `Connect to a mock target. This connects to a simulated asset. We recorded the asset's data beforehand.
 Provide the recording with mock data as an argument:
 
@@ -74,7 +74,7 @@ Provide the recording with mock data as an argument:
 				Short: "Connect to a Vagrant host.",
 			},
 			"terraform": {
-				Short: "Connect to all Terraform files in a path (.tf files).",
+				Short: "Connect to Terraform HCL (files.tf and directories), plan files (json), and state files (json).",
 			},
 			"ssh": {
 				Short: "Connect to an SSH target.",
@@ -84,8 +84,9 @@ Provide the recording with mock data as an argument:
 			},
 			"container": {
 				Short: "Connect to a container, image, or registry.",
-				Long: `Connect to a container, container image, or container registry. By default cnspec tries to auto-detect the container or image from the provided ID, even
-				if it's not the full ID:
+				Long: `Connect to a container, container image, or container registry. By default
+we try to auto-detect the container or image from the provided ID, even
+if it's not the full ID:
 
     cnspec shell container b62b276baab6
     cnspec shell container b62
@@ -102,7 +103,7 @@ You can also explicitly connect to an image or a container registry:
 			},
 			"container-registry": {
 				Short: "Connect to a container registry.",
-				Long: `Connect to a container registry. Supports more parameters for different registries:
+				Long: `Connect to a container registry. This supports more parameters for different registries:
 
     cnspec shell container registry harbor.lunalectric.com/project/repository
     cnspec shell container registry yourname.azurecr.io
@@ -121,22 +122,22 @@ You can also specify a subcommand to narrow the scan to containers or images.
 `,
 			},
 			"docker-container": {
-				Short: "Connect to a Docker container",
+				Short: "Connect to a Docker container.",
 				Long: `Connect to a Docker container. You can specify the container ID (such as b62b276baab6)
-				or container name (such as elated_poincare).`,
+or container name (such as elated_poincare).`,
 			},
 			"docker-image": {
 				Short: "Connect to a Docker image.",
 				Long: `Connect to a Docker image. You can specify the image ID (such as b6f507652425)
-				or the image name (such as ubuntu:latest).`,
+or the image name (such as ubuntu:latest).`,
 			},
 			"kubernetes": {
 				Short: "Connect to a Kubernetes cluster or local manifest files(s).",
 			},
 			"aws": {
 				Short: "Connect to an AWS account or instance.",
-				Long: `Connect to an AWS account or EC2 instance. cnspec uses your local AWS configuration
-				for the account scan. See the subcommands to scan EC2 instances.`,
+				Long: `Connect to an AWS account or EC2 instance. This uses your local AWS configuration
+for the account scan. See the subcommands to scan EC2 instances.`,
 			},
 			"aws-ec2": {
 				Short: "Connect to an AWS instance using one of the available connectors.",
@@ -146,30 +147,45 @@ You can also specify a subcommand to narrow the scan to containers or images.
 			},
 			"aws-ec2-ebs-instance": {
 				Short: "Connect to an AWS instance using an EBS volume scan. This requires an AWS host.",
-				Long:  `Connect to an AWS instance using an EBS volume scan. using an EBS volume scan. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long: `Connect to an AWS instance using an EBS volume scan. This requires that the
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-volume": {
 				Short: "Connect to a specific AWS volume using an EBS volume scan. This requires an AWS host.",
-				Long:  `Connect to a specific AWS volume using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long: `Connect to a specific AWS volume using an EBS volume scan. This requires that the
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ebs-snapshot": {
 				Short: "Connect to a specific AWS snapshot using an EBS volume scan. This requires an AWS host.",
-				Long:  `Connect a specific AWS snapshot using the EBS volume scan capability. This requires that the scan execute on an instance that is running inside of AWS.`,
+				Long: `Connect to a specific AWS snapshot using an EBS volume scan. This requires that the
+scan execute on an instance that is running inside of AWS.`,
 			},
 			"aws-ec2-ssm": {
-				Short: "Connect to an AWS instance using the AWS Systems Manager.",
+				Short: "Connect to an AWS instance using the AWS Systems Manager to connect.",
 			},
 			"azure": {
 				Short: "Connect to a Microsoft Azure subscription or virtual machines.",
-				Long: `Connect to a Microsoft Azure subscriptions or virtual machines. cnspec uses your local Azure
-				configuration for the account scan. To connect to Azure virtual machines, you must
-				configure your Azure credentials and have SSH access to the virtual machines.`,
+				Long: `Connect to a Microsoft Azure subscriptions or virtual machines. This uses your local Azure
+configuration for the account scan. To connect to Azure virtual machines, you must
+configure your Azure credentials and have SSH access to the virtual machines.`,
 			},
 			"gcp": {
 				Short: "Connect to a Google Cloud Platform (GCP) project.",
 			},
+			"gcp-org": {
+				Short: "Connect to a Google Cloud Platform (GCP) organization.",
+			},
+			"gcp-project": {
+				Short: "Connect to a Google Cloud Platform (GCP) project.",
+			},
+			"gcp-folder": {
+				Short: "Connect to a Google Cloud Platform (GCP) folder.",
+			},
 			"gcp-gcr": {
 				Short: "Connect to a Google Container Registry (GCR).",
+			},
+			"gcp-compute-instance": {
+				Short: "Connect to a Google Cloud Platform (GCP) VM instance.",
 			},
 			"vsphere": {
 				Short: "Connect to a VMware vSphere API endpoint.",
@@ -198,6 +214,9 @@ You can also specify a subcommand to narrow the scan to containers or images.
 			"github-repo": {
 				Short: "Connect to a GitHub repository.",
 			},
+			"github-user": {
+				Short: "Connect to a GitHub user.",
+			},
 			"gitlab": {
 				Short: "Connect to a GitLab group.",
 			},
@@ -222,6 +241,12 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 			},
 			"oci": {
 				Short: "Connect to Oracle Cloud Infrastructure (OCI) tenancy.",
+			},
+			"filesystem": {
+				Short: "Connect to a mounted file system target.",
+			},
+			"opcua": {
+				Short: "Connect to an OPC UA endpoint.",
 			},
 		},
 	},

@@ -23,10 +23,10 @@ func init() {
 var logoutCmd = &cobra.Command{
 	Use:     "logout",
 	Aliases: []string{"unregister"},
-	Short:   "Log out from Mondoo Platform",
+	Short:   "Log out from Mondoo Platform.",
 	Long: `
-This process also initiates a revocation of the client's service account to ensure
-the credentials cannot be used in future anymore.
+This process also revokes the Mondoo Platform service account to 
+ensure the credentials cannot be used in the future.
 `,
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("force", cmd.Flags().Lookup("force"))
@@ -121,6 +121,6 @@ the credentials cannot be used in future anymore.
 			}
 		}
 
-		log.Info().Msgf("Bye bye space cowboy, client %s unregistered successfully", credentials.Mrn)
+		log.Info().Msgf("Bye bye, space cat. Client %s unregistered successfully", credentials.Mrn)
 	},
 }
