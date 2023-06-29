@@ -107,7 +107,7 @@ var execCmd = builder.NewProviderCommand(builder.CommandOpts{
 				Short: "Run an MQL query against a Google Cloud Platform (GCP) VM instance.",
 			},
 			"oci": {
-				Short: "Run an MQL query against a Oracle Cloud Infrastructure (OCI) tenancy.",
+				Short: "Run an MQL query against an Oracle Cloud Infrastructure (OCI) tenancy.",
 			},
 			"vsphere": {
 				Short: "Run an MQL query against a VMware vSphere API endpoint.",
