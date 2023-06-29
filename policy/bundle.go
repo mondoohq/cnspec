@@ -715,6 +715,27 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		}
 	}
 
+	frameworksByMrn := map[string]*Framework{}
+	for _, framework := range p.Frameworks {
+		if err := framework.compile(ctx, ownerMrn, cache, library); err != nil {
+			return nil, errors.New("failed to validate framework: " + err.Error())
+		}
+		frameworksByMrn[framework.Mrn] = framework
+	}
+
+	for i := range p.FrameworkMaps {
+		fm := p.FrameworkMaps[i]
+		if err := fm.compile(ctx, ownerMrn, cache, library); err != nil {
+			return nil, errors.New("failed to validate framework map: " + err.Error())
+		}
+
+		framework, ok := frameworksByMrn[fm.FrameworkOwner]
+		if !ok {
+			return nil, errors.New("failed to get framework in bundle (not yet supported) for " + fm.FrameworkOwner)
+		}
+		framework.FrameworkMaps = append(framework.FrameworkMaps, fm)
+	}
+
 	// cannot be done before all policies and queries have their MRNs set
 	bundleMap := p.ToMap()
 	bundleMap.Library = library
@@ -736,28 +757,6 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
-	}
-
-	for i := range p.Frameworks {
-		framework := p.Frameworks[i]
-		if err := framework.compile(ctx, ownerMrn, cache, library); err != nil {
-			return nil, errors.New("failed to validate framework: " + err.Error())
-		}
-
-		bundleMap.Frameworks[framework.Mrn] = framework
-	}
-
-	for i := range p.FrameworkMaps {
-		fm := p.FrameworkMaps[i]
-		if err := fm.compile(ctx, ownerMrn, cache, library); err != nil {
-			return nil, errors.New("failed to validate framework map: " + err.Error())
-		}
-
-		framework, ok := bundleMap.Frameworks[fm.FrameworkOwner]
-		if !ok {
-			return nil, errors.New("failed to get framework in bundle (not yet supported) for " + fm.FrameworkOwner)
-		}
-		framework.FrameworkMaps = append(framework.FrameworkMaps, fm)
 	}
 
 	return bundleMap, cache.error()

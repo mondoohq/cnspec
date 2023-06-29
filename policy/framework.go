@@ -242,17 +242,17 @@ func (f *Framework) updateGraphChecksums(
 			return err
 		}
 
-		for _, fm := range depObj.FrameworkMaps {
-			if fm.LocalContentChecksum == "" || fm.LocalExecutionChecksum == "" {
-				fm.UpdateChecksums()
-			}
-			graphExecutionChecksum = graphExecutionChecksum.Add(fm.LocalExecutionChecksum)
-			graphContentChecksum = graphContentChecksum.Add(fm.LocalContentChecksum)
-		}
-
 		graphExecutionChecksum = graphExecutionChecksum.
 			Add(depObj.GraphExecutionChecksum)
 		graphContentChecksum = graphContentChecksum.Add(depObj.GraphContentChecksum)
+	}
+
+	for _, fm := range f.FrameworkMaps {
+		if fm.LocalContentChecksum == "" || fm.LocalExecutionChecksum == "" {
+			fm.UpdateChecksums()
+		}
+		graphExecutionChecksum = graphExecutionChecksum.Add(fm.LocalExecutionChecksum)
+		graphContentChecksum = graphContentChecksum.Add(fm.LocalContentChecksum)
 	}
 
 	f.GraphExecutionChecksum = graphExecutionChecksum.Add(f.LocalExecutionChecksum).String()
@@ -345,7 +345,7 @@ func (f *Framework) updateAllChecksums(ctx context.Context,
 }
 
 func (c *Control) updateChecksum() (string, string) {
-	executionChecksum := checksums.New.Add(c.Mrn)
+	executionChecksum := checksums.New.Add(c.Mrn).AddUint(uint64(c.Action))
 	contentChecksum := checksums.New.Add(c.Title)
 
 	keys := sortx.Keys[string](c.Tags)

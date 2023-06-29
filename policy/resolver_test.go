@@ -327,7 +327,7 @@ policies:
 }
 
 func TestResolve_Frameworks(t *testing.T) {
-	b := parseBundle(t, `
+	bundleStr := `
 owner_mrn: //test.sth
 policies:
 - uid: policy1
@@ -353,9 +353,18 @@ frameworks:
       title: control2
     - uid: control3
       title: control3
+- uid: framework2
+  name: framework2
+  groups:
+  - title: group1
+    controls:
+    - uid: control1
+      title: control1
+    - uid: control2
+      title: control2
 - uid: parent-framework
   dependencies:
-  - mrn: `+frameworkMrn("framework1")+`
+  - mrn: ` + frameworkMrn("framework1") + `
 
 framework_maps:
 - uid: framework-map1
@@ -370,13 +379,15 @@ framework_maps:
     checks:
     - uid: check-pass-2
     - uid: check-fail
-`)
-
-	srv := initResolver(t, []*testAsset{
-		{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
-	}, []*policy.Bundle{b})
+`
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
+		b := parseBundle(t, bundleStr)
+
+		srv := initResolver(t, []*testAsset{
+			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
+		}, []*policy.Bundle{b})
+
 		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
@@ -417,6 +428,37 @@ framework_maps:
 		rjTester.requireReportsTo(controlMrn("control2"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
 		rjTester.requireReportsTo(frameworkMrn("parent-framework"), "root")
+	})
+
+	t.Run("test checksumming", func(t *testing.T) {
+		bInitial := parseBundle(t, bundleStr)
+
+		srv := initResolver(t, []*testAsset{
+			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
+		}, []*policy.Bundle{bInitial})
+
+		rpInitial, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rpInitial)
+
+		bFrameworkUpdate := parseBundle(t, bundleStr)
+		bFrameworkUpdate.Frameworks[0].Groups[0].Controls = bFrameworkUpdate.Frameworks[0].Groups[0].Controls[:2]
+
+		srv = initResolver(t, []*testAsset{
+			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
+		}, []*policy.Bundle{bFrameworkUpdate})
+
+		rpFrameworkUpdate, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rpFrameworkUpdate)
+
+		require.NotEqual(t, rpInitial.GraphExecutionChecksum, rpFrameworkUpdate.GraphExecutionChecksum)
 	})
 }
 
@@ -571,6 +613,7 @@ framework_maps:
 				break
 			}
 		}
+		require.NotNil(t, frameworkJob)
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		var childJob *explorer.Impact
 		for uuid, j := range frameworkJob.ChildJobs {
@@ -579,6 +622,7 @@ framework_maps:
 				break
 			}
 		}
+		require.NotNil(t, childJob)
 		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
@@ -685,6 +729,7 @@ framework_maps:
 				break
 			}
 		}
+		require.NotNil(t, frameworkJob)
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		require.Len(t, frameworkJob.ChildJobs, 2)
 	})
