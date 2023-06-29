@@ -412,11 +412,14 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 		for i := range framework.FrameworkMaps {
 			fmap := framework.FrameworkMaps[i]
 
-			for j := range fmap.Controls {
-				ctl := fmap.Controls[j]
+			for _, ctl := range fmap.Controls {
 				res.addReportLink(framework.Mrn, ctl.Mrn)
 				res.addControl(ctl)
 			}
+		}
+		// FIXME: why do these not show up in the framework map
+		for _, depFramework := range framework.Dependencies {
+			res.addReportLink(framework.Mrn, depFramework.Mrn)
 		}
 	}
 

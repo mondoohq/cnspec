@@ -2,6 +2,7 @@ package policy_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +15,9 @@ import (
 )
 
 type testAsset struct {
-	asset    string
-	policies []string
+	asset      string
+	policies   []string
+	frameworks []string
 }
 
 func parseBundle(t *testing.T, data string) *policy.Bundle {
@@ -37,8 +39,9 @@ func initResolver(t *testing.T, assets []*testAsset, bundles []*policy.Bundle) *
 	for i := range assets {
 		asset := assets[i]
 		_, err := srv.Assign(context.Background(), &policy.PolicyAssignment{
-			AssetMrn:   asset.asset,
-			PolicyMrns: asset.policies,
+			AssetMrn:      asset.asset,
+			PolicyMrns:    asset.policies,
+			FrameworkMrns: asset.frameworks,
 		})
 		require.NoError(t, err)
 	}
@@ -50,6 +53,18 @@ func policyMrn(uid string) string {
 	return "//test.sth/policies/" + uid
 }
 
+func frameworkMrn(uid string) string {
+	return "//test.sth/frameworks/" + uid
+}
+
+func controlMrn(uid string) string {
+	return "//test.sth/controls/" + uid
+}
+
+func queryMrn(uid string) string {
+	return "//test.sth/queries/" + uid
+}
+
 func TestResolve_EmptyPolicy(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth
@@ -58,7 +73,7 @@ policies:
 `)
 
 	srv := initResolver(t, []*testAsset{
-		{"asset1", []string{policyMrn("policy1")}},
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve w/o filters", func(t *testing.T) {
@@ -108,7 +123,7 @@ policies:
 `)
 
 	srv := initResolver(t, []*testAsset{
-		{"asset1", []string{policyMrn("policy1")}},
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
 	}, []*policy.Bundle{b})
 
 	checkResolvedPolicy := func(t *testing.T, rp *policy.ResolvedPolicy) {
@@ -191,7 +206,7 @@ policies:
 `)
 
 	srv := initResolver(t, []*testAsset{
-		{"asset1", []string{policyMrn("policy-active"), policyMrn("policy-ignored")}},
+		{asset: "asset1", policies: []string{policyMrn("policy-active"), policyMrn("policy-ignored")}},
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve with ignored policy", func(t *testing.T) {
@@ -309,4 +324,152 @@ policies:
 		require.NotNil(t, rp)
 		require.Len(t, rp.ExecutionJob.Queries, 2)
 	})
+}
+
+func TestResolve_Frameworks(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - filters: "true"
+    checks:
+    - uid: check-fail
+      mql: 1 == 2
+    - uid: check-pass-1
+      mql: 1 == 1
+    - uid: check-pass-2
+      mql: 2 == 2
+
+frameworks:
+- uid: framework1
+  name: framework1
+  groups:
+  - title: group1
+    controls:
+    - uid: control1
+      title: control1
+    - uid: control2
+      title: control2
+    - uid: control3
+      title: control3
+- uid: parent-framework
+  dependencies:
+  - mrn: `+frameworkMrn("framework1")+`
+
+framework_maps:
+- uid: framework-map1
+  framework_owner: framework1
+  policy_dependencies:
+  - uid: policy1
+  controls:
+  - uid: control1
+    checks:
+    - uid: check-pass-1
+  - uid: control2
+    checks:
+    - uid: check-pass-2
+    - uid: check-fail
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+
+		bundleMap, err := bundle.Compile(context.Background(), nil)
+		require.NoError(t, err)
+
+		mrnToQueryId := map[string]string{}
+		for _, q := range bundleMap.Queries {
+			mrnToQueryId[q.Mrn] = q.CodeId
+		}
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		require.Len(t, rp.ExecutionJob.Queries, 3)
+
+		rjTester := frameworkReportingJobTester{
+			t:                     t,
+			queryIdToReportingJob: map[string]*policy.ReportingJob{},
+			rjIdToReportingJob:    rp.CollectorJob.ReportingJobs,
+		}
+
+		for _, rj := range rjTester.rjIdToReportingJob {
+			rjTester.queryIdToReportingJob[rj.QrId] = rj
+		}
+
+		// control3 had no checks, so it should not have a reporting job.
+		// TODO: is that the desired behavior?
+		require.Nil(t, rjTester.queryIdToReportingJob[controlMrn("control3")])
+		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-1")], controlMrn("control1"))
+		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-2")], controlMrn("control2"))
+		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], controlMrn("control2"))
+		rjTester.requireReportsTo(controlMrn("control1"), frameworkMrn("framework1"))
+		rjTester.requireReportsTo(controlMrn("control2"), frameworkMrn("framework1"))
+		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
+		rjTester.requireReportsTo(frameworkMrn("parent-framework"), "root")
+	})
+}
+
+type frameworkReportingJobTester struct {
+	t                     *testing.T
+	queryIdToReportingJob map[string]*policy.ReportingJob
+	rjIdToReportingJob    map[string]*policy.ReportingJob
+}
+
+func isFramework(queryId string) bool {
+	return strings.Contains(queryId, "/frameworks/")
+}
+
+func isControl(queryId string) bool {
+	return strings.Contains(queryId, "/controls/")
+}
+
+func isPolicy(queryId string) bool {
+	return strings.Contains(queryId, "/policies/")
+}
+
+func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string, parentQueryId string) {
+	tester.t.Helper()
+
+	childRj, ok := tester.queryIdToReportingJob[childQueryId]
+	require.True(tester.t, ok)
+
+	parentRj, ok := tester.queryIdToReportingJob[parentQueryId]
+	require.True(tester.t, ok)
+
+	require.Contains(tester.t, parentRj.ChildJobs, childRj.Uuid)
+	require.Contains(tester.t, childRj.Notify, parentRj.Uuid)
+
+	if isFramework(parentQueryId) {
+		require.Equal(tester.t, policy.ReportingJob_FRAMEWORK, parentRj.Type)
+	} else if isControl(parentQueryId) {
+		require.Equal(tester.t, policy.ReportingJob_CONTROL, parentRj.Type)
+	} else if isPolicy(parentQueryId) || parentQueryId == "root" {
+		require.Equal(tester.t, policy.ReportingJob_POLICY, parentRj.Type)
+		// The root/asset reporting job is not a framework, but a policy
+		childImpact := parentRj.ChildJobs[childRj.Uuid]
+		require.Equal(tester.t, explorer.ScoringSystem_IGNORE_SCORE, childImpact.Scoring)
+	} else {
+		require.Equal(tester.t, policy.ReportingJob_CHECK, parentRj.Type)
+	}
+
+	if isControl(childQueryId) {
+		require.Equal(tester.t, policy.ReportingJob_CONTROL, childRj.Type)
+	} else if isFramework(childQueryId) {
+		require.Equal(tester.t, policy.ReportingJob_FRAMEWORK, childRj.Type)
+	} else if isPolicy(childQueryId) {
+		require.Equal(tester.t, policy.ReportingJob_POLICY, childRj.Type)
+	} else {
+		require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
+	}
 }
