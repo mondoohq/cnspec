@@ -145,6 +145,7 @@ func (s *LocalServices) PrepareFramework(ctx context.Context, frameworkObj *Fram
 		logCtx.Trace().Str("framework", frameworkObj.Mrn).Msg("update graphchecksum")
 		err = frameworkObj.UpdateChecksums(ctx,
 			s.DataLake.GetFramework,
+			s.DataLake.GetFrameworkMaps,
 			bundle)
 		if err != nil {
 			return nil, err

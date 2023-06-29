@@ -101,8 +101,57 @@ func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bun
 	return nil
 }
 
+func checksumControlRef(cr *ControlRef) string {
+	c := checksums.
+		New.
+		Add(cr.Mrn).
+		AddUint(uint64(cr.Action))
+
+	return c.String()
+}
+
+func (m *FrameworkMap) UpdateChecksums() {
+	executionChecksum := checksums.
+		New.
+		Add(m.Mrn).
+		Add(m.FrameworkOwner)
+
+	for _, dep := range m.FrameworkDependencies {
+		executionChecksum = executionChecksum.Add(dep.Mrn)
+	}
+
+	for _, dep := range m.PolicyDependencies {
+		executionChecksum = executionChecksum.Add(dep.Mrn)
+	}
+
+	for _, controlMap := range m.Controls {
+		executionChecksum = executionChecksum.Add(controlMap.Mrn)
+		for _, cr := range controlMap.Checks {
+			executionChecksum = executionChecksum.Add(checksumControlRef(cr))
+		}
+		for _, cr := range controlMap.Policies {
+			executionChecksum = executionChecksum.Add(checksumControlRef(cr))
+		}
+		for _, cr := range controlMap.Controls {
+			executionChecksum = executionChecksum.Add(checksumControlRef(cr))
+		}
+	}
+
+	contentChecksum := checksums.New.
+		Add(m.Mrn).
+		Add(m.FrameworkOwner).
+		Add(executionChecksum.String())
+
+	m.LocalExecutionChecksum = executionChecksum.String()
+	m.LocalContentChecksum = contentChecksum.String()
+}
+
 func getFrameworkNoop(ctx context.Context, mrn string) (*Framework, error) {
 	return nil, errors.New("framework not found: " + mrn)
+}
+
+func getFrameworkMapsNoop(ctx context.Context, mrn string) ([]*FrameworkMap, error) {
+	return []*FrameworkMap{}, nil
 }
 
 func (f *Framework) ClearGraphChecksums() {
@@ -129,6 +178,7 @@ func (f *Framework) ClearAllChecksums() {
 
 func (f *Framework) UpdateChecksums(ctx context.Context,
 	getFramework func(ctx context.Context, mrn string) (*Framework, error),
+	getFrameworkMaps func(ctx context.Context, mrn string) ([]*FrameworkMap, error),
 	bundle *PolicyBundleMap,
 ) error {
 	// simplify the access if we don't have a bundle
@@ -142,21 +192,26 @@ func (f *Framework) UpdateChecksums(ctx context.Context,
 		getFramework = getFrameworkNoop
 	}
 
+	if getFrameworkMaps == nil {
+		getFrameworkMaps = getFrameworkMapsNoop
+	}
+
 	// if we have local checksums set, we can take an optimized route;
 	// if not, we have to update all checksums
 	if f.LocalContentChecksum == "" || f.LocalExecutionChecksum == "" {
-		return f.updateAllChecksums(ctx, getFramework, bundle)
+		return f.updateAllChecksums(ctx, getFramework, getFrameworkMaps, bundle)
 	}
 
 	// otherwise we have local checksums and only need to recompute the
 	// graph checksums. This code is identical to the complete computation
 	// but doesn't recompute any of the local checksums.
-	return f.updateGraphChecksums(ctx, getFramework, bundle)
+	return f.updateGraphChecksums(ctx, getFramework, getFrameworkMaps, bundle)
 }
 
 func (f *Framework) updateGraphChecksums(
 	ctx context.Context,
 	getFramework func(ctx context.Context, mrn string) (*Framework, error),
+	getFrameworkMaps func(ctx context.Context, mrn string) ([]*FrameworkMap, error),
 	bundle *PolicyBundleMap,
 ) error {
 	graphExecutionChecksum := checksums.New
@@ -176,13 +231,27 @@ func (f *Framework) updateGraphChecksums(
 			if err != nil {
 				return err
 			}
+			frameworkMaps, err := getFrameworkMaps(ctx, dep.Mrn)
+			if err != nil {
+				return err
+			}
+			depObj.FrameworkMaps = frameworkMaps
 		}
 
-		if err := depObj.UpdateChecksums(ctx, getFramework, bundle); err != nil {
+		if err := depObj.UpdateChecksums(ctx, getFramework, getFrameworkMaps, bundle); err != nil {
 			return err
 		}
 
-		graphExecutionChecksum = graphExecutionChecksum.Add(depObj.GraphExecutionChecksum)
+		for _, fm := range depObj.FrameworkMaps {
+			if fm.LocalContentChecksum == "" || fm.LocalExecutionChecksum == "" {
+				fm.UpdateChecksums()
+			}
+			graphExecutionChecksum = graphExecutionChecksum.Add(fm.LocalExecutionChecksum)
+			graphContentChecksum = graphContentChecksum.Add(fm.LocalContentChecksum)
+		}
+
+		graphExecutionChecksum = graphExecutionChecksum.
+			Add(depObj.GraphExecutionChecksum)
 		graphContentChecksum = graphContentChecksum.Add(depObj.GraphContentChecksum)
 	}
 
@@ -193,6 +262,7 @@ func (f *Framework) updateGraphChecksums(
 
 func (f *Framework) updateAllChecksums(ctx context.Context,
 	getFramework func(ctx context.Context, mrn string) (*Framework, error),
+	getFrameworkMaps func(ctx context.Context, mrn string) ([]*FrameworkMap, error),
 	bundle *PolicyBundleMap,
 ) error {
 	log.Trace().Str("framework", f.Mrn).Msg("update framework checksum")
@@ -271,7 +341,7 @@ func (f *Framework) updateAllChecksums(ctx context.Context,
 	f.LocalExecutionChecksum = executionChecksum.String()
 	f.LocalContentChecksum = executionChecksum.AddUint(uint64(contentChecksum)).String()
 
-	return f.updateGraphChecksums(ctx, getFramework, bundle)
+	return f.updateGraphChecksums(ctx, getFramework, getFrameworkMaps, bundle)
 }
 
 func (c *Control) updateChecksum() (string, string) {

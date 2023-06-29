@@ -86,6 +86,9 @@ func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[strin
 	frameworkw.Framework.ClearExecutionChecksums()
 	err = frameworkw.Framework.UpdateChecksums(ctx,
 		func(ctx context.Context, mrn string) (*policy.Framework, error) { return db.GetFramework(ctx, mrn) },
+		func(ctx context.Context, mrn string) ([]*policy.FrameworkMap, error) {
+			return db.GetFrameworkMaps(ctx, mrn)
+		},
 		nil,
 	)
 	if err != nil {
