@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230627064855-927d377ee7af
+	go.mondoo.com/cnquery v0.0.0-20230703142853-10b934935e26
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.16.0
 	golang.org/x/sync v0.3.0 // indirect
@@ -43,7 +43,7 @@ require (
 	cloud.google.com/go/accessapproval v1.6.0 // indirect
 	cloud.google.com/go/functions v1.13.0 // indirect
 	cloud.google.com/go/logging v1.7.0 // indirect
-	cloud.google.com/go/monitoring v1.13.0 // indirect
+	cloud.google.com/go/monitoring v1.15.1 // indirect
 	cloud.google.com/go/run v0.9.0 // indirect
 	cloud.google.com/go/storage v1.29.0 // indirect
 	github.com/4meepo/tagalign v1.2.2 // indirect
@@ -102,14 +102,14 @@ require (
 
 require (
 	4d63.com/gochecknoglobals v0.2.1 // indirect
-	cloud.google.com/go v0.110.0 // indirect
+	cloud.google.com/go v0.110.2 // indirect
 	cloud.google.com/go/bigquery v1.51.2 // indirect
 	cloud.google.com/go/compute v1.19.3 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/container v1.15.0 // indirect
 	cloud.google.com/go/iam v0.13.0 // indirect
 	cloud.google.com/go/kms v1.10.1 // indirect
-	cloud.google.com/go/longrunning v0.4.1 // indirect
+	cloud.google.com/go/longrunning v0.5.0 // indirect
 	cloud.google.com/go/pubsub v1.30.0 // indirect
 	cloud.google.com/go/recommender v1.9.0 // indirect
 	cloud.google.com/go/secretmanager v1.10.0 // indirect
@@ -202,7 +202,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.20.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.30.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.19.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/rds v1.42.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/rds v1.46.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/redshift v1.27.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.31.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3control v1.31.1 // indirect
@@ -303,7 +303,7 @@ require (
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.2.4 // indirect
-	github.com/googleapis/gax-go/v2 v2.10.0 // indirect
+	github.com/googleapis/gax-go/v2 v2.11.0 // indirect
 	github.com/gordonklaus/ineffassign v0.0.0-20230610083614-0e73809eb601 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/gosimple/slug v1.13.1 // indirect
