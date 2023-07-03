@@ -86,6 +86,10 @@ upstream/generate:
 cnspec/build:
 	go build -o cnspec ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
+.PHONY: cnspec/build/linux
+cnspec/build/linux:
+	GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+
 .PHONY: cnspec/install
 cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
