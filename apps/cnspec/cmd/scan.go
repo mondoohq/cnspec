@@ -240,6 +240,9 @@ configure your Azure credentials and have SSH access to the virtual machines.`,
 			"gcp-compute-instance": {
 				Short: "Scan a Google Cloud Platform (GCP) VM instance.",
 			},
+			"gcp-compute-snapshot": {
+				Short: "Scan a Google Cloud Platform (GCP) VM snapshot.",
+			},
 			"oci": {
 				Short: "Scan a Oracle Cloud Infrastructure (OCI) tenancy.",
 			},
