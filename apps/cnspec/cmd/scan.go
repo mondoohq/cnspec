@@ -319,7 +319,7 @@ This example connects to Microsoft 365 using the PKCS #12 formatted certificate:
 		cmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
 
 		// policies & incognito mode
-		cmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to the Mondoo platform.")
+		cmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to Mondoo Platform.")
 		cmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires incognito mode. You can pass multiple policies using --policy POLICY")
 		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy bundle file.")
 		// flag completion command
