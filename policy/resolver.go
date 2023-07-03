@@ -1496,17 +1496,23 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
 	nuJobs := map[string]*ReportingJob{}
 
+	// try to find all framework groups of type IGNORE or DISABLE for this and depending frameworks
+	// these groups are needed to determine if a control is ignored/snoozed or disabled
 	frameworkGroupByControlMrn := map[string]*FrameworkGroup{}
 	assetFramework := cache.bundleMap.Frameworks[framework.Mrn]
-	for i := range assetFramework.Dependencies {
-		depFramework := cache.bundleMap.Frameworks[assetFramework.Dependencies[i].Mrn]
-		for j := range depFramework.Groups {
-			group := depFramework.Groups[j]
-			if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE {
-				continue
-			}
-			for k := range group.Controls {
-				frameworkGroupByControlMrn[group.Controls[k].Mrn] = group
+	if assetFramework != nil {
+		for i := range assetFramework.Dependencies {
+			depFramework := cache.bundleMap.Frameworks[assetFramework.Dependencies[i].Mrn]
+			if depFramework != nil {
+				for j := range depFramework.Groups {
+					group := depFramework.Groups[j]
+					if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE {
+						continue
+					}
+					for k := range group.Controls {
+						frameworkGroupByControlMrn[group.Controls[k].Mrn] = group
+					}
+				}
 			}
 		}
 	}
