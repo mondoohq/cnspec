@@ -1386,45 +1386,27 @@ func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, pro
 	return &res, dataChecksum, nil
 }
 
-func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework) *ReportingJob {
+func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework, frameworkGroupByControlMrn map[string]*FrameworkGroup) *ReportingJob {
 	uuid := cache.relativeChecksum(controlMrn)
 
 	if found, ok := jobs[uuid]; ok {
 		return found
 	}
 
-	assetFramework := cache.bundleMap.Frameworks[framework.Mrn]
-
-	var control *Control
-	var controlGroup *FrameworkGroup
-	for i := range assetFramework.Dependencies {
-		depFramework := cache.bundleMap.Frameworks[assetFramework.Dependencies[i].Mrn]
-		for j := range depFramework.Groups {
-			group := depFramework.Groups[j]
-			if group.Type != GroupType_IGNORED {
-				continue
-			}
-			for k := range group.Controls {
-				if group.Controls[k].Mrn == controlMrn {
-					control = group.Controls[k]
-					controlGroup = group
-				}
-			}
-		}
-	}
-
 	// If we ignore this control, we have to transfer this info to the impact var,
 	// which is used to inform how to aggregate the results of all child jobs.
 	impact := &explorer.Impact{}
 	validUntil := ""
-	if controlGroup != nil && controlGroup.EndDate != 0 {
-		time.Unix(controlGroup.EndDate, 0).Format(time.RFC3339)
-	}
-	if control != nil && controlGroup.Action == explorer.Action_IGNORE {
-		stillIgnore := CheckValidUntil(validUntil, control.Mrn)
-		if stillIgnore {
-			impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
-			impact.Action = explorer.Action_IGNORE
+	if frameworkGroup, ok := frameworkGroupByControlMrn[controlMrn]; ok {
+		if frameworkGroup.EndDate != 0 {
+			time.Unix(frameworkGroup.EndDate, 0).Format(time.RFC3339)
+		}
+		if frameworkGroup.Type == GroupType_IGNORED {
+			stillIgnore := CheckValidUntil(validUntil, controlMrn)
+			if stillIgnore {
+				impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
+				impact.Action = explorer.Action_IGNORE
+			}
 		}
 	}
 
@@ -1514,6 +1496,21 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
 	nuJobs := map[string]*ReportingJob{}
 
+	frameworkGroupByControlMrn := map[string]*FrameworkGroup{}
+	assetFramework := cache.bundleMap.Frameworks[framework.Mrn]
+	for i := range assetFramework.Dependencies {
+		depFramework := cache.bundleMap.Frameworks[assetFramework.Dependencies[i].Mrn]
+		for j := range depFramework.Groups {
+			group := depFramework.Groups[j]
+			if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE {
+				continue
+			}
+			for k := range group.Controls {
+				frameworkGroupByControlMrn[group.Controls[k].Mrn] = group
+			}
+		}
+	}
+
 	for _, rj := range job.ReportingJobs {
 		query, ok := querymap[rj.QrId]
 		if !ok {
@@ -1528,7 +1525,13 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 
 		for i := range targets {
 			controlMrn := targets[i]
-			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework)
+			// skip controls which are part of a FrameworkGroup with type DISABLE
+			if group, ok := frameworkGroupByControlMrn[controlMrn]; ok {
+				if group.Type == GroupType_DISABLE {
+					continue
+				}
+			}
+			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
 
 			controlJob.ChildJobs[rj.Uuid] = nil
 			rj.Notify = append(rj.Notify, controlJob.Uuid)
