@@ -45,7 +45,7 @@ var vulnCmd = builder.NewProviderCommand(builder.CommandOpts{
 		cmd.Flags().Bool("inventory-domainlist", false, "Set inventory format to domain list.")
 
 		// policies & incognito mode
-		cmd.Flags().Bool("incognito", false, "Incognito mode. Do not report scan results to the Mondoo platform.")
+		cmd.Flags().Bool("incognito", false, "Incognito mode. Do not report scan results to Mondoo Platform.")
 		cmd.Flags().StringSlice("policy", nil, "List policies to execute. This requires incognito mode. To scan multiple policies, pass `--policy POLICY`")
 		cmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy bundle file.")
 		// flag completion command

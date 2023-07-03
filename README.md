@@ -156,9 +156,9 @@ To clear the terminal, type `clear`.
 
 To exit, either hit CTRL + D or type `exit`.
 
-## Scale cnspec across your fleet with the Mondoo Platform
+## Scale cnspec across your fleet with Mondoo Platform
 
-The easiest way to scale cnspec across your fleet is to sign up for a free Mondoo Platform account. With the Mondoo Platform, you can:
+The easiest way to scale cnspec across your fleet is to sign up for a free Mondoo Platform account. With Mondoo Platform, you can:
 
 - Aggregate and share reports
 - Perform vulnerability scans
@@ -172,9 +172,9 @@ Go to [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mon
 
 To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home) or visit [mondoo.com](https://www.mondoo.com).
 
-### Register cnspec with the Mondoo Platform
+### Register cnspec with Mondoo Platform
 
-To use cnspec with the Mondoo Platform, generate a token with the Mondoo platform, then run:
+To use cnspec with Mondoo Platform, [generate a token in the Mondoo Console](https://mondoo.com/docs/cnspec/cnspec-platform/), then run:
 
 ```bash
 cnspec login --token TOKEN
