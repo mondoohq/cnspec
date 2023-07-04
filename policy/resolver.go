@@ -1398,10 +1398,10 @@ func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJ
 	impact := &explorer.Impact{}
 	validUntil := ""
 	if frameworkGroup, ok := frameworkGroupByControlMrn[controlMrn]; ok {
-		if frameworkGroup.EndDate != 0 {
-			time.Unix(frameworkGroup.EndDate, 0).Format(time.RFC3339)
-		}
 		if frameworkGroup.Type == GroupType_IGNORED {
+			if frameworkGroup.EndDate != 0 {
+				validUntil = time.Unix(frameworkGroup.EndDate, 0).Format(time.RFC3339)
+			}
 			stillIgnore := CheckValidUntil(validUntil, controlMrn)
 			if stillIgnore {
 				impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
