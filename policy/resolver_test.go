@@ -473,3 +473,202 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 		require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
 	}
 }
+
+func TestResolve_CheckValidUntil(t *testing.T) {
+	stillValid := policy.CheckValidUntil(time.Now().Format(time.RFC3339), "test123")
+	require.False(t, stillValid)
+	stillValid = policy.CheckValidUntil(time.Now().Add(time.Hour*1).Format(time.RFC3339), "test123")
+	require.True(t, stillValid)
+	// wrong format as input, should return false
+	stillValid = policy.CheckValidUntil(time.Now().Format(time.RFC1123), "test123")
+	require.False(t, stillValid)
+}
+
+func TestResolve_ControlGroupIgnore(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: ssh-policy
+  name: SSH Policy
+  groups:
+  - filters: "true"
+    checks:
+    - uid: sshd-ciphers-01
+      title: Prevent weaker CBC ciphers from being used
+      mql: sshd.config.ciphers.none( /cbc/ )
+      impact: 60
+    - uid: sshd-ciphers-02
+      title: Do not allow ciphers with few bits
+      mql: sshd.config.ciphers.none( /128/ )
+      impact: 60
+    - uid: sshd-config-permissions
+      title: SSH config editing should be limited to admins
+      mql: sshd.config.file.permissions.mode == 0644
+      impact: 100
+
+frameworks:
+- uid: mondoo-ucf
+  mrn: //test.sth/framework/mondoo-ucf
+  name: Unified Compliance Framework
+  groups:
+  - title: System hardening
+    controls:
+    - uid: mondoo-ucf-01
+      title: Only use strong ciphers
+    - uid: mondoo-ucf-02
+      title: Limit access to system configuration
+    - uid: mondoo-ucf-03
+      title: Only use ciphers with sufficient bits
+  - title: exception-1
+    type: 4
+    controls:
+    - uid: mondoo-ucf-02
+
+framework_maps:
+    - uid: compliance-to-ssh-policy
+      mrn: //test.sth/framework/compliance-to-ssh-policy
+      framework_owner: mondoo-ucf
+      policy_dependencies:
+      - uid: ssh-policy
+      controls:
+      - uid: mondoo-ucf-01
+        checks:
+        - uid: sshd-ciphers-01
+        - uid: sshd-ciphers-02
+      - uid: mondoo-ucf-02
+        checks:
+        - uid: sshd-config-permissions
+      - uid: mondoo-ucf-03
+        checks:
+        - uid: sshd-ciphers-02
+`)
+
+	_, srv, err := inmemory.NewServices(nil)
+	require.NoError(t, err)
+
+	_, err = srv.SetBundle(context.Background(), b)
+	require.NoError(t, err)
+
+	_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+		AssetMrn:      "asset1",
+		PolicyMrns:    []string{policyMrn("ssh-policy")},
+		FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+	})
+	require.NoError(t, err)
+
+	filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+	require.NoError(t, err)
+	assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+	require.NoError(t, err)
+
+	err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+	require.NoError(t, err)
+
+	t.Run("resolve with ignored control", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		frameworkJob := rp.CollectorJob.ReportingJobs["sDMg+OsJcXQ="]
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, frameworkJob.ChildJobs["wzZosRUzLRQ="].Scoring)
+		require.Len(t, frameworkJob.ChildJobs, 3)
+	})
+}
+
+func TestResolve_ControlGroupDisable(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: ssh-policy
+  name: SSH Policy
+  groups:
+  - filters: "true"
+    checks:
+    - uid: sshd-ciphers-01
+      title: Prevent weaker CBC ciphers from being used
+      mql: sshd.config.ciphers.none( /cbc/ )
+      impact: 60
+    - uid: sshd-ciphers-02
+      title: Do not allow ciphers with few bits
+      mql: sshd.config.ciphers.none( /128/ )
+      impact: 60
+    - uid: sshd-config-permissions
+      title: SSH config editing should be limited to admins
+      mql: sshd.config.file.permissions.mode == 0644
+      impact: 100
+
+frameworks:
+- uid: mondoo-ucf
+  mrn: //test.sth/framework/mondoo-ucf
+  name: Unified Compliance Framework
+  groups:
+  - title: System hardening
+    controls:
+    - uid: mondoo-ucf-01
+      title: Only use strong ciphers
+    - uid: mondoo-ucf-02
+      title: Limit access to system configuration
+    - uid: mondoo-ucf-03
+      title: Only use ciphers with sufficient bits
+  - title: exception-disable-1
+    type: 5
+    controls:
+    - uid: mondoo-ucf-02
+
+framework_maps:
+  - uid: compliance-to-ssh-policy
+    mrn: //test.sth/framework/compliance-to-ssh-policy
+    framework_owner: mondoo-ucf
+    policy_dependencies:
+    - uid: ssh-policy
+    controls:
+    - uid: mondoo-ucf-01
+      checks:
+      - uid: sshd-ciphers-01
+      - uid: sshd-ciphers-02
+    - uid: mondoo-ucf-02
+      checks:
+      - uid: sshd-config-permissions
+    - uid: mondoo-ucf-03
+      checks:
+      - uid: sshd-ciphers-02
+`)
+
+	_, srv, err := inmemory.NewServices(nil)
+	require.NoError(t, err)
+
+	_, err = srv.SetBundle(context.Background(), b)
+	require.NoError(t, err)
+
+	_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+		AssetMrn:      "asset1",
+		PolicyMrns:    []string{policyMrn("ssh-policy")},
+		FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+	})
+	require.NoError(t, err)
+
+	filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+	require.NoError(t, err)
+	assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+	require.NoError(t, err)
+
+	err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+	require.NoError(t, err)
+
+	t.Run("resolve with disabled control", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 8)
+		frameworkJob := rp.CollectorJob.ReportingJobs["GSJRbxbbgek="]
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		require.Len(t, frameworkJob.ChildJobs, 2)
+	})
+}

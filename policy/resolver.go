@@ -892,13 +892,21 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			continue
 		}
 
+		validUntil := time.Unix(group.EndDate, 0).Format(time.RFC3339)
+		if check.Action == explorer.Action_IGNORE {
+			stillValid := CheckValidUntil(validUntil, check.Mrn)
+			if !stillValid {
+				// the exception is no longer valid => score the check
+				check.Action = explorer.Action_ACTIVATE
+			}
+		}
 		// If we ignore this check, we have to transfer this info to the impact var,
 		// which is used to inform how to aggregate the scores of all child jobs.
 		impact := check.Impact
+		if impact == nil {
+			impact = &explorer.Impact{}
+		}
 		if check.Action == explorer.Action_IGNORE {
-			if impact == nil {
-				impact = &explorer.Impact{}
-			}
 			impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
 			impact.Action = check.Action
 		}
@@ -1378,11 +1386,28 @@ func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, pro
 	return &res, dataChecksum, nil
 }
 
-func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework) *ReportingJob {
+func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJob, controlMrn string, framework *ResolvedFramework, frameworkGroupByControlMrn map[string]*FrameworkGroup) *ReportingJob {
 	uuid := cache.relativeChecksum(controlMrn)
 
 	if found, ok := jobs[uuid]; ok {
 		return found
+	}
+
+	// If we ignore this control, we have to transfer this info to the impact var,
+	// which is used to inform how to aggregate the results of all child jobs.
+	impact := &explorer.Impact{}
+	validUntil := ""
+	if frameworkGroup, ok := frameworkGroupByControlMrn[controlMrn]; ok {
+		if frameworkGroup.Type == GroupType_IGNORED {
+			if frameworkGroup.EndDate != 0 {
+				validUntil = time.Unix(frameworkGroup.EndDate, 0).Format(time.RFC3339)
+			}
+			stillIgnore := CheckValidUntil(validUntil, controlMrn)
+			if stillIgnore {
+				impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
+				impact.Action = explorer.Action_IGNORE
+			}
+		}
 	}
 
 	controlJob := &ReportingJob{
@@ -1403,8 +1428,7 @@ func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJ
 			continue
 		}
 
-		// FIXME: we need to take user exceptions into account!
-		frameworkJob.ChildJobs[uuid] = &explorer.Impact{}
+		frameworkJob.ChildJobs[uuid] = impact
 		controlJob.Notify = append(controlJob.Notify, parentUuid)
 	}
 
@@ -1472,6 +1496,27 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
 	nuJobs := map[string]*ReportingJob{}
 
+	// try to find all framework groups of type IGNORE or DISABLE for this and depending frameworks
+	// these groups are needed to determine if a control is ignored/snoozed or disabled
+	frameworkGroupByControlMrn := map[string]*FrameworkGroup{}
+	assetFramework := cache.bundleMap.Frameworks[framework.Mrn]
+	if assetFramework != nil {
+		for i := range assetFramework.Dependencies {
+			depFramework := cache.bundleMap.Frameworks[assetFramework.Dependencies[i].Mrn]
+			if depFramework != nil {
+				for j := range depFramework.Groups {
+					group := depFramework.Groups[j]
+					if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE {
+						continue
+					}
+					for k := range group.Controls {
+						frameworkGroupByControlMrn[group.Controls[k].Mrn] = group
+					}
+				}
+			}
+		}
+	}
+
 	for _, rj := range job.ReportingJobs {
 		query, ok := querymap[rj.QrId]
 		if !ok {
@@ -1486,7 +1531,13 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 
 		for i := range targets {
 			controlMrn := targets[i]
-			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework)
+			// skip controls which are part of a FrameworkGroup with type DISABLE
+			if group, ok := frameworkGroupByControlMrn[controlMrn]; ok {
+				if group.Type == GroupType_DISABLE {
+					continue
+				}
+			}
+			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
 
 			controlJob.ChildJobs[rj.Uuid] = nil
 			rj.Notify = append(rj.Notify, controlJob.Uuid)
@@ -1527,4 +1578,28 @@ func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, as
 	}
 
 	return s.DataLake.SetAssetResolvedPolicy(ctx, assetMrn, resolvedPolicy, V2Code)
+}
+
+// CheckValidUntil returns whether the given time is lying in the future or not.
+// Specialcase is an empty string, which is treated as forever.
+func CheckValidUntil(validUntil string, mrn string) bool {
+	stillIgnore := false
+	// empty validUntil means ignore forever
+	if validUntil == "" {
+		stillIgnore = true
+		log.Debug().Str("mrn", mrn).Msg("control is ignored forever")
+	} else {
+		validTime, err := time.Parse(time.RFC3339, validUntil)
+		if err != nil {
+			// user wanted an exception, but something went wrong with the date
+			// should we bubble up the error?
+			log.Error().Err(err).Str("mrn", mrn).Msg("failed to parse validUntil")
+		} else {
+			if validTime.After(time.Now()) {
+				stillIgnore = true
+				log.Debug().Str("mrn", mrn).Msg("is ignored for now because of validUntil timestamp")
+			}
+		}
+	}
+	return stillIgnore
 }

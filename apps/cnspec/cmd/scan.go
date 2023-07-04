@@ -660,7 +660,7 @@ func RunScan(config *scanConfig, opts ...scan.ScannerOption) (*policy.ReportColl
 		scannerOpts = append(scannerOpts, scan.WithUpstream(config.UpstreamConfig.ApiEndpoint, config.UpstreamConfig.SpaceMrn, config.UpstreamConfig.HttpClient), scan.WithPlugins(config.UpstreamConfig.Plugins))
 	}
 
-	// show warning to the user of the policy filter container a bundle file name
+	// show warning to the user of the policy filter containes a bundle file name
 	for i := range config.PolicyNames {
 		entry := config.PolicyNames[i]
 		if strings.HasSuffix(entry, ".mql.yaml") || strings.HasSuffix(entry, ".mql.yml") {
