@@ -633,7 +633,8 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			ref := query.Variants[i]
 
 			for _, variant := range p.Queries {
-				if variant.Uid == ref.Uid || variant.Mrn == ref.Mrn {
+				if (variant.Uid != "" && variant.Uid == ref.Uid) ||
+					(variant.Mrn != "" && variant.Mrn == ref.Mrn) {
 					addBaseToVariant(query, variant)
 				}
 			}
