@@ -463,6 +463,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 
 	frameworkObj := bundleMap.Frameworks[bundleMrn]
 	policyObj := bundleMap.Policies[bundleMrn]
+	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(policyObj, frameworkObj)
 
 	matchingFilters, err := MatchingAssetFilters(bundleMrn, assetFilters, policyObj)
 	if err != nil {
@@ -601,7 +602,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 
 	resolvedPolicy := ResolvedPolicy{
-		GraphExecutionChecksum: policyObj.GraphExecutionChecksum,
+		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
 		Filters:                matchingFilters,
 		FiltersChecksum:        assetFiltersChecksum,
 		ExecutionJob:           executionJob,
