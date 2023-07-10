@@ -485,7 +485,7 @@ func TestResolve_CheckValidUntil(t *testing.T) {
 }
 
 func TestResolve_Exceptions(t *testing.T) {
-	b := parseBundle(t, `
+	bundleString := `
 owner_mrn: //test.sth
 policies:
 - uid: ssh-policy
@@ -541,29 +541,21 @@ framework_maps:
       - uid: mondoo-ucf-03
         checks:
         - uid: sshd-ciphers-02
-`)
+`
 
 	_, srv, err := inmemory.NewServices(nil)
 	require.NoError(t, err)
 
 	t.Run("resolve with ignored control", func(t *testing.T) {
-		_, err = srv.SetBundle(context.Background(), b)
-		require.NoError(t, err)
+		b := parseBundle(t, bundleString)
 
-		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-			AssetMrn:      "asset1",
-			PolicyMrns:    []string{policyMrn("ssh-policy")},
-			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
-		})
-		require.NoError(t, err)
-
-		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-
-		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-		require.NoError(t, err)
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{"//test.sth/framework/mondoo-ucf"},
+			},
+		}, []*policy.Bundle{b})
 
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
@@ -592,24 +584,16 @@ framework_maps:
 	})
 
 	t.Run("resolve with ignored control and validUntil", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
 		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(time.Hour).Unix()
-		_, err = srv.SetBundle(context.Background(), b)
-		require.NoError(t, err)
 
-		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-			AssetMrn:      "asset1",
-			PolicyMrns:    []string{policyMrn("ssh-policy")},
-			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
-		})
-		require.NoError(t, err)
-
-		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-
-		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-		require.NoError(t, err)
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{"//test.sth/framework/mondoo-ucf"},
+			},
+		}, []*policy.Bundle{b})
 
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
@@ -638,24 +622,16 @@ framework_maps:
 	})
 
 	t.Run("resolve with expired validUntil", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
 		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(-time.Hour).Unix()
-		_, err = srv.SetBundle(context.Background(), b)
-		require.NoError(t, err)
 
-		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-			AssetMrn:      "asset1",
-			PolicyMrns:    []string{policyMrn("ssh-policy")},
-			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
-		})
-		require.NoError(t, err)
-
-		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-
-		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-		require.NoError(t, err)
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{"//test.sth/framework/mondoo-ucf"},
+			},
+		}, []*policy.Bundle{b})
 
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
@@ -672,7 +648,6 @@ framework_maps:
 			}
 		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
-		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		var childJob *explorer.Impact
 		for uuid, j := range frameworkJob.ChildJobs {
 			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
@@ -680,29 +655,21 @@ framework_maps:
 				break
 			}
 		}
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
+		require.Equal(t, explorer.ScoringSystem_SCORING_UNSPECIFIED, childJob.Scoring)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
 
 	t.Run("resolve with disabled control", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
 		b.Frameworks[0].Groups[1].Type = policy.GroupType_DISABLE
-		_, err = srv.SetBundle(context.Background(), b)
-		require.NoError(t, err)
 
-		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-			AssetMrn:      "asset1",
-			PolicyMrns:    []string{policyMrn("ssh-policy")},
-			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
-		})
-		require.NoError(t, err)
-
-		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-
-		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-		require.NoError(t, err)
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{"//test.sth/framework/mondoo-ucf"},
+			},
+		}, []*policy.Bundle{b})
 
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
@@ -723,25 +690,17 @@ framework_maps:
 	})
 
 	t.Run("resolve with rejected disable exception", func(t *testing.T) {
-		b.Frameworks[0].Groups[1].Type = 5
+		b := parseBundle(t, bundleString)
+		b.Frameworks[0].Groups[1].Type = policy.GroupType_DISABLE
 		b.Frameworks[0].Groups[1].ReviewStatus = policy.ReviewStatus_REJECTED
-		_, err = srv.SetBundle(context.Background(), b)
-		require.NoError(t, err)
 
-		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-			AssetMrn:      "asset1",
-			PolicyMrns:    []string{policyMrn("ssh-policy")},
-			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
-		})
-		require.NoError(t, err)
-
-		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-		require.NoError(t, err)
-
-		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-		require.NoError(t, err)
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{"//test.sth/framework/mondoo-ucf"},
+			},
+		}, []*policy.Bundle{b})
 
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
