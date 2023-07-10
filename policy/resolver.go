@@ -1509,6 +1509,10 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 					if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE {
 						continue
 					}
+					if group.ReviewStatus == ReviewStatus_REJECTED {
+						// The exception was rejected, so we don't care about it
+						continue
+					}
 					for k := range group.Controls {
 						frameworkGroupByControlMrn[group.Controls[k].Mrn] = group
 					}

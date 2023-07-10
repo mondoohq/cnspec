@@ -484,7 +484,7 @@ func TestResolve_CheckValidUntil(t *testing.T) {
 	require.False(t, stillValid)
 }
 
-func TestResolve_ControlGroupIgnore(t *testing.T) {
+func TestResolve_Exceptions(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -546,25 +546,25 @@ framework_maps:
 	_, srv, err := inmemory.NewServices(nil)
 	require.NoError(t, err)
 
-	_, err = srv.SetBundle(context.Background(), b)
-	require.NoError(t, err)
-
-	_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-		AssetMrn:      "asset1",
-		PolicyMrns:    []string{policyMrn("ssh-policy")},
-		FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
-	})
-	require.NoError(t, err)
-
-	filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-	require.NoError(t, err)
-	assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-	require.NoError(t, err)
-
-	err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-	require.NoError(t, err)
-
 	t.Run("resolve with ignored control", func(t *testing.T) {
+		_, err = srv.SetBundle(context.Background(), b)
+		require.NoError(t, err)
+
+		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+			AssetMrn:      "asset1",
+			PolicyMrns:    []string{policyMrn("ssh-policy")},
+			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+		})
+		require.NoError(t, err)
+
+		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
+
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
@@ -572,94 +572,138 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
-		frameworkJob := rp.CollectorJob.ReportingJobs["sDMg+OsJcXQ="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, frameworkJob.ChildJobs["wzZosRUzLRQ="].Scoring)
+		var childJob *explorer.Impact
+		for uuid, j := range frameworkJob.ChildJobs {
+			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
+				childJob = j
+				break
+			}
+		}
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
-}
 
-func TestResolve_ControlGroupDisable(t *testing.T) {
-	b := parseBundle(t, `
-owner_mrn: //test.sth
-policies:
-- uid: ssh-policy
-  name: SSH Policy
-  groups:
-  - filters: "true"
-    checks:
-    - uid: sshd-ciphers-01
-      title: Prevent weaker CBC ciphers from being used
-      mql: sshd.config.ciphers.none( /cbc/ )
-      impact: 60
-    - uid: sshd-ciphers-02
-      title: Do not allow ciphers with few bits
-      mql: sshd.config.ciphers.none( /128/ )
-      impact: 60
-    - uid: sshd-config-permissions
-      title: SSH config editing should be limited to admins
-      mql: sshd.config.file.permissions.mode == 0644
-      impact: 100
+	t.Run("resolve with ignored control and validUntil", func(t *testing.T) {
+		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(time.Hour).Unix()
+		_, err = srv.SetBundle(context.Background(), b)
+		require.NoError(t, err)
 
-frameworks:
-- uid: mondoo-ucf
-  mrn: //test.sth/framework/mondoo-ucf
-  name: Unified Compliance Framework
-  groups:
-  - title: System hardening
-    controls:
-    - uid: mondoo-ucf-01
-      title: Only use strong ciphers
-    - uid: mondoo-ucf-02
-      title: Limit access to system configuration
-    - uid: mondoo-ucf-03
-      title: Only use ciphers with sufficient bits
-  - title: exception-disable-1
-    type: 5
-    controls:
-    - uid: mondoo-ucf-02
+		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+			AssetMrn:      "asset1",
+			PolicyMrns:    []string{policyMrn("ssh-policy")},
+			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+		})
+		require.NoError(t, err)
 
-framework_maps:
-  - uid: compliance-to-ssh-policy
-    mrn: //test.sth/framework/compliance-to-ssh-policy
-    framework_owner: mondoo-ucf
-    policy_dependencies:
-    - uid: ssh-policy
-    controls:
-    - uid: mondoo-ucf-01
-      checks:
-      - uid: sshd-ciphers-01
-      - uid: sshd-ciphers-02
-    - uid: mondoo-ucf-02
-      checks:
-      - uid: sshd-config-permissions
-    - uid: mondoo-ucf-03
-      checks:
-      - uid: sshd-ciphers-02
-`)
+		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
 
-	_, srv, err := inmemory.NewServices(nil)
-	require.NoError(t, err)
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
 
-	_, err = srv.SetBundle(context.Background(), b)
-	require.NoError(t, err)
-
-	_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
-		AssetMrn:      "asset1",
-		PolicyMrns:    []string{policyMrn("ssh-policy")},
-		FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		var childJob *explorer.Impact
+		for uuid, j := range frameworkJob.ChildJobs {
+			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
+				childJob = j
+				break
+			}
+		}
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
+		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
-	require.NoError(t, err)
 
-	filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
-	require.NoError(t, err)
-	assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
-	require.NoError(t, err)
+	t.Run("resolve with expired validUntil", func(t *testing.T) {
+		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(-time.Hour).Unix()
+		_, err = srv.SetBundle(context.Background(), b)
+		require.NoError(t, err)
 
-	err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
-	require.NoError(t, err)
+		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+			AssetMrn:      "asset1",
+			PolicyMrns:    []string{policyMrn("ssh-policy")},
+			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+		})
+		require.NoError(t, err)
+
+		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		var childJob *explorer.Impact
+		for uuid, j := range frameworkJob.ChildJobs {
+			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
+				childJob = j
+				break
+			}
+		}
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
+		require.Len(t, frameworkJob.ChildJobs, 3)
+	})
 
 	t.Run("resolve with disabled control", func(t *testing.T) {
+		b.Frameworks[0].Groups[1].Type = policy.GroupType_DISABLE
+		_, err = srv.SetBundle(context.Background(), b)
+		require.NoError(t, err)
+
+		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+			AssetMrn:      "asset1",
+			PolicyMrns:    []string{policyMrn("ssh-policy")},
+			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+		})
+		require.NoError(t, err)
+
+		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
+
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
@@ -667,8 +711,53 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 8)
-		frameworkJob := rp.CollectorJob.ReportingJobs["GSJRbxbbgek="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		require.Len(t, frameworkJob.ChildJobs, 2)
+	})
+
+	t.Run("resolve with rejected disable exception", func(t *testing.T) {
+		b.Frameworks[0].Groups[1].Type = 5
+		b.Frameworks[0].Groups[1].ReviewStatus = policy.ReviewStatus_REJECTED
+		_, err = srv.SetBundle(context.Background(), b)
+		require.NoError(t, err)
+
+		_, err = srv.Assign(context.Background(), &policy.PolicyAssignment{
+			AssetMrn:      "asset1",
+			PolicyMrns:    []string{policyMrn("ssh-policy")},
+			FrameworkMrns: []string{"//test.sth/framework/mondoo-ucf"},
+		})
+		require.NoError(t, err)
+
+		filters, err := srv.GetPolicyFilters(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+		assetPolicy, err := srv.GetPolicy(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+
+		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
+		require.NoError(t, err)
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
 }
