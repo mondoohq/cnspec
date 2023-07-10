@@ -572,9 +572,22 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
-		frameworkJob := rp.CollectorJob.ReportingJobs["NkTWThBaLqc="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, frameworkJob.ChildJobs["Bf7vb8/h2YM="].Scoring)
+		var childJob *explorer.Impact
+		for uuid, j := range frameworkJob.ChildJobs {
+			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
+				childJob = j
+				break
+			}
+		}
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
 
@@ -605,9 +618,22 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
-		frameworkJob := rp.CollectorJob.ReportingJobs["NkTWThBaLqc="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, frameworkJob.ChildJobs["Bf7vb8/h2YM="].Scoring)
+		var childJob *explorer.Impact
+		for uuid, j := range frameworkJob.ChildJobs {
+			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
+				childJob = j
+				break
+			}
+		}
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
 
@@ -638,14 +664,28 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
-		frameworkJob := rp.CollectorJob.ReportingJobs["NkTWThBaLqc="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
-		require.Equal(t, explorer.ScoringSystem_SCORING_UNSPECIFIED, frameworkJob.ChildJobs["Bf7vb8/h2YM="].Scoring)
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		var childJob *explorer.Impact
+		for uuid, j := range frameworkJob.ChildJobs {
+			if rp.CollectorJob.ReportingJobs[uuid].QrId == "//test.sth/controls/mondoo-ucf-02" {
+				childJob = j
+				break
+			}
+		}
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
 
 	t.Run("resolve with disabled control", func(t *testing.T) {
-		b.Frameworks[0].Groups[1].Type = 5
+		b.Frameworks[0].Groups[1].Type = policy.GroupType_DISABLE
 		_, err = srv.SetBundle(context.Background(), b)
 		require.NoError(t, err)
 
@@ -671,14 +711,20 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 8)
-		frameworkJob := rp.CollectorJob.ReportingJobs["ym15u8kWL9c="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		require.Len(t, frameworkJob.ChildJobs, 2)
 	})
 
 	t.Run("resolve with rejected disable exception", func(t *testing.T) {
 		b.Frameworks[0].Groups[1].Type = 5
-		b.Frameworks[0].Groups[1].Rejected = true
+		b.Frameworks[0].Groups[1].ReviewStatus = policy.ReviewStatus_REJECTED
 		_, err = srv.SetBundle(context.Background(), b)
 		require.NoError(t, err)
 
@@ -704,7 +750,13 @@ framework_maps:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
-		frameworkJob := rp.CollectorJob.ReportingJobs["ym15u8kWL9c="]
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
