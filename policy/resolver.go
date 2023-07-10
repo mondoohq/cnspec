@@ -38,8 +38,8 @@ type AssetMutation struct {
 // 2. asset is local (via incognito mode) but policy is upstream
 // 3. asset and policy are upstream
 func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment) (*Empty, error) {
-	if len(assignment.PolicyMrns) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "a policy mrn is required")
+	if len(assignment.PolicyMrns)+len(assignment.FrameworkMrns) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "a policy or framework mrn is required")
 	}
 
 	// all remote, call upstream
@@ -61,7 +61,9 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 		}
 	}
 
-	s.DataLake.EnsureAsset(ctx, assignment.AssetMrn)
+	if err := s.DataLake.EnsureAsset(ctx, assignment.AssetMrn); err != nil {
+		return nil, err
+	}
 
 	policyActions := map[string]explorer.Action{}
 	for i := range assignment.PolicyMrns {
