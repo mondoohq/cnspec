@@ -39,7 +39,7 @@ type AssetMutation struct {
 // 3. asset and policy are upstream
 func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment) (*Empty, error) {
 	if len(assignment.PolicyMrns)+len(assignment.FrameworkMrns) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "a policy mrn is required")
+		return nil, status.Error(codes.InvalidArgument, "a policy or framework mrn is required")
 	}
 
 	// all remote, call upstream
