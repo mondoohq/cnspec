@@ -26,7 +26,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230703142853-10b934935e26
+	go.mondoo.com/cnquery v0.0.0-20230711094059-d4b66ec651d9
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.16.0
 	golang.org/x/sync v0.3.0 // indirect
@@ -469,7 +469,7 @@ require (
 	github.com/vbatts/tar-split v0.11.2 // indirect
 	github.com/vmware/go-vcloud-director/v2 v2.17.0 // indirect
 	github.com/vmware/goipmi v0.0.0-20181114221114-2333cd82d702 // indirect
-	github.com/vmware/govmomi v0.29.0 // indirect
+	github.com/vmware/govmomi v0.30.4 // indirect
 	github.com/xanzy/go-gitlab v0.74.0 // indirect
 	github.com/yagipy/maintidx v1.0.0 // indirect
 	github.com/yeya24/promlinter v0.2.0 // indirect
