@@ -64,8 +64,16 @@ func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bun
 		return err
 	}
 
-	if nu, ok := cache.uid2mrn[fm.FrameworkOwner]; ok {
-		fm.FrameworkOwner = nu
+	if fm.FrameworkOwner == nil {
+		return errors.New("framework map " + fm.Mrn + " has no owner")
+	}
+
+	if fm.FrameworkOwner.Uid != "" {
+		fm.FrameworkOwner.Mrn, ok = cache.uid2mrn[fm.FrameworkOwner.Uid]
+		if !ok {
+			return errors.New("cannot find framework owner '" + fm.FrameworkOwner.Uid + "' in this bundle, which is referenced by framework map " + fm.Mrn)
+		}
+		fm.FrameworkOwner.Uid = ""
 	}
 
 	for i := range fm.FrameworkDependencies {
@@ -114,7 +122,7 @@ func (m *FrameworkMap) UpdateChecksums() {
 	executionChecksum := checksums.
 		New.
 		Add(m.Mrn).
-		Add(m.FrameworkOwner)
+		Add(m.FrameworkOwner.GetMrn())
 
 	for _, dep := range m.FrameworkDependencies {
 		executionChecksum = executionChecksum.Add(dep.Mrn)
@@ -139,7 +147,7 @@ func (m *FrameworkMap) UpdateChecksums() {
 
 	contentChecksum := checksums.New.
 		Add(m.Mrn).
-		Add(m.FrameworkOwner).
+		Add(m.FrameworkOwner.GetMrn()).
 		Add(executionChecksum.String())
 
 	m.LocalExecutionChecksum = executionChecksum.String()

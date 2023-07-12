@@ -127,7 +127,8 @@ frameworks:
 
 framework_maps:
 - uid: framework-map1
-  framework_owner: framework1
+  framework_owner:
+    uid: framework1
   policy_dependencies:
   - uid: policy1
   controls:
