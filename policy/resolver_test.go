@@ -368,7 +368,8 @@ frameworks:
 
 framework_maps:
 - uid: framework-map1
-  framework_owner: framework1
+  framework_owner:
+    uid: framework1
   policy_dependencies:
   - uid: policy1
   controls:
@@ -569,7 +570,8 @@ frameworks:
 framework_maps:
     - uid: compliance-to-ssh-policy
       mrn: //test.sth/framework/compliance-to-ssh-policy
-      framework_owner: mondoo-ucf
+      framework_owner:
+        uid: mondoo-ucf
       policy_dependencies:
       - uid: ssh-policy
       controls:
