@@ -30,7 +30,7 @@ iex ((New-Object System.Net.WebClient).DownloadString('https://install.mondoo.co
 Install-Mondoo;
 ```
 
-If you prefer manual installation, you find the cnspec packages on [GitHub releases](https://github.com/mondoohq/cnspec/releases).
+If you prefer manual installation, you find the cnspec packages in our [releases](https://github.com/mondoohq/cnspec/releases).
 
 ## Run a scan with policies
 
@@ -71,19 +71,19 @@ export GITHUB_TOKEN=<personal_access_token>
 cnspec scan github repo <org/repo>
 ```
 
-[:books: To learn more, read the cnquery docs.](https://mondoo.com/docs/cnquery/home)
+[:books: To learn more, read the cnspec docs.](https://mondoo.com/docs/cnspec/home)
 
 ### Policies
 
-cnspec policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). cnspec comes with default security policies configured for all supported targets. The default policies are available via the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
+cnspec policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). cnspec comes with default security policies configured for all supported targets. The default policies are available in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
 
 ## Vulnerability scan
 
-cnspec supports vulnerability scanning for a wide-range of platforms. The vulnerability scanning is not restricted to container images, it works for build and runtime.
+cnspec scans for vulnerabilities in a wide range of platforms. Vulnerability scanning is not restricted to container images; it works for build and runtime as well.
 
-![cnspec vuln example](docs/images/cnspec-vuln.gif)
+![cnspec vulnerability scan example](docs/images/cnspec-vuln.gif)
 
-NOTE: The current version requires you to be logged in to Mondoo Platform. Future versions will be able to scan the platforms without the requirement to be logged in.
+NOTE: The current version requires you to log into Mondoo Platform. Future versions will let you scan the platforms without logging in.
 
 ### Examples
 
@@ -129,7 +129,7 @@ cnspec vuln local
 
 ## cnspec interactive shell
 
-cnspec also provides an interactive shell to explore assertions. It helps you understand the assertions that policies use, and write your own as well. It's also a great way to interact with both local and remote targets on the fly.
+cnspec also provides an interactive shell to explore assertions. It helps you understand the assertions that security policies use, as well as write your own policies. It's also a great way to interact with both local and remote targets on the fly.
 
 ### Local system shell
 
@@ -137,7 +137,7 @@ cnspec also provides an interactive shell to explore assertions. It helps you un
 cnspec shell local
 ```
 
-The shell provides a `help` command to get help on the resources that power cnspec. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource. For example:
+The shell provides a `help` command for information on the resources that power cnspec. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more detail on a specific resource. For example:
 
 ```bash
 cnspec> help ports
@@ -146,7 +146,9 @@ ports:              TCP/IP ports on the system
   listening []port: All listening ports
 ```
 
-The shell uses auto-complete, which makes it easy to explore. Once inside the shell, you can enter MQL assertions like this:
+The shell uses auto-complete, which makes it easy to explore. 
+
+Once inside the shell, you can enter MQL assertions like this:
 
 ```coffeescript
 > ports.listening.none( port == 23 )
@@ -166,7 +168,7 @@ The easiest way to scale cnspec across your fleet is to sign up for a free Mondo
 - Set custom policy exceptions
 - Explore the relationships between the different assets in your infrastructure
 
-Mondoo's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, all assets can report on policies and you can define custom exceptions for your fleet.
+Mondoo Platform's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, you can assess all your assets based on consistent policies and define custom policies and exceptions for your fleet.
 
 Go to [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup) to sign up.
 
@@ -186,7 +188,7 @@ Once authenticated, you can scan any target:
 cnspec scan <target>
 ```
 
-cnspec returns the results from the scan to `STDOUT` and to the platform.
+cnspec returns the results from the scan to `STDOUT` and to Mondoo Platform.
 
 With an account on Mondoo Platform, you can upload policies:
 
@@ -198,13 +200,13 @@ cnspec bundle upload mypolicy.mql.yaml
 
 A cnspec policy is simply a YAML file that lets you express any security rule or best practice for your fleet.
 
-A few examples can be found in the `examples` folder in this repo. You can run any of these policies via:
+A few examples can be found in the `examples` folder in this repo. You can run any of these policies:
 
 ```bash
 cnspec scan local -f examples/example.mql.yaml
 ```
 
-If you're interested in writing your own policies or contributing policies back to the cnspec community, see our [policy as code guide](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/).
+If you're interested in writing your own policies or contributing policies back to the cnspec community, read Mondoo's [Policy Authoring Guide](https://mondoo.com/docs/cnspec/cnspec-policies/write/).
 
 ## Supported targets
 
@@ -232,6 +234,7 @@ If you're interested in writing your own policies or contributing policies back 
 | Microsoft 365 accounts           | `ms365`                    | `cnspec scan ms365 --tenant-id TENANT_ID --client-id CLIENT_ID --certificate-path PFX_FILE`                                                           |
 | Microsoft Azure subscriptions    | `azure`                    | `cnspec scan azure --subscription SUBSCRIPTION_ID`                                                                                                    |
 | Microsoft Azure virtual machines | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
+| Oracle Cloud Infrastructure (OCI) | `oci`                     | `cnspec shell oci`                                                                                              |
 | Okta                             | `okta`                     | `cnspec shell okta --token TOKEN --organization ORGANIZATION`                                                                                         |
 | Running containers               | `docker`                   | `cnspec scan docker CONTAINER_ID`                                                                                                                     |
 | Slack                            | `slack`                    | `cnspec shell slack --token TOKEN`                                                                                                                    |
@@ -241,7 +244,7 @@ If you're interested in writing your own policies or contributing policies back 
 | Terraform state                  | `terraform state`          | `cnspec scan terraform state state.json`                                                                                                              |
 | Vagrant virtual machines         | `vagrant`                  | `cnspec scan vagrant HOST`                                                                                                                            |
 | VMware vSphere                   | `vsphere`                  | `cnspec scan vsphere user@domain@host --ask-pass`                                                                                                     |
-| Windows hosts                    | `local`, `ssh`, `winrm`    | `cnspec scan local`,<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass` or<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
+| Windows hosts                    | `local`, `ssh`, `winrm`    | `cnspec scan local`<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass`<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
 
 ## What's next?
 
@@ -251,7 +254,7 @@ Explore our:
 
 - [cnspec docs](https://mondoo.com/docs/cnspec/home)
 - [Policy bundles](https://github.com/mondoohq/cnspec-policies)
-- [Policy as code](https://mondoo.com/docs/tutorials/mondoo/policy-as-code/)
+- [Policy as code](https://mondoo.com/docs/platform/console/policy_hub/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources/)
 - [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
@@ -259,7 +262,7 @@ Explore our:
 
 ## Join the community!
 
-Our goal is to secure all layers of your infrastructure. If you need support, or want to get involved with the development of cnspec, join our [community](https://github.com/orgs/mondoohq/discussions) today and let's grow it together!
+Our goal is to secure all layers of your infrastructure. If you need support or want to get involved with the development of cnspec, join our [community](https://github.com/orgs/mondoohq/discussions) today and let's grow it together!
 
 ## Development
 
