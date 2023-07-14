@@ -30,7 +30,7 @@ iex ((New-Object System.Net.WebClient).DownloadString('https://install.mondoo.co
 Install-Mondoo;
 ```
 
-If you prefer manual installation, you find the cnspec packages in our [releases](https://github.com/mondoohq/cnspec/releases).
+If you prefer manual installation, you can find the cnspec packages in our [releases](https://github.com/mondoohq/cnspec/releases).
 
 ## Run a scan with policies
 
