@@ -110,18 +110,18 @@ cnspec vuln local
 
 | Platform                 | Versions                 |
 | ------------------------ | ------------------------ |
-| Alpine                   | 3.10 - 3.16              |
+| Alpine                   | 3.10 - 3.18              |
 | AlmaLinux                | 8, 9                     |
-| Amazon Linux             | 1, 2, 2022               |
+| Amazon Linux             | 1, 2, 2023               |
 | Arch Linux               | Rolling                  |
 | CentOS                   | 6, 7                     |
-| Debian                   | 8, 9, 10, 11             |
-| Fedora                   | 30 - 36                  |
-| openSUSE                 | Leap 15.4                |
-| Oracle Linux             | 6, 7, 8                  |
-| Photon Linux             | 2, 3, 4                  |
-| Red Hat Enterprise Linux | 6, 7, 8                  |
-| Rocky Linux              | 8                        |
+| Debian                   | 8, 9, 10, 11, 12         |
+| Fedora                   | 30 - 38                  |
+| openSUSE                 | Leap 15                  |
+| Oracle Linux             | 6, 7, 8, 9               |
+| Photon Linux             | 2, 3, 4, 5               |
+| Red Hat Enterprise Linux | 6, 7, 8, 9               |
+| Rocky Linux              | 8, 9                     |
 | SUSE Linux Enterprise    | 12, 15                   |
 | Ubuntu                   | 18.04, 20.04, 22.04      |
 | VMware vSphere ESXi      | 6, 7                     |
@@ -140,10 +140,10 @@ cnspec shell local
 The shell provides a `help` command to get help on the resources that power cnspec. Running `help` without any arguments lists all of the available resources and their fields. You can also run `help <resource>` to get more information on a specific resource. For example:
 
 ```bash
-cnquery> help ports
+cnspec> help ports
 ports:              TCP/IP ports on the system
-  list []port:      TCP/IP ports on the system
-  listening []port: TCP/IP ports on the system
+  list []port:      List of all TCP/IP ports
+  listening []port: All listening ports
 ```
 
 The shell uses auto-complete, which makes it easy to explore. Once inside the shell, you can enter MQL assertions like this:
