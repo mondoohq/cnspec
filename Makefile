@@ -90,6 +90,10 @@ cnspec/build:
 cnspec/build/linux:
 	GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
+.PHONY: cnspec/build/windows
+cnspec/build/windows:
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+
 .PHONY: cnspec/install
 cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
