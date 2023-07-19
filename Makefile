@@ -84,19 +84,19 @@ upstream/generate:
 
 .PHONY: cnspec/build
 cnspec/build:
-	go build -o cnspec ${LDFLAGSDIST} apps/cnspec/cnspec.go
+	CGO_ENABLED=0 go build -o cnspec ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/build/linux
 cnspec/build/linux:
-	GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/build/windows
 cnspec/build/windows:
-	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/install
 cnspec/install:
-	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
+	CGO_ENABLED=0 COGOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 cnspec/dist/goreleaser/stable:
 	goreleaser release --clean --skip-publish --skip-validate	-f .goreleaser.yml --timeout 120m
