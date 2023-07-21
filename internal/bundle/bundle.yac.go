@@ -63,6 +63,8 @@ func (x *Author) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Bundle struct {
+	Frameworks           []*Framework           `protobuf:"bytes,8,rep,name=frameworks,proto3" json:"frameworks,omitempty" yaml:"frameworks,omitempty"`
+	FrameworkMaps        []*FrameworkMap        `protobuf:"bytes,9,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty" yaml:"framework_maps,omitempty"`
 	DeprecatedV7Policies []*DeprecatedV7_Policy `protobuf:"bytes,2,rep,name=deprecated_v7_policies,json=deprecatedV7Policies,proto3" json:"deprecated_v7_policies,omitempty" yaml:"deprecated_v7_policies,omitempty"`
 	DeprecatedV7Queries  []*DeprecatedV7_Mquery `protobuf:"bytes,4,rep,name=deprecated_v7_queries,json=deprecatedV7Queries,proto3" json:"deprecated_v7_queries,omitempty" yaml:"deprecated_v7_queries,omitempty"`
 	OwnerMrn             string                 `protobuf:"bytes,1,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
@@ -76,6 +78,92 @@ type Bundle struct {
 func (x *Bundle) UnmarshalYAML(node *yaml.Node) error {
 	// prevent recursive calls into UnmarshalYAML with a placeholder type
 	type tmp Bundle
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type Control struct {
+	Uid         string            `protobuf:"bytes,5,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string            `protobuf:"bytes,4,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Title       string            `protobuf:"bytes,20,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Tags        map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Docs        *ControlDocs      `protobuf:"bytes,21,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	Checksum    string            `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
+	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Manual      bool              `protobuf:"varint,50,opt,name=manual,proto3" json:"manual,omitempty" yaml:"manual,omitempty"`
+	FileContext FileContext       `json:"-" yaml:"-"`
+}
+
+func (x *Control) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Control
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type ControlDocs struct {
+	Refs        []*MqueryRef `protobuf:"bytes,4,rep,name=refs,proto3" json:"refs,omitempty" yaml:"refs,omitempty"`
+	Desc        string       `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
+	FileContext FileContext  `json:"-" yaml:"-"`
+}
+
+func (x *ControlDocs) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp ControlDocs
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type ControlMap struct {
+	Controls    []*ControlRef `protobuf:"bytes,9,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
+	Uid         string        `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string        `protobuf:"bytes,4,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Policies    []*ControlRef `protobuf:"bytes,8,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
+	Checks      []*ControlRef `protobuf:"bytes,7,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
+	FileContext FileContext   `json:"-" yaml:"-"`
+}
+
+func (x *ControlMap) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp ControlMap
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type ControlRef struct {
+	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+}
+
+func (x *ControlRef) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp ControlRef
 	err := node.Decode((*tmp)(x))
 	if err != nil {
 		return err
@@ -308,6 +396,117 @@ type Filters struct {
 func (x *Filters) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+}
+
+type Framework struct {
+	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
+	Created                int64             `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
+	Modified               int64             `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	Dependencies           []*FrameworkRef   `protobuf:"bytes,35,rep,name=dependencies,proto3" json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	LocalContentChecksum   string            `protobuf:"bytes,37,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
+	GraphContentChecksum   string            `protobuf:"bytes,38,opt,name=graph_content_checksum,json=graphContentChecksum,proto3" json:"graph_content_checksum,omitempty" yaml:"graph_content_checksum,omitempty"`
+	LocalExecutionChecksum string            `protobuf:"bytes,39,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
+	GraphExecutionChecksum string            `protobuf:"bytes,40,opt,name=graph_execution_checksum,json=graphExecutionChecksum,proto3" json:"graph_execution_checksum,omitempty" yaml:"graph_execution_checksum,omitempty"`
+	FrameworkMaps          []*FrameworkMap   `protobuf:"bytes,53,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty" yaml:"framework_maps,omitempty"`
+	Uid                    string            `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	OwnerMrn               string            `protobuf:"bytes,8,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
+	Mrn                    string            `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Name                   string            `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Version                string            `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
+	License                string            `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
+	Tags                   map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Authors                []*Author         `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
+	Docs                   *PolicyDocs       `protobuf:"bytes,41,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	Groups                 []*FrameworkGroup `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
+	FileContext            FileContext       `json:"-" yaml:"-"`
+}
+
+func (x *Framework) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Framework
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type FrameworkGroup struct {
+	Uid          string           `protobuf:"bytes,5,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Title        string           `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Authors      []*Author        `protobuf:"bytes,26,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
+	Docs         *PolicyGroupDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	Controls     []*Control       `protobuf:"bytes,1,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
+	Type         GroupType        `protobuf:"varint,4,opt,name=type,proto3,enum=cnspec.policy.v1.GroupType" json:"type,omitempty" yaml:"type,omitempty"`
+	StartDate    int64            `protobuf:"varint,21,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty" yaml:"start_date,omitempty"`
+	EndDate      int64            `protobuf:"varint,22,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty" yaml:"end_date,omitempty"`
+	ReminderDate int64            `protobuf:"varint,23,opt,name=reminder_date,json=reminderDate,proto3" json:"reminder_date,omitempty" yaml:"reminder_date,omitempty"`
+	Reviewers    []*Author        `protobuf:"bytes,27,rep,name=reviewers,proto3" json:"reviewers,omitempty" yaml:"reviewers,omitempty"`
+	ReviewStatus ReviewStatus     `protobuf:"varint,28,opt,name=review_status,json=reviewStatus,proto3,enum=cnspec.policy.v1.ReviewStatus" json:"review_status,omitempty" yaml:"review_status,omitempty"`
+	Created      int64            `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
+	Modified     int64            `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	FileContext  FileContext      `json:"-" yaml:"-"`
+}
+
+func (x *FrameworkGroup) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp FrameworkGroup
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type FrameworkMap struct {
+	FrameworkDependencies  []*ObjectRef  `protobuf:"bytes,3,rep,name=framework_dependencies,json=frameworkDependencies,proto3" json:"framework_dependencies,omitempty" yaml:"framework_dependencies,omitempty"`
+	PolicyDependencies     []*ObjectRef  `protobuf:"bytes,4,rep,name=policy_dependencies,json=policyDependencies,proto3" json:"policy_dependencies,omitempty" yaml:"policy_dependencies,omitempty"`
+	Controls               []*ControlMap `protobuf:"bytes,5,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
+	FrameworkOwner         *ObjectRef    `protobuf:"bytes,20,opt,name=framework_owner,json=frameworkOwner,proto3" json:"framework_owner,omitempty" yaml:"framework_owner,omitempty"`
+	LocalContentChecksum   string        `protobuf:"bytes,21,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
+	LocalExecutionChecksum string        `protobuf:"bytes,22,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
+	Uid                    string        `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn                    string        `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	FileContext            FileContext   `json:"-" yaml:"-"`
+}
+
+func (x *FrameworkMap) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp FrameworkMap
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
+}
+
+type FrameworkRef struct {
+	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+}
+
+func (x *FrameworkRef) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp FrameworkRef
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	return nil
 }
 
 type GroupType policy.GroupType
@@ -662,6 +861,31 @@ type Remediation struct {
 func (x *Remediation) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+}
+
+type ReviewStatus policy.ReviewStatus
+
+func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded interface{}
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v policy.ReviewStatus
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = ReviewStatus(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal ReviewStatus")
 }
 
 type TypedDoc struct {
