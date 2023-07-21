@@ -101,6 +101,12 @@ policies:
     - uid: check-pass-4
       mql: 4 == 4
 frameworks:
+- uid: framework0
+  name: framework0
+  groups:
+  - title: group0
+    controls:
+  - uid: control1
 - uid: framework1
   name: framework1
   groups:
@@ -112,6 +118,8 @@ frameworks:
       title: control2
     - uid: control3
       title: control3
+  dependencies:
+  - mrn: //test.sth/frameworks/framework0
 - uid: framework2
   name: framework1
   groups:
@@ -155,13 +163,19 @@ framework_maps:
 		{
 			name: "when a control is removed",
 			modify: func(bundle *policy.Bundle) {
-				bundle.Frameworks[0].Groups[0].Controls = bundle.Frameworks[0].Groups[0].Controls[:2]
+				bundle.Frameworks[1].Groups[0].Controls = bundle.Frameworks[1].Groups[0].Controls[:2]
 			},
 		},
 		{
 			name: "when a control action is changed",
 			modify: func(bundle *policy.Bundle) {
-				bundle.Frameworks[0].Groups[0].Controls[0].Action = explorer.Action_DEACTIVATE
+				bundle.Frameworks[1].Groups[0].Controls[0].Action = explorer.Action_DEACTIVATE
+			},
+		},
+		{
+			name: "when a framework dependency action changes",
+			modify: func(bundle *policy.Bundle) {
+				bundle.Frameworks[1].Dependencies[0].Action = explorer.Action_IGNORE
 			},
 		},
 		{
@@ -220,7 +234,7 @@ framework_maps:
 
 			_, err := srv.SetBundle(context.Background(), bundle)
 
-			checksumToTestCases[bundle.Frameworks[0].GraphExecutionChecksum] = append(checksumToTestCases[bundle.Frameworks[0].GraphExecutionChecksum], tc.name)
+			checksumToTestCases[bundle.Frameworks[1].GraphExecutionChecksum] = append(checksumToTestCases[bundle.Frameworks[1].GraphExecutionChecksum], tc.name)
 			require.NoError(t, err)
 		}
 
@@ -241,7 +255,7 @@ framework_maps:
 				_, err := srv.SetBundle(context.Background(), bundle)
 				require.NoError(t, err)
 
-				checksums = append(checksums, bundle.Frameworks[0].GraphExecutionChecksum)
+				checksums = append(checksums, bundle.Frameworks[1].GraphExecutionChecksum)
 			}
 			// All checksums should be the same
 			for i := 1; i < len(checksums); i++ {

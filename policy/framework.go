@@ -251,8 +251,11 @@ func (f *Framework) updateGraphChecksums(
 		}
 
 		graphExecutionChecksum = graphExecutionChecksum.
-			Add(depObj.GraphExecutionChecksum)
-		graphContentChecksum = graphContentChecksum.Add(depObj.GraphContentChecksum)
+			Add(depObj.GraphExecutionChecksum).
+			AddUint(uint64(dep.Action))
+		graphContentChecksum = graphContentChecksum.
+			Add(depObj.GraphContentChecksum).
+			AddUint(uint64(dep.Action))
 	}
 
 	for _, fm := range f.FrameworkMaps {
