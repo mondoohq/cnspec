@@ -26,26 +26,26 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230720181447-221641d7d3a1
+	go.mondoo.com/cnquery v0.0.0-20230725090200-9e647075afc8
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.16.0
 	golang.org/x/sync v0.3.0 // indirect
-	google.golang.org/genproto v0.0.0-20230530153820-e85fd2cbaebc // indirect
+	google.golang.org/genproto v0.0.0-20230706204954-ccb25ca9f130 // indirect
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/yaml.v3 v3.0.1
 	sigs.k8s.io/yaml v1.3.0
 )
 
-require google.golang.org/genproto/googleapis/rpc v0.0.0-20230530153820-e85fd2cbaebc
+require google.golang.org/genproto/googleapis/rpc v0.0.0-20230711160842-782d3b101e98
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
-	cloud.google.com/go/accessapproval v1.6.0 // indirect
-	cloud.google.com/go/functions v1.13.0 // indirect
+	cloud.google.com/go/accessapproval v1.7.1 // indirect
+	cloud.google.com/go/functions v1.15.1 // indirect
 	cloud.google.com/go/logging v1.7.0 // indirect
 	cloud.google.com/go/monitoring v1.15.1 // indirect
 	cloud.google.com/go/run v0.9.0 // indirect
-	cloud.google.com/go/storage v1.29.0 // indirect
+	cloud.google.com/go/storage v1.30.1 // indirect
 	github.com/4meepo/tagalign v1.2.2 // indirect
 	github.com/Abirdcfly/dupword v0.0.11 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.0.1 // indirect
@@ -97,22 +97,22 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/otel/metric v1.16.0 // indirect
 	go.tmz.dev/musttag v0.7.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20230530153820-e85fd2cbaebc // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20230706204954-ccb25ca9f130 // indirect
 )
 
 require (
 	4d63.com/gochecknoglobals v0.2.1 // indirect
-	cloud.google.com/go v0.110.2 // indirect
-	cloud.google.com/go/bigquery v1.51.2 // indirect
-	cloud.google.com/go/compute v1.19.3 // indirect
+	cloud.google.com/go v0.110.4 // indirect
+	cloud.google.com/go/bigquery v1.52.0 // indirect
+	cloud.google.com/go/compute v1.20.1 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	cloud.google.com/go/container v1.15.0 // indirect
-	cloud.google.com/go/iam v0.13.0 // indirect
-	cloud.google.com/go/kms v1.10.1 // indirect
-	cloud.google.com/go/longrunning v0.5.0 // indirect
-	cloud.google.com/go/pubsub v1.30.0 // indirect
-	cloud.google.com/go/recommender v1.9.0 // indirect
-	cloud.google.com/go/secretmanager v1.10.0 // indirect
+	cloud.google.com/go/container v1.22.1 // indirect
+	cloud.google.com/go/iam v1.1.0 // indirect
+	cloud.google.com/go/kms v1.12.1 // indirect
+	cloud.google.com/go/longrunning v0.5.1 // indirect
+	cloud.google.com/go/pubsub v1.32.0 // indirect
+	cloud.google.com/go/recommender v1.10.1 // indirect
+	cloud.google.com/go/secretmanager v1.11.1 // indirect
 	cloud.google.com/go/serviceusage v1.6.0 // indirect
 	github.com/99designs/go-keychain v0.0.0-20191008050251-8e49817e8af4 // indirect
 	github.com/99designs/keyring v1.2.1 // indirect
@@ -302,8 +302,8 @@ require (
 	github.com/google/go-containerregistry v0.12.1 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.2.4 // indirect
-	github.com/googleapis/gax-go/v2 v2.11.0 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.2.5 // indirect
+	github.com/googleapis/gax-go/v2 v2.12.0 // indirect
 	github.com/gordonklaus/ineffassign v0.0.0-20230610083614-0e73809eb601 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/gosimple/slug v1.13.1 // indirect
@@ -481,21 +481,21 @@ require (
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
-	golang.org/x/crypto v0.9.0 // indirect
+	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230510235704-dd950f8aeaea // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230306221820-f0f767cdffd6 // indirect
 	golang.org/x/mod v0.10.0 // indirect
-	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/oauth2 v0.8.0 // indirect
-	golang.org/x/sys v0.9.0
-	golang.org/x/term v0.8.0 // indirect
-	golang.org/x/text v0.9.0 // indirect
+	golang.org/x/net v0.12.0 // indirect
+	golang.org/x/oauth2 v0.10.0 // indirect
+	golang.org/x/sys v0.10.0
+	golang.org/x/term v0.10.0 // indirect
+	golang.org/x/text v0.11.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/tools v0.9.3 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	google.golang.org/api v0.128.0 // indirect
+	google.golang.org/api v0.132.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/grpc v1.56.1
+	google.golang.org/grpc v1.56.2
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
