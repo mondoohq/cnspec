@@ -246,8 +246,10 @@ func (f *Framework) updateGraphChecksums(
 			depObj.FrameworkMaps = frameworkMaps
 		}
 
-		if err := depObj.UpdateChecksums(ctx, getFramework, getFrameworkMaps, bundle); err != nil {
-			return err
+		if depObj.LocalExecutionChecksum == "" || depObj.LocalContentChecksum == "" || depObj.GraphExecutionChecksum == "" || depObj.GraphContentChecksum == "" {
+			if err := depObj.UpdateChecksums(ctx, getFramework, getFrameworkMaps, bundle); err != nil {
+				return err
+			}
 		}
 
 		graphExecutionChecksum = graphExecutionChecksum.
