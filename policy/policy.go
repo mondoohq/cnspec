@@ -444,12 +444,14 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// CHECKS (must be sorted)
-		sort.Slice(group.Checks, func(i, j int) bool {
-			return group.Checks[i].Mrn < group.Checks[j].Mrn
+		checks := make([]*explorer.Mquery, len(group.Checks))
+		copy(checks, group.Checks)
+		sort.Slice(checks, func(i, j int) bool {
+			return checks[i].Mrn < checks[j].Mrn
 		})
 
-		for i := range group.Checks {
-			check := group.Checks[i]
+		for i := range checks {
+			check := checks[i]
 
 			if base, ok := bundle.Queries[check.Mrn]; ok {
 				check = check.Merge(base)
@@ -482,12 +484,14 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// DATA (must be sorted)
-		sort.Slice(group.Queries, func(i, j int) bool {
-			return group.Queries[i].Mrn < group.Queries[j].Mrn
+		queries := make([]*explorer.Mquery, len(group.Queries))
+		copy(queries, group.Queries)
+		sort.Slice(queries, func(i, j int) bool {
+			return queries[i].Mrn < queries[j].Mrn
 		})
 
-		for i := range group.Queries {
-			query := group.Queries[i]
+		for i := range queries {
+			query := queries[i]
 
 			if base, ok := bundle.Queries[query.Mrn]; ok {
 				query = query.Merge(base)
