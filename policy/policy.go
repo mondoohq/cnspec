@@ -444,6 +444,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// CHECKS (must be sorted)
+		// copy checks to keep the original order and only sort it for the purpose of checksum generation
 		checks := make([]*explorer.Mquery, len(group.Checks))
 		copy(checks, group.Checks)
 		sort.Slice(checks, func(i, j int) bool {
@@ -484,6 +485,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		}
 
 		// DATA (must be sorted)
+		// copy checks to keep the original order and only sort it for the purpose of checksum generation
 		queries := make([]*explorer.Mquery, len(group.Queries))
 		copy(queries, group.Queries)
 		sort.Slice(queries, func(i, j int) bool {
