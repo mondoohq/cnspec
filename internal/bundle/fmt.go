@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -96,6 +97,18 @@ func FormatFile(filename string) error {
 	}
 
 	b, err := ParseYaml(data)
+
+	// to improve the formatting we need to remove the whitespace at the end of the lines
+	// this is a bit hacky, but it works
+	for i := range b.Queries {
+		mql := b.Queries[i].Mql
+		lines := strings.Split(mql, "\n")
+		for j := range lines {
+			lines[j] = strings.TrimRight(lines[j], " ")
+		}
+		b.Queries[i].Mql = strings.Join(lines, "\n")
+	}
+
 	// we have v7 structs in v8 bundle, so it can happen that v7 parses properly
 	// for that case we need to make sure all the structs are properly converted
 	if err != nil || hasV7Structs(b) {
