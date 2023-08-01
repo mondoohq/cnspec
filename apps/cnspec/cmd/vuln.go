@@ -218,7 +218,7 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 			log.Fatal().Err(err).Msg("failed to prepare config")
 		}
 
-		unauthedErrorMsg := "vulnerability scan requires authentication, future versions will not have this restriction, login with `cnspec login --token`"
+		unauthedErrorMsg := "vulnerability scan requires authentication, login with `cnspec login --token`"
 		if conf.UpstreamConfig == nil {
 			log.Fatal().Msg(unauthedErrorMsg)
 		}
