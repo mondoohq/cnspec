@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder"
 	"go.mondoo.com/cnquery/apps/cnquery/cmd/builder/common"
 	"go.mondoo.com/cnquery/cli/components"
-	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/shell"
 	"go.mondoo.com/cnquery/cli/theme"
 	"go.mondoo.com/cnquery/explorer/executor"
@@ -29,6 +27,8 @@ import (
 	provider_resolver "go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/cli/reporter"
+	"go.mondoo.com/ranger-rpc/codes"
+	"go.mondoo.com/ranger-rpc/status"
 )
 
 func init() {
@@ -218,8 +218,9 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 			log.Fatal().Err(err).Msg("failed to prepare config")
 		}
 
+		unauthedErrorMsg := "vulnerability scan requires authentication, future versions will not have this restriction, login with `cnspec login --token`"
 		if conf.UpstreamConfig == nil {
-			log.Fatal().Msg("vulnerability scan requires authentication, future versions will not have this restriction, login with `cnspec login --token`")
+			log.Fatal().Msg(unauthedErrorMsg)
 		}
 
 		ctx := discovery.InitCtx(context.Background())
@@ -294,22 +295,36 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 		vulnReportQuery := "platform.vulnerabilityReport"
 		vulnReportDatapointChecksum := executor.MustGetOneDatapoint(executor.MustCompile(vulnReportQuery))
 		_, results, err := sh.RunOnce(vulnReportQuery)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to run query")
+			return
+		}
 
 		// render vulnerability report
-		print := printer.DefaultPrinter
-		var b bytes.Buffer
 		var vulnReport mvd.VulnReport
 		value, ok := results[vulnReportDatapointChecksum]
 		if !ok {
-			b.WriteString(print.Error("could not find advisory report\n\n"))
-			b.String()
+			log.Error().Msg("could not find advisory report\n\n")
 			return
 		}
 
 		if value == nil || value.Data == nil {
-			b.WriteString(print.Error("could not load advisory report\n\n"))
-			b.String()
+			log.Error().Msg("could not load advisory report\n\n")
 			return
+		}
+
+		if value.Data.Error != nil {
+			err := value.Data.Error
+			if status, ok := status.FromError(err); ok {
+				code := status.Code()
+				switch code {
+				case codes.Unauthenticated:
+					log.Fatal().Msg(unauthedErrorMsg)
+				default:
+					log.Err(value.Data.Error).Msg("could not load advisory report")
+					return
+				}
+			}
 		}
 
 		rawData := value.Data.Value
@@ -321,8 +336,7 @@ configure your Azure credentials and have SSH access to your virtual machines.`,
 		decoder, _ := mapstructure.NewDecoder(cfg)
 		err = decoder.Decode(rawData)
 		if err != nil {
-			b.WriteString(print.Error("could not decode advisory report\n\n"))
-			b.String()
+			log.Error().Msg("could not decode advisory report\n\n")
 			return
 		}
 
