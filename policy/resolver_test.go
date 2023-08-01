@@ -422,9 +422,14 @@ framework_maps:
 		// control3 had no checks, so it should not have a reporting job.
 		// TODO: is that the desired behavior?
 		require.Nil(t, rjTester.queryIdToReportingJob[controlMrn("control3")])
-		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-1")], controlMrn("control1"))
-		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-2")], controlMrn("control2"))
-		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], controlMrn("control2"))
+		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-1")], queryMrn("check-pass-1"))
+		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-2")], queryMrn("check-pass-2"))
+		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], queryMrn("check-fail"))
+
+		rjTester.requireReportsTo(queryMrn("check-pass-1"), controlMrn("control1"))
+		rjTester.requireReportsTo(queryMrn("check-pass-2"), controlMrn("control2"))
+		rjTester.requireReportsTo(queryMrn("check-fail"), controlMrn("control2"))
+
 		rjTester.requireReportsTo(controlMrn("control1"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(controlMrn("control2"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
@@ -607,7 +612,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 12)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
@@ -647,7 +652,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 12)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
@@ -685,7 +690,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 12)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
@@ -723,7 +728,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 8)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 11)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
@@ -755,7 +760,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 9)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 12)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
