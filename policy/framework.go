@@ -479,6 +479,7 @@ func (c *ControlMap) refreshMRNs(ownerMRN string, cache *bundleCache) error {
 		if !ok {
 			return errors.New("cannot find policy '" + control.Uid + "' in this bundle, which is referenced by control " + c.Mrn)
 		}
+		control.Uid = ""
 	}
 
 	return nil
