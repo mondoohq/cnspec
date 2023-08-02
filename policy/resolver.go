@@ -1536,6 +1536,18 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			continue
 		}
 
+		// Create a reporting job from the query code id to one with the mrn.
+		// This isn't 100% correct. We don't keep track of all the queries that
+		// have the same code id.
+		uuid := cache.relativeChecksum(query.Mrn)
+		queryJob := &ReportingJob{
+			Uuid:      uuid,
+			QrId:      query.Mrn,
+			ChildJobs: map[string]*explorer.Impact{},
+			Type:      ReportingJob_CHECK,
+		}
+		nuJobs[uuid] = queryJob
+
 		for i := range targets {
 			controlMrn := targets[i]
 			// skip controls which are part of a FrameworkGroup with type DISABLE
@@ -1546,8 +1558,11 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			}
 			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
 
-			controlJob.ChildJobs[rj.Uuid] = nil
-			rj.Notify = append(rj.Notify, controlJob.Uuid)
+			queryJob.ChildJobs[rj.Uuid] = nil
+			rj.Notify = append(rj.Notify, queryJob.Uuid)
+
+			controlJob.ChildJobs[queryJob.Uuid] = nil
+			queryJob.Notify = append(queryJob.Notify, controlJob.Uuid)
 		}
 	}
 
