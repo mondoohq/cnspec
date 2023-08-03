@@ -2,6 +2,7 @@ package internal
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/progress"
@@ -438,7 +439,13 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 	if data.score != nil {
 		rjRes, ok := nodeData.childScores[from]
 		if !ok {
-			panic("invalid score report")
+			keys := make([]string, 0, len(nodeData.childScores))
+			for k := range nodeData.childScores {
+				keys = append(keys, k)
+			}
+
+			panic(fmt.Sprintf("invalid reporting job. %s received message from %s. can only accept messages from %s",
+				nodeData.queryID, from, keys))
 		}
 		rjRes.score = data.score
 		nodeData.invalidated = true
