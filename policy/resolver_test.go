@@ -500,6 +500,7 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 
 	if isFramework(parentQueryId) {
 		require.Equal(tester.t, policy.ReportingJob_FRAMEWORK, parentRj.Type)
+		require.Equal(tester.t, explorer.ScoringSystem_AVERAGE, parentRj.ScoringSystem)
 	} else if isControl(parentQueryId) {
 		require.Equal(tester.t, policy.ReportingJob_CONTROL, parentRj.Type)
 	} else if isPolicy(parentQueryId) || parentQueryId == "root" {
@@ -515,6 +516,7 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 		require.Equal(tester.t, policy.ReportingJob_CONTROL, childRj.Type)
 	} else if isFramework(childQueryId) {
 		require.Equal(tester.t, policy.ReportingJob_FRAMEWORK, childRj.Type)
+		require.Equal(tester.t, explorer.ScoringSystem_AVERAGE, childRj.ScoringSystem)
 	} else if isPolicy(childQueryId) {
 		require.Equal(tester.t, policy.ReportingJob_POLICY, childRj.Type)
 	} else {

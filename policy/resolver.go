@@ -1467,7 +1467,7 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 					Uuid:          uuid,
 					QrId:          childFramework.Mrn,
 					ChildJobs:     map[string]*explorer.Impact{},
-					ScoringSystem: explorer.ScoringSystem_WORST,
+					ScoringSystem: explorer.ScoringSystem_AVERAGE,
 					Type:          ReportingJob_FRAMEWORK,
 				}
 			}
@@ -1478,7 +1478,7 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 				// overwrite it as that would change the scoring system
 				impact := &explorer.Impact{}
 				if parent.Type == ReportingJob_FRAMEWORK {
-					impact.Scoring = explorer.ScoringSystem_WORST
+					impact.Scoring = explorer.ScoringSystem_AVERAGE
 				} else {
 					impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
 				}
