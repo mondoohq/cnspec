@@ -11,6 +11,20 @@ import (
 	"go.mondoo.com/cnquery/sortx"
 )
 
+type ResolvedFrameworkNodeType int
+
+const (
+	ResolvedFrameworkNodeTypeFramework ResolvedFrameworkNodeType = iota
+	ResolvedFrameworkNodeTypeControl
+	ResolvedFrameworkNodeTypePolicy
+	ResolvedFrameworkNodeTypeCheck
+)
+
+type ResolvedFrameworkNode struct {
+	Mrn  string
+	Type ResolvedFrameworkNodeType
+}
+
 type ResolvedFramework struct {
 	Mrn                  string
 	GraphContentChecksum string
@@ -24,6 +38,7 @@ type ResolvedFramework struct {
 	// E.g. ReportSources[controlA] = [check123, check45]
 	// E.g. ReportSources[frameworkX] = [controlA, ...]
 	ReportSources map[string][]string
+	Nodes         map[string]ResolvedFrameworkNode
 }
 
 // Compile takes a framework and prepares it to be stored and further
@@ -477,7 +492,7 @@ func (c *ControlMap) refreshMRNs(ownerMRN string, cache *bundleCache) error {
 		}
 		control.Mrn, ok = cache.uid2mrn[control.Uid]
 		if !ok {
-			return errors.New("cannot find policy '" + control.Uid + "' in this bundle, which is referenced by control " + c.Mrn)
+			return errors.New("cannot find control '" + control.Uid + "' in this bundle, which is referenced by control " + c.Mrn)
 		}
 		control.Uid = ""
 	}
@@ -490,6 +505,7 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 		Mrn:           mrn,
 		ReportTargets: map[string][]string{},
 		ReportSources: map[string][]string{},
+		Nodes:         map[string]ResolvedFrameworkNode{},
 	}
 
 	for _, framework := range frameworks {
@@ -497,13 +513,30 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 			fmap := framework.FrameworkMaps[i]
 
 			for _, ctl := range fmap.Controls {
-				res.addReportLink(framework.Mrn, ctl.Mrn)
+				res.addReportLink(
+					ResolvedFrameworkNode{
+						Mrn:  framework.Mrn,
+						Type: ResolvedFrameworkNodeTypeFramework,
+					},
+					ResolvedFrameworkNode{
+						Mrn:  ctl.Mrn,
+						Type: ResolvedFrameworkNodeTypeControl,
+					})
 				res.addControl(ctl)
 			}
 		}
 		// FIXME: why do these not show up in the framework map
 		for _, depFramework := range framework.Dependencies {
-			res.addReportLink(framework.Mrn, depFramework.Mrn)
+			res.addReportLink(
+				ResolvedFrameworkNode{
+					Mrn:  framework.Mrn,
+					Type: ResolvedFrameworkNodeTypeFramework,
+				},
+				ResolvedFrameworkNode{
+					Mrn:  depFramework.Mrn,
+					Type: ResolvedFrameworkNodeTypeFramework,
+				},
+			)
 		}
 	}
 
@@ -512,28 +545,94 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 
 func (r *ResolvedFramework) addControl(control *ControlMap) {
 	for i := range control.Checks {
-		r.addReportLink(control.Mrn, control.Checks[i].Mrn)
+		r.addReportLink(
+			ResolvedFrameworkNode{
+				Mrn:  control.Mrn,
+				Type: ResolvedFrameworkNodeTypeControl,
+			},
+			ResolvedFrameworkNode{
+				Mrn:  control.Checks[i].Mrn,
+				Type: ResolvedFrameworkNodeTypeCheck,
+			},
+		)
 	}
 	for i := range control.Policies {
-		r.addReportLink(control.Mrn, control.Policies[i].Mrn)
+		r.addReportLink(
+			ResolvedFrameworkNode{
+				Mrn:  control.Mrn,
+				Type: ResolvedFrameworkNodeTypeControl,
+			},
+			ResolvedFrameworkNode{
+				Mrn:  control.Policies[i].Mrn,
+				Type: ResolvedFrameworkNodeTypePolicy,
+			},
+		)
 	}
 	for i := range control.Controls {
-		r.addReportLink(control.Mrn, control.Controls[i].Mrn)
+		r.addReportLink(
+			ResolvedFrameworkNode{
+				Mrn:  control.Mrn,
+				Type: ResolvedFrameworkNodeTypeControl,
+			},
+			ResolvedFrameworkNode{
+				Mrn:  control.Controls[i].Mrn,
+				Type: ResolvedFrameworkNodeTypeControl,
+			},
+		)
 	}
 }
 
-func (r *ResolvedFramework) addReportLink(parent, child string) {
-	existing, ok := r.ReportTargets[child]
+func (r *ResolvedFramework) addReportLink(parent, child ResolvedFrameworkNode) {
+	r.Nodes[parent.Mrn] = parent
+	r.Nodes[child.Mrn] = child
+	existing, ok := r.ReportTargets[child.Mrn]
 	if !ok {
-		r.ReportTargets[child] = []string{parent}
+		r.ReportTargets[child.Mrn] = []string{parent.Mrn}
 	} else {
-		r.ReportTargets[child] = append(existing, parent)
+		r.ReportTargets[child.Mrn] = append(existing, parent.Mrn)
 	}
 
-	existing, ok = r.ReportSources[parent]
+	existing, ok = r.ReportSources[parent.Mrn]
 	if !ok {
-		r.ReportSources[parent] = []string{child}
+		r.ReportSources[parent.Mrn] = []string{child.Mrn}
 	} else {
-		r.ReportSources[parent] = append(existing, child)
+		r.ReportSources[parent.Mrn] = append(existing, child.Mrn)
 	}
+}
+
+func (r *ResolvedFramework) TopologicalSort() []string {
+	sorted := []string{}
+	visited := map[string]struct{}{}
+
+	nodes := make([]string, len(r.Nodes))
+	i := 0
+	for node := range r.Nodes {
+		nodes[i] = node
+		i++
+	}
+
+	sort.Strings(nodes)
+
+	for _, node := range nodes {
+		r.visit(node, visited, &sorted)
+	}
+
+	// reverse the list
+	for i := len(sorted)/2 - 1; i >= 0; i-- {
+		opp := len(sorted) - 1 - i
+		sorted[i], sorted[opp] = sorted[opp], sorted[i]
+	}
+
+	return sorted
+}
+
+func (r *ResolvedFramework) visit(node string, visited map[string]struct{}, sorted *[]string) {
+	if _, ok := visited[node]; ok {
+		return
+	}
+	visited[node] = struct{}{}
+	for _, child := range r.ReportTargets[node] {
+		r.visit(child, visited, sorted)
+	}
+	*sorted = append(*sorted, node)
 }

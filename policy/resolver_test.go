@@ -353,6 +353,8 @@ frameworks:
       title: control2
     - uid: control3
       title: control3
+    - uid: control4
+      title: control4
 - uid: framework2
   name: framework2
   groups:
@@ -380,6 +382,9 @@ framework_maps:
     checks:
     - uid: check-pass-2
     - uid: check-fail
+  - uid: control4
+    controls:
+    - uid: control1
 `
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
@@ -431,7 +436,9 @@ framework_maps:
 		rjTester.requireReportsTo(queryMrn("check-fail"), controlMrn("control2"))
 
 		rjTester.requireReportsTo(controlMrn("control1"), frameworkMrn("framework1"))
+		rjTester.requireReportsTo(controlMrn("control1"), controlMrn("control4"))
 		rjTester.requireReportsTo(controlMrn("control2"), frameworkMrn("framework1"))
+		rjTester.requireReportsTo(controlMrn("control4"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
 		rjTester.requireReportsTo(frameworkMrn("parent-framework"), "root")
 	})

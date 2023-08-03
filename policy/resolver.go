@@ -1524,45 +1524,99 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 		}
 	}
 
+	rjByMrn := map[string]*ReportingJob{}
 	for _, rj := range job.ReportingJobs {
-		query, ok := querymap[rj.QrId]
-		if !ok {
-			log.Warn().Str("mrn", framework.Mrn)
+		query := querymap[rj.QrId]
+		if query == nil {
 			continue
 		}
+		rjByMrn[query.Mrn] = rj
+	}
 
-		targets, ok := framework.ReportTargets[query.Mrn]
+	mrns := framework.TopologicalSort()
+	for _, mrn := range mrns {
+		node, ok := framework.Nodes[mrn]
 		if !ok {
 			continue
 		}
+		targets := framework.ReportTargets[mrn]
+		var curJob *ReportingJob
+		switch node.Type {
+		case ResolvedFrameworkNodeTypeCheck:
+			if len(targets) == 0 {
+				continue
+			}
+			rj, ok := rjByMrn[mrn]
+			if !ok {
+				continue
+			}
+			query, ok := querymap[rj.QrId]
+			if !ok {
+				continue
+			}
 
-		// Create a reporting job from the query code id to one with the mrn.
-		// This isn't 100% correct. We don't keep track of all the queries that
-		// have the same code id.
-		uuid := cache.relativeChecksum(query.Mrn)
-		queryJob := &ReportingJob{
-			Uuid:      uuid,
-			QrId:      query.Mrn,
-			ChildJobs: map[string]*explorer.Impact{},
-			Type:      ReportingJob_CHECK,
-		}
-		nuJobs[uuid] = queryJob
+			// Create a reporting job from the query code id to one with the mrn.
+			// This isn't 100% correct. We don't keep track of all the queries that
+			// have the same code id.
+			uuid := cache.relativeChecksum(query.Mrn)
+			queryJob := &ReportingJob{
+				Uuid:      uuid,
+				QrId:      query.Mrn,
+				ChildJobs: map[string]*explorer.Impact{},
+				Type:      ReportingJob_CHECK,
+			}
+			nuJobs[uuid] = queryJob
 
-		for i := range targets {
-			controlMrn := targets[i]
+			queryJob.ChildJobs[rj.Uuid] = nil
+			rj.Notify = append(rj.Notify, queryJob.Uuid)
+			continue
+		case ResolvedFrameworkNodeTypeControl:
 			// skip controls which are part of a FrameworkGroup with type DISABLE
-			if group, ok := frameworkGroupByControlMrn[controlMrn]; ok {
+			if group, ok := frameworkGroupByControlMrn[mrn]; ok {
 				if group.Type == GroupType_DISABLE {
 					continue
 				}
 			}
-			controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
 
-			queryJob.ChildJobs[rj.Uuid] = nil
-			rj.Notify = append(rj.Notify, queryJob.Uuid)
+			// Avoid adding controls which don't have any active children
+			shouldAdd := false
+			for _, child := range framework.ReportSources[mrn] {
+				if _, ok := nuJobs[cache.relativeChecksum(child)]; ok {
+					shouldAdd = true
+					break
+				}
+			}
 
-			controlJob.ChildJobs[queryJob.Uuid] = nil
-			queryJob.Notify = append(queryJob.Notify, controlJob.Uuid)
+			if !shouldAdd {
+				continue
+			}
+
+			controlJob := ensureControlJob(cache, nuJobs, mrn, framework, frameworkGroupByControlMrn)
+			// addedControlJobs[mrn] = controlJob
+			curJob = controlJob
+		case ResolvedFrameworkNodeTypeFramework:
+			curJob = job.ReportingJobs[cache.relativeChecksum(mrn)]
+		}
+
+		// Ensure that child jobs notify their parents
+		for _, child := range framework.ReportSources[mrn] {
+			childJob, ok := nuJobs[cache.relativeChecksum(child)]
+			if !ok {
+				continue
+			}
+			if _, ok := curJob.ChildJobs[childJob.Uuid]; !ok {
+				curJob.ChildJobs[childJob.Uuid] = nil
+			}
+			shouldAdd := true
+			for _, parent := range childJob.Notify {
+				if parent == curJob.Uuid {
+					shouldAdd = false
+					break
+				}
+			}
+			if shouldAdd {
+				childJob.Notify = append(childJob.Notify, curJob.Uuid)
+			}
 		}
 	}
 
