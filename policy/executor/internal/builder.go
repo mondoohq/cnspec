@@ -405,6 +405,7 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 	nodeData := &ReportingJobNodeData{
 		queryID:               queryID,
 		isQuery:               isQuery,
+		rjType:                rj.Type,
 		childScores:           map[string]*reportingJobResult{},
 		datapoints:            map[string]*reportingJobDatapoint{},
 		featureFlagFailErrors: ge.featureFlagFailErrors,

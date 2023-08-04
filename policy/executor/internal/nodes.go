@@ -419,6 +419,7 @@ type ReportingJobNodeData struct {
 	queryID       string
 	scoringSystem explorer.ScoringSystem
 	isQuery       bool
+	rjType        policy.ReportingJob_Type
 
 	childScores map[NodeID]*reportingJobResult
 	datapoints  map[NodeID]*reportingJobDatapoint
@@ -440,7 +441,23 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 		if !ok {
 			panic("invalid score report")
 		}
-		rjRes.score = data.score
+		score := data.score
+		switch nodeData.rjType {
+		case policy.ReportingJob_CONTROL:
+			if score.Type != policy.ScoreType_Result {
+				// We map errors to failed results.
+				// Skip and unknown are mapped to passing results
+				score = proto.Clone(score).(*policy.Score)
+				if score.Type == policy.ScoreType_Error {
+					score.Type = policy.ScoreType_Result
+					score.Value = 0
+				} else if score.Type == policy.ScoreType_Skip || score.Type == policy.ScoreType_Unscored {
+					score.Type = policy.ScoreType_Result
+					score.Value = 100
+				}
+			}
+		}
+		rjRes.score = score
 		nodeData.invalidated = true
 	}
 
