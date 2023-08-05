@@ -133,11 +133,11 @@ func (x *ControlDocs) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type ControlMap struct {
-	Controls    []*ControlRef `protobuf:"bytes,9,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
 	Uid         string        `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string        `protobuf:"bytes,4,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Policies    []*ControlRef `protobuf:"bytes,8,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
 	Checks      []*ControlRef `protobuf:"bytes,7,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
+	Controls    []*ControlRef `protobuf:"bytes,9,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
 	FileContext FileContext   `json:"-" yaml:"-"`
 }
 
@@ -437,9 +437,6 @@ func (x *Framework) UnmarshalYAML(node *yaml.Node) error {
 type FrameworkGroup struct {
 	Uid          string           `protobuf:"bytes,5,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Title        string           `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
-	Authors      []*Author        `protobuf:"bytes,26,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
-	Docs         *PolicyGroupDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
-	Controls     []*Control       `protobuf:"bytes,1,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
 	Type         GroupType        `protobuf:"varint,4,opt,name=type,proto3,enum=cnspec.policy.v1.GroupType" json:"type,omitempty" yaml:"type,omitempty"`
 	StartDate    int64            `protobuf:"varint,21,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty" yaml:"start_date,omitempty"`
 	EndDate      int64            `protobuf:"varint,22,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty" yaml:"end_date,omitempty"`
@@ -448,6 +445,9 @@ type FrameworkGroup struct {
 	ReviewStatus ReviewStatus     `protobuf:"varint,28,opt,name=review_status,json=reviewStatus,proto3,enum=cnspec.policy.v1.ReviewStatus" json:"review_status,omitempty" yaml:"review_status,omitempty"`
 	Created      int64            `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified     int64            `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	Controls     []*Control       `protobuf:"bytes,1,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
+	Authors      []*Author        `protobuf:"bytes,26,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
+	Docs         *PolicyGroupDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext  FileContext      `json:"-" yaml:"-"`
 }
 
@@ -465,14 +465,14 @@ func (x *FrameworkGroup) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type FrameworkMap struct {
-	FrameworkDependencies  []*ObjectRef  `protobuf:"bytes,3,rep,name=framework_dependencies,json=frameworkDependencies,proto3" json:"framework_dependencies,omitempty" yaml:"framework_dependencies,omitempty"`
 	PolicyDependencies     []*ObjectRef  `protobuf:"bytes,4,rep,name=policy_dependencies,json=policyDependencies,proto3" json:"policy_dependencies,omitempty" yaml:"policy_dependencies,omitempty"`
-	Controls               []*ControlMap `protobuf:"bytes,5,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
-	FrameworkOwner         *ObjectRef    `protobuf:"bytes,20,opt,name=framework_owner,json=frameworkOwner,proto3" json:"framework_owner,omitempty" yaml:"framework_owner,omitempty"`
 	LocalContentChecksum   string        `protobuf:"bytes,21,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
 	LocalExecutionChecksum string        `protobuf:"bytes,22,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
 	Uid                    string        `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn                    string        `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	FrameworkOwner         *ObjectRef    `protobuf:"bytes,20,opt,name=framework_owner,json=frameworkOwner,proto3" json:"framework_owner,omitempty" yaml:"framework_owner,omitempty"`
+	FrameworkDependencies  []*ObjectRef  `protobuf:"bytes,3,rep,name=framework_dependencies,json=frameworkDependencies,proto3" json:"framework_dependencies,omitempty" yaml:"framework_dependencies,omitempty"`
+	Controls               []*ControlMap `protobuf:"bytes,5,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
 	FileContext            FileContext   `json:"-" yaml:"-"`
 }
 
