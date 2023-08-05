@@ -1101,6 +1101,90 @@ func TestReportingJobNode(t *testing.T) {
 					})
 				})
 
+				t.Run("when is control", func(t *testing.T) {
+					t.Run("error converted to fail", func(t *testing.T) {
+						nodeData := newNodeData()
+						nodeData.rjType = policy.ReportingJob_CONTROL
+						nodeData.childScores = map[NodeID]*reportingJobResult{
+							nodeData.queryID: {},
+						}
+
+						nodeData.initialize()
+						nodeData.recalculate()
+
+						nodeData.consume(NodeID(nodeData.queryID), &envelope{
+							score: &policy.Score{
+								QrId:            nodeData.queryID,
+								Type:            policy.ScoreType_Error,
+								Value:           0,
+								ScoreCompletion: 100,
+							},
+						})
+						data := nodeData.recalculate()
+
+						assert.Equal(t, "testqueryid", data.score.QrId)
+						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
+						assert.Equal(t, 0, int(data.score.Value))
+						assert.Equal(t, 100, int(data.score.ScoreCompletion))
+						assert.Equal(t, 100, int(data.score.DataCompletion))
+						assert.Equal(t, 0, int(data.score.DataTotal))
+					})
+					t.Run("unscored converted to pass", func(t *testing.T) {
+						nodeData := newNodeData()
+						nodeData.rjType = policy.ReportingJob_CONTROL
+						nodeData.childScores = map[NodeID]*reportingJobResult{
+							nodeData.queryID: {},
+						}
+
+						nodeData.initialize()
+						nodeData.recalculate()
+
+						nodeData.consume(NodeID(nodeData.queryID), &envelope{
+							score: &policy.Score{
+								QrId:            nodeData.queryID,
+								Type:            policy.ScoreType_Unscored,
+								Value:           0,
+								ScoreCompletion: 100,
+							},
+						})
+						data := nodeData.recalculate()
+
+						assert.Equal(t, "testqueryid", data.score.QrId)
+						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
+						assert.Equal(t, 100, int(data.score.Value))
+						assert.Equal(t, 100, int(data.score.ScoreCompletion))
+						assert.Equal(t, 100, int(data.score.DataCompletion))
+						assert.Equal(t, 0, int(data.score.DataTotal))
+					})
+					t.Run("skip converted to pass", func(t *testing.T) {
+						nodeData := newNodeData()
+						nodeData.rjType = policy.ReportingJob_CONTROL
+						nodeData.childScores = map[NodeID]*reportingJobResult{
+							nodeData.queryID: {},
+						}
+
+						nodeData.initialize()
+						nodeData.recalculate()
+
+						nodeData.consume(NodeID(nodeData.queryID), &envelope{
+							score: &policy.Score{
+								QrId:            nodeData.queryID,
+								Type:            policy.ScoreType_Skip,
+								Value:           0,
+								ScoreCompletion: 100,
+							},
+						})
+						data := nodeData.recalculate()
+
+						assert.Equal(t, "testqueryid", data.score.QrId)
+						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
+						assert.Equal(t, 100, int(data.score.Value))
+						assert.Equal(t, 100, int(data.score.ScoreCompletion))
+						assert.Equal(t, 100, int(data.score.DataCompletion))
+						assert.Equal(t, 0, int(data.score.DataTotal))
+					})
+				})
+
 				t.Run("when not isQuery", func(t *testing.T) {
 					t.Run("when score", func(t *testing.T) {
 						nodeData := newNodeData()
