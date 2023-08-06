@@ -26,10 +26,11 @@ func main() {
 			"Queries":  60,
 
 			// groups
-			"Filters": 80,
-			"Checks":  70,
+			"Filters":  80,
+			"Checks":   70,
+			"Controls": 70,
 
-			// used in may structs
+			// used in many structs
 			"Uid":   100,
 			"Mrn":   99,
 			"Name":  98,
@@ -47,6 +48,10 @@ func main() {
 			"Docs":   50,
 			"Refs":   49,
 			"Groups": 40,
+
+			// frameworks
+			"FrameworkOwner":        90,
+			"FrameworkDependencies": 89,
 
 			// author
 			"Email": 97,
