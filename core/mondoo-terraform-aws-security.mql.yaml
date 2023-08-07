@@ -60,7 +60,11 @@ policies:
 queries:
   - uid: terraform-aws-security-no-static-credentials-in-providers
     title: Providers should not contain hard-coded credentials
-    mql: "terraform.providers.where( nameLabel == \"aws\" ) { \n  arguments[\"access_key\"] == null || arguments[\"access_key\"].find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all(\"AKIAIOSFODNN7EXAMPLE\") \n  arguments[\"secret_key\"] == null || arguments[\"secret_key\"].find(/([A-Za-z0-9\\\\\\/+\\\\]{40})/).all( \"wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY\") \n}\n"
+    mql: |
+      terraform.providers.where( nameLabel == "aws" ) {
+        arguments["access_key"] == null || arguments["access_key"].find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        arguments["secret_key"] == null || arguments["secret_key"].find(/([A-Za-z0-9\\\/+\\]{40})/).all( "wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+      }
     docs:
       desc: |
         Hard-coded credentials are not recommended in any Terraform configuration, and risks secret leakage should this file ever be committed to a public version control system.
@@ -297,7 +301,27 @@ queries:
         title: Terraform Documentation - iam_group_policy Resource
   - uid: terraform-aws-security-s3-bucket-versioning-enabled
     title: Ensure that versioning is enabled for your S3 buckets
-    mql: "if ( terraform.settings.requiredProviders[\"aws\"][\"version\"] == /[~><=\\s]+3\\./ ) {\n  terraform.resources.where( nameLabel == 'aws_s3_bucket') {\n    blocks.one(type == 'versioning')\n    blocks.where(type == 'versioning') {\n      arguments['enabled'] == true\n    }\n  }\n}\nif ( terraform.settings.requiredProviders[\"aws\"][\"version\"] == /[~><=\\s]+4\\./ ) {\n  terraform.resources.where( nameLabel == 'aws_s3_bucket').map(labels.last) {\n    bucketnames = _\n    terraform.resources.where( nameLabel == 'aws_s3_bucket_versioning' && arguments['bucket'].split('.')[1] == bucketnames ) != []\n    terraform.resources.where( nameLabel == 'aws_s3_bucket_versioning' && arguments['bucket'].split('.')[1] == bucketnames ) {\n      blocks.one( type.downcase == 'versioning_configuration' )\n      blocks.where( type.downcase == 'versioning_configuration' ) { \n        arguments['status'].downcase == 'enabled'\n      }\n    }\n  }\n}\n"
+    mql: |
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+3\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket') {
+          blocks.one(type == 'versioning')
+          blocks.where(type == 'versioning') {
+            arguments['enabled'] == true
+          }
+        }
+      }
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+4\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket').map(labels.last) {
+          bucketnames = _
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_versioning' && arguments['bucket'].split('.')[1] == bucketnames ) != []
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_versioning' && arguments['bucket'].split('.')[1] == bucketnames ) {
+            blocks.one( type.downcase == 'versioning_configuration' )
+            blocks.where( type.downcase == 'versioning_configuration' ) {
+              arguments['status'].downcase == 'enabled'
+            }
+          }
+        }
+      }
     refs:
       - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-versioning-enabled.html
         title: AWS Config Managed Rules
@@ -363,7 +387,23 @@ queries:
         title: Terraform Documentation - s3_bucket Resource - restrict_public_buckets Argument
   - uid: terraform-aws-security-s3-bucket-server-side-encryption-enabled
     title: Ensure S3 buckets has the Amazon S3 default encryption enabled
-    mql: "if ( terraform.settings.requiredProviders[\"aws\"][\"version\"] == /[~><=\\s]+3\\./ ) {\n  terraform.resources.where( nameLabel == 'aws_s3_bucket') { \n    blocks.one( type == \"server_side_encryption_configuration\" ) \n    blocks.where( type == \"server_side_encryption_configuration\" ) { \n      blocks.one( _.type == \"rule\" && _.blocks.one( type == 'apply_server_side_encryption_by_default' )) \n    } \n  }\n}\nif ( terraform.settings.requiredProviders[\"aws\"][\"version\"] == /[~><=\\s]+4\\./ ) {\n  terraform.resources.where( nameLabel == 'aws_s3_bucket_server_side_encryption_configuration') { \n    blocks.one( type == \"rule\" ) \n    blocks.where( type == \"rule\" ) { \n      blocks.one( _.type == 'apply_server_side_encryption_by_default' ) \n    } \n  }\n}\n"
+    mql: |
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+3\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket') {
+          blocks.one( type == "server_side_encryption_configuration" )
+          blocks.where( type == "server_side_encryption_configuration" ) {
+            blocks.one( _.type == "rule" && _.blocks.one( type == 'apply_server_side_encryption_by_default' ))
+          }
+        }
+      }
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+4\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket_server_side_encryption_configuration') {
+          blocks.one( type == "rule" )
+          blocks.where( type == "rule" ) {
+            blocks.one( _.type == 'apply_server_side_encryption_by_default' )
+          }
+        }
+      }
     docs:
       desc: |
         Amazon S3 default encryption is an optional configuration that sets the default encryption behavior for an S3 bucket. Enabling default SSE configures S3 buckets so that all new objects are encrypted when they are stored in the bucket. The objects are encrypted using server-side encryption with either Amazon S3-managed keys (SSE-S3) or AWS KMS keys stored in AWS Key Management Service (AWS KMS) (SSE-KMS).
@@ -403,7 +443,10 @@ queries:
         title: Terraform Documentation - s3_bucket Resource - acl Argument
   - uid: terraform-aws-security-eks-encrypt-secrets
     title: EKS should have the encryption of secrets enabled
-    mql: "terraform.resources.where( nameLabel == \"aws_eks_cluster\" ) { \n  blocks.one( type == \"encryption_config\" ) \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ) {
+        blocks.one( type == "encryption_config" )
+      }
     docs:
       desc: |
         EKS cluster resources should have the encryption_config block set with protection of the secrets resource.
@@ -449,7 +492,12 @@ queries:
         ```
   - uid: terraform-aws-security-eks-no-public-cluster-access-to-cidr
     title: EKS Clusters should restrict access to public API server
-    mql: "terraform.resources.where( nameLabel == \"aws_eks_cluster\" ) { \n  blocks.where( type == \"vpc_config\" ) { \n    arguments['endpoint_public_access'] == false || arguments['public_access_cidrs'].none( \"0.0.0.0/0\") \n  }\n}"
+    mql: |-
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ) {
+        blocks.where( type == "vpc_config" ) {
+          arguments['endpoint_public_access'] == false || arguments['public_access_cidrs'].none( "0.0.0.0/0")
+        }
+      }
     docs:
       desc: |
         EKS Clusters have public access CIDRs set to 0.0.0.0/0 by default which is wide open to the internet. This should be explicitly set to a more specific private CIDR range.

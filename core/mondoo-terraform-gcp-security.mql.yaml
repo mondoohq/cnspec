@@ -79,7 +79,12 @@ policies:
 queries:
   - uid: terraform-gcp-security-iam-no-folder-level-default-service-account-assignment
     title: Roles should not be assigned to default service accounts
-    mql: "terraform.resources.where( nameLabel  == \"google_folder_iam_member\") { \n  arguments['member'] != /.+@appspot\\.gserviceaccount\\.com/ && \n  arguments['member'] != /.+-compute@developer\\.gserviceaccount\\.com/ &&\n  arguments['member'] != /data\\.google_compute_default_account/\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_folder_iam_member") {
+        arguments['member'] != /.+@appspot\.gserviceaccount\.com/ &&
+        arguments['member'] != /.+-compute@developer\.gserviceaccount\.com/ &&
+        arguments['member'] != /data\.google_compute_default_account/
+      }
     docs:
       desc: |
         Default service accounts should not be used when granting access to folders as this can violate least privilege. It is recommended to use specialized service accounts instead.
@@ -110,10 +115,27 @@ queries:
           member  = data.google_compute_default_service_account.default.id
         }
         ```
-      remediation: "Define a service account with least privilege for the role\n\n```hcl\nresource \"google_service_account\" \"limited\" {\n  account_id   = \"account123\"\n  display_name = \"account123\"\n}\n        \nresource \"google_folder_iam_member\" \"folder-123\" {\n  folder = \"folder-123\"\n  role    = \"roles/my-role\"\n  member  = \"serviceAccount:${google_service_account.limited.email}\"\n}\n```\n"
+      remediation: |
+        Define a service account with least privilege for the role
+
+        ```hcl
+        resource "google_service_account" "limited" {
+          account_id   = "account123"
+          display_name = "account123"
+        }
+
+        resource "google_folder_iam_member" "folder-123" {
+          folder = "folder-123"
+          role    = "roles/my-role"
+          member  = "serviceAccount:${google_service_account.limited.email}"
+        }
+        ```
   - uid: terraform-gcp-security-iam-no-folder-level-service-account-impersonation
     title: Users should not be granted service account access at the folder level
-    mql: "terraform.resources.where( nameLabel  == \"google_folder_iam_binding\") { \n  arguments['role'] != /iam\\.serviceAccountUser/\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_folder_iam_binding") {
+        arguments['role'] != /iam\.serviceAccountUser/
+      }
     docs:
       desc: |
         Users with service account access at the folder level can impersonate any service account. Instead, they should be given access to particular service accounts as required.
@@ -137,7 +159,11 @@ queries:
         ```
   - uid: terraform-gcp-security-iam-no-privileged-service-accounts
     title: Service accounts should not have roles assigned with excessive privileges
-    mql: "terraform.resources.where( nameLabel  == \"google_project_iam_member\") { \n  arguments['role'] != /roles\\/owner/ &&\n  arguments['role'] != /roles\\/editor/\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_project_iam_member") {
+        arguments['role'] != /roles\/owner/ &&
+        arguments['role'] != /roles\/editor/
+      }
     docs:
       desc: |
         Service accounts should have a minimal set of permissions assigned to accomplish their job. They should never have excessive access because if compromised, an attacker can escalate privileges and take over the entire account.
@@ -173,7 +199,10 @@ queries:
         ```
   - uid: terraform-gcp-security-storage-no-public-access
     title: Ensure that Cloud Storage bucket is not publicly accessible
-    mql: "terraform.resources.where( nameLabel  == \"google_storage_bucket_iam_binding\") { \n  attributes['members']['value'] { _ != /allUsers/ && _ != /allAuthenticatedUsers/} \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_storage_bucket_iam_binding") {
+        attributes['members']['value'] { _ != /allUsers/ && _ != /allAuthenticatedUsers/}
+      }
     docs:
       desc: |
         Google Cloud Storage buckets that define 'allUsers' or 'allAuthenticatedUsers' as members in an IAM member/binding causes data to be exposed outside of the organization. This can lead to exposure of sensitive data. The recommended approach is to restrict public access.
@@ -211,19 +240,74 @@ queries:
         ```
   - uid: terraform-gcp-security-storage-enable-ubla
     title: Ensure that Cloud Storage buckets have uniform bucket-level access enabled
-    mql: "terraform.resources.where( nameLabel  == \"google_storage_bucket\") { \n   arguments['uniform_bucket_level_access'] == true\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_storage_bucket") {
+         arguments['uniform_bucket_level_access'] == true
+      }
     docs:
       desc: |
         Google Cloud Storage buckets should be configured with uniform bucket-level access.
 
         When you enable uniform bucket-level access on a bucket, Access Control Lists (ACLs) are disabled, and only bucket-level Identity and Access Management (IAM) permissions grant access to that bucket and the objects it contains. You revoke all access granted by object ACLs and the ability to administrate permissions using bucket ACLs.
-      audit: "Check if `uniform_bucket_level_access` is set to `true`\n\n```hcl\nresource \"google_storage_bucket\" \"static-site\" {\n  name          = \"image-store.com\"\n  location      = \"EU\"\n  force_destroy = true\n  \n  uniform_bucket_level_access = false\n  \n  website {\n    main_page_suffix = \"index.html\"\n    not_found_page   = \"404.html\"\n  }\n  cors {\n    origin          = [\"http://image-store.com\"]\n    method          = [\"GET\", \"HEAD\", \"PUT\", \"POST\", \"DELETE\"]\n    response_header = [\"*\"]\n    max_age_seconds = 3600\n  }\n}\n```\n"
-      remediation: "Configure `uniform_bucket_level_access` to `true`\n\n```hcl\nresource \"google_storage_bucket\" \"static-site\" {\n  name          = \"image-store.com\"\n  location      = \"EU\"\n  force_destroy = true\n  \n  uniform_bucket_level_access = true\n  \n  website {\n    main_page_suffix = \"index.html\"\n    not_found_page   = \"404.html\"\n  }\n  cors {\n    origin          = [\"http://image-store.com\"]\n    method          = [\"GET\", \"HEAD\", \"PUT\", \"POST\", \"DELETE\"]\n    response_header = [\"*\"]\n    max_age_seconds = 3600\n  }\n}\n```\n"
+      audit: |
+        Check if `uniform_bucket_level_access` is set to `true`
+
+        ```hcl
+        resource "google_storage_bucket" "static-site" {
+          name          = "image-store.com"
+          location      = "EU"
+          force_destroy = true
+
+          uniform_bucket_level_access = false
+
+          website {
+            main_page_suffix = "index.html"
+            not_found_page   = "404.html"
+          }
+          cors {
+            origin          = ["http://image-store.com"]
+            method          = ["GET", "HEAD", "PUT", "POST", "DELETE"]
+            response_header = ["*"]
+            max_age_seconds = 3600
+          }
+        }
+        ```
+      remediation: |
+        Configure `uniform_bucket_level_access` to `true`
+
+        ```hcl
+        resource "google_storage_bucket" "static-site" {
+          name          = "image-store.com"
+          location      = "EU"
+          force_destroy = true
+
+          uniform_bucket_level_access = true
+
+          website {
+            main_page_suffix = "index.html"
+            not_found_page   = "404.html"
+          }
+          cors {
+            origin          = ["http://image-store.com"]
+            method          = ["GET", "HEAD", "PUT", "POST", "DELETE"]
+            response_header = ["*"]
+            max_age_seconds = 3600
+          }
+        }
+        ```
   - uid: terraform-gcp-security-compute-no-public-ip
     title: Compute instances should not be publicly exposed to the internet
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_instance\") { \n  blocks.where( type == \"network_interface\") { \n    blocks.where( type == \"access_config\") {\n      arguments.values.length != 0 \n    } \n  } \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_instance") {
+        blocks.where( type == "network_interface") {
+          blocks.where( type == "access_config") {
+            arguments.values.length != 0
+          }
+        }
+      }
     docs:
-      desc: "Google Cloud compute instances that have a public IP address are exposed on the internet and are at risk to attack. \n"
+      desc: |
+        Google Cloud compute instances that have a public IP address are exposed on the internet and are at risk to attack.
       audit: |
         Check if the `access_config` is empty.
 
@@ -284,7 +368,15 @@ queries:
         ```
   - uid: terraform-gcp-security-compute-disk-encryption-customer-key
     title: Disks should be encrypted with Customer Supplied Encryption Keys
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_disk\" ) { \n  blocks.one( type == \"disk_encryption_key\") \n}\nterraform.resources.where( nameLabel  == \"google_compute_disk\" && blocks.one( type == \"disk_encryption_key\") ) { \n  blocks.where( type == \"disk_encryption_key\") { \n    arguments != \"\" \n  }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_disk" ) {
+        blocks.one( type == "disk_encryption_key")
+      }
+      terraform.resources.where( nameLabel  == "google_compute_disk" && blocks.one( type == "disk_encryption_key") ) {
+        blocks.where( type == "disk_encryption_key") {
+          arguments != ""
+        }
+      }
     docs:
       desc: |
         Google Cloud compute instances should use disk encryption using a customer-supplied encryption key. If you do not provide an encryption key when creating the disk, then the disk will be encrypted using an automatically generated key, and you do not need to provide the key to use the disk later.
@@ -323,9 +415,17 @@ queries:
         ```
   - uid: terraform-gcp-security-compute-disk-encryption-required
     title: Disk encryption Keys should not be passed as plaintext
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_disk\" && blocks.one( type == \"disk_encryption_key\") ) {\n  blocks.where( type == \"disk_encryption_key\") { \n    arguments.keys[0] != \"raw_key\" \n  } \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_disk" && blocks.one( type == "disk_encryption_key") ) {
+        blocks.where( type == "disk_encryption_key") {
+          arguments.keys[0] != "raw_key"
+        }
+      }
     docs:
-      desc: "Google Cloud compute instances should use disk encryption using a customer-supplied encryption key. One of the options is for the `disk_encryption_key` is `raw_key`, which is the key in plaintext. \n\nSensitive values such as raw encryption keys should not be included in your Terraform code and should be stored securely by a secrets manager.\n"
+      desc: |
+        Google Cloud compute instances should use disk encryption using a customer-supplied encryption key. One of the options is for the `disk_encryption_key` is `raw_key`, which is the key in plaintext.
+
+        Sensitive values such as raw encryption keys should not be included in your Terraform code and should be stored securely by a secrets manager.
       audit: |
         Check if the `access_config` is empty
 
@@ -348,7 +448,20 @@ queries:
         ```
   - uid: terraform-gcp-security-compute-enable-shielded-vm
     title: Verify shielded VM is enabled on compute instances
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_instance\" ) { \n  blocks.one( type == \"shielded_instance_config\" ) \n}\nterraform.resources.where( nameLabel  == \"google_compute_instance\" && blocks.one( type == \"shielded_instance_config\" )) {\n  blocks.where( type == \"shielded_instance_config\") { \n    attributes['enable_vtpm'] == null || attributes['enable_vtpm']['value'] == true\n  } \n}\nterraform.resources.where( nameLabel  == \"google_compute_instance\" && blocks.one( type == \"shielded_instance_config\" )) {\n  blocks.where( type == \"shielded_instance_config\") { \n    attributes['enable_integrity_monitoring'] == null || attributes['enable_integrity_monitoring']['value'] == true\n  } \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_instance" ) {
+        blocks.one( type == "shielded_instance_config" )
+      }
+      terraform.resources.where( nameLabel  == "google_compute_instance" && blocks.one( type == "shielded_instance_config" )) {
+        blocks.where( type == "shielded_instance_config") {
+          attributes['enable_vtpm'] == null || attributes['enable_vtpm']['value'] == true
+        }
+      }
+      terraform.resources.where( nameLabel  == "google_compute_instance" && blocks.one( type == "shielded_instance_config" )) {
+        blocks.where( type == "shielded_instance_config") {
+          attributes['enable_integrity_monitoring'] == null || attributes['enable_integrity_monitoring']['value'] == true
+        }
+      }
     docs:
       desc: |
         Shielded VMs are virtual machines (VMs) on Google Cloud hardened by a set of security controls that help defend against rootkits and bootkits. Using Shielded VMs helps protect enterprise workloads from threats like remote attacks, privilege escalation, and malicious insiders. Shielded VMs leverage advanced platform security capabilities such as secure and measured boot, a virtual trusted platform module (vTPM), UEFI firmware, and integrity monitoring.
@@ -414,7 +527,10 @@ queries:
         ```
   - uid: terraform-gcp-security-compute-enable-vpc-flow-logs
     title: Verify VPC flow logs enabled on compute instances
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_subnetwork\" && arguments['purpose'] != \"INTERNAL_HTTPS_LOAD_BALANCER\" ) { \n  blocks.one( type == \"log_config\")  \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_subnetwork" && arguments['purpose'] != "INTERNAL_HTTPS_LOAD_BALANCER" ) {
+        blocks.one( type == "log_config")
+      }
     docs:
       desc: |
         VPC flow logs record information about all traffic, which is a vital tool in reviewing anomalous traffic. Google Compute Engine subnetworks that do not have VPC flow logs enabled have limited information for auditing and awareness.
@@ -471,7 +587,17 @@ queries:
         ```
   - uid: terraform-gcp-security-compute-no-default-service-account
     title: Compute instances should not use the default service account
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_instance\" && blocks.one( type == \"service_account\") ) {\n  blocks.where( type == \"service_account\" ) {\n    attributes['email'] != null\n  } \n}\nterraform.resources.where( nameLabel  == \"google_compute_instance\" && blocks.one( type == \"service_account\") ) { \n  blocks.where( type == \"service_account\" ) { \n    attributes['email'] != /.+-compute@developer\\.gserviceaccount.com/\n  }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_instance" && blocks.one( type == "service_account") ) {
+        blocks.where( type == "service_account" ) {
+          attributes['email'] != null
+        }
+      }
+      terraform.resources.where( nameLabel  == "google_compute_instance" && blocks.one( type == "service_account") ) {
+        blocks.where( type == "service_account" ) {
+          attributes['email'] != /.+-compute@developer\.gserviceaccount.com/
+        }
+      }
     docs:
       desc: |
         The default service account has full project access. Provisioning instances using the default service account gives the instance full access to the project. Compute instances should instead be assigned the minimal access they need.
@@ -558,16 +684,76 @@ queries:
         ```
   - uid: terraform-gcp-security-compute-no-ip-forwarding
     title: Compute instances should be configured with IP forwarding
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_instance\" && attributes['can_ip_forward']) {\n  attributes['can_ip_forward']['value'] == false \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_instance" && attributes['can_ip_forward']) {
+        attributes['can_ip_forward']['value'] == false
+      }
     docs:
-      desc: "Disabling IP forwarding ensures the instance can only receive packets addressed to the instance and can only send packets with a source address of the instance.\n\nThe attribute `can_ip_forward` is optional on `google_compute_instance` and defaults to `false`. Instances with `can_ip_forward = true` will fail. \n"
-      audit: "The following example will fail:\n\n```terraform\n\nresource \"google_compute_instance\" \"bad_example\" {\n  name         = \"test\"\n  machine_type = \"e2-medium\"\n  zone         = \"us-central1-a\"\n\n  boot_disk {\n    initialize_params {\n      image = \"debian-cloud/debian-9\"\n    }\n  }\n\n  // Local SSD disk\n  scratch_disk {\n    interface = \"SCSI\"\n  }\n  \n  can_ip_forward = false\n}\n\n```\n"
-      remediation: "The following example will pass:\n\n```terraform\n\nresource \"google_compute_instance\" \"bad_example\" {\n  name         = \"test\"\n  machine_type = \"e2-medium\"\n  zone         = \"us-central1-a\"\n\n  boot_disk {\n    initialize_params {\n      image = \"debian-cloud/debian-9\"\n    }\n  }\n\n  // Local SSD disk\n  scratch_disk {\n    interface = \"SCSI\"\n  }\n  \n  can_ip_forward = false\n}\n\n```\n"
+      desc: |
+        Disabling IP forwarding ensures the instance can only receive packets addressed to the instance and can only send packets with a source address of the instance.
+
+        The attribute `can_ip_forward` is optional on `google_compute_instance` and defaults to `false`. Instances with `can_ip_forward = true` will fail.
+      audit: |
+        The following example will fail:
+
+        ```terraform
+
+        resource "google_compute_instance" "bad_example" {
+          name         = "test"
+          machine_type = "e2-medium"
+          zone         = "us-central1-a"
+
+          boot_disk {
+            initialize_params {
+              image = "debian-cloud/debian-9"
+            }
+          }
+
+          // Local SSD disk
+          scratch_disk {
+            interface = "SCSI"
+          }
+
+          can_ip_forward = false
+        }
+
+        ```
+      remediation: |
+        The following example will pass:
+
+        ```terraform
+
+        resource "google_compute_instance" "bad_example" {
+          name         = "test"
+          machine_type = "e2-medium"
+          zone         = "us-central1-a"
+
+          boot_disk {
+            initialize_params {
+              image = "debian-cloud/debian-9"
+            }
+          }
+
+          // Local SSD disk
+          scratch_disk {
+            interface = "SCSI"
+          }
+
+          can_ip_forward = false
+        }
+
+        ```
   - uid: terraform-gcp-security-compute-no-plaintext-vm-disk-keys
     title: VM disk encryption keys should not be provided in plaintext
-    mql: "terraform.resources.where( nameLabel  == \"google_compute_instance\" ) { \n  blocks { arguments.keys { _ != 'disk_encryption_key_raw' } } \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_compute_instance" ) {
+        blocks { arguments.keys { _ != 'disk_encryption_key_raw' } }
+      }
     docs:
-      desc: "Providing your encryption key in plaintext format means anyone with access to the source code also has access to the key.\n\nWhen encrypting a `boot_disk`, it is not recommended to use the `disk_encryption_key_raw` argument as this passes the key in plaintext, which is not secure. Consider using `kms_key_self_link` or a secrets manager instead. \n"
+      desc: |
+        Providing your encryption key in plaintext format means anyone with access to the source code also has access to the key.
+
+        When encrypting a `boot_disk`, it is not recommended to use the `disk_encryption_key_raw` argument as this passes the key in plaintext, which is not secure. Consider using `kms_key_self_link` or a secrets manager instead.
       audit: |
         The following example will fail:
 
@@ -613,7 +799,10 @@ queries:
         ```
   - uid: terraform-gcp-security-bigquery-no-public-access
     title: BigQuery datasets should only be accessible within the organization
-    mql: "terraform.resources.where( nameLabel  == \"google_bigquery_dataset\" ) { \n  blocks { arguments.values.none(\"allAuthenticatedUsers\") }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_bigquery_dataset" ) {
+        blocks { arguments.values.none("allAuthenticatedUsers") }
+      }
     docs:
       desc: |
         BigQuery datasets should not be configured to provide access to `allAuthenticatedUsers` as this provides any authenticated GCP user, even those outside of your organization, access to your BigQuery dataset. This can lead to exposure of sensitive data to the public internet.
@@ -680,9 +869,15 @@ queries:
         ```
   - uid: terraform-gcp-security-dns-enable-dnssec
     title: Cloud DNS should use DNSSEC
-    mql: "terraform.resources.where( nameLabel  == \"google_dns_managed_zone\" ) { \n  blocks.where( type == \"dnssec_config\" ) { \n    attributes['state']['value'] != \"off\"  \n  } \n}      \n"
+    mql: |
+      terraform.resources.where( nameLabel  == "google_dns_managed_zone" ) {
+        blocks.where( type == "dnssec_config" ) {
+          attributes['state']['value'] != "off"
+        }
+      }
     docs:
-      desc: "DNSSEC authenticates DNS responses, preventing MITM attacks and impersonation. Unverified DNS responses could lead to man-in-the-middle attacks. \n"
+      desc: |
+        DNSSEC authenticates DNS responses, preventing MITM attacks and impersonation. Unverified DNS responses could lead to man-in-the-middle attacks.
       audit: |
         The following example will fail:
 
@@ -728,14 +923,76 @@ queries:
         ```
   - uid: terraform-gcp-security-dns-no-rsa-sha1
     title: Zone signing should not use RSA SHA1
-    mql: "terraform.datasources.where( nameLabel  == \"google_dns_keys\" ) { \n  blocks { attributes['algorithm']['value'] != \"rsasha1\" }\n}\n"
+    mql: |
+      terraform.datasources.where( nameLabel  == "google_dns_keys" ) {
+        blocks { attributes['algorithm']['value'] != "rsasha1" }
+      }
     docs:
-      desc: "RSA SHA1 is a weaker algorithm than SHA2-based algorithms such as RSA SHA256/512. \n"
-      audit: "The following example will fail:\n\n```terraform\n\nresource \"google_dns_managed_zone\" \"foo\" {\n  name     = \"foobar\"\n  dns_name = \"foo.bar.\"\n  \n  dnssec_config {\n    state         = \"on\"\n    non_existence = \"nsec3\"\n  }\n}\n  \ndata \"google_dns_keys\" \"foo_dns_keys\" {\n  managed_zone = google_dns_managed_zone.foo.id\n  zone_signing_keys {\n    algorithm = \"rsasha1\"\n  }\n}\n  \noutput \"foo_dns_ds_record\" {\n  description = \"DS record of the foo subdomain.\"\n  value       = data.google_dns_keys.foo_dns_keys.key_signing_keys[0].ds_record\n}\n\n```\n"
-      remediation: "The following example will pass:\n\n```terraform\n\nresource \"google_dns_managed_zone\" \"foo\" {\n  name     = \"foobar\"\n  dns_name = \"foo.bar.\"\n  \n  dnssec_config {\n    state         = \"on\"\n    non_existence = \"nsec3\"\n  }\n}\n  \ndata \"google_dns_keys\" \"foo_dns_keys\" {\n  managed_zone = google_dns_managed_zone.foo.id\n  zone_signing_keys {\n    algorithm = \"rsasha512\"\n  }\n}\n  \noutput \"foo_dns_ds_record\" {\n  description = \"DS record of the foo subdomain.\"\n  value       = data.google_dns_keys.foo_dns_keys.key_signing_keys[0].ds_record\n}\n```\n"
+      desc: |
+        RSA SHA1 is a weaker algorithm than SHA2-based algorithms such as RSA SHA256/512.
+      audit: |
+        The following example will fail:
+
+        ```terraform
+
+        resource "google_dns_managed_zone" "foo" {
+          name     = "foobar"
+          dns_name = "foo.bar."
+
+          dnssec_config {
+            state         = "on"
+            non_existence = "nsec3"
+          }
+        }
+
+        data "google_dns_keys" "foo_dns_keys" {
+          managed_zone = google_dns_managed_zone.foo.id
+          zone_signing_keys {
+            algorithm = "rsasha1"
+          }
+        }
+
+        output "foo_dns_ds_record" {
+          description = "DS record of the foo subdomain."
+          value       = data.google_dns_keys.foo_dns_keys.key_signing_keys[0].ds_record
+        }
+
+        ```
+      remediation: |
+        The following example will pass:
+
+        ```terraform
+
+        resource "google_dns_managed_zone" "foo" {
+          name     = "foobar"
+          dns_name = "foo.bar."
+
+          dnssec_config {
+            state         = "on"
+            non_existence = "nsec3"
+          }
+        }
+
+        data "google_dns_keys" "foo_dns_keys" {
+          managed_zone = google_dns_managed_zone.foo.id
+          zone_signing_keys {
+            algorithm = "rsasha512"
+          }
+        }
+
+        output "foo_dns_ds_record" {
+          description = "DS record of the foo subdomain."
+          value       = data.google_dns_keys.foo_dns_keys.key_signing_keys[0].ds_record
+        }
+        ```
   - uid: terraform-gcp-security-gke-enable-auto-repair
     title: Kubernetes should have 'Automatic repair' enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_node_pool\" ) { \n  blocks.where( type == \"management\") { \n    arguments['auto_repair'] != false \n  }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_node_pool" ) {
+        blocks.where( type == "management") {
+          arguments['auto_repair'] != false
+        }
+      }
     docs:
       desc: |
         Automatic repair will monitor nodes and attempt repair when a node fails multiple subsequent health checks. Failing nodes will require manual repair.
@@ -808,7 +1065,12 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-auto-upgrade
     title: Kubernetes should have 'Automatic upgrade' enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_node_pool\" ) { \n  blocks.where( type == \"management\") { \n    arguments['auto_upgrade'] != false \n  }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_node_pool" ) {
+        blocks.where( type == "management") {
+          arguments['auto_upgrade'] != false
+        }
+      }
     docs:
       desc: |
         Automatic updates keep nodes updated with the latest cluster master version.
@@ -897,7 +1159,10 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-ip-aliasing
     title: Clusters should have IP aliasing enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.one( type == \"ip_allocation_policy\" ) \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.one( type == "ip_allocation_policy" )
+      }
     docs:
       desc: |
         IP aliasing allows the reuse of public IPs internally, removing the need for a NAT gateway.
@@ -1021,7 +1286,10 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-master-networks
     title: Master authorized networks should be configured on GKE clusters
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  arguments.keys.contains(\"master_authorized_networks_config\")  \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        arguments.keys.contains("master_authorized_networks_config")
+      }
     docs:
       desc: |
         Enabling authorized networks means you can restrict master access to a fixed set of CIDR ranges.
@@ -1112,7 +1380,10 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-network-policy
     title: Network Policy should be enabled on GKE clusters
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.one( type == \"network_policy\" )  \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.one( type == "network_policy" )
+      }
     docs:
       desc: |
         Enabling a network policy allows the segregation of network traffic by namespace.
@@ -1203,7 +1474,10 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-private-cluster
     title: Clusters should be set to private
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.one( type == \"network_policy\" )  \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.one( type == "network_policy" )
+      }
     docs:
       desc: |
         Enabling private nodes on a cluster ensures the nodes are only available internally as they will only be assigned internal addresses.
@@ -1294,7 +1568,13 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-stackdriver-logging
     title: Stackdriver Logging should be enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  attributes.keys.contains( \"logging_service\" ) \n}\nterraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  attributes['logging_service']['value'] == 'logging.googleapis.com/kubernetes'\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        attributes.keys.contains( "logging_service" )
+      }
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        attributes['logging_service']['value'] == 'logging.googleapis.com/kubernetes'
+      }
     docs:
       desc: |
         StackDriver logging provides a useful interface to all of stdout/stderr for each container and should be enabled for monitoring, debugging, etc. Without Stackdriver, visibility to the cluster will be reduced.
@@ -1376,7 +1656,13 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-enable-stackdriver-monitoring
     title: Stackdriver Monitoring should be enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  attributes.keys.contains( \"monitoring_service\" ) \n}\nterraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  attributes['monitoring_service']['value'] == 'monitoring.googleapis.com/kubernetes'\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        attributes.keys.contains( "monitoring_service" )
+      }
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        attributes['monitoring_service']['value'] == 'monitoring.googleapis.com/kubernetes'
+      }
     docs:
       desc: |
         StackDriver monitoring aggregates logs, events, and metrics from your Kubernetes environment on GKE to help you understand your application's behavior in production.
@@ -1463,7 +1749,10 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-metadata-endpoints-disabled
     title: Legacy metadata endpoints enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  attributes['metadata']['value']['disable-legacy-endpoints'] != false\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        attributes['metadata']['value']['disable-legacy-endpoints'] != false
+      }
     docs:
       desc: |
         The Compute Engine instance metadata server exposes legacy v0.1 and v1beta1 endpoints, which do not enforce metadata query headers. This is a feature in the v1 APIs that makes it more difficult for a potential attacker to retrieve instance metadata. Unless specifically required, we recommend you disable these legacy APIs. When setting the `metadata` block, the default value for `disable-legacy-endpoints` is set to `true`, they should not be explicitly enabled.
@@ -1492,7 +1781,12 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-no-client-cert-authentication
     title: Clusters should not use client certificates for authentication
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.where( type == \"master_auth\" ) { \n    blocks { attributes['issue_client_certificate']['value'] != true }\n  }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.where( type == "master_auth" ) {
+          blocks { attributes['issue_client_certificate']['value'] != true }
+        }
+      }
     docs:
       desc: |
         There are several methods of authenticating to the Kubernetes API server. In GKE, the supported methods are service account bearer tokens, OAuth tokens, and x509 client certificates. Prior to GKE's integration with OAuth, a one-time generated x509 certificate or static password were the only available authentication methods, but are now not recommended and should be disabled. These methods present a wider surface of attack for cluster compromise and have been disabled by default since GKE version 1.12. If you are using legacy authentication methods, we recommend that you turn them off. Authentication with a static password is deprecated and has been removed since GKE version 1.19.
@@ -1557,7 +1851,13 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-no-basic-authentication
     title: Clusters should not use basic authentication
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.where( type == \"master_auth\" ) { attributes['username']['value'] == null ||  attributes['username']['value'] == \"\" }\n}\nterraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.where( type == \"master_auth\" ) { attributes['password']['value'] == null ||  attributes['password']['value'] == \"\" }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.where( type == "master_auth" ) { attributes['username']['value'] == null ||  attributes['username']['value'] == "" }
+      }
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.where( type == "master_auth" ) { attributes['password']['value'] == null ||  attributes['password']['value'] == "" }
+      }
     docs:
       desc: |
         There are several methods of authenticating to the Kubernetes API server. In GKE, the supported methods are service account bearer tokens, OAuth tokens, and x509 client certificates. Prior to GKE's integration with OAuth, a one-time generated x509 certificate or static password were the only available authentication methods, but are now not recommended and should be disabled. These methods present a wider surface of attack for cluster compromise and have been disabled by default since GKE version 1.12. If you are using legacy authentication methods, we recommend that you turn them off. Authentication with a static password is deprecated and has been removed since GKE version 1.19.
@@ -1583,10 +1883,48 @@ queries:
           }
         }
         ```
-      remediation: "The following example will pass since the `master_auth` block is not specified and secure defaults are used instead:\n\n```terraform\n\nresource \"google_container_cluster\" \"good_example\" {\n  name     = \"my-gke-cluster\"\n  location = \"us-central1\"\n\n  # We can't create a cluster with no node pool defined, but we want to only use\n  # separately managed node pools. So we create the smallest possible default\n  # node pool and immediately delete it.\n  remove_default_node_pool = true\n  initial_node_count       = 1\n}\n```\n\nThe following example will pass because the `master_auth` block is explicitly configuring basic auth to be disabled:\n\n```terraform\n\nresource \"google_container_cluster\" \"good_example\" {\n  name     = \"my-gke-cluster\"\n  location = \"us-central1\"\n\n  remove_default_node_pool = true\n  initial_node_count       = 1\n\n  master_auth {\n    username = \"\"\n    password = \"\" \n    client_certificate_config {\n      issue_client_certificate = false\n    }\n}\n```\n"
+      remediation: |
+        The following example will pass since the `master_auth` block is not specified and secure defaults are used instead:
+
+        ```terraform
+
+        resource "google_container_cluster" "good_example" {
+          name     = "my-gke-cluster"
+          location = "us-central1"
+
+          # We can't create a cluster with no node pool defined, but we want to only use
+          # separately managed node pools. So we create the smallest possible default
+          # node pool and immediately delete it.
+          remove_default_node_pool = true
+          initial_node_count       = 1
+        }
+        ```
+
+        The following example will pass because the `master_auth` block is explicitly configuring basic auth to be disabled:
+
+        ```terraform
+
+        resource "google_container_cluster" "good_example" {
+          name     = "my-gke-cluster"
+          location = "us-central1"
+
+          remove_default_node_pool = true
+          initial_node_count       = 1
+
+          master_auth {
+            username = ""
+            password = ""
+            client_certificate_config {
+              issue_client_certificate = false
+            }
+        }
+        ```
   - uid: terraform-gcp-security-gke-no-public-control-plane
     title: GKE Control Plane should not be publicly accessible
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  arguments['master_authorized_networks_config'][0]['cidr_blocks'] { _['cidr_block'] != \"0.0.0.0/0\" } \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        arguments['master_authorized_networks_config'][0]['cidr_blocks'] { _['cidr_block'] != "0.0.0.0/0" }
+      }
     docs:
       desc: |
         Authorized networks allow you to specify CIDR ranges and allow IP addresses in those ranges to access your cluster control plane endpoint using HTTPS. Exposing the Kubernetes control plane to the public internet by specifying a CIDR block of "0.0.0.0/0" is not recommended. Public clusters can have up to 50 authorized network CIDR ranges; private clusters can have up to 100.
@@ -1631,9 +1969,20 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-node-metadata-security
     title: Node metadata value disables metadata concealment
-    mql: "terraform.resources.where( nameLabel == \"google_container_node_pool\" ) { \n  blocks.where( type == \"node_config\") { \n    blocks { attributes['node_metadata']['value'] != \"EXPOSE\"  }\n  }\n}\nterraform.resources.where( nameLabel == \"google_container_node_pool\" ) { \n  blocks.where( type == \"node_config\") { \n    blocks { attributes['node_metadata']['value'] != \"UNSPECIFIED\"  }\n  }\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_node_pool" ) {
+        blocks.where( type == "node_config") {
+          blocks { attributes['node_metadata']['value'] != "EXPOSE"  }
+        }
+      }
+      terraform.resources.where( nameLabel == "google_container_node_pool" ) {
+        blocks.where( type == "node_config") {
+          blocks { attributes['node_metadata']['value'] != "UNSPECIFIED"  }
+        }
+      }
     docs:
-      desc: "GKE metadata concealment protects some potentially sensitive system metadata from user workloads running on your cluster. Metadata concealment is scheduled to be deprecated in the future and Google recommends using Workload Identity instead of metadata concealment. This check is looking for configuration that exposes metadata completely. \n"
+      desc: |
+        GKE metadata concealment protects some potentially sensitive system metadata from user workloads running on your cluster. Metadata concealment is scheduled to be deprecated in the future and Google recommends using Workload Identity instead of metadata concealment. This check is looking for configuration that exposes metadata completely.
       audit: |
         The following example will fail due to the `node_config` block that specifies `node_metadata = "EXPOSE"`:
 
@@ -1660,12 +2009,45 @@ queries:
           }
         }
         ```
-      remediation: "The following example will pass due to the `node_config` block that specifies `node_metadata = \"GKE_METADATA_SERVER\"` (recommended): \n\n```terraform\n\nresource \"google_container_node_pool\" \"bad_example\" {\n  node_config {\n    workload_metadata_config {\n      node_metadata = \"GKE_METADATA_SERVER\"\n    }\n  }\n}\n\n```\n\nThe following example will pass due to the `node_config` block that specifies `node_metadata = \"SECURE\"`: \n\n```terraform\n\nresource \"google_container_node_pool\" \"bad_example\" {\n  node_config {\n    workload_metadata_config {\n      node_metadata = \"SECURE\"\n    }\n  }\n}\n\n```\n"
+      remediation: |
+        The following example will pass due to the `node_config` block that specifies `node_metadata = "GKE_METADATA_SERVER"` (recommended):
+
+        ```terraform
+
+        resource "google_container_node_pool" "bad_example" {
+          node_config {
+            workload_metadata_config {
+              node_metadata = "GKE_METADATA_SERVER"
+            }
+          }
+        }
+
+        ```
+
+        The following example will pass due to the `node_config` block that specifies `node_metadata = "SECURE"`:
+
+        ```terraform
+
+        resource "google_container_node_pool" "bad_example" {
+          node_config {
+            workload_metadata_config {
+              node_metadata = "SECURE"
+            }
+          }
+        }
+
+        ```
   - uid: terraform-gcp-security-gke-node-pool-uses-cos
     title: Ensure Container-Optimized OS (cos) is used for Kubernetes Engine Clusters Node image
-    mql: "terraform.resources.where( nameLabel == \"google_container_node_pool\" ) { \n  blocks.where( type == \"node_config\") { \n    attributes['image_type']['value'] == 'COS_CONTAINERD' \n  } \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_node_pool" ) {
+        blocks.where( type == "node_config") {
+          attributes['image_type']['value'] == 'COS_CONTAINERD'
+        }
+      }
     docs:
-      desc: "GKE supports several OS image types but COS_CONTAINERD is the recommended OS image to use on cluster nodes for enhanced security. COS_CONTAINERD is the recommended OS image to use on cluster nodes. \n"
+      desc: |
+        GKE supports several OS image types but COS_CONTAINERD is the recommended OS image to use on cluster nodes for enhanced security. COS_CONTAINERD is the recommended OS image to use on cluster nodes.
       audit: |
         The following example will fail due to the `node_config` block that specifies `image_type = "something"`:
 
@@ -1689,30 +2071,126 @@ queries:
           }
         }
         ```
-      remediation: "The following example will pass due to the `node_config` block that specifies `image_type = \"COS_CONTAINERD\"` (recommended): \n\n```terraform\n\nresource \"google_container_node_pool\" \"good_example\" {\n  name       = \"my-node-pool\"\n  cluster    = google_container_cluster.primary.id\n  node_count = 1\n\n  node_config {\n    preemptible  = true\n    machine_type = \"e2-medium\"\n\n    # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.\n    service_account = google_service_account.default.email\n    oauth_scopes = [\n      \"https://www.googleapis.com/auth/cloud-platform\"\n    ]\n    image_type = \"COS_CONTAINERD\"\n  }\n}\n\n```\n"
+      remediation: |
+        The following example will pass due to the `node_config` block that specifies `image_type = "COS_CONTAINERD"` (recommended):
+
+        ```terraform
+
+        resource "google_container_node_pool" "good_example" {
+          name       = "my-node-pool"
+          cluster    = google_container_cluster.primary.id
+          node_count = 1
+
+          node_config {
+            preemptible  = true
+            machine_type = "e2-medium"
+
+            # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.
+            service_account = google_service_account.default.email
+            oauth_scopes = [
+              "https://www.googleapis.com/auth/cloud-platform"
+            ]
+            image_type = "COS_CONTAINERD"
+          }
+        }
+
+        ```
   - uid: terraform-gcp-security-gke-node-shielding-enabled
     title: Shielded GKE nodes not enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  arguments['enable_shielded_nodes'] != false \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        arguments['enable_shielded_nodes'] != false
+      }
     docs:
       desc: |
         Node identity and integrity can't be verified without shielded GKE nodes. CIS GKE Benchmark Recommendation: 6.5.5. Shielded GKE Nodes provide strong, verifiable node identity and integrity to increase the security of GKE nodes and should be enabled on all GKE clusters.
 
         `enable_shielded_nodes` is an optional argument and is set to `true` by default, and should not be set to `false`.
-      audit: "The following example will fail due to the `enable_shielded_nodes` is set to `false`: \n\n```terraform\n\nresource \"google_container_cluster\" \"bad_example\" {\n  enable_shielded_nodes = \"false\"\n}\n```\n"
-      remediation: "The following example will pass due to the `enable_shielded_nodes` is set to `true`: \n\n```terraform\n\nresource \"google_container_cluster\" \"good_example\" {\n  enable_shielded_nodes = \"true\"\n}\n\n```\n"
+      audit: |
+        The following example will fail due to the `enable_shielded_nodes` is set to `false`:
+
+        ```terraform
+
+        resource "google_container_cluster" "bad_example" {
+          enable_shielded_nodes = "false"
+        }
+        ```
+      remediation: |
+        The following example will pass due to the `enable_shielded_nodes` is set to `true`:
+
+        ```terraform
+
+        resource "google_container_cluster" "good_example" {
+          enable_shielded_nodes = "true"
+        }
+
+        ```
   - uid: terraform-gcp-security-gke-use-cluster-labels
     title: Clusters should be configured with Labels
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  arguments.keys.contains( \"resource_labels\" ) \n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        arguments.keys.contains( "resource_labels" )
+      }
     docs:
-      desc: "Cluster labels are key-value pairs that helps you organize your Google Cloud clusters. You can attach a label to each resource, then filter the resources based on their labels. Information about labels is forwarded to the billing system, so you can break down your billed charges by label.\n\nThe `resource_labels` argument is optional when using the `google_container_cluster` resource. \n"
-      audit: "The following example will fail because the `resource_labels` argument is not defined for the cluster: \n\n```terraform\n\nresource \"google_container_cluster\" \"bad_example\" {\n  name     = \"my-gke-cluster\"\n  location = \"us-central1\"\n\n  remove_default_node_pool = true\n  initial_node_count       = 1\n}\n\n```\n"
-      remediation: "The following example will pass because the `resource_labels` argument is defined for the cluster: \n\n```terraform\n\nresource \"google_container_cluster\" \"good_example\" {\n  name     = \"my-gke-cluster\"\n  location = \"us-central1\"\n\n  # We can't create a cluster with no node pool defined, but we want to only use\n  # separately managed node pools. So we create the smallest possible default\n  # node pool and immediately delete it.\n  remove_default_node_pool = true\n  initial_node_count       = 1\n  resource_labels = {\n    \"env\" = \"staging\"\n  }\n}\n\n```\n"
+      desc: |
+        Cluster labels are key-value pairs that helps you organize your Google Cloud clusters. You can attach a label to each resource, then filter the resources based on their labels. Information about labels is forwarded to the billing system, so you can break down your billed charges by label.
+
+        The `resource_labels` argument is optional when using the `google_container_cluster` resource.
+      audit: |
+        The following example will fail because the `resource_labels` argument is not defined for the cluster:
+
+        ```terraform
+
+        resource "google_container_cluster" "bad_example" {
+          name     = "my-gke-cluster"
+          location = "us-central1"
+
+          remove_default_node_pool = true
+          initial_node_count       = 1
+        }
+
+        ```
+      remediation: |
+        The following example will pass because the `resource_labels` argument is defined for the cluster:
+
+        ```terraform
+
+        resource "google_container_cluster" "good_example" {
+          name     = "my-gke-cluster"
+          location = "us-central1"
+
+          # We can't create a cluster with no node pool defined, but we want to only use
+          # separately managed node pools. So we create the smallest possible default
+          # node pool and immediately delete it.
+          remove_default_node_pool = true
+          initial_node_count       = 1
+          resource_labels = {
+            "env" = "staging"
+          }
+        }
+
+        ```
   - uid: terraform-gcp-security-gke-use-rbac-permissions
     title: Legacy ABAC permissions are enabled
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  arguments['enable_legacy_abac'] != true\n}\n"
+    mql: |
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        arguments['enable_legacy_abac'] != true
+      }
     docs:
-      desc: "By default, ABAC is disabled for clusters created using GKE version 1.8 and later. In Kubernetes, RBAC is used to grant permissions to resources at the cluster and namespace level. RBAC allows you to define roles with rules containing a set of permissions. RBAC has significant security advantages over ABAC.\n\nThe `enable_legacy_abac` is set to `false` by default. \n"
-      audit: "The following example will fail because the `enable_legacy_abac` argument is set to `true`: \n\n```terraform\n\nresource \"google_container_cluster\" \"bad_example\" {\n  enable_legacy_abac = true\n}\n\n```\n"
+      desc: |
+        By default, ABAC is disabled for clusters created using GKE version 1.8 and later. In Kubernetes, RBAC is used to grant permissions to resources at the cluster and namespace level. RBAC allows you to define roles with rules containing a set of permissions. RBAC has significant security advantages over ABAC.
+
+        The `enable_legacy_abac` is set to `false` by default.
+      audit: |
+        The following example will fail because the `enable_legacy_abac` argument is set to `true`:
+
+        ```terraform
+
+        resource "google_container_cluster" "bad_example" {
+          enable_legacy_abac = true
+        }
+
+        ```
       remediation: |
         The following example will pass because the `enable_legacy_abac` argument is explicitly set to `false` (omitting the argument will also pass):
 
@@ -1728,9 +2206,68 @@ queries:
         ```
   - uid: terraform-gcp-security-gke-use-service-account
     title: Checks for service account defined for GKE nodes
-    mql: "terraform.resources.where( nameLabel == \"google_container_cluster\" ) { \n  blocks.where( type == \"node_config\" ) { \n    arguments.keys.contains(\"service_account\") \n  }\n}\nterraform.resources.where( nameLabel == \"google_container_node_pool\" ) { \n  blocks.where( type == \"node_config\" ) { \n    arguments.keys.contains(\"service_account\") \n  }\n}"
+    mql: |-
+      terraform.resources.where( nameLabel == "google_container_cluster" ) {
+        blocks.where( type == "node_config" ) {
+          arguments.keys.contains("service_account")
+        }
+      }
+      terraform.resources.where( nameLabel == "google_container_node_pool" ) {
+        blocks.where( type == "node_config" ) {
+          arguments.keys.contains("service_account")
+        }
+      }
     docs:
       desc: |
         Each GKE node has an Identity and Access Management (IAM) Service Account associated with it. By default, nodes are given the Compute Engine default service account, which you can find by navigating to the IAM section of the Cloud Console. This account has broad access by default, making it useful to wide variety of applications, but it has more permissions than are required to run your Kubernetes Engine cluster. You should create and use a minimally privileged service account for your nodes to use instead of the Compute Engine default service account.
-      audit: "The following example will fail because the `node_config` block does not contain a `service_account` argument: \n\n```terraform\n\nresource \"google_container_cluster\" \"bad_example\" {\n  name               = \"marcellus-wallace\"\n  location           = \"us-central1-a\"\n  initial_node_count = 3\n\n  node_config {\n    labels = {\n      foo = \"bar\"\n    }\n    tags = [\"foo\", \"bar\"]\n  }\n  timeouts {\n    create = \"30m\"\n    update = \"40m\"\n  }\n}\n\n```\n"
-      remediation: "The following example will pass because the `node_config` block contains a `service_account` argument: \n\n```terraform\n\nresource \"google_container_cluster\" \"bad_example\" {\n  name               = \"marcellus-wallace\"\n  location           = \"us-central1-a\"\n  initial_node_count = 3\n\n  node_config {\n    # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.\n    service_account = google_service_account.default.email\n    oauth_scopes = [\n      \"https://www.googleapis.com/auth/cloud-platform\"\n    \n    labels = {\n      foo = \"bar\"\n    }\n    tags = [\"foo\", \"bar\"]\n  }\n  timeouts {\n    create = \"30m\"\n    update = \"40m\"\n  }\n}\n\n```\n"
+      audit: |
+        The following example will fail because the `node_config` block does not contain a `service_account` argument:
+
+        ```terraform
+
+        resource "google_container_cluster" "bad_example" {
+          name               = "marcellus-wallace"
+          location           = "us-central1-a"
+          initial_node_count = 3
+
+          node_config {
+            labels = {
+              foo = "bar"
+            }
+            tags = ["foo", "bar"]
+          }
+          timeouts {
+            create = "30m"
+            update = "40m"
+          }
+        }
+
+        ```
+      remediation: |
+        The following example will pass because the `node_config` block contains a `service_account` argument:
+
+        ```terraform
+
+        resource "google_container_cluster" "bad_example" {
+          name               = "marcellus-wallace"
+          location           = "us-central1-a"
+          initial_node_count = 3
+
+          node_config {
+            # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.
+            service_account = google_service_account.default.email
+            oauth_scopes = [
+              "https://www.googleapis.com/auth/cloud-platform"
+
+            labels = {
+              foo = "bar"
+            }
+            tags = ["foo", "bar"]
+          }
+          timeouts {
+            create = "30m"
+            update = "40m"
+          }
+        }
+
+        ```
