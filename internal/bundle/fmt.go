@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"unicode"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -88,6 +89,16 @@ func DeprecatedV7_ToV8(data []byte) ([]byte, error) {
 	return Format(v8yaci)
 }
 
+// sanitizeStringForYaml is here to help generating literal style yaml strings
+// if a string has a trailing space in a line, it is automatically converted into quoted style
+func sanitizeStringForYaml(s string) string {
+	lines := strings.Split(s, "\n")
+	for j := range lines {
+		lines[j] = strings.TrimRightFunc(lines[j], unicode.IsSpace)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // Format formats the .mql.yaml bundle
 func FormatFile(filename string) error {
 	log.Info().Str("file", filename).Msg("format file")
@@ -99,14 +110,33 @@ func FormatFile(filename string) error {
 	b, err := ParseYaml(data)
 
 	// to improve the formatting we need to remove the whitespace at the end of the lines
-	// this is a bit hacky, but it works
 	for i := range b.Queries {
-		mql := b.Queries[i].Mql
-		lines := strings.Split(mql, "\n")
-		for j := range lines {
-			lines[j] = strings.TrimRight(lines[j], " ")
+		query := b.Queries[i]
+		query.Title = sanitizeStringForYaml(query.Title)
+		query.Mql = sanitizeStringForYaml(query.Mql)
+		if query.Docs != nil {
+			query.Docs.Desc = sanitizeStringForYaml(query.Docs.Desc)
+			query.Docs.Audit = sanitizeStringForYaml(query.Docs.Audit)
+			if query.Docs.Remediation != nil {
+				for j := range query.Docs.Remediation.Items {
+					docs := query.Docs.Remediation.Items[j]
+					docs.Desc = sanitizeStringForYaml(docs.Desc)
+				}
+			}
 		}
-		b.Queries[i].Mql = strings.Join(lines, "\n")
+	}
+
+	for i := range b.Frameworks {
+		for j := range b.Frameworks[i].Groups {
+			grp := b.Frameworks[i].Groups[j]
+			grp.Title = sanitizeStringForYaml(grp.Title)
+			for k := range grp.Controls {
+				grp.Controls[k].Title = sanitizeStringForYaml(grp.Controls[k].Title)
+				if grp.Controls[k].Docs != nil {
+					grp.Controls[k].Docs.Desc = sanitizeStringForYaml(grp.Controls[k].Docs.Desc)
+				}
+			}
+		}
 	}
 
 	// we have v7 structs in v8 bundle, so it can happen that v7 parses properly
