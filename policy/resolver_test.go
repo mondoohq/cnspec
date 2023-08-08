@@ -367,6 +367,7 @@ frameworks:
 - uid: parent-framework
   dependencies:
   - mrn: ` + frameworkMrn("framework1") + `
+  - mrn: ` + frameworkMrn("framework2") + `
 
 framework_maps:
 - uid: framework-map1
@@ -427,6 +428,9 @@ framework_maps:
 		// control3 had no checks, so it should not have a reporting job.
 		// TODO: is that the desired behavior?
 		require.Nil(t, rjTester.queryIdToReportingJob[controlMrn("control3")])
+		// framework 2 has no implemented controls, so it should not have a reporting job.
+		require.Nil(t, rjTester.queryIdToReportingJob[frameworkMrn("framework2")])
+
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-1")], queryMrn("check-pass-1"))
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-2")], queryMrn("check-pass-2"))
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], queryMrn("check-fail"))

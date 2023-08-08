@@ -1603,11 +1603,10 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			// if the framework has no children reporting, i.e. it has no controls implemented
 			// skip it. also delete it from all other jobs that have it as a child job (other frameworks)
 			if len(children) == 0 {
-				delete(framework.Nodes, mrn)
-				j := job.ReportingJobs[cache.relativeChecksum(mrn)]
-				for _, p := range j.Notify {
+				rj := job.ReportingJobs[cache.relativeChecksum(mrn)]
+				for _, p := range rj.Notify {
 					pj := job.ReportingJobs[p]
-					delete(pj.ChildJobs, j.Uuid)
+					delete(pj.ChildJobs, rj.Uuid)
 				}
 				delete(job.ReportingJobs, cache.relativeChecksum(mrn))
 			}
