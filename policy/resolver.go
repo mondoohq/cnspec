@@ -343,6 +343,7 @@ type resolverCache struct {
 	baseChecksum         string
 	assetFiltersChecksum string
 	assetFilters         map[string]struct{}
+	codeIdToMrn          map[string][]string
 
 	// assigned queries, listed by their UUID (i.e. policy context)
 	executionQueries map[string]*ExecutionQuery
@@ -507,6 +508,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		assetFiltersChecksum: assetFiltersChecksum,
 		assetFilters:         assetFiltersMap,
 		executionQueries:     map[string]*ExecutionQuery{},
+		codeIdToMrn:          map[string][]string{},
 		dataQueries:          map[string]struct{}{},
 		propsCache:           explorer.NewPropsCache(),
 		queriesByMsum:        map[string]*explorer.Mquery{},
@@ -583,8 +585,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		return nil, err
 	}
 
-	queries := bundleMap.QueryMap()
-	if err := s.jobsToControls(cacheFrameworkJobs, resolvedFramework, collectorJob, queries); err != nil {
+	if err := s.jobsToControls(cacheFrameworkJobs, resolvedFramework, collectorJob); err != nil {
 		logCtx.Error().
 			Err(err).
 			Str("bundle", bundleMrn).
@@ -976,6 +977,7 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 			DeprecatedV7Spec: map[string]*DeprecatedV7_ScoringSpec{},
 			// ^^
 		}
+		cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
 		cache.global.reportingJobsByUUID[uuid] = queryJob
 		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], queryJob)
 		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], queryJob)
@@ -1496,7 +1498,7 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 	return nil
 }
 
-func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob, querymap map[string]*explorer.Mquery) error {
+func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob) error {
 	nuJobs := map[string]*ReportingJob{}
 
 	// try to find all framework groups of type IGNORE or DISABLE for this and depending frameworks
@@ -1526,11 +1528,10 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 
 	rjByMrn := map[string]*ReportingJob{}
 	for _, rj := range job.ReportingJobs {
-		query := querymap[rj.QrId]
-		if query == nil {
-			continue
+		queryMrns := cache.codeIdToMrn[rj.QrId]
+		for _, queryMrn := range queryMrns {
+			rjByMrn[queryMrn] = rj
 		}
-		rjByMrn[query.Mrn] = rj
 	}
 
 	mrns := framework.TopologicalSort()
@@ -1550,26 +1551,22 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			if !ok {
 				continue
 			}
-			query, ok := querymap[rj.QrId]
-			if !ok {
+			queryMrns := cache.codeIdToMrn[rj.QrId]
+
+			for _, queryMrn := range queryMrns {
+				uuid := cache.relativeChecksum(queryMrn)
+				queryJob := &ReportingJob{
+					Uuid:      uuid,
+					QrId:      queryMrn,
+					ChildJobs: map[string]*explorer.Impact{},
+					Type:      ReportingJob_CHECK,
+				}
+				nuJobs[uuid] = queryJob
+
+				queryJob.ChildJobs[rj.Uuid] = nil
+				rj.Notify = append(rj.Notify, queryJob.Uuid)
 				continue
 			}
-
-			// Create a reporting job from the query code id to one with the mrn.
-			// This isn't 100% correct. We don't keep track of all the queries that
-			// have the same code id.
-			uuid := cache.relativeChecksum(query.Mrn)
-			queryJob := &ReportingJob{
-				Uuid:      uuid,
-				QrId:      query.Mrn,
-				ChildJobs: map[string]*explorer.Impact{},
-				Type:      ReportingJob_CHECK,
-			}
-			nuJobs[uuid] = queryJob
-
-			queryJob.ChildJobs[rj.Uuid] = nil
-			rj.Notify = append(rj.Notify, queryJob.Uuid)
-			continue
 		case ResolvedFrameworkNodeTypeControl:
 			// skip controls which are part of a FrameworkGroup with type DISABLE
 			if group, ok := frameworkGroupByControlMrn[mrn]; ok {
