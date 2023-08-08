@@ -340,7 +340,16 @@ policies:
       mql: 1 == 1
     - uid: check-pass-2
       mql: 2 == 2
-
+- uid: policy-inactive
+  groups:
+  - filters: "false"
+    checks:
+    - uid: inactive-fail
+      mql: 1 == 2
+    - uid: inactive-pass
+      mql: 1 == 1
+    - uid: inactive-pass-2
+      mql: 2 == 2
 frameworks:
 - uid: framework1
   name: framework1
@@ -391,7 +400,7 @@ framework_maps:
 		b := parseBundle(t, bundleStr)
 
 		srv := initResolver(t, []*testAsset{
-			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
+			{asset: "asset1", policies: []string{policyMrn("policy1"), policyMrn("policy-inactive")}, frameworks: []string{frameworkMrn("parent-framework")}},
 		}, []*policy.Bundle{b})
 
 		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
@@ -421,6 +430,8 @@ framework_maps:
 		}
 
 		for _, rj := range rjTester.rjIdToReportingJob {
+			_, ok := rjTester.queryIdToReportingJob[rj.QrId]
+			require.False(t, ok)
 			rjTester.queryIdToReportingJob[rj.QrId] = rj
 		}
 
@@ -441,6 +452,10 @@ framework_maps:
 		rjTester.requireReportsTo(controlMrn("control4"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
 		rjTester.requireReportsTo(frameworkMrn("parent-framework"), "root")
+
+		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-fail")])
+		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass")])
+		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass-2")])
 	})
 
 	t.Run("test checksumming", func(t *testing.T) {
