@@ -1,7 +1,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Linux Security
-    version: 1.3.2
+    version: 2.0.0
     license: MPL-2.0
     tags:
       mondoo.com/category: security
@@ -73,7 +73,7 @@ policies:
     groups:
       - title: Core
         filters: |
-          platform.family.contains(_ == 'linux')
+          asset.family.contains('linux')
         checks:
           - uid: mondoo-linux-security--window-system-is-not-installed
           - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
@@ -121,7 +121,7 @@ policies:
           - uid: mondoo-linux-security-tftp-server-is-not-enabled
       - title: Configure SSH Server
         filters: |
-          platform.family.contains(_ == 'linux')
+          asset.family.contains('linux')
           package('openssh-server').installed
         checks:
           - uid: mondoo-linux-security-only-strong-ciphers-are-used
@@ -145,7 +145,7 @@ policies:
           - uid: mondoo-linux-security-ssh-x11-forwarding-is-disabled
       - title: Logging
         filters: |
-          platform.family.contains(_ == 'linux')
+          asset.family.contains('linux')
         checks:
           - uid: mondoo-linux-security-audit-log-storage-size-is-configured
           - uid: mondoo-linux-security-audit-logs-are-not-automatically-deleted
@@ -177,7 +177,7 @@ policies:
           - uid: mondoo-linux-security-unsuccessful-unauthorized-file-access-attempts-are-collected
       - title: Users and groups
         filters: |
-          platform.family.contains(_ == 'linux')
+          asset.family.contains('linux')
         checks:
           - uid: mondoo-linux-security-access-to-the-su-command-is-restricted
           - uid: mondoo-linux-security-default-group-for-the-root-account-is-gid-0
@@ -234,7 +234,7 @@ queries:
         ```
   - uid: mondoo-linux-security-filesystem-integrity-is-regularly-checked
     title: Ensure filesystem integrity is regularly checked
-    impact: 60
+    impact: 50
     mql: |
       command("crontab -u root -l | grep aide").stdout.contains("aide --check") || command("crontab -u root -l | grep aide").stdout.contains("aide.conf --check") || service('aidecheck').enabled || parse.ini("/etc/default/aide").params["CRON_DAILY_RUN"] == "yes"
     docs:
@@ -297,7 +297,7 @@ queries:
         ```
   - uid: mondoo-linux-security-core-dumps-are-restricted
     title: Ensure core dumps are restricted
-    impact: 100
+    impact: 75
     mql: |
       file("/etc/security/limits.conf").content.lines.where( _ == /^[^#]/ ).where( _.contains("core") ) {
         _ == /\*\s+hard\s+core\s+0/
@@ -344,7 +344,7 @@ queries:
         ```
   - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
     title: Ensure address space layout randomization (ASLR) is enabled
-    impact: 100
+    impact: 90
     mql: |
       kernel.parameters["kernel.randomize_va_space"] == 2
     docs:
@@ -363,7 +363,7 @@ queries:
         ```
   - uid: mondoo-linux-security-prelink-is-disabled
     title: Ensure prelink is disabled
-    impact: 100
+    impact: 70
     mql: |
       package("prelink").installed == false
     docs:
@@ -388,7 +388,7 @@ queries:
     title: Ensure X Window System is not installed
     impact: 100
     mql: |
-      package("xserver-xorg").installed == false
+      packages.none(name == /^xserver-xorg.*/)
     docs:
       desc: The X Window System provides a Graphical User Interface (GUI) where users can have multiple windows to run programs and various add-ons. The X Windows system is typically used on workstations where users login, but not on servers where users typically do not login.
       remediation: |-
@@ -623,15 +623,15 @@ queries:
         ```
   - uid: mondoo-linux-security-mail-transfer-agent-is-configured-for-local-only-mode
     title: Ensure mail transfer agent is configured for local-only mode
-    impact: 100
+    impact: 85
     mql: |
-      if( package("postfix").installed ) {
+      if( package("postfix").installed && service('postfix').running ) {
         parse.ini("/etc/postfix/main.cf").params["inet_interfaces"] == "localhost" || parse.ini("/etc/postfix/main.cf").params["inet_interfaces"] == "loopback-only"
       }
-      if( package("exim4").installed ) {
+      if( package("exim4").installed && service('exim4').running ) {
         parse.ini("/etc/exim4/update-exim4.conf.conf").params["dc_local_interfaces"] == "'127.0.0.1 ; ::1'"
       }
-      ports.listening.all( port != 25 )
+      ports.listening.none(port == 25)
     docs:
       desc: Mail Transfer Agents (MTA), such as Sendmail and Postfix, listen for incoming mail and transfer the messages to the appropriate user or mail server. If the system is not intended to be a mail server, it is recommended that the MTA be configured to only process local mail.
       remediation: |-
@@ -648,7 +648,7 @@ queries:
         ```
   - uid: mondoo-linux-security-nis-server-is-not-enabled
     title: Ensure NIS server is stopped and not enabled
-    impact: 100
+    impact: 75
     mql: |
       service("ypserv").enabled == false
       service("ypserv").running == false
@@ -663,7 +663,7 @@ queries:
         ```
   - uid: mondoo-linux-security-rsh-server-is-not-enabled
     title: Ensure rsh server is stopped and not enabled
-    impact: 100
+    impact: 75
     mql: |
       service("rsh.socket").enabled == false
       service("rlogin.socket").enabled == false
@@ -687,7 +687,7 @@ queries:
         ```
   - uid: mondoo-linux-security-telnet-server-is-not-enabled
     title: Ensure telnet server is stopped and not enabled
-    impact: 100
+    impact: 90
     mql: |
       service("telnet.socket").enabled == false
       service("telnet.socket").running == false
@@ -747,7 +747,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ip-forwarding-is-disabled
     title: Ensure IP forwarding is disabled
-    impact: 60
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.ip_forward'] == 0
       kernel.parameters['net.ipv6.conf.all.forwarding'] == 0
@@ -775,7 +775,7 @@ queries:
         ```
   - uid: mondoo-linux-security-packet-redirect-sending-is-disabled
     title: Ensure packet redirect sending is disabled
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.conf.all.send_redirects'] == 0
       kernel.parameters['net.ipv4.conf.default.send_redirects'] == 0
@@ -801,7 +801,7 @@ queries:
         ```
   - uid: mondoo-linux-security-source-routed-packets-are-not-accepted
     title: Ensure source routed packets are not accepted
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.conf.all.accept_source_route'] == 0
       kernel.parameters['net.ipv4.conf.default.accept_source_route'] == 0
@@ -839,7 +839,7 @@ queries:
         ```
   - uid: mondoo-linux-security-icmp-redirects-are-not-accepted
     title: Ensure ICMP redirects are not accepted
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.conf.all.accept_redirects'] == 0
       kernel.parameters['net.ipv4.conf.default.accept_redirects'] == 0
@@ -877,7 +877,7 @@ queries:
         ```
   - uid: mondoo-linux-security-secure-icmp-redirects-are-not-accepted
     title: Ensure secure ICMP redirects are not accepted
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.conf.all.secure_redirects'] == 0
       kernel.parameters['net.ipv4.conf.default.secure_redirects'] == 0
@@ -903,7 +903,7 @@ queries:
         ```
   - uid: mondoo-linux-security-suspicious-packets-are-logged
     title: Ensure suspicious packets are logged
-    impact: 80
+    impact: 60
     mql: |
       kernel.parameters['net.ipv4.conf.all.log_martians'] == 1
       kernel.parameters['net.ipv4.conf.default.log_martians'] == 1
@@ -930,7 +930,7 @@ queries:
         ```
   - uid: mondoo-linux-security-broadcast-icmp-requests-are-ignored
     title: Ensure broadcast ICMP requests are ignored
-    impact: 100
+    impact: 60
     mql: |
       kernel.parameters['net.ipv4.icmp_echo_ignore_broadcasts'] == 1
     docs:
@@ -951,7 +951,7 @@ queries:
         ```
   - uid: mondoo-linux-security-bogus-icmp-responses-are-ignored
     title: Ensure bogus ICMP responses are ignored
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.icmp_ignore_bogus_error_responses'] == 1
     docs:
@@ -972,7 +972,7 @@ queries:
         ```
   - uid: mondoo-linux-security-reverse-path-filtering-is-enabled
     title: Ensure Reverse Path Filtering is enabled
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.conf.all.rp_filter'] == 1
       kernel.parameters['net.ipv4.conf.default.rp_filter'] == 1
@@ -998,7 +998,7 @@ queries:
         ```
   - uid: mondoo-linux-security-tcp-syn-cookies-is-enabled
     title: Ensure TCP SYN Cookies is enabled
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv4.tcp_syncookies'] == 1
     docs:
@@ -1019,7 +1019,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ipv6-router-advertisements-are-not-accepted
     title: Ensure IPv6 router advertisements are not accepted
-    impact: 100
+    impact: 75
     mql: |
       kernel.parameters['net.ipv6.conf.all.accept_ra'] == 0
       kernel.parameters['net.ipv6.conf.default.accept_ra'] == 0
@@ -1045,9 +1045,10 @@ queries:
         ```
   - uid: mondoo-linux-security-auditd-is-installed
     title: Ensure auditd is installed
-    impact: 80
+    impact: 50
     mql: |
-      package("audit").installed || package("auditd").installed && package("audispd-plugins").installed || package("audit").installed && package("audit-libs").installed
+      package("auditd").installed && package("audispd-plugins").installed
+      || package("audit").installed || package("audit-libs").installed
     docs:
       desc: auditd is the user space component to the Linux Auditing System. It's responsible for writing audit records to the disk
       remediation: |-
@@ -1064,7 +1065,7 @@ queries:
         ```
   - uid: mondoo-linux-security-auditd-service-is-enabled
     title: Ensure auditd service is enabled
-    impact: 80
+    impact: 50
     mql: |
       service("auditd").enabled
     docs:
@@ -1080,7 +1081,7 @@ queries:
         ```
   - uid: mondoo-linux-security-auditing-for-processes-that-start-prior-to-auditd-is-enabled
     title: Ensure auditing for processes that start prior to auditd is enabled
-    impact: 80
+    impact: 50
     mql: |
       if( file("/boot/grub2/grub.cfg" ).exists) {
         file("/boot/grub2/grub.cfg").content.lines.where( _ == /^[^#]/ ).any(_ == /audit(\s+)?\=(\s+)?1/)
@@ -1123,12 +1124,9 @@ queries:
         ```
   - uid: mondoo-linux-security-audit-log-storage-size-is-configured
     title: Ensure audit log storage size is configured
-    impact: 80
+    impact: 40
     mql: |
-      file("/etc/audit/auditd.conf").exists
-      if (file("/etc/audit/auditd.conf").exists) {
-        parse.ini("/etc/audit/auditd.conf").params["max_log_file"] != ""
-      }
+      parse.ini("/etc/audit/auditd.conf").params["max_log_file"] > 0
     docs:
       desc: Configure the maximum size of the audit log file. Once the log reaches the maximum size, it will be rotated and a new log file will be started.
       remediation: |-
@@ -1140,12 +1138,9 @@ queries:
         ```
   - uid: mondoo-linux-security-audit-logs-are-not-automatically-deleted
     title: Ensure audit logs are not automatically deleted
-    impact: 70
+    impact: 40
     mql: |
-      file("/etc/audit/auditd.conf").exists
-      if (file("/etc/audit/auditd.conf").exists) {
-        parse.ini("/etc/audit/auditd.conf").params["max_log_file_action"].downcase == "keep_logs"
-      }
+      parse.ini("/etc/audit/auditd.conf").params["max_log_file_action"].downcase == "keep_logs"
     docs:
       desc: |-
         The `max_log_file_action`
@@ -1159,15 +1154,12 @@ queries:
         ```
   - uid: mondoo-linux-security-system-is-disabled-when-audit-logs-are-full
     title: Ensure system is disabled when audit logs are full
-    impact: 60
+    impact: 40
     mql: |
-      file("/etc/audit/auditd.conf").exists
-      if (file("/etc/audit/auditd.conf").exists) {
-        parse.ini("/etc/audit/auditd.conf") {
-          params["space_left_action"].downcase == "email"
-          params["action_mail_acct"].downcase == "root"
-          params["admin_space_left_action"].downcase == "halt"
-        }
+      parse.ini("/etc/audit/auditd.conf") {
+        params["space_left_action"].downcase == "email"
+        params["action_mail_acct"].downcase == "root"
+        params["admin_space_left_action"].downcase == "halt"
       }
     docs:
       desc: |-
@@ -1185,13 +1177,16 @@ queries:
         ```
   - uid: mondoo-linux-security-changes-to-system-administration-scope-sudoers-is-collected
     title: Ensure changes to system administration scope (sudoers) is collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/sudoers\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/)
-          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/sudoers\.d\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/)
-        }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/sudoers\.d\/\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/sudoers\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/))
     docs:
       desc: |-
         Monitor scope changes for system administrators. If the system has been properly configured to force system administrators to log in as themselves first and then use the `sudo`
@@ -1225,18 +1220,16 @@ queries:
         ```
   - uid: mondoo-linux-security-login-and-logout-events-are-collected
     title: Ensure login and logout events are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        if( platform.family.contains('debian') ) {
-          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/faillog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
-        } else {
-          file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/run\/faillock\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
-        }
-      file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/lastlog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
-      file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/tallylog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/run\/faillock\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/lastlog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/))
     docs:
       desc: |-
         Monitor login and logout events. The parameters below track changes to files associated with login/logout events.
@@ -1283,14 +1276,17 @@ queries:
         ```
   - uid: mondoo-linux-security-session-initiation-information-is-collected
     title: Ensure session initiation information is collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/run\/utmp\s+\-p\s+wa\s+\-k\s+session(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/run\/utmp\s+\-p\s+wa\s+\-k\s+session(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/))
     docs:
       desc: |-
         Monitor session initiation events. The parameters in this section track changes to the files associated with session events.
@@ -1329,20 +1325,19 @@ queries:
         ```
   - uid: mondoo-linux-security-events-that-modify-date-and-time-information-are-collected
     title: Ensure events that modify date and time information are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+adjtimex\s+\-S\s+settimeofday\s+\-k\s+time\-change(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+adjtimex\,settimeofday\s+\-F\s+key\=time\-change(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+adjtimex\s+\-S\s+settimeofday\s+\-S\s+stime\s+\-k\s+time\-change(\s+)?$/)
-          ||file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+stime\,settimeofday\,adjtimex\s+\-F\s+key\=time\-change(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+clock\_settime\s+\-k\s+time\-change(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+clock\_settime\s+\-F\s+key\=time\-change(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+clock\_settime\s+\-k\s+time\-change(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+clock\_settime\s+\-F\s+key\=time\-change(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/localtime\s+\-p\s+wa\s+\-k\s+time\-change/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+adjtimex\s+\-S\s+settimeofday\s+\-k\s+time-change(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+adjtimex\s+\-S\s+settimeofday\s+\-S\s+stime\s+\-k\s+time-change(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+clock\_settime\s+\-k\s+time-change(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+clock\_settime\s+\-k\s+time-change(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/localtime\s+\-p\s+wa\s+\-k\s+time-change(\s+)?$/))
     docs:
       desc: |-
         Capture events where the system date and/or time has been modified. The parameters in this section are set to determine if the `adjtimex`
@@ -1401,15 +1396,16 @@ queries:
         ```
   - uid: mondoo-linux-security-events-that-modify-the-systems-mandatory-access-controls-are-collected
     title: Ensure events that modify the system's Mandatory Access Controls are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/selinux\/\s+\-p\s+\wa\s+\-k\s+MAC\-policy(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/apparmor\/\s+\-p\s+\wa\s+\-k\s+MAC\-policy(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/usr\/share\/selinux\/\s+\-p\s+\wa\s+\-k\s+MAC\-policy(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/apparmor.d\/\s+\-p\s+\wa\s+\-k\s+MAC\-policy(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/selinux\/\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/usr\/share\/selinux\/\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
     docs:
       desc: |-
         Monitor SELinux/AppArmor mandatory access controls. The parameters below monitor any write access (potential additional,
@@ -1451,21 +1447,19 @@ queries:
         ```
   - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected
     title: Ensure events that modify the system's network environment are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system\-locale(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\,setdomainname\s+\-F\s+key\=system\-locale(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system\-locale(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\,setdomainname\s+\-F\s+key\=system\-locale(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/issue\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/issue\.net\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/hosts\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/sysconfig\/network\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/netctl\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/network\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system-locale(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system-locale(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/issue\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/issue.net\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/hosts\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/sysconfig\/network\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
     docs:
       desc: |-
         Record changes to network environment files or system calls. The below parameters monitor the sethostname (set the systems host name)
@@ -1546,23 +1540,20 @@ queries:
         ```
   - uid: mondoo-linux-security-discretionary-access-control-permission-modification-events-are-collected
     title: Ensure discretionary access control permission modification events are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chmod\s+\-S\s+fchmod\s+\-S\s+fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chmod\,fchmod\,fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chmod\s+\-S\s+fchmod\s+\-S\s+fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chmod\,fchmod\,fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chown\s+\-S\s+fchown\s+\-S\s+fchownat\s+\-S\s+lchown\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chown\,fchown\,lchown\,fchownat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chown\s+\-S\s+fchown\s+\-S\s+fchownat\s+\-S\s+lchown\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+lchown\,fchown\,chown\,fchownat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+setxattr\s+\-S\s+lsetxattr\s+\-S\s+fsetxattr\s+\-S\s+removexattr\s+\-S\s+lremovexattr\s+\-S\s+fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+setxattr\,lsetxattr\,fsetxattr\,removexattr\,lremovexattr\,fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+setxattr\s+\-S\s+lsetxattr\s+\-S\s+fsetxattr\s+\-S\s+removexattr\s+\-S\s+lremovexattr\s+\-S\s+fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+setxattr\,lsetxattr\,fsetxattr\,removexattr\,lremovexattr\,fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=perm\_mod/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chmod\s+\-S\s+fchmod\s+\-S\s+fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chmod\s+\-S\s+fchmod\s+\-S\s+fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chown\s+\-S\s+fchown\s+\-S\s+fchownat\s+\-S\s+lchown\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chown\s+\-S\s+fchown\s+\-S\s+fchownat\s+\-S\s+lchown\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+setxattr\s+\-S\s+lsetxattr\s+\-S\s+fsetxattr\s+\-S\s+removexattr\s+\-S\s+lremovexattr\s+\-S\s+fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+setxattr\s+\-S\s+lsetxattr\s+\-S\s+fsetxattr\s+\-S\s+removexattr\s+\-S\s+lremovexattr\s+\-S\s+fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+perm\_mod(\s+)?$/))
     docs:
       desc: |-
         Monitor changes to file permissions, attributes, ownership and group. The parameters in this section track changes for system calls that affect file permissions and attributes.
@@ -1630,19 +1621,16 @@ queries:
         ```
   - uid: mondoo-linux-security-unsuccessful-unauthorized-file-access-attempts-are-collected
     title: Ensure unsuccessful unauthorized file access attempts are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+open\,truncate\,ftruncate\,creat\,openat\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=access(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+open\,creat\,truncate\,ftruncate\,openat\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=access(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+open\,truncate\,ftruncate\,creat\,openat\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=-1\s+\-F\s+key\=access(\s+)?$/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+open\,creat\,truncate\,ftruncate\,openat\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=-1\s+\-F\s+key\=access(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+access(\s+)?$/))
     docs:
       desc: |-
         Monitor for unsuccessful attempts to access files. The parameters below are associated with system calls that control creation ( `creat` ), opening ( `open`, `openat` ) and
@@ -1704,16 +1692,19 @@ queries:
         ```
   - uid: mondoo-linux-security-events-that-modify-usergroup-information-are-collected
     title: Ensure events that modify user/group information are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/group\s+\-p\s+wa\s+\-k\s+identity/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/passwd\s+\-p\s+wa\s+\-k\s+identity/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/gshadow\s+\-p\s+wa\s+\-k\s+identity/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/shadow\s+\-p\s+wa\s+\-k\s+identity/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/etc\/security\/opasswd\s+\-p\s+wa\s+\-k\s+identity/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/passwd\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/group\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/gshadow\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/shadow\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/security\/opasswd\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
     docs:
       desc: |-
         Record events affecting the `group`, `passwd` (user IDs), `shadow` and `gshadow` (passwords) or `/etc/security/opasswd`
@@ -1753,15 +1744,15 @@ queries:
         ```
   - uid: mondoo-linux-security-successful-file-system-mounts-are-collected
     title: Ensure successful file system mounts are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+mounts/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=mounts/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+mounts/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=mounts/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+mounts(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+mounts(\s+)?$/))
     docs:
       desc: |-
         Monitor the use of the `mount`
@@ -1806,15 +1797,16 @@ queries:
         ```
   - uid: mondoo-linux-security-file-deletion-events-by-users-are-collected
     title: Ensure file deletion events by users are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.where( _ == /^[^#]/ ).contains(/\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+delete/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+rename\,unlink\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=delete/)
-        file('/etc/audit/audit.rules').content.lines.where( _ == /^[^#]/ ).contains(/\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+delete/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+unlink\,rename\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=\-1\s+\-F\s+key\=delete/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+rename\,unlink\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=unset\s+\-F\s+key\=delete(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+delete(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+rename\,unlink\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=unset\s+\-F\s+key\=delete(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=4294967295\s+\-k\s+delete(\s+)?$/))
     docs:
       desc: |-
         Monitor the use of system calls associated with the deletion or renaming of files and file attributes. This configuration statement sets up monitoring for the `unlink`
@@ -1866,18 +1858,18 @@ queries:
         ```
   - uid: mondoo-linux-security-kernel-module-loading-and-unloading-is-collected
     title: Ensure kernel module loading and unloading is collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/sbin\/insmod\s+\-p\s+x\s+\-k\s+modules/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/sbin\/rmmod\s+\-p\s+x\s+\-k\s+modules/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/sbin\/modprobe\s+\-p\s+x\s+\-k\s+modules/)
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\,delete\_module\s+\-F\s+key\=modules/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules/)
-          || file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\,delete\_module\s+\-F\s+key\=modules/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/insmod\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/rmmod\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/modprobe\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
+      props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/)) || props.auditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/))
     docs:
       desc: |-
         Monitor the loading and unloading of kernel modules. The programs `insmod`
@@ -1934,12 +1926,15 @@ queries:
         ```
   - uid: mondoo-linux-security-system-administrator-actions-sudolog-are-collected
     title: Ensure system administrator actions (sudolog) are collected
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-w\s+\/var\/log\/sudo\.log\s+\-p\s+wa\s+\-k\s+actions(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/sudo\.log\s+\-p\s+wa\s+\-k\s+actions(\s+)?$/))
     docs:
       desc: |-
         Monitor the `sudo` log file. If the system has been properly configured to disable the use of the `su`
@@ -1977,12 +1972,15 @@ queries:
         ```
   - uid: mondoo-linux-security-the-audit-configuration-is-immutable
     title: Ensure the audit configuration is immutable
-    impact: 80
+    impact: 50
+    props:
+      - uid: auditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          auditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return auditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      file('/etc/audit/audit.rules').exists
-      if (file('/etc/audit/audit.rules').exists) {
-        file('/etc/audit/audit.rules').content.lines.contains(/^(\s+)?\-e\s+2(\s+)?$/)
-      }
+      props.auditFiles.any(_.contains(/(\s+)?\-e\s+2(\s+)?$/))
     docs:
       desc: |-
         Set system audit so that audit rules cannot be modified with `auditctl`
@@ -2045,7 +2043,7 @@ queries:
         ```
   - uid: mondoo-linux-security-rsyslog-is-installed
     title: Ensure rsyslog is installed
-    impact: 60
+    impact: 50
     mql: |
       package("rsyslog").installed
     docs:
@@ -2062,7 +2060,7 @@ queries:
         ```
   - uid: mondoo-linux-security-rsyslog-service-is-enabled
     title: Ensure rsyslog Service is enabled
-    impact: 60
+    impact: 50
     mql: |
       service("rsyslog").enabled
     docs:
@@ -2089,7 +2087,7 @@ queries:
         ```
   - uid: mondoo-linux-security-journald-is-configured-to-send-logs-to-rsyslog
     title: Ensure journald is configured to send logs to rsyslog
-    impact: 60
+    impact: 50
     mql: |
       if (file("/etc/systemd/journald.conf").exists) {
         parse.ini("/etc/systemd/journald.conf").sections["Journal"]["ForwardToSyslog"] == "yes"
@@ -2106,11 +2104,9 @@ queries:
         ```
   - uid: mondoo-linux-security-journald-is-configured-to-compress-large-log-files
     title: Ensure journald is configured to compress large log files
-    impact: 40
+    impact: 50
     mql: |
-      if (file("/etc/systemd/journald.conf").exists) {
-        parse.ini("/etc/systemd/journald.conf").sections["Journal"]["Compress"] == "yes"
-      }
+      parse.ini("/etc/systemd/journald.conf").sections["Journal"]["Compress"] == "yes"
     docs:
       desc: The journald system includes the capability of compressing overly large files to avoid filling up the system with logs or making the logs unmanageably large.
       remediation: |-
@@ -2121,7 +2117,7 @@ queries:
         ```
   - uid: mondoo-linux-security-journald-is-configured-to-write-logfiles-to-persistent-disk
     title: Ensure journald is configured to write logfiles to persistent disk
-    impact: 60
+    impact: 50
     mql: |
       if (file("/etc/systemd/journald.conf").exists) {
         parse.ini("/etc/systemd/journald.conf").sections["Journal"]["Storage"] == "persistent"
@@ -2230,7 +2226,8 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-protocol-is-set-to-2
     title: Ensure SSH Protocol is set to 2
-    impact: 100
+    impact: 80
+    filters: package('openssh-server').version == /6./ || package('openssh-server').version == /7\.[0|1|2|3|4|5]/
     mql: |
       sshd.config.params["Protocol"] == 2
     docs:
@@ -2243,7 +2240,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-loglevel-is-appropriate
     title: Ensure SSH LogLevel is appropriate
-    impact: 80
+    impact: 60
     mql: |
       sshd.config.params["LogLevel"] == /INFO|VERBOSE/
     docs:
@@ -2278,7 +2275,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-maxauthtries-is-set-to-4-or-less
     title: Ensure SSH MaxAuthTries is set to 4 or less
-    impact: 80
+    impact: 75
     mql: |
       sshd.config.params["MaxAuthTries"] <= 4
     docs:
@@ -2291,7 +2288,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-ignorerhosts-is-enabled
     title: Ensure SSH IgnoreRhosts is enabled
-    impact: 100
+    impact: 60
     mql: |
       sshd.config.params["IgnoreRhosts"] == "yes"
     docs:
@@ -2304,7 +2301,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-hostbasedauthentication-is-disabled
     title: Ensure SSH HostbasedAuthentication is disabled
-    impact: 100
+    impact: 70
     mql: |
       sshd.config.params["HostbasedAuthentication"] == "no"
     docs:
@@ -2330,7 +2327,7 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-permitemptypasswords-is-disabled
     title: Ensure SSH PermitEmptyPasswords is disabled
-    impact: 100
+    impact: 70
     mql: |
       sshd.config.params["PermitEmptyPasswords"] == "no"
     docs:
@@ -2452,11 +2449,9 @@ queries:
     title: Ensure SSH Idle Timeout Interval is configured
     impact: 60
     mql: |
-      sshd.config.params {
-        _["ClientAliveInterval"] >= 1
-        _["ClientAliveInterval"] <= 300
-        _["ClientAliveCountMax"] <= 3
-      }
+      sshd.config.params["ClientAliveInterval"] >= 1
+      sshd.config.params["ClientAliveInterval"] <= 900
+      sshd.config.params["ClientAliveCountMax"] = 0
     docs:
       desc: The two options `ClientAliveInterval` and `ClientAliveCountMax` control the timeout of ssh sessions. When the `ClientAliveInterval` variable is set, ssh sessions that have no activity for the specified length of time are terminated. When the `ClientAliveCountMax` variable is set, `sshd` will send client alive messages at every `ClientAliveInterval` interval. When the number of consecutive client alive messages are sent with no response from the client, the `ssh` session is terminated. For example, if the `ClientAliveInterval` is set to 15 seconds and the `ClientAliveCountMax` is set to 3, the client `ssh` session will be terminated after 45 seconds of idle time.
       remediation: |-
@@ -2470,10 +2465,8 @@ queries:
     title: Ensure SSH LoginGraceTime is set to one minute or less
     impact: 80
     mql: |
-      sshd.config.params {
-        _["LoginGraceTime"] >= 1
-        _["LoginGraceTime"] <= 60
-      }
+      sshd.config.params["LoginGraceTime"] >= 1
+      sshd.config.params["LoginGraceTime"] <= 60
     docs:
       desc: The `LoginGraceTime` parameter specifies the time allowed for successful authentication to the SSH server. The longer the grace period is, the more open unauthenticated connections can exist. Like other session controls, the grace period should be limited to appropriate organizational limits to ensure the service is available for needed access.
       remediation: |-
@@ -2486,8 +2479,12 @@ queries:
     title: Ensure SSH access is limited
     impact: 60
     mql: |
-      sshd.config.params["AllowUsers"] != "" || sshd.config.params["DenyUsers"] != ""
-      sshd.config.params["AllowGroups"] != "" || sshd.config.params["DenyGroups"] != ""
+      sshd.config.params["AllowUsers"] != null || sshd.config.params["AllowGroups"] != null || sshd.config.params["DenyUsers"] != null || sshd.config.params["DenyGroups"] != null
+
+      if (sshd.config.params["AllowUsers"] != null) { sshd.config.params["AllowUsers"] != "" }
+      if (sshd.config.params["AllowGroups"] != null) { sshd.config.params["AllowGroups"] != "" }
+      if (sshd.config.params["DenyUsers"] != null) { sshd.config.params["DenyUsers"] != "" }
+      if (sshd.config.params["DenyGroups"] != null) { sshd.config.params["DenyGroups"] != "" }
     docs:
       desc: |-
         There are several options available to limit which users and groups can access the system via SSH. It is recommended that at least one of the following options be leveraged: `AllowUsers`
@@ -2511,9 +2508,12 @@ queries:
         ```
   - uid: mondoo-linux-security-ssh-warning-banner-is-configured
     title: Ensure SSH warning banner is configured
-    impact: 40
+    impact: 30
     mql: |
       sshd.config.params["Banner"] != ""
+      sshd.config.params["Banner"] != "none"
+      sshd.config.params["Banner"] != null
+      sshd.config.params["Banner"] == "/etc/issue.net"
     docs:
       desc: The `Banner` parameter specifies a file whose contents must be sent to the remote user before authentication is permitted. By default, no banner is displayed.
       remediation: |-
@@ -2736,7 +2736,7 @@ queries:
         ```
   - uid: mondoo-linux-security-no-duplicate-uids-exist
     title: Ensure no duplicate UIDs exist
-    impact: 100
+    impact: 80
     mql: |
       users.list.duplicates(uid).none()
     docs:
@@ -2754,7 +2754,7 @@ queries:
         ```
   - uid: mondoo-linux-security-no-duplicate-user-names-exist
     title: Ensure no duplicate user names exist
-    impact: 100
+    impact: 80
     mql: |
       users.list.duplicates(name).none()
     docs:
@@ -2772,7 +2772,7 @@ queries:
         ```
   - uid: mondoo-linux-security-no-duplicate-gids-exist
     title: Ensure no duplicate GIDs exist
-    impact: 100
+    impact: 80
     mql: |
       groups.list.duplicates(gid).none()
     docs:
@@ -2784,7 +2784,7 @@ queries:
         Based on the results of the query output, establish unique GIDs and review all files owned by the shared GID to determine which group they are supposed to belong to.
   - uid: mondoo-linux-security-no-duplicate-group-names-exist
     title: Ensure no duplicate group names exist
-    impact: 100
+    impact: 80
     mql: |
       groups.list.duplicates(name).none()
     docs:
@@ -2802,7 +2802,7 @@ queries:
         ```
   - uid: mondoo-linux-security-default-group-for-the-root-account-is-gid-0
     title: Ensure default group for the root account is GID 0
-    impact: 100
+    impact: 80
     mql: |
       users.where( name == "root" ).list { gid == 0 }
     docs:
@@ -2816,7 +2816,7 @@ queries:
         ```
   - uid: mondoo-linux-security-each-user-member-of-a-group
     title: Ensure each user is a member of a group
-    impact: 80
+    impact: 70
     mql: |
       users.list { name gid != null }
     docs:
@@ -2859,9 +2859,8 @@ queries:
         ```
   - uid: mondoo-linux-security-shadow-group-is-empty
     title: Ensure shadow group is empty
-    impact: 100
-    mql: |
-      groups.where( name == "shadow").list { members.length == 0 }
+    impact: 80
+    mql: groups.where( name == "shadow").list { members.length == 0 }
     docs:
       desc: The shadow group allows system programs or defined users the ability to read the `/etc/shadow` file. No users should be assigned to the shadow group.
       remediation: Remove all users from the shadow group in `/etc/group`, and change the primary group of any users with shadow as their primary group.
@@ -2875,10 +2874,9 @@ queries:
       remediation: Remove all users from the shadow group in `/etc/group`, and change the primary group of any users with root as their primary group, except the root user.
   - uid: mondoo-linux-security-system-accounts-are-non-login
     title: Ensure system accounts are non-login
-    impact: 80
+    impact: 70
     mql: |
       users.where( name != "root" && name != "sync" && name != "shutdown" && name != "halt" ).where( uid < 1000 ).list {
-        name
         shell == "/usr/bin/nologin" || shell == "/sbin/nologin" || shell == "/usr/sbin/nologin"
       }
     docs:
@@ -2913,34 +2911,21 @@ queries:
         nologin is a per-user method of disabling interactive logins (usually used for system accounts like http or ftp). nologin uses /etc/nologin.txt as an optional source for a non-default message, the login access is always refused independently of the file.
   - uid: mondoo-linux-security-access-to-the-su-command-is-restricted
     title: Ensure access to the su command is restricted
-    impact: 100
+    impact: 80
     props:
-      - uid: MondooSudoGroup
+      - uid: sudoGroup
         title: Define the members of the sudo or wheel group
         mql: |
-          return /root|ec2-user|centos|ubuntu/
-      - uid: MondooSudoGroup
-        title: Define the members of the sudo or wheel group
-        mql: |
-          return /root|ec2-user|centos|ubuntu/
+          return /root|ec2-user|centos|ubuntu|admin|mondoo/
     mql: |
       pam.conf.entries["/etc/pam.d/su"].where(pamType == "auth" && module == "pam_wheel.so").any(options.contains("use_uid"))
-      if( groups.where( name == "wheel" ).list != [] ) {
-        groups.where( name == "wheel" ).list { members {
-            name
-            name == props.MondooSudoGroup
-          }
-        }
-      } else {
-        groups.where( name == "sudo" ).list { members {
-            name
-            name == props.MondooSudoGroup
-          }
+      groups.any(name == "wheel" || name == "sudo")
+      groups.where(name == "wheel" || name == "sudo") {
+        members {
+          name
+          name == props.sudoGroup
         }
       }
-      # To assert a specific user list, you can use a query like:
-      #   groups.where( name == "wheel" ).list { members{ name == /ec2-user|root/} }
-      # where the list of users is pipe separated like "ec2-user|root"
     docs:
       desc: |
         The `su` command allows a user to run a command or shell as another user. Typically, the `su` command can be executed by any user, which is a security concern. Users should instead rely on the`sudo` command, which allows for more granular control over privileged access.
