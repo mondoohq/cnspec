@@ -364,6 +364,8 @@ frameworks:
       title: control3
     - uid: control4
       title: control4
+    - uid: control5
+      title: control5
 - uid: framework2
   name: framework2
   groups:
@@ -394,6 +396,18 @@ framework_maps:
   - uid: control4
     controls:
     - uid: control1
+- uid: framework-map2
+  framework_owner:
+    uid: framework1
+  policy_dependencies:
+  - uid: policy1
+  controls:
+  - uid: control4
+    controls:
+    - uid: control1  
+  - uid: control5
+    controls:
+    - uid: control1  
 `
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
@@ -420,6 +434,11 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
+
+		// Check that there are no duplicates in the reporting job's notify list
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			requireUnique(t, rj.Notify)
+		}
 
 		require.Len(t, rp.ExecutionJob.Queries, 3)
 
@@ -450,6 +469,7 @@ framework_maps:
 		rjTester.requireReportsTo(controlMrn("control1"), controlMrn("control4"))
 		rjTester.requireReportsTo(controlMrn("control2"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(controlMrn("control4"), frameworkMrn("framework1"))
+		rjTester.requireReportsTo(controlMrn("control5"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
 		rjTester.requireReportsTo(frameworkMrn("parent-framework"), "root")
 
@@ -795,4 +815,14 @@ framework_maps:
 		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
 		require.Len(t, frameworkJob.ChildJobs, 3)
 	})
+}
+
+func requireUnique(t *testing.T, items []string) {
+	seen := make(map[string]bool)
+	for _, item := range items {
+		if seen[item] {
+			t.Errorf("duplicate item found: %s", item)
+		}
+		seen[item] = true
+	}
 }

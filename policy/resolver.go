@@ -1425,7 +1425,7 @@ func ensureControlJob(cache *frameworkResolverCache, jobs map[string]*ReportingJ
 	jobs[uuid] = controlJob
 
 	parents := framework.ReportTargets[controlMrn]
-	for _, parentMrn := range parents {
+	for parentMrn := range parents {
 		parentUuid := cache.relativeChecksum(parentMrn)
 
 		frameworkJob, ok := cache.frameworkJobsByMrn[parentMrn]
@@ -1455,7 +1455,7 @@ func (s *LocalServices) jobsToFrameworks(cache *frameworkResolverCache, resolved
 }
 
 func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, resolvedFramework *ResolvedFramework, job *CollectorJob, frameworkMrn string, parent *ReportingJob) error {
-	for _, source := range resolvedFramework.ReportSources[frameworkMrn] {
+	for source := range resolvedFramework.ReportSources[frameworkMrn] {
 		if childFramework, ok := cache.bundleMap.Frameworks[source]; ok {
 			var reportingJob *ReportingJob
 			if found, ok := cache.frameworkJobsByMrn[childFramework.Mrn]; ok {
@@ -1577,7 +1577,7 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 
 			// Avoid adding controls which don't have any active children
 			shouldAdd := false
-			for _, child := range framework.ReportSources[mrn] {
+			for child := range framework.ReportSources[mrn] {
 				if _, ok := nuJobs[cache.relativeChecksum(child)]; ok {
 					shouldAdd = true
 					break
@@ -1589,14 +1589,13 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			}
 
 			controlJob := ensureControlJob(cache, nuJobs, mrn, framework, frameworkGroupByControlMrn)
-			// addedControlJobs[mrn] = controlJob
 			curJob = controlJob
 		case ResolvedFrameworkNodeTypeFramework:
 			curJob = job.ReportingJobs[cache.relativeChecksum(mrn)]
 		}
 
 		// Ensure that child jobs notify their parents
-		for _, child := range framework.ReportSources[mrn] {
+		for child := range framework.ReportSources[mrn] {
 			childJob, ok := nuJobs[cache.relativeChecksum(child)]
 			if !ok {
 				continue
