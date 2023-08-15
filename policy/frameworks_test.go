@@ -6,8 +6,8 @@ import (
 
 func TestResolvedFrameworkTopologicalSort(t *testing.T) {
 	framework := &ResolvedFramework{
-		ReportTargets: map[string][]string{},
-		ReportSources: map[string][]string{},
+		ReportTargets: map[string]ResolvedFrameworkReferenceSet{},
+		ReportSources: map[string]ResolvedFrameworkReferenceSet{},
 		Nodes:         map[string]ResolvedFrameworkNode{},
 	}
 

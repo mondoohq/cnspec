@@ -25,6 +25,12 @@ type ResolvedFrameworkNode struct {
 	Type ResolvedFrameworkNodeType
 }
 
+type ResolvedFrameworkReferenceSet map[string]struct{}
+
+func (r ResolvedFrameworkReferenceSet) Add(mrn string) {
+	r[mrn] = struct{}{}
+}
+
 type ResolvedFramework struct {
 	Mrn                  string
 	GraphContentChecksum string
@@ -32,12 +38,12 @@ type ResolvedFramework struct {
 	// and frameworks.
 	// E.g. ReportTarget[check123] = [controlA, controlB]
 	// E.g. ReportTarget[controlA] = [frameworkX]
-	ReportTargets map[string][]string
+	ReportTargets map[string]ResolvedFrameworkReferenceSet
 	// ReportSources tracks all the sources that a control or framework pulls
 	// data from, i.e. all the checks/policies/controls that provide its data.
 	// E.g. ReportSources[controlA] = [check123, check45]
 	// E.g. ReportSources[frameworkX] = [controlA, ...]
-	ReportSources map[string][]string
+	ReportSources map[string]ResolvedFrameworkReferenceSet
 	Nodes         map[string]ResolvedFrameworkNode
 }
 
@@ -503,8 +509,8 @@ func (c *ControlMap) refreshMRNs(ownerMRN string, cache *bundleCache) error {
 func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFramework {
 	res := &ResolvedFramework{
 		Mrn:           mrn,
-		ReportTargets: map[string][]string{},
-		ReportSources: map[string][]string{},
+		ReportTargets: map[string]ResolvedFrameworkReferenceSet{},
+		ReportSources: map[string]ResolvedFrameworkReferenceSet{},
 		Nodes:         map[string]ResolvedFrameworkNode{},
 	}
 
@@ -585,19 +591,16 @@ func (r *ResolvedFramework) addControl(control *ControlMap) {
 func (r *ResolvedFramework) addReportLink(parent, child ResolvedFrameworkNode) {
 	r.Nodes[parent.Mrn] = parent
 	r.Nodes[child.Mrn] = child
-	existing, ok := r.ReportTargets[child.Mrn]
-	if !ok {
-		r.ReportTargets[child.Mrn] = []string{parent.Mrn}
-	} else {
-		r.ReportTargets[child.Mrn] = append(existing, parent.Mrn)
+
+	if r.ReportTargets[child.Mrn] == nil {
+		r.ReportTargets[child.Mrn] = ResolvedFrameworkReferenceSet{}
+	}
+	if r.ReportSources[parent.Mrn] == nil {
+		r.ReportSources[parent.Mrn] = ResolvedFrameworkReferenceSet{}
 	}
 
-	existing, ok = r.ReportSources[parent.Mrn]
-	if !ok {
-		r.ReportSources[parent.Mrn] = []string{child.Mrn}
-	} else {
-		r.ReportSources[parent.Mrn] = append(existing, child.Mrn)
-	}
+	r.ReportTargets[child.Mrn].Add(parent.Mrn)
+	r.ReportSources[parent.Mrn].Add(child.Mrn)
 }
 
 func (r *ResolvedFramework) TopologicalSort() []string {
@@ -631,8 +634,10 @@ func (r *ResolvedFramework) visit(node string, visited map[string]struct{}, sort
 		return
 	}
 	visited[node] = struct{}{}
-	for _, child := range r.ReportTargets[node] {
+	for child := range r.ReportTargets[node] {
 		r.visit(child, visited, sorted)
+
 	}
+
 	*sorted = append(*sorted, node)
 }
