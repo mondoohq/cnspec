@@ -1,6 +1,8 @@
 module go.mondoo.com/cnspec
 
-go 1.20
+go 1.21
+
+toolchain go1.21.0
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -26,7 +28,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230817154554-b0b9daa1b71c
+	go.mondoo.com/cnquery v0.0.0-20230822180252-2a14c7065d8e
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.16.0
 	golang.org/x/sync v0.3.0 // indirect
