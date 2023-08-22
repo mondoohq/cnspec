@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # call the cnspec migrate command
 echo " -> Migrate cnspec configuration"

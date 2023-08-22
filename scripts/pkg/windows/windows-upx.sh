@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
 
 set -e
 
