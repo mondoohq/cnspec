@@ -25,7 +25,7 @@ func TestParser(t *testing.T) {
 		Value: &ImpactValue{
 			Value: 70,
 		},
-		FileContext: FileContext{70, 13},
+		FileContext: FileContext{73, 13},
 	}, baseline.Queries[0].Impact)
 }
 
