@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # Run during uninstall
 # Note: rpm runs this phase even during upgrades therefore we need to include a condition

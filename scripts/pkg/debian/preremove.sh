@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
 
 if [ "$1" = "remove" ]; then
     if [ "$(cat /proc/1/comm)" = "init" ]
