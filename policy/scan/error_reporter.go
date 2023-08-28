@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"go.mondoo.com/cnquery/cli/theme"
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnspec/policy"
 	pbStatus "go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"

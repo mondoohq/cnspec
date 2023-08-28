@@ -18,9 +18,9 @@ import (
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/motor/asset"
-	"go.mondoo.com/cnquery/stringx"
-	"go.mondoo.com/cnquery/upstream/mvd"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/utils/stringx"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )

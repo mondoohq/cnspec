@@ -4,7 +4,7 @@
 package scan
 
 import (
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 )
 
 type NoOpReporter struct{}

@@ -10,7 +10,7 @@ import (
 
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnquery/cli/theme/colors"
-	"go.mondoo.com/cnquery/stringx"
+	"go.mondoo.com/cnquery/utils/stringx"
 	"go.mondoo.com/cnspec/policy"
 )
 

@@ -8,10 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"go.mondoo.com/cnquery/upstream/mvd"
-
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/resources/packs/core/versions/generic"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/providers/core/resources/versions/generic"
 )
 
 type RowWriter interface {

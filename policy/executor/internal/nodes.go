@@ -4,14 +4,14 @@
 package internal
 
 import (
-	"errors"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/types"
+	"go.mondoo.com/cnquery/utils/multierr"
 	"go.mondoo.com/cnspec/policy"
 	"google.golang.org/protobuf/proto"
 )
@@ -315,7 +315,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	var scoreFound *llx.RawData
 	var scoreValue int
 
-	var errorsMsg string
+	var err multierr.Errors
 	for _, dr := range nodeData.results {
 		cur := dr.value
 		if cur == nil {
@@ -324,18 +324,15 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 		}
 
 		if cur.Data.Error != nil {
-			var resourceNotFoundErr *resources.ResourceNotFound
-			if errors.As(cur.Data.Error, &resourceNotFoundErr) {
+			msg := cur.Data.Error.Error()
+			if strings.HasPrefix(msg, "could not find resource") {
 				assetVanishedDuringScan = true
 			} else {
 				allSkipped = false
 				foundError = true
 			}
-			// append ; if we accumulate errors
-			if errorsMsg != "" {
-				errorsMsg += "; "
-			}
-			errorsMsg += cur.Data.Error.Error()
+
+			err.Add(cur.Data.Error)
 			continue
 		}
 
@@ -367,7 +364,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				Value:           0,
 				ScoreCompletion: 100,
 				Weight:          1,
-				Message:         errorsMsg,
+				Message:         err.Deduplicate().Error(),
 			}
 		} else if foundError {
 			return &policy.Score{
@@ -376,7 +373,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				Value:           0,
 				ScoreCompletion: 100,
 				Weight:          1,
-				Message:         errorsMsg,
+				Message:         err.Deduplicate().Error(),
 			}
 		} else if allSkipped {
 			return &policy.Score{

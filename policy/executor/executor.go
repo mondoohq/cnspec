@@ -15,7 +15,6 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/mqlc"
-	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/policy/executor/internal"
@@ -23,8 +22,7 @@ import (
 
 // Executor helps you run multiple pieces of mondoo code and process results
 type Executor struct {
-	schema        *resources.Schema
-	runtime       *resources.Runtime
+	runtime       llx.Runtime
 	RunningCode   *RunningCode
 	ScoreResults  *ScoreResults
 	Results       *RawResults
@@ -156,16 +154,12 @@ func (w *watcherMap) Range(f func(k string, v watcherFunc) bool) {
 // New creates a new Executor
 // schema == nil will use the default schema
 // runtime must be defined
-func New(schema *resources.Schema, runtime *resources.Runtime) *Executor {
+func New(runtime llx.Runtime) *Executor {
 	if runtime == nil {
 		panic("cannot have executor initialized with resources.Runtime == nil")
 	}
-	if schema == nil {
-		panic("cannot have executor initialize with resources.Schema == nil")
-	}
 
 	res := &Executor{
-		schema:        schema,
 		runtime:       runtime,
 		ScoreResults:  &ScoreResults{},
 		Results:       &RawResults{},
@@ -206,7 +200,7 @@ func (e *Executor) AreAllResultsCollected() bool {
 
 // Compile a given code with the default schema
 func (e *Executor) Compile(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
-	return mqlc.Compile(code, props, mqlc.NewConfig(e.schema, cnquery.DefaultFeatures))
+	return mqlc.Compile(code, props, mqlc.NewConfig(e.runtime.Schema(), cnquery.DefaultFeatures))
 }
 
 func (e *Executor) AddCode(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
@@ -654,6 +648,6 @@ func (e *Executor) MissingQueries() []*MissingQuery {
 }
 
 // Schema is used for testing. Check carefully if you have other intentions
-func (e *Executor) Schema() *resources.Schema {
-	return e.schema
+func (e *Executor) Schema() llx.Schema {
+	return e.runtime.Schema()
 }

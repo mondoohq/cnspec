@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"go.mondoo.com/cnquery/checksums"
-	"go.mondoo.com/cnquery/sortx"
+	"go.mondoo.com/cnquery/utils/sortx"
 )
 
 // RefreshChecksum recalculates the reporting job checksum

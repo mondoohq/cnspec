@@ -11,8 +11,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/olekukonko/tablewriter"
-	"go.mondoo.com/cnquery/upstream/mvd"
-	"go.mondoo.com/cnquery/upstream/mvd/cvss"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd/cvss"
 	"go.mondoo.com/cnspec/cli/components/advisories"
 )
 

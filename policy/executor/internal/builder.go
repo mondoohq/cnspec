@@ -13,7 +13,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -143,7 +142,7 @@ func (b *GraphBuilder) WithFeatureFlagFailErrors() {
 	b.featureFlagFailErrors = true
 }
 
-func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtime, assetMrn string) (*GraphExecutor, error) {
+func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecutor, error) {
 	resultChan := make(chan *llx.RawResult, 128)
 
 	queries := make(map[string]query, len(b.queries))
@@ -156,7 +155,7 @@ func (b *GraphBuilder) Build(schema *resources.Schema, runtime *resources.Runtim
 		edges:        map[NodeID][]NodeID{},
 		priorityMap:  map[NodeID]int{},
 		queryTimeout: b.queryTimeout,
-		executionManager: newExecutionManager(schema, runtime, make(chan runQueueItem, len(queries)),
+		executionManager: newExecutionManager(runtime, make(chan runQueueItem, len(queries)),
 			resultChan, b.queryTimeout),
 		resultChan: resultChan,
 		doneChan:   make(chan struct{}),

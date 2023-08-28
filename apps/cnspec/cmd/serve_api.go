@@ -21,8 +21,7 @@ import (
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/logger"
-	"go.mondoo.com/cnquery/resources"
-	"go.mondoo.com/cnquery/upstream"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
 	"go.mondoo.com/cnspec/policy/scan"
 	"go.mondoo.com/ranger-rpc"
@@ -85,7 +84,7 @@ var serveApiCmd = &cobra.Command{
 		httpTimeout := viper.GetUint("http-timeout")
 		httpClient.Timeout = time.Duration(httpTimeout) * time.Second
 		log.Info().Msg("using service account credentials")
-		upstreamConfig := resources.UpstreamConfig{
+		upstreamConfig := upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
 			Plugins:     plugins,

@@ -6,7 +6,7 @@ package scan
 import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnspec/policy"
 )
 

@@ -12,29 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/motor"
-	"go.mondoo.com/cnquery/motor/providers/mock"
 	"go.mondoo.com/cnquery/mqlc"
-	"go.mondoo.com/cnquery/resources"
-	resource_pack "go.mondoo.com/cnquery/resources/packs/core"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec"
 )
 
 func initExecutor() *Executor {
-	transport, err := mock.NewFromTomlFile("./testdata/arch.toml")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	motor, err := motor.New(transport)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	registry := resource_pack.Registry
-	runtime := resources.NewRuntime(registry, motor)
-	executor := New(registry.Schema(), runtime)
+	runtime := testutils.TomlMock("./testdata/arch.toml")
+	executor := New(runtime)
 
 	return executor
 }
@@ -101,7 +87,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 			received[res.CodeID]++
 		})
 
-		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(resource_pack.Registry.Schema(), cnquery.DefaultFeatures))
+		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(executor.Schema(), cnquery.DefaultFeatures))
 		require.NoError(t, err)
 		executor.AddCodeBundle(codeBundle, nil)
 

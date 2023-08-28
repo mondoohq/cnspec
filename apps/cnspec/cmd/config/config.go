@@ -6,7 +6,7 @@ package config
 import (
 	"github.com/cockroachdb/errors"
 	"github.com/spf13/viper"
-	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
+	"go.mondoo.com/cnquery/cli/config"
 )
 
 func ReadConfig() (*CliConfig, error) {
@@ -22,7 +22,7 @@ func ReadConfig() (*CliConfig, error) {
 
 type CliConfig struct {
 	// inherit common config
-	cnquery_config.CommonCliConfig `mapstructure:",squash"`
+	config.Config `mapstructure:",squash"`
 
 	// Asset Category
 	Category               string `json:"category,omitempty" mapstructure:"category"`

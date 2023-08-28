@@ -21,19 +21,14 @@ import (
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/explorer"
+	ee "go.mondoo.com/cnquery/explorer/executor"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
-	"go.mondoo.com/cnquery/motor"
-	"go.mondoo.com/cnquery/motor/asset"
-	"go.mondoo.com/cnquery/motor/discovery"
-	"go.mondoo.com/cnquery/motor/inventory"
-	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
-	providers "go.mondoo.com/cnquery/motor/providers"
-	"go.mondoo.com/cnquery/motor/providers/resolver"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/resources"
-	"go.mondoo.com/cnquery/resources/packs/all"
-	"go.mondoo.com/cnquery/upstream"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory/manager"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
@@ -48,6 +43,8 @@ type LocalScanner struct {
 	queue               *diskQueueClient
 	ctx                 context.Context
 	fetcher             *fetcher
+	upstream            *upstream.UpstreamConfig
+	recording           providers.Recording
 
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
@@ -69,11 +66,9 @@ func WithUpstream(apiEndpoint string, spaceMrn string, httpClient *http.Client) 
 	}
 }
 
-func WithPlugins(plugins []ranger.ClientPlugin) ScannerOption {
+func WithRecording(r providers.Recording) func(s *LocalScanner) {
 	return func(s *LocalScanner) {
-		for _, p := range plugins {
-			s.pluginsMap[p.GetName()] = p
-		}
+		s.recording = r
 	}
 }
 
@@ -143,12 +138,7 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 		return nil, errors.New("no context provided to run job with local scanner")
 	}
 
-	dctx := discovery.InitCtx(ctx)
-	upstreamConfig, err := s.getUpstreamConfig(false, job)
-	if err != nil {
-		return nil, err
-	}
-	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
+	reports, _, err := s.distributeJob(job, ctx, s.upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -169,13 +159,7 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult,
 		return nil, errors.New("no context provided to run job with local scanner")
 	}
 
-	dctx := discovery.InitCtx(ctx)
-
-	upstreamConfig, err := s.getUpstreamConfig(true, job)
-	if err != nil {
-		return nil, err
-	}
-	reports, _, err := s.distributeJob(job, dctx, upstreamConfig)
+	reports, _, err := s.distributeJob(job, ctx, s.upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -204,22 +188,15 @@ func preprocessPolicyFilters(filters []string) []string {
 	return res
 }
 
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig resources.UpstreamConfig) (*ScanResult, bool, error) {
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig *upstream.UpstreamConfig) (*ScanResult, bool, error) {
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
-	im, err := inventory.New(inventory.WithInventory(job.Inventory))
+
+	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.Coordinator.NewRuntime()))
 	if err != nil {
-		return nil, false, errors.Wrap(err, "could not load asset information")
+		return nil, false, errors.New("failed to resolve inventory for connection")
 	}
-
-	assetErrors := im.Resolve(ctx)
-	if len(assetErrors) > 0 {
-		for a := range assetErrors {
-			log.Error().Err(assetErrors[a]).Str("asset", a.Name).Msg("could not resolve asset")
-		}
-		return nil, false, errors.New("failed to resolve multiple assets")
-	}
-
 	assetList := im.GetAssets()
+
 	if len(assetList) == 0 {
 		return nil, false, errors.New("could not find an asset that we can connect to")
 	}
@@ -302,7 +279,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 				PolicyFilters:    preprocessPolicyFilters(job.PolicyFilters),
 				Props:            job.Props,
 				Ctx:              ctx,
-				CredsResolver:    im.GetCredsResolver(),
 				Reporter:         reporter,
 				ProgressReporter: p,
 			})
@@ -322,100 +298,61 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 	return reporter.Reports(), finished, nil
 }
 
+func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.Services {
+	if conf == nil ||
+		conf.ApiEndpoint == "" ||
+		conf.Incognito {
+		return nil
+	}
+
+	client, err := s.upstream.InitClient()
+	if err != nil {
+		log.Error().Err(err).Msg("could not init upstream client")
+		return nil
+	}
+
+	res, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, s.httpClient)
+	if err != nil {
+		log.Error().Err(err).Msg("could not connect to upstream")
+	}
+
+	return res
+}
+
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	log.Debug().Msgf("connecting to asset %s", job.Asset.HumanName())
 
-	var upstream *policy.Services
-	var err error
-	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
-		log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-		upstream, err = policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins, s.httpClient)
+	upstream := s.upstreamServices(job.UpstreamConfig)
+	if upstream != nil {
+		resp, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
+			SpaceMrn: job.UpstreamConfig.SpaceMrn,
+			List:     []*inventory.Asset{job.Asset},
+		})
 		if err != nil {
-			log.Error().Err(err).Msg("could not connect to upstream")
+			log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
+			job.Reporter.AddScanError(job.Asset, err)
+			job.ProgressReporter.Score("X")
+			job.ProgressReporter.Errored()
+			return
 		}
+
+		log.Debug().Str("asset", job.Asset.Name).Strs("platform-ids", job.Asset.PlatformIds).Msg("update asset")
+		platformId := job.Asset.PlatformIds[0]
+		job.Asset.Mrn = resp.Details[platformId].AssetMrn
+		job.Asset.Url = resp.Details[platformId].Url
+		job.Asset.Labels["mondoo.com/project-id"] = resp.Details[platformId].ProjectId
 	}
 
-	// run over all connections
-	connections, err := resolver.OpenAssetConnections(job.Ctx, job.Asset, job.CredsResolver, job.DoRecord)
+	results, err := s.runMotorizedAsset(job)
 	if err != nil {
+		log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 		job.Reporter.AddScanError(job.Asset, err)
 		job.ProgressReporter.Score("X")
 		job.ProgressReporter.Errored()
-		if upstream != nil {
-			_, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
-				SpaceMrn: job.UpstreamConfig.SpaceMrn,
-				List:     []*asset.Asset{job.Asset},
-			})
-			if err != nil {
-				log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
-			}
-		}
 		return
 	}
 
-	for c := range connections {
-		// We use a function since we want to close the motor once the current iteration finishes. If we directly
-		// use defer in the loop m.Close() for each connection will only be executed once the entire loop is
-		// finished.
-		func(m *motor.Motor) {
-			// ensures temporary files get deleted
-			defer m.Close()
-
-			log.Debug().Msg("established connection")
-			// It's possible that the platform information was not collected at all or only partially during the
-			// discovery phase.
-			// For example, the ebs discovery does not detect the platform because it requires mounting
-			// the filesystem. Another example is the docker container discovery, where it collects a lot of metadata
-			// but does not have platform name and arch available.
-			// TODO: It feels like this will only happen for performance optimizations. I think a better approach
-			// would be to make it so that the motor used in the discovery phase gets reused here, instead
-			// of being recreated.
-			if job.Asset.Platform == nil || job.Asset.Platform.Name == "" {
-				p, err := m.Platform()
-				if err != nil {
-					log.Warn().Err(err).Msg("failed to query platform information")
-				} else {
-					job.Asset.Platform = p
-				}
-			}
-
-			if upstream != nil {
-				resp, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
-					SpaceMrn: job.UpstreamConfig.SpaceMrn,
-					List:     []*asset.Asset{job.Asset},
-				})
-				if err != nil {
-					log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
-					job.Reporter.AddScanError(job.Asset, err)
-					job.ProgressReporter.Score("X")
-					job.ProgressReporter.Errored()
-					return
-				}
-
-				log.Debug().Str("asset", job.Asset.Name).Strs("platform-ids", job.Asset.PlatformIds).Msg("update asset")
-				platformId := job.Asset.PlatformIds[0]
-				job.Asset.Mrn = resp.Details[platformId].AssetMrn
-				job.Asset.Url = resp.Details[platformId].Url
-				job.Asset.Labels["mondoo.com/project-id"] = resp.Details[platformId].ProjectId
-			}
-
-			job.connection = m
-			results, err := s.runMotorizedAsset(job)
-			if err != nil {
-				log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
-				job.Reporter.AddScanError(job.Asset, err)
-				job.ProgressReporter.Score("X")
-				job.ProgressReporter.Errored()
-				return
-			}
-
-			job.Reporter.AddReport(job.Asset, results)
-
-			if m.IsRecording() {
-				m.StoreRecording("") // if no filename is provided it generates one
-			}
-		}(connections[c])
-	}
+	job.Reporter.AddReport(job.Asset, results)
 
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
 	// such that it is visible from the logs.
@@ -431,26 +368,24 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			upstream, err := policy.NewRemoteServices(job.UpstreamConfig.ApiEndpoint, job.UpstreamConfig.Plugins, s.httpClient)
+			client, err := s.upstream.InitClient()
+			if err != nil {
+				return err
+			}
+
+			upstream, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, s.httpClient)
 			if err != nil {
 				return err
 			}
 			services.Upstream = upstream
 		}
 
-		registry := all.Registry
-		schema := registry.Schema()
-		runtime := resources.NewRuntime(registry, job.connection)
-		runtime.UpstreamConfig = &job.UpstreamConfig
-
 		scanner := &localAssetScanner{
 			db:               db,
 			services:         services,
 			job:              job,
 			fetcher:          s.fetcher,
-			Registry:         registry,
-			Schema:           schema,
-			Runtime:          runtime,
+			Runtime:          job.runtime,
 			ProgressReporter: job.ProgressReporter,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
@@ -476,21 +411,17 @@ func (s *LocalScanner) RunAdmissionReview(ctx context.Context, job *AdmissionRev
 	opts["k8s-admission-review"] = base64.StdEncoding.EncodeToString(data)
 
 	// construct the inventory to scan the admission review
-	inv := &v1.Inventory{
-		Spec: &v1.InventorySpec{
-			Assets: []*asset.Asset{
-				{
-					Connections: []*providers.Config{
-						{
-							Backend:  providers.ProviderType_K8S,
-							Options:  opts,
-							Discover: job.Discovery,
-						},
-					},
-					Labels:   job.Labels,
-					Category: asset.AssetCategory_CATEGORY_CICD,
-				},
-			},
+	inv := &inventory.Inventory{
+		Spec: &inventory.InventorySpec{
+			Assets: []*inventory.Asset{{
+				Connections: []*inventory.Config{{
+					Backend:  "k8s",
+					Options:  opts,
+					Discover: job.Discovery,
+				}},
+				Labels:   job.Labels,
+				Category: inventory.AssetCategory_CATEGORY_CICD,
+			}},
 		},
 	}
 
@@ -557,63 +488,13 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 	}, nil
 }
 
-func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (resources.UpstreamConfig, error) {
-	// Make a copy here, we do not want to add to the original plugins map if we're connecting upstream with credentials from a job.
-	pluginsCopyMap := map[string]ranger.ClientPlugin{}
-	for k, v := range s.pluginsMap {
-		pluginsCopyMap[k] = v
-	}
-	endpoint := s.apiEndpoint
-	spaceMrn := s.spaceMrn
-	httpClient := s.httpClient
-
-	jobCredentials := job.GetInventory().GetSpec().GetUpstreamCredentials()
-	if s.allowJobCredentials && jobCredentials != nil {
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(jobCredentials)
-		if err != nil {
-			return resources.UpstreamConfig{}, err
-		}
-		pluginsCopyMap[certAuth.GetName()] = certAuth
-		endpoint = jobCredentials.GetApiEndpoint()
-		spaceMrn = jobCredentials.GetParentMrn()
-		// TODO: if we want proxy here it has to be defined on UpstreamCredentials proto level too
-		httpClient = ranger.DefaultHttpClient()
-	}
-
-	plugins := []ranger.ClientPlugin{}
-	for _, p := range pluginsCopyMap {
-		plugins = append(plugins, p)
-	}
-
-	if endpoint == "" && !incognito {
-		return resources.UpstreamConfig{}, errors.New("missing endpoint")
-	}
-	if spaceMrn == "" && !incognito {
-		return resources.UpstreamConfig{}, errors.New("missing space mrn")
-	}
-
-	if httpClient == nil {
-		httpClient = ranger.DefaultHttpClient()
-	}
-
-	return resources.UpstreamConfig{
-		SpaceMrn:    spaceMrn,
-		ApiEndpoint: endpoint,
-		Incognito:   incognito,
-		Plugins:     plugins,
-		HttpClient:  httpClient,
-	}, nil
-}
-
 type localAssetScanner struct {
 	db       *inmemory.Db
 	services *policy.LocalServices
 	job      *AssetJob
 	fetcher  *fetcher
 
-	Registry         *resources.Registry
-	Schema           *resources.Schema
-	Runtime          *resources.Runtime
+	Runtime          llx.Runtime
 	ProgressReporter progress.Progress
 }
 
@@ -754,7 +635,7 @@ func (s *localAssetScanner) prepareAsset() error {
 	return nil
 }
 
-var assetDetectBundle = executor.MustCompile("asset { kind platform runtime version family }")
+var assetDetectBundle = ee.MustCompile("asset { kind platform runtime version family }")
 
 func (s *localAssetScanner) ensureBundle() error {
 	if s.job.Bundle != nil {
@@ -762,7 +643,7 @@ func (s *localAssetScanner) ensureBundle() error {
 	}
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	_, res, err := executor.ExecuteQuery(s.Schema, s.Runtime, assetDetectBundle, nil, features)
+	_, res, err := executor.ExecuteQuery(s.Runtime, assetDetectBundle, nil, features)
 	if err != nil {
 		return errors.Wrap(err, "failed to run asset detection query")
 	}
@@ -837,7 +718,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Schema, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
+	err = executor.ExecuteResolvedPolicy(s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -877,7 +758,7 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 
 // FilterQueries returns all queries whose result is truthy
 func (s *localAssetScanner) FilterQueries(queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
-	return executor.ExecuteFilterQueries(s.Schema, s.Runtime, queries, timeout)
+	return executor.ExecuteFilterQueries(s.Runtime, queries, timeout)
 }
 
 // UpdateFilters takes a list of test filters and runs them against the backend

@@ -15,8 +15,8 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/resources/packs/all/info"
-	"go.mondoo.com/cnquery/sortx"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/utils/sortx"
 	"go.mondoo.com/cnquery/types"
 )
 
@@ -27,9 +27,8 @@ func (m *DeprecatedV7_Mquery) Compile(props map[string]*llx.Primitive) (*llx.Cod
 		return nil, errors.New("query is not implemented '" + m.Mrn + "'")
 	}
 
-	schema := info.Registry.Schema()
-
-	v2Code, err := mqlc.Compile(m.Query, props, mqlc.NewConfig(schema, cnquery.DefaultFeatures))
+	runtime := providers.DefaultRuntime()
+	v2Code, err := mqlc.Compile(m.Query, props, mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures))
 	if err != nil {
 		return nil, err
 	}
@@ -187,9 +186,9 @@ func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string
 	return mrn.String(), nil
 }
 
-func ChecksumAssetFilters(queries []*explorer.Mquery) (string, error) {
+func ChecksumAssetFilters(queries []*explorer.Mquery, schema llx.Schema) (string, error) {
 	for i := range queries {
-		if _, err := queries[i].RefreshAsFilter(""); err != nil {
+		if _, err := queries[i].RefreshAsFilter("", schema); err != nil {
 			return "", errors.New("failed to compile query: " + err.Error())
 		}
 	}
@@ -209,10 +208,10 @@ func ChecksumAssetFilters(queries []*explorer.Mquery) (string, error) {
 // RefreshChecksums of all queries
 // Note: This method is used for testing purposes only. If you need it in other
 // places please make sure to implement the query lookup.
-func (m *Mqueries) RefreshChecksums(props map[string]explorer.PropertyRef) error {
+func (m *Mqueries) RefreshChecksums(schema llx.Schema, props map[string]explorer.PropertyRef) error {
 	queries := map[string]*explorer.Mquery{}
 	for i := range m.Items {
-		if _, err := m.Items[i].RefreshChecksumAndType(queries, props); err != nil {
+		if _, err := m.Items[i].RefreshChecksumAndType(queries, props, schema); err != nil {
 			return err
 		}
 	}

@@ -12,7 +12,7 @@ import (
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
 	"go.mondoo.com/cnquery/shared"
-	"go.mondoo.com/cnquery/upstream/mvd"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor"
 	"sigs.k8s.io/yaml"

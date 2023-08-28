@@ -11,7 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/sortx"
+	"go.mondoo.com/cnquery/utils/sortx"
 )
 
 type ResolvedFrameworkNodeType int

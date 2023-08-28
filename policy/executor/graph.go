@@ -11,7 +11,6 @@ import (
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mqlc"
-	"go.mondoo.com/cnquery/resources"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor/internal"
 )
@@ -20,7 +19,7 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
+func ExecuteResolvedPolicy(runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressReporter progress.Progress,
 ) error {
 	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
@@ -37,7 +36,7 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 		builder.WithFeatureFlagFailErrors()
 	}
 
-	ge, err := builder.Build(schema, runtime, assetMrn)
+	ge, err := builder.Build(runtime, assetMrn)
 	if err != nil {
 		return err
 	}
@@ -47,13 +46,13 @@ func ExecuteResolvedPolicy(schema *resources.Schema, runtime *resources.Runtime,
 	return ge.Execute()
 }
 
-func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
+func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
 	var errs []error
 	queryMap := map[string]*explorer.Mquery{}
 
 	builder := internal.NewBuilder()
 	for _, m := range queries {
-		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(schema, cnquery.DefaultFeatures))
+		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures))
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -80,7 +79,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
 
-	ge, err := builder.Build(schema, runtime, "")
+	ge, err := builder.Build(runtime, "")
 	if err != nil {
 		errs = append(errs, err)
 		return nil, errs
@@ -100,7 +99,7 @@ func ExecuteFilterQueries(schema *resources.Schema, runtime *resources.Runtime, 
 	return filteredQueries, errs
 }
 
-func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
+func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
 	builder := internal.NewBuilder()
 
 	builder.AddQuery(codeBundle, nil, props)
@@ -131,7 +130,7 @@ func ExecuteQuery(schema *resources.Schema, runtime *resources.Runtime, codeBund
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
 
-	ge, err := builder.Build(schema, runtime, "")
+	ge, err := builder.Build(runtime, "")
 	if err != nil {
 		return nil, nil, err
 	}
