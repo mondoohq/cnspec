@@ -23,13 +23,13 @@ func NewErrorReporter() Reporter {
 	return &ErrorReporter{assets: make(map[string]*policy.Asset), errors: make(map[string]string)}
 }
 
-func (r *ErrorReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
 		r.worstScore = results.Report.Score
 	}
 }
 
-func (c *ErrorReporter) AddScanError(asset *asset.Asset, err error) {
+func (c *ErrorReporter) AddScanError(asset *inventory.Asset, err error) {
 	if c.errors == nil {
 		c.errors = make(map[string]string)
 	}
@@ -51,7 +51,7 @@ func (r *ErrorReporter) Reports() *ScanResult {
 	}
 }
 
-func findNameForAsset(assetObj *asset.Asset) string {
+func findNameForAsset(assetObj *inventory.Asset) string {
 	if assetObj == nil {
 		return "unknown"
 	}
@@ -64,7 +64,7 @@ func findNameForAsset(assetObj *asset.Asset) string {
 	return "unknown"
 }
 
-func assetScanErrToString(assetObj *asset.Asset, err error) string {
+func assetScanErrToString(assetObj *inventory.Asset, err error) string {
 	st, ok := pbStatus.FromError(err)
 	if !ok {
 		return err.Error()

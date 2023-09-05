@@ -77,7 +77,7 @@ func (r *defaultReporter) print() error {
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	assetUrl := ""
-	assetsByPlatform := make(map[string][]*asset.Asset)
+	assetsByPlatform := make(map[string][]*inventory.Asset)
 	projectId := ""
 	assetsByScore := make(map[string]int)
 	for _, assetMrnName := range orderedAssets {
@@ -217,7 +217,7 @@ func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []s
 	return scores
 }
 
-func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*asset.Asset) []string {
+func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*inventory.Asset) []string {
 	assets := []string{}
 
 	maxPlatformLength := 0
@@ -236,7 +236,7 @@ func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*as
 	return assets
 }
 
-func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*asset.Asset) {
+func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*inventory.Asset) {
 	availablePlatforms := make([]string, 0, len(assetsByPlatform))
 	for k := range assetsByPlatform {
 		availablePlatforms = append(availablePlatforms, k)
@@ -366,7 +366,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 // Remove all this code and migrate it to tap or something
 // ============================= vv ============================================
 
-func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control, assetMrn string, asset *asset.Asset) {
+func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control, assetMrn string, asset *inventory.Asset) {
 	var scores []*policy.Score
 	for _, rj := range resolved.CollectorJob.ReportingJobs {
 		if rj.Type != policy.ReportingJob_CONTROL {
@@ -446,7 +446,7 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 	}
 }
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *asset.Asset) {
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
 	dataQueriesOutput := ""

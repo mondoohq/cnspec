@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -44,25 +43,22 @@ type LocalScanner struct {
 	ctx                 context.Context
 	fetcher             *fetcher
 	upstream            *upstream.UpstreamConfig
+	_upstreamClient     *upstream.UpstreamClient
 	recording           providers.Recording
+	runtime             llx.Runtime
 
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
 	// for remote connectivity
-	apiEndpoint        string
-	spaceMrn           string
 	pluginsMap         map[string]ranger.ClientPlugin
-	httpClient         *http.Client
 	disableProgressBar bool
 }
 
 type ScannerOption func(*LocalScanner)
 
-func WithUpstream(apiEndpoint string, spaceMrn string, httpClient *http.Client) ScannerOption {
+func WithUpstream(conf *upstream.UpstreamConfig) ScannerOption {
 	return func(s *LocalScanner) {
-		s.apiEndpoint = apiEndpoint
-		s.spaceMrn = spaceMrn
-		s.httpClient = httpClient
+		s.upstream = conf
 	}
 }
 
@@ -85,8 +81,11 @@ func DisableProgressBar() ScannerOption {
 }
 
 func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
+	runtime := providers.Coordinator.NewRuntime()
+
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
+		runtime:             runtime,
 		fetcher:             newFetcher(),
 		ctx:                 context.Background(),
 		pluginsMap:          map[string]ranger.ClientPlugin{},
@@ -138,7 +137,12 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 		return nil, errors.New("no context provided to run job with local scanner")
 	}
 
-	reports, _, err := s.distributeJob(job, ctx, s.upstream)
+	upstream, err := s.getUpstreamConfig(false, job)
+	if err != nil {
+		return nil, err
+	}
+
+	reports, _, err := s.distributeJob(job, ctx, upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +163,12 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult,
 		return nil, errors.New("no context provided to run job with local scanner")
 	}
 
-	reports, _, err := s.distributeJob(job, ctx, s.upstream)
+	upstream, err := s.getUpstreamConfig(false, job)
+	if err != nil {
+		return nil, err
+	}
+
+	reports, _, err := s.distributeJob(job, ctx, upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -305,13 +314,13 @@ func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.S
 		return nil
 	}
 
-	client, err := s.upstream.InitClient()
+	client, err := s.upstreamClient()
 	if err != nil {
 		log.Error().Err(err).Msg("could not init upstream client")
 		return nil
 	}
 
-	res, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, s.httpClient)
+	res, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
 	if err != nil {
 		log.Error().Err(err).Msg("could not connect to upstream")
 	}
@@ -361,19 +370,33 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	}
 }
 
+func (s *LocalScanner) upstreamClient() (*upstream.UpstreamClient, error) {
+	if s._upstreamClient != nil {
+		return s._upstreamClient, nil
+	}
+
+	client, err := s.upstream.InitClient()
+	if err != nil {
+		return nil, err
+	}
+
+	s._upstreamClient = client
+	return client, nil
+}
+
 func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var res *AssetReport
 	var policyErr error
 
-	runtimeErr := inmemory.WithDb(s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
+	runtimeErr := inmemory.WithDb(s.runtime, s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			client, err := s.upstream.InitClient()
+			client, err := s.upstreamClient()
 			if err != nil {
 				return err
 			}
 
-			upstream, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, s.httpClient)
+			upstream, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
 			if err != nil {
 				return err
 			}
@@ -438,18 +461,26 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 	if garbageCollectOpts == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing garbage collection options")
 	}
+	if s.upstream == nil {
+		return nil, status.Errorf(codes.Internal, "missing upstream config in service")
+	}
+
+	client, err := s.upstreamClient()
+	if err != nil {
+		return nil, err
+	}
 
 	plugins := []ranger.ClientPlugin{}
 	for _, p := range s.pluginsMap {
 		plugins = append(plugins, p)
 	}
-	pClient, err := policy.NewRemoteServices(s.apiEndpoint, plugins, s.httpClient)
+	pClient, err := policy.NewRemoteServices(s.upstream.ApiEndpoint, plugins, client.HttpClient)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not initialize asset synchronization")
 	}
 
 	dar := &policy.PurgeAssetsRequest{
-		SpaceMrn:        s.spaceMrn,
+		SpaceMrn:        s.upstream.SpaceMrn,
 		ManagedBy:       garbageCollectOpts.ManagedBy,
 		PlatformRuntime: garbageCollectOpts.PlatformRuntime,
 		Labels:          garbageCollectOpts.Labels,
@@ -486,6 +517,36 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 		Build:      cnspec.GetBuild(),
 		Version:    cnspec.GetVersion(),
 	}, nil
+}
+
+func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.UpstreamConfig, error) {
+	var endpoint, spaceMrn string
+	if s.upstream != nil {
+		endpoint = s.upstream.ApiEndpoint
+		spaceMrn = s.upstream.SpaceMrn
+	}
+
+	res := upstream.UpstreamConfig{
+		SpaceMrn:    spaceMrn,
+		ApiEndpoint: endpoint,
+		Incognito:   incognito,
+	}
+
+	jobCredentials := job.GetInventory().GetSpec().GetUpstreamCredentials()
+	if s.allowJobCredentials && jobCredentials != nil {
+		res.Creds = jobCredentials
+		endpoint = jobCredentials.GetApiEndpoint()
+		spaceMrn = jobCredentials.GetParentMrn()
+	}
+
+	if endpoint == "" && !incognito {
+		return nil, errors.New("missing endpoint")
+	}
+	if spaceMrn == "" && !incognito {
+		return nil, errors.New("missing space mrn")
+	}
+
+	return &res, nil
 }
 
 type localAssetScanner struct {
@@ -676,7 +737,7 @@ func (s *localAssetScanner) ensureBundle() error {
 		return errors.New("cannot find any default policies for this asset (" + platform + ")")
 	}
 
-	s.job.Bundle, err = s.fetcher.fetchBundles(s.job.Ctx, urls.Urls...)
+	s.job.Bundle, err = s.fetcher.fetchBundles(s.job.Ctx, s.Runtime.Schema(), urls.Urls...)
 	return err
 }
 

@@ -110,7 +110,7 @@ func (r *reportRenderer) printAsset(assetMrn string) (string, error) {
 	return res.String(), nil
 }
 
-func (r *reportRenderer) assetSummary(assetObj *asset.Asset, score *policy.Score) string {
+func (r *reportRenderer) assetSummary(assetObj *inventory.Asset, score *policy.Score) string {
 	var res bytes.Buffer
 
 	if assetObj == nil {

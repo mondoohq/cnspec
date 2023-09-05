@@ -11,16 +11,16 @@ import (
 
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
-	"go.mondoo.com/cnquery/shared"
+	ee "go.mondoo.com/cnquery/explorer/executor"
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/shared"
 	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/cnspec/policy/executor"
 	"sigs.k8s.io/yaml"
 )
 
 var (
-	vulnReportDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("platform.vulnerabilityReport"))
-	kernelListDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("kernel.installed"))
+	vulnReportDatapointChecksum = ee.MustGetOneDatapoint(ee.MustCompile("platform.vulnerabilityReport"))
+	kernelListDatapointChecksum = ee.MustGetOneDatapoint(ee.MustCompile("kernel.installed"))
 )
 
 type Reporter struct {

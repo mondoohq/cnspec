@@ -13,10 +13,10 @@ func NewNoOpReporter() Reporter {
 	return &NoOpReporter{}
 }
 
-func (r *NoOpReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+func (r *NoOpReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 }
 
-func (r *NoOpReporter) AddScanError(asset *asset.Asset, err error) {
+func (r *NoOpReporter) AddScanError(asset *inventory.Asset, err error) {
 }
 
 func (r *NoOpReporter) Reports() *ScanResult {

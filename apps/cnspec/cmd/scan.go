@@ -23,6 +23,7 @@ import (
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scan"
 )
 
 func init() {
@@ -229,7 +230,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		}
 	}
 
-	if len(conf.QueryPackPaths) > 0 && !conf.IsIncognito {
+	if len(conf.PolicyPaths) > 0 && !conf.IsIncognito {
 		log.Warn().Msg("Scanning with local bundles will switch into --incognito mode by default. Your results will not be sent upstream.")
 		conf.IsIncognito = true
 	}
@@ -253,7 +254,7 @@ func (c *scanConfig) loadPolicies() error {
 			return err
 		}
 
-		_, err = bundle.Compile(context.Background(), c.runtime.Schema())
+		_, err = bundle.Compile(context.Background(), c.runtime.Schema(), nil)
 		if err != nil {
 			return errors.Wrap(err, "failed to compile bundle")
 		}
@@ -265,8 +266,8 @@ func (c *scanConfig) loadPolicies() error {
 	return nil
 }
 
-func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
-	opts := []scan.ScannerOption{}
+func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
+	opts := scannerOpts
 	if config.runtime.UpstreamConfig != nil {
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}
@@ -277,24 +278,32 @@ func RunScan(config *scanConfig) (*policy.ReportCollection, error) {
 	scanner := scan.NewLocalScanner(opts...)
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 
+	var res *scan.ScanResult
+	var err error
 	if config.IsIncognito {
-		return scanner.RunIncognito(
+		res, err = scanner.RunIncognito(
 			ctx,
 			&scan.Job{
-				Inventory:        config.Inventory,
-				Bundle:           config.Bundle,
-				QueryPackFilters: config.QueryPackNames,
-				Props:            config.Props,
+				Inventory:     config.Inventory,
+				Bundle:        config.Bundle,
+				PolicyFilters: config.PolicyNames,
+				Props:         config.Props,
+			})
+	} else {
+		res, err = scanner.Run(
+			ctx,
+			&scan.Job{
+				Inventory:     config.Inventory,
+				Bundle:        config.Bundle,
+				PolicyFilters: config.PolicyNames,
+				Props:         config.Props,
 			})
 	}
-	return scanner.Run(
-		ctx,
-		&scan.Job{
-			Inventory:        config.Inventory,
-			Bundle:           config.Bundle,
-			QueryPackFilters: config.QueryPackNames,
-			Props:            config.Props,
-		})
+
+	if err != nil {
+		return nil, err
+	}
+	return res.GetFull(), nil
 }
 
 func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.Command) {

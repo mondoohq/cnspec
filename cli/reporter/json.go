@@ -44,7 +44,7 @@ type assetPrintable struct {
 	PlatformName string `protobuf:"bytes,20,opt,name=platformName,proto3" json:"platformName,omitempty"`
 }
 
-func prepareAssetsForPrinting(assets map[string]*asset.Asset) map[string]*assetPrintable {
+func prepareAssetsForPrinting(assets map[string]*inventory.Asset) map[string]*assetPrintable {
 	printableAssets := map[string]*assetPrintable{}
 	for k, a := range assets {
 		pAsset := &assetPrintable{

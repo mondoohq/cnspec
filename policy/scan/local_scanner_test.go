@@ -4,7 +4,6 @@
 package scan
 
 import (
-	"net/http"
 	"os"
 	"testing"
 
@@ -34,30 +33,6 @@ func TestFilterPreprocess(t *testing.T) {
 }
 
 func TestGetUpstreamConfig(t *testing.T) {
-	t.Run("with upstream plugin", func(t *testing.T) {
-		opts := []ScannerOption{
-			WithUpstream("api-endpoint", "space-mrn", http.DefaultClient),
-		}
-		scanner := NewLocalScanner(opts...)
-		_, err := scanner.getUpstreamConfig(false, &Job{})
-		require.NoError(t, err)
-
-		_, err = scanner.getUpstreamConfig(true, &Job{})
-		require.NoError(t, err)
-	})
-
-	t.Run("with upstream plugin, but no http client", func(t *testing.T) {
-		opts := []ScannerOption{
-			WithUpstream("api-endpoint", "space-mrn", nil),
-		}
-		scanner := NewLocalScanner(opts...)
-		_, err := scanner.getUpstreamConfig(false, &Job{})
-		require.NoError(t, err)
-
-		_, err = scanner.getUpstreamConfig(true, &Job{})
-		require.NoError(t, err)
-	})
-
 	t.Run("with job creds", func(t *testing.T) {
 		opts := []ScannerOption{
 			AllowJobCredentials(),

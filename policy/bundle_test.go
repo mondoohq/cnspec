@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/providers"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -60,11 +61,13 @@ func TestPolicyBundleSort(t *testing.T) {
 }
 
 func TestBundleCompile(t *testing.T) {
+	schema := providers.DefaultRuntime().Schema()
+
 	bundle, err := policy.BundleFromPaths("../examples/complex.mql.yaml")
 	require.NoError(t, err)
 	require.NotNil(t, bundle)
 
-	bundlemap, err := bundle.Compile(context.Background(), nil)
+	bundlemap, err := bundle.Compile(context.Background(), schema, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bundlemap)
 
@@ -227,7 +230,7 @@ framework_maps:
 
 	checksumToTestCases := map[string][]string{}
 
-	_, srv, err := inmemory.NewServices(nil)
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
 	require.NoError(t, err)
 
 	t.Run("no duplicate checksums", func(t *testing.T) {
@@ -265,6 +268,5 @@ framework_maps:
 				assert.Equal(t, checksums[0], checksums[i], "checksums should be the same")
 			}
 		}
-
 	})
 }

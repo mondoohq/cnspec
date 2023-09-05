@@ -80,7 +80,7 @@ func ReportCollectionToJunit(r *policy.ReportCollection, out shared.OutputHelper
 }
 
 // assetPolicyTests converts asset scoring queries to Junit test cases
-func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
+func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
 	ts := junit.Testsuite{
 		Time:      "",
 		Testcases: []junit.Testcase{},
@@ -155,7 +155,7 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *ass
 }
 
 // assetPolicyTests converts asset vulnerability results to Junit test cases
-func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.Asset) *junit.Testsuite {
+func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset) *junit.Testsuite {
 	// check if we have a vulnerability report
 	results, ok := r.Reports[assetMrn]
 	if !ok {

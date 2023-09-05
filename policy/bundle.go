@@ -758,7 +758,7 @@ func (p *Bundle) Compile(ctx context.Context, schema llx.Schema, library Library
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
 
-		err = bundleMap.ValidatePolicy(ctx, policy)
+		err = bundleMap.ValidatePolicy(ctx, policy, schema)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}

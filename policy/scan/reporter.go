@@ -16,7 +16,7 @@ type AssetReport struct {
 }
 
 type Reporter interface {
-	AddReport(asset *asset.Asset, results *AssetReport)
-	AddScanError(asset *asset.Asset, err error)
+	AddReport(asset *inventory.Asset, results *AssetReport)
+	AddScanError(asset *inventory.Asset, err error)
 	Reports() *ScanResult
 }

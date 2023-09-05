@@ -537,7 +537,9 @@ func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error 
 	wrap.Policy.UpdateChecksums(ctx,
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
-		nil)
+		nil,
+		db.services.Schema(),
+	)
 
 	ok := db.cache.Set(dbIDPolicy+wrap.Policy.Mrn, *wrap, 2)
 	if !ok {

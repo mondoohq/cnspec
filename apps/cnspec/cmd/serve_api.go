@@ -17,14 +17,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/cli/config"
-	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
 	"go.mondoo.com/cnspec/policy/scan"
-	"go.mondoo.com/ranger-rpc"
 )
 
 func init() {
@@ -63,35 +60,18 @@ var serveApiCmd = &cobra.Command{
 			log.Fatal().Msg("no service account configured")
 		}
 
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-		if err != nil {
-			log.Error().Err(err).Msg(errorMessageServiceAccount)
-			os.Exit(cnquery_cmd.ConfigurationErrorCode)
-		}
-		plugins := []ranger.ClientPlugin{certAuth}
-		// determine information about the client
-		sysInfo, err := sysinfo.GatherSystemInfo()
-		if err != nil {
-			log.Warn().Err(err).Msg("could not gather client information")
-		}
-		plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
-		httpClient, err := opts.GetHttpClient()
-		if err != nil {
-			log.Error().Err(err).Msg("error seting up http client")
-			os.Exit(cnquery_cmd.ConfigurationErrorCode)
-		}
-
-		httpTimeout := viper.GetUint("http-timeout")
-		httpClient.Timeout = time.Duration(httpTimeout) * time.Second
 		log.Info().Msg("using service account credentials")
 		upstreamConfig := upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
-			Plugins:     plugins,
-			HttpClient:  httpClient,
+			Incognito:   false, // because we serve, we interact with upstream, never incognito
+			Creds:       serviceAccount,
 		}
 
-		scanner := scan.NewLocalScanner(scan.WithUpstream(upstreamConfig.ApiEndpoint, upstreamConfig.SpaceMrn, upstreamConfig.HttpClient), scan.WithPlugins(plugins), scan.DisableProgressBar())
+		scanner := scan.NewLocalScanner(
+			scan.WithUpstream(&upstreamConfig),
+			scan.DisableProgressBar(),
+		)
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
 		}
