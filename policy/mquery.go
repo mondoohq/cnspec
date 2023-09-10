@@ -16,8 +16,8 @@ import (
 	"go.mondoo.com/cnquery/mqlc"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/providers"
-	"go.mondoo.com/cnquery/utils/sortx"
 	"go.mondoo.com/cnquery/types"
+	"go.mondoo.com/cnquery/utils/sortx"
 )
 
 // Compile a given query and return the bundle. Both v1 and v2 versions are compiled.
