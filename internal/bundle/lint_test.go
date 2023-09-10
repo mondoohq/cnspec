@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/internal/bundle"
 )
 
@@ -20,9 +21,11 @@ func init() {
 }
 
 func TestLintPass(t *testing.T) {
+	runtime := testutils.Local()
+
 	file := "../../examples/example.mql.yaml"
 	rootDir := "../../examples"
-	results, err := bundle.Lint(schema, file)
+	results, err := bundle.Lint(runtime.Schema(), file)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, len(results.BundleLocations))

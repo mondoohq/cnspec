@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	vulnReportDatapointChecksum = ee.MustGetOneDatapoint(ee.MustCompile("platform.vulnerabilityReport"))
+	vulnReportDatapointChecksum = ee.MustGetOneDatapoint(ee.MustCompile("asset.vulnerabilityReport"))
 	kernelListDatapointChecksum = ee.MustGetOneDatapoint(ee.MustCompile("kernel.installed"))
 )
 
