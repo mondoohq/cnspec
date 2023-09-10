@@ -19,7 +19,7 @@ import (
 )
 
 func initExecutor() *Executor {
-	runtime := testutils.TomlMock("./testdata/arch.toml")
+	runtime := testutils.LinuxMock()
 	executor := New(runtime)
 
 	return executor
@@ -121,14 +121,14 @@ func TestExecutor(t *testing.T) {
 		},
 	})
 
-	runTest(t, "package('not').installed == false", map[string]value{
-		"olBgIHiECeDWquxQNId+6HvPuwUm+GgWNyZFv3qBfbpFA5I6nKEVSX8ynKw0DUc+ijW+D1hcpBheELESIbDTdA==": {
-			2, nil, false,
+	runTest(t, "package('acl').installed == true", map[string]value{
+		"IA/mh1qcKcrnANOhYpgeYqtqFWe7od9D8L1rskL+LmySCnOHnLjaQww2MZL+lhEVcE9vz8+IRM9YAxSCRJ2iwA==": {
+			2, nil, true,
 		},
-		"a15HA8C3jENBZ+X5vgqz3/octJmFOANb1n5dVyefrHSAvY4oyU/gigll79skqGHVn82I+hduvsoTRV43qOejLA==": {
+		"NRSGjPzTnDC5EeUFEAe0LaM9MtNtgkiq/D8lhxx0TTtKb9IULE672Tfe7N9smyqjs/hdWobucKNsWnkvS6JJ9A==": {
 			1, nil, true,
 		},
-		"Sz65cAIF9S0=": {
+		"4Q1qtmgoTTk=": {
 			1, nil, true,
 		},
 	})
