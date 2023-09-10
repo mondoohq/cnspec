@@ -14,6 +14,7 @@ import (
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -31,7 +32,8 @@ func parseBundle(t *testing.T, data string) *policy.Bundle {
 }
 
 func initResolver(t *testing.T, assets []*testAsset, bundles []*policy.Bundle) *policy.LocalServices {
-	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
+	runtime := testutils.LinuxMock()
+	_, srv, err := inmemory.NewServices(runtime, nil)
 	require.NoError(t, err)
 
 	for i := range bundles {
@@ -221,8 +223,11 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
-		ignoreJob := rp.CollectorJob.ReportingJobs["jGWUFIvetOg="]
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, ignoreJob.ChildJobs["lgJDqBZEz+M="].Scoring)
+		ignoreJob := rp.CollectorJob.ReportingJobs["KA46R+nvZXs="]
+		require.NotNil(t, ignoreJob)
+		childJob := ignoreJob.ChildJobs["0yAvYregRkA="]
+		require.NotNil(t, childJob)
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 	})
 }
 

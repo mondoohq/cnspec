@@ -23,7 +23,7 @@ import (
 type mqlCode string
 
 const (
-	vulnReport      mqlCode = "asset.VulnerabilityReport"
+	vulnReport      mqlCode = "asset.vulnerabilityReport"
 	kernelInstalled mqlCode = "kernel.installed"
 )
 

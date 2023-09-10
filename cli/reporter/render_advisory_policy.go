@@ -37,7 +37,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	score := report.Scores[policyObj.Mrn]
 
 	schema := providers.DefaultRuntime().Schema()
-	vulnCheckpoint, err := defaultChecksum(vulnReport, schema)
+	vulnChecksum, err := defaultChecksum(vulnReport, schema)
 	if err != nil {
 		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
 		b.WriteString(print.Error("no vulnerabilities for this provider"))
@@ -45,7 +45,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	}
 
 	results := report.Data
-	value, ok := results[vulnCheckpoint]
+	value, ok := results[vulnChecksum]
 	if !ok {
 		b.WriteString(print.Error("could not find advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
