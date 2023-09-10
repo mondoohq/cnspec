@@ -61,8 +61,6 @@ func TestPolicyBundleSort(t *testing.T) {
 }
 
 func TestBundleCompile(t *testing.T) {
-	schema := providers.DefaultRuntime().Schema()
-
 	bundle, err := policy.BundleFromPaths("../examples/complex.mql.yaml")
 	require.NoError(t, err)
 	require.NotNil(t, bundle)

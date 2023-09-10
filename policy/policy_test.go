@@ -13,14 +13,15 @@ import (
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/policy"
 )
 
 var schema llx.Schema
 
 func init() {
-	schema = providers.DefaultRuntime().Schema()
+	runtime := testutils.Local()
+	schema = runtime.Schema()
 }
 
 func getChecksums(p *policy.Policy) map[string]string {
