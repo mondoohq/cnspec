@@ -18,9 +18,10 @@ import (
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/providers"
 	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/utils/stringx"
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/utils/stringx"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -583,7 +584,15 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	print := r.Printer
 
-	value, ok := results[vulnReportDatapointChecksum]
+	schema := providers.DefaultRuntime().Schema()
+	vulnChecksum, err := defaultChecksum(vulnReport, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
+		r.out.Write([]byte(print.Error("No vulnerabilities for this provider")))
+		return
+	}
+
+	value, ok := results[vulnChecksum]
 	if !ok {
 		return
 	}
@@ -611,8 +620,7 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	err := decoder.Decode(rawData)
-	if err != nil {
+	if err = decoder.Decode(rawData); err != nil {
 		r.out.Write([]byte(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter)))
 		return
 	}

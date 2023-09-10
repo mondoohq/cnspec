@@ -11,10 +11,12 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/termenv"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
-	"go.mondoo.com/cnquery/utils/stringx"
+	"go.mondoo.com/cnquery/providers"
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/utils/stringx"
 	"go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -34,9 +36,16 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	// render mini score card
 	score := report.Scores[policyObj.Mrn]
 
-	var vulnReport mvd.VulnReport
+	schema := providers.DefaultRuntime().Schema()
+	vulnCheckpoint, err := defaultChecksum(vulnReport, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
+		b.WriteString(print.Error("no vulnerabilities for this provider"))
+		return b.String()
+	}
+
 	results := report.Data
-	value, ok := results[vulnReportDatapointChecksum]
+	value, ok := results[vulnCheckpoint]
 	if !ok {
 		b.WriteString(print.Error("could not find advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
@@ -54,14 +63,14 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 
 	rawData := value.Data.RawData().Value
 
+	var vulnReport mvd.VulnReport
 	cfg := &mapstructure.DecoderConfig{
 		Metadata: nil,
 		Result:   &vulnReport,
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	err := decoder.Decode(rawData)
-	if err != nil {
+	if err = decoder.Decode(rawData); err != nil {
 		b.WriteString(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
@@ -87,7 +96,12 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	}
 
 	// render additional information
-	kernelDataValue, ok := results[kernelListDatapointChecksum]
+	kernelInstalledChecksum, err := defaultChecksum(kernelInstalled, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine installed kernel checksum")
+	}
+
+	kernelDataValue, ok := results[kernelInstalledChecksum]
 	if ok && kernelDataValue.Data != nil {
 		if kernelDataValue.Error != "" {
 			b.WriteString(print.Error(kernelDataValue.Error + NewLineCharacter))
