@@ -13,22 +13,17 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
-	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/inventoryloader"
 	"go.mondoo.com/cnquery/cli/prof"
-	"go.mondoo.com/cnquery/cli/sysinfo"
-	"go.mondoo.com/cnquery/motor/asset"
-	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
-	"go.mondoo.com/cnquery/motor/providers"
-	"go.mondoo.com/cnquery/resources"
-	"go.mondoo.com/cnquery/upstream"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/apps/cnspec/cmd/backgroundjob"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
 	"go.mondoo.com/cnspec/policy/scan"
-	"go.mondoo.com/ranger-rpc"
 )
 
 // we send a 78 exit code to prevent systemd from restart
@@ -75,13 +70,18 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			log.Error().Err(err).Msg("could not load configuration")
 			// we return the specific error code to prevent systemd from restarting
-			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+			os.Exit(ConfigurationErrorCode)
 		}
 
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
 
-		if conf != nil && conf.UpstreamConfig != nil {
-			hc := backgroundjob.NewHealthPinger(ctx, conf.UpstreamConfig.HttpClient, conf.UpstreamConfig.ApiEndpoint, 5*time.Minute)
+		if conf != nil && conf.runtime.UpstreamConfig != nil {
+			client, err := conf.runtime.UpstreamConfig.InitClient()
+			if err != nil {
+				log.Fatal().Err(err).Msg("failed to initialize upstream client")
+			}
+
+			hc := backgroundjob.NewHealthPinger(ctx, client.HttpClient, client.ApiEndpoint, 5*time.Minute)
 			hc.Start()
 			defer hc.Stop()
 		}
@@ -119,16 +119,23 @@ func getServeConfig() (*scanConfig, error) {
 
 	logClientInfo(opts.SpaceMrn, opts.AgentMrn, opts.ServiceAccountMrn)
 
-	// display activated features
 	if len(opts.Features) > 0 {
 		log.Info().Strs("features", opts.Features).Msg("user activated features")
 	}
+
+	// Since we don't know the runtime yet, i.e. when we go into listening mode
+	// we may get to a variety of actual systems that we connect to,
+	// we have to create a default runtime. This will be extended for anything
+	// that the job runner throws at it.
+
+	runtime := providers.Coordinator.NewRuntime()
 
 	conf := scanConfig{
 		Features:   opts.GetFeatures(),
 		DoRecord:   viper.GetBool("record"),
 		ReportType: scan.ReportType_ERROR,
 		Output:     "",
+		runtime:    runtime,
 	}
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
@@ -141,41 +148,21 @@ func getServeConfig() (*scanConfig, error) {
 			runtimeLabels := runtimeEnv.Labels()
 			conf.Inventory.ApplyLabels(runtimeLabels)
 		}
-		conf.Inventory.ApplyCategory(asset.AssetCategory_CATEGORY_CICD)
+		conf.Inventory.ApplyCategory(inventory.AssetCategory_CATEGORY_CICD)
 	}
 
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount != nil {
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-		if err != nil {
-			return nil, errors.Wrap(err, errorMessageServiceAccount)
-		}
-		plugins := []ranger.ClientPlugin{certAuth}
 		// determine information about the client
-		sysInfo, err := sysinfo.GatherSystemInfo()
-		if err != nil {
-			log.Warn().Err(err).Msg("could not gather client information")
-		}
-		plugins = append(plugins, defaultRangerPlugins(sysInfo, opts.GetFeatures())...)
 		log.Info().Msg("using service account credentials")
-		conf.UpstreamConfig = &resources.UpstreamConfig{
+		runtime.UpstreamConfig = &upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
-			Plugins:     plugins,
+			Creds:       serviceAccount,
 		}
 	}
 
-	// set up the http client to include proxy config
-	httpClient, err := opts.GetHttpClient()
-	if err != nil {
-		log.Error().Err(err).Msg("error while setting up httpclient")
-		os.Exit(ConfigurationErrorCode)
-	}
-	if conf.UpstreamConfig == nil {
-		conf.UpstreamConfig = &resources.UpstreamConfig{}
-	}
-	conf.UpstreamConfig.HttpClient = httpClient
-
+	var err error
 	conf.Inventory, err = inventoryloader.ParseOrUse(nil, viper.GetBool("insecure"))
 	if err != nil {
 		return nil, errors.Wrap(err, "could not load configuration")
@@ -184,12 +171,10 @@ func getServeConfig() (*scanConfig, error) {
 	// fall back to local machine if no inventory was localed
 	if conf.Inventory == nil || conf.Inventory.Spec == nil || len(conf.Inventory.Spec.Assets) == 0 {
 		log.Info().Msg("configure inventory to scan local operating system")
-		conf.Inventory = v1.New(v1.WithAssets(&asset.Asset{
-			Connections: []*providers.Config{
-				{
-					Backend: providers.ProviderType_LOCAL_OS,
-				},
-			},
+		conf.Inventory = inventory.New(inventory.WithAssets(&inventory.Asset{
+			Connections: []*inventory.Config{{
+				Backend: "local",
+			}},
 		}))
 	}
 

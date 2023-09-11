@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -21,7 +22,7 @@ type Db struct {
 }
 
 // NewServices creates a new set of policy services
-func NewServices(resolvedPolicyCache *ResolvedPolicyCache) (*Db, *policy.LocalServices, error) {
+func NewServices(runtime llx.Runtime, resolvedPolicyCache *ResolvedPolicyCache) (*Db, *policy.LocalServices, error) {
 	var cache kvStore = newKissDb()
 
 	if resolvedPolicyCache == nil {
@@ -35,15 +36,15 @@ func NewServices(resolvedPolicyCache *ResolvedPolicyCache) (*Db, *policy.LocalSe
 		resolvedPolicyCache: resolvedPolicyCache,
 	}
 
-	services := policy.NewLocalServices(db, db.uuid)
+	services := policy.NewLocalServices(db, db.uuid, runtime)
 	db.services = services // close the connection between db and services
 
 	return db, services, nil
 }
 
 // WithDb creates a new set of policy services and closes everything out once the function is done
-func WithDb(resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalServices) error) error {
-	db, ls, err := NewServices(resolvedPolicyCache)
+func WithDb(runtime llx.Runtime, resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalServices) error) error {
+	db, ls, err := NewServices(runtime, resolvedPolicyCache)
 	if err != nil {
 		return err
 	}

@@ -6,12 +6,12 @@ package scan
 import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnspec/policy"
 )
 
 type AggregateReporter struct {
-	assets           map[string]*asset.Asset
+	assets           map[string]*inventory.Asset
 	assetReports     map[string]*policy.Report
 	assetErrors      map[string]error
 	bundle           *policy.Bundle
@@ -21,14 +21,14 @@ type AggregateReporter struct {
 
 func NewAggregateReporter() *AggregateReporter {
 	return &AggregateReporter{
-		assets:           make(map[string]*asset.Asset),
+		assets:           make(map[string]*inventory.Asset),
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 	}
 }
 
-func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
 
 	r.assets[asset.Mrn] = asset
@@ -41,7 +41,7 @@ func (r *AggregateReporter) AddReport(asset *asset.Asset, results *AssetReport) 
 	}
 }
 
-func (r *AggregateReporter) AddScanError(asset *asset.Asset, err error) {
+func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan error to report")
 	r.assets[asset.Mrn] = asset
 	r.assetErrors[asset.Mrn] = err

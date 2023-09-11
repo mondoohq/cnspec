@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/shared"
-	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/cli/components/advisories"
 )

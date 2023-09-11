@@ -9,10 +9,9 @@ import (
 	"time"
 
 	"go.mondoo.com/cnquery/cli/progress"
-	"go.mondoo.com/cnquery/motor"
-	"go.mondoo.com/cnquery/motor/asset"
-	"go.mondoo.com/cnquery/motor/vault"
-	"go.mondoo.com/cnquery/resources"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -30,14 +29,13 @@ func init() {
 
 type AssetJob struct {
 	DoRecord         bool
-	UpstreamConfig   resources.UpstreamConfig
-	Asset            *asset.Asset
+	UpstreamConfig   *upstream.UpstreamConfig
+	Asset            *inventory.Asset
 	Bundle           *policy.Bundle
 	PolicyFilters    []string
 	Props            map[string]string
 	Ctx              context.Context
-	CredsResolver    vault.Resolver
 	Reporter         Reporter
-	connection       *motor.Motor
+	runtime          *providers.Runtime
 	ProgressReporter progress.Progress
 }

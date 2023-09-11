@@ -605,7 +605,7 @@ func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, qu
 // 4. generate MRNs for all policies, queries, and properties and updates referencing local fields
 // 5. snapshot all queries into the packs
 // 6. make queries public that are only embedded
-func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap, error) {
+func (p *Bundle) Compile(ctx context.Context, schema llx.Schema, library Library) (*PolicyBundleMap, error) {
 	ownerMrn := p.OwnerMrn
 	if ownerMrn == "" {
 		// this only happens for local bundles where queries have no mrn yet
@@ -619,6 +619,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 	cache := &bundleCache{
 		ownerMrn:    ownerMrn,
 		bundle:      p,
+		schema:      schema,
 		uid2mrn:     map[string]string{},
 		lookupProp:  map[string]explorer.PropertyRef{},
 		lookupQuery: map[string]*explorer.Mquery{},
@@ -687,14 +688,14 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 		if policy.ComputedFilters == nil || policy.ComputedFilters.Items == nil {
 			policy.ComputedFilters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
 		}
-		policy.ComputedFilters.Compile(ownerMrn)
+		policy.ComputedFilters.Compile(ownerMrn, schema)
 
 		// ---- GROUPs -------------
 		for i := range policy.Groups {
 			group := policy.Groups[i]
 
 			// When filters are initially added they haven't been compiled
-			group.Filters.Compile(ownerMrn)
+			group.Filters.Compile(ownerMrn, schema)
 			if group.Filters != nil {
 				for j := range group.Filters.Items {
 					filter := group.Filters.Items[j]
@@ -757,7 +758,7 @@ func (p *Bundle) Compile(ctx context.Context, library Library) (*PolicyBundleMap
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
 
-		err = bundleMap.ValidatePolicy(ctx, policy)
+		err = bundleMap.ValidatePolicy(ctx, policy, schema)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
@@ -816,6 +817,7 @@ type bundleCache struct {
 	uid2mrn     map[string]string
 	codeBundles map[string]*llx.CodeBundle
 	bundle      *Bundle
+	schema      llx.Schema
 	errors      []error
 }
 
@@ -916,7 +918,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 	}
 
 	// filters have no dependencies, so we can compile them early
-	if err := query.Filters.Compile(c.ownerMrn); err != nil {
+	if err := query.Filters.Compile(c.ownerMrn, c.schema); err != nil {
 		c.errors = append(c.errors, errors.New("failed to compile filters for query "+query.Mrn))
 		return nil
 	}
@@ -950,7 +952,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 // dependencies have been processed. Properties must be compiled. Connected
 // queries may not be ready yet, but we have to have precompiled them.
 func (c *bundleCache) compileQuery(query *explorer.Mquery) {
-	_, err := query.RefreshChecksumAndType(c.lookupQuery, c.lookupProp)
+	_, err := query.RefreshChecksumAndType(c.lookupQuery, c.lookupProp, c.schema)
 	if err != nil {
 		c.errors = append(c.errors, errors.Wrap(err, "failed to compile "+query.Mrn))
 	}
@@ -979,7 +981,7 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 		name = m.Basename()
 	}
 
-	if _, err := prop.RefreshChecksumAndType(); err != nil {
+	if _, err := prop.RefreshChecksumAndType(c.schema); err != nil {
 		return err
 	}
 

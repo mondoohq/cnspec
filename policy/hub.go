@@ -38,7 +38,7 @@ func NewPolicyMrn(namespace string, uid string) string {
 
 // ValidateBundle and check queries, relationships, MRNs, and versions
 func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
-	_, err := bundle.Compile(ctx, s.DataLake)
+	_, err := bundle.Compile(ctx, s.runtime.Schema(), s.DataLake)
 	return globalEmpty, err
 }
 
@@ -46,7 +46,7 @@ func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Em
 func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
 	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
 
-	bundleMap, err := bundle.Compile(ctx, s.DataLake)
+	bundleMap, err := bundle.Compile(ctx, s.runtime.Schema(), s.DataLake)
 	if err != nil {
 		return globalEmpty, err
 	}
@@ -91,10 +91,13 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	// otherwise we generate the old GraphChecksum
 	if policyObj.GraphExecutionChecksum == "" || policyObj.GraphContentChecksum == "" {
 		logCtx.Trace().Str("policy", policyObj.Mrn).Msg("marketplace> update graphchecksum")
-		err = policyObj.UpdateChecksums(ctx,
+		err = policyObj.UpdateChecksums(
+			ctx,
 			s.DataLake.GetValidatedPolicy,
 			s.DataLake.GetQuery,
-			bundle)
+			bundle,
+			s.runtime.Schema(),
+		)
 		if err != nil {
 			return nil, nil, err
 		}

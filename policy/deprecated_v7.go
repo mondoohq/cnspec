@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/sortx"
+	"go.mondoo.com/cnquery/utils/sortx"
 )
 
 // FIXME: DEPRECATED, remove in v9.0 (all of it)

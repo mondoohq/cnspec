@@ -19,7 +19,7 @@ import (
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/logger"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/sortx"
+	"go.mondoo.com/cnquery/utils/sortx"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -123,7 +123,7 @@ func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*
 	// validate that the queries compile and fill in checksums
 	for i := range req.Props {
 		prop := req.Props[i]
-		code, err := prop.RefreshChecksumAndType()
+		code, err := prop.RefreshChecksumAndType(s.runtime.Schema())
 		if err != nil {
 			return nil, err
 		}
@@ -446,7 +446,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 
 	// phase 1: resolve asset filters and see if we can find a cached policy
 	// trying first with all asset filters
-	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters)
+	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters, s.runtime.Schema())
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +484,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		assetFiltersMap[matchingFilters[i].CodeId] = struct{}{}
 	}
 
-	assetFiltersChecksum, err := ChecksumAssetFilters(matchingFilters)
+	assetFiltersChecksum, err := ChecksumAssetFilters(matchingFilters, s.runtime.Schema())
 	if err != nil {
 		return nil, err
 	}
@@ -887,7 +887,11 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 
 		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
 			check = check.Merge(base)
-			if err := check.RefreshChecksum(ctx, explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery); err != nil {
+			err := check.RefreshChecksum(ctx,
+				s.runtime.Schema(),
+				explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery,
+			)
+			if err != nil {
 				return err
 			}
 		}
@@ -940,7 +944,11 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 
 		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
 			query = query.Merge(base)
-			if err := query.RefreshChecksum(ctx, explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery); err != nil {
+			err := query.RefreshChecksum(ctx,
+				s.runtime.Schema(),
+				explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery,
+			)
+			if err != nil {
 				return err
 			}
 		}
@@ -1203,7 +1211,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 					}
 				}
 
-				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false)
+				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false, s.runtime.Schema())
 				if err != nil {
 					return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
 				}
@@ -1218,7 +1226,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			}
 		}
 
-		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery)
+		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery, s.runtime.Schema())
 		if err != nil {
 			return nil, nil, errors.New("resolver> failed to compile query for MRN " + query.Mrn + ": " + err.Error())
 		}
@@ -1329,13 +1337,13 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 }
 
 type queryLike interface {
-	Compile(props map[string]*llx.Primitive) (*llx.CodeBundle, error)
+	Compile(props map[string]*llx.Primitive, schema llx.Schema) (*llx.CodeBundle, error)
 	GetChecksum() string
 	GetMql() string
 }
 
-func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool) (*ExecutionQuery, string, error) {
-	bundle, err := query.Compile(props)
+func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool, schema llx.Schema) (*ExecutionQuery, string, error) {
+	bundle, err := query.Compile(props, schema)
 	if err != nil {
 		return nil, "", err
 	}

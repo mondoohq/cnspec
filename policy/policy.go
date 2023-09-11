@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/checksums"
 	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mrn"
 	"go.mondoo.com/cnquery/types"
 	"google.golang.org/protobuf/proto"
@@ -269,6 +270,7 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
 	bundle *PolicyBundleMap,
+	schema llx.Schema,
 ) error {
 	// simplify the access if we don't have a bundle
 	if bundle == nil {
@@ -288,7 +290,7 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 	// if we have local checksums set, we can take an optimized route;
 	// if not, we have to update all checksums
 	if p.LocalContentChecksum == "" || p.LocalExecutionChecksum == "" {
-		return p.updateAllChecksums(ctx, getPolicy, getQuery, bundle)
+		return p.updateAllChecksums(ctx, getPolicy, getQuery, bundle, schema)
 	}
 
 	// otherwise we have local checksums and only need to recompute the
@@ -321,7 +323,7 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 			}
 
 			if p.GraphContentChecksum == "" || p.GraphExecutionChecksum == "" {
-				err = p.UpdateChecksums(ctx, getPolicy, getQuery, bundle)
+				err = p.UpdateChecksums(ctx, getPolicy, getQuery, bundle, schema)
 				if err != nil {
 					return err
 				}
@@ -342,6 +344,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
 	bundle *PolicyBundleMap,
+	schema llx.Schema,
 ) error {
 	log.Trace().Str("policy", p.Mrn).Msg("update policy checksum")
 	p.LocalContentChecksum = ""
@@ -459,7 +462,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			if base, ok := bundle.Queries[check.Mrn]; ok {
 				check = check.Merge(base)
-				if err := check.RefreshChecksum(ctx, getQuery); err != nil {
+				if err := check.RefreshChecksum(ctx, schema, getQuery); err != nil {
 					return err
 				}
 			} else if check.Checksum == "" {
@@ -468,7 +471,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				}
 				if x, err := getQuery(ctx, check.Mrn); err == nil {
 					check = check.Merge(x)
-					if err := check.RefreshChecksum(ctx, getQuery); err != nil {
+					if err := check.RefreshChecksum(ctx, schema, getQuery); err != nil {
 						return err
 					}
 				}
@@ -500,7 +503,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			if base, ok := bundle.Queries[query.Mrn]; ok {
 				query = query.Merge(base)
-				if err := query.RefreshChecksum(ctx, getQuery); err != nil {
+				if err := query.RefreshChecksum(ctx, schema, getQuery); err != nil {
 					return err
 				}
 			} else if query.Checksum == "" {
@@ -509,7 +512,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				}
 				if x, err := getQuery(ctx, query.Mrn); err == nil {
 					query = query.Merge(x)
-					if err := query.RefreshChecksum(ctx, getQuery); err != nil {
+					if err := query.RefreshChecksum(ctx, schema, getQuery); err != nil {
 						return err
 					}
 				}

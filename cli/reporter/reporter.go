@@ -9,19 +9,52 @@ import (
 	"io"
 	"strings"
 
+	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/printer"
 	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/mqlc"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/shared"
-	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/cnspec/policy/executor"
 	"sigs.k8s.io/yaml"
 )
 
-var (
-	vulnReportDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("platform.vulnerabilityReport"))
-	kernelListDatapointChecksum = executor.MustGetOneDatapoint(executor.MustCompile("kernel.installed"))
+type mqlCode string
+
+const (
+	vulnReport      mqlCode = "asset.vulnerabilityReport"
+	kernelInstalled mqlCode = "kernel.installed"
 )
+
+var _defaultChecksums = map[mqlCode]struct {
+	sum string
+	err error
+}{}
+
+func defaultChecksum(code mqlCode, schema llx.Schema) (string, error) {
+	res, ok := _defaultChecksums[code]
+	if ok {
+		return res.sum, res.err
+	}
+
+	codeBundle, err := mqlc.Compile(string(code), nil,
+		mqlc.NewConfig(schema, cnquery.DefaultFeatures))
+	if err != nil {
+		res.err = err
+	} else if len(codeBundle.CodeV2.Entrypoints()) != 1 {
+		res.err = errors.New("code bundle should only have 1 entrypoint for: " + string(code))
+	} else {
+		entrypoint := codeBundle.CodeV2.Entrypoints()[0]
+		res.sum, ok = codeBundle.CodeV2.Checksums[entrypoint]
+		if !ok {
+			res.err = errors.New("could not find the datapoint for: " + string(code))
+		}
+	}
+
+	_defaultChecksums[code] = res
+	return res.sum, res.err
+}
 
 type Reporter struct {
 	Format      Format

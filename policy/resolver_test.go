@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -30,7 +32,8 @@ func parseBundle(t *testing.T, data string) *policy.Bundle {
 }
 
 func initResolver(t *testing.T, assets []*testAsset, bundles []*policy.Bundle) *policy.LocalServices {
-	_, srv, err := inmemory.NewServices(nil)
+	runtime := testutils.LinuxMock()
+	_, srv, err := inmemory.NewServices(runtime, nil)
 	require.NoError(t, err)
 
 	for i := range bundles {
@@ -220,8 +223,11 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
-		ignoreJob := rp.CollectorJob.ReportingJobs["jGWUFIvetOg="]
-		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, ignoreJob.ChildJobs["lgJDqBZEz+M="].Scoring)
+		ignoreJob := rp.CollectorJob.ReportingJobs["KA46R+nvZXs="]
+		require.NotNil(t, ignoreJob)
+		childJob := ignoreJob.ChildJobs["0yAvYregRkA="]
+		require.NotNil(t, childJob)
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 	})
 }
 
@@ -240,7 +246,7 @@ policies:
       mql: "1 == 2"
 `)
 
-	_, srv, err := inmemory.NewServices(nil)
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
 	require.NoError(t, err)
 
 	_, err = srv.SetBundle(context.Background(), b)
@@ -293,7 +299,7 @@ policies:
 
 		// Recompute the checksums so that the resolved policy is invalidated
 		assetPolicy.InvalidateAllChecksums()
-		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil)
+		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, schema)
 
 		// Set the asset policy
 		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
@@ -313,7 +319,7 @@ policies:
 
 		// Recompute the checksums so that the resolved policy is invalidated
 		assetPolicy.InvalidateAllChecksums()
-		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil)
+		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, schema)
 
 		// Set the asset policy
 		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
@@ -423,7 +429,7 @@ framework_maps:
 		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), nil)
+		bundleMap, err := bundle.Compile(context.Background(), schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}
@@ -639,7 +645,7 @@ framework_maps:
         - uid: sshd-ciphers-02
 `
 
-	_, srv, err := inmemory.NewServices(nil)
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
 	require.NoError(t, err)
 
 	t.Run("resolve with ignored control", func(t *testing.T) {

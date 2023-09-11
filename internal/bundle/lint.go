@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/Masterminds/semver"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -41,7 +42,7 @@ type Rule struct {
 	Description string
 }
 
-var rules = []Rule{
+var LinterRules = []Rule{
 	{
 		ID:          bundleCompileError,
 		Name:        "MQL compile error",
@@ -147,7 +148,7 @@ type Location struct {
 }
 
 // Lint validates a policy bundle for consistency
-func Lint(files ...string) (*Results, error) {
+func Lint(schema llx.Schema, files ...string) (*Results, error) {
 	aggregatedResults := &Results{
 		BundleLocations: []string{},
 	}
@@ -172,7 +173,7 @@ func Lint(files ...string) (*Results, error) {
 	// Invalid yaml files are already caught by the individual linting, therefore we do not need extra error handling here
 	policyBundle, err := policy.BundleFromPaths(files...)
 	if err == nil {
-		_, err = policyBundle.Compile(context.Background(), nil)
+		_, err = policyBundle.Compile(context.Background(), schema, nil)
 		if err != nil {
 			locs := []Location{}
 

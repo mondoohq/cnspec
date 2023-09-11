@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/ranger-rpc"
 )
 
@@ -40,14 +41,16 @@ type LocalServices struct {
 	DataLake  DataLake
 	Upstream  *Services
 	Incognito bool
+	runtime   llx.Runtime
 }
 
 // NewLocalServices initializes a reasonably configured local services struct
-func NewLocalServices(datalake DataLake, uuid string) *LocalServices {
+func NewLocalServices(datalake DataLake, uuid string, runtime llx.Runtime) *LocalServices {
 	return &LocalServices{
 		DataLake:  datalake,
 		Upstream:  nil,
 		Incognito: false,
+		runtime:   runtime,
 	}
 }
 
@@ -74,4 +77,8 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 		PolicyHub:      policyHub,
 		PolicyResolver: policyResolver,
 	}, nil
+}
+
+func (l *LocalServices) Schema() llx.Schema {
+	return l.runtime.Schema()
 }

@@ -12,29 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/motor"
-	"go.mondoo.com/cnquery/motor/providers/mock"
 	"go.mondoo.com/cnquery/mqlc"
-	"go.mondoo.com/cnquery/resources"
-	resource_pack "go.mondoo.com/cnquery/resources/packs/core"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnquery/types"
 	"go.mondoo.com/cnspec"
 )
 
 func initExecutor() *Executor {
-	transport, err := mock.NewFromTomlFile("./testdata/arch.toml")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	motor, err := motor.New(transport)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	registry := resource_pack.Registry
-	runtime := resources.NewRuntime(registry, motor)
-	executor := New(registry.Schema(), runtime)
+	runtime := testutils.LinuxMock()
+	executor := New(runtime)
 
 	return executor
 }
@@ -101,7 +87,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 			received[res.CodeID]++
 		})
 
-		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(resource_pack.Registry.Schema(), cnquery.DefaultFeatures))
+		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(executor.Schema(), cnquery.DefaultFeatures))
 		require.NoError(t, err)
 		executor.AddCodeBundle(codeBundle, nil)
 
@@ -135,14 +121,14 @@ func TestExecutor(t *testing.T) {
 		},
 	})
 
-	runTest(t, "package('not').installed == false", map[string]value{
-		"olBgIHiECeDWquxQNId+6HvPuwUm+GgWNyZFv3qBfbpFA5I6nKEVSX8ynKw0DUc+ijW+D1hcpBheELESIbDTdA==": {
-			2, nil, false,
+	runTest(t, "package('acl').installed == true", map[string]value{
+		"IA/mh1qcKcrnANOhYpgeYqtqFWe7od9D8L1rskL+LmySCnOHnLjaQww2MZL+lhEVcE9vz8+IRM9YAxSCRJ2iwA==": {
+			2, nil, true,
 		},
-		"a15HA8C3jENBZ+X5vgqz3/octJmFOANb1n5dVyefrHSAvY4oyU/gigll79skqGHVn82I+hduvsoTRV43qOejLA==": {
+		"NRSGjPzTnDC5EeUFEAe0LaM9MtNtgkiq/D8lhxx0TTtKb9IULE672Tfe7N9smyqjs/hdWobucKNsWnkvS6JJ9A==": {
 			1, nil, true,
 		},
-		"Sz65cAIF9S0=": {
+		"4Q1qtmgoTTk=": {
 			1, nil, true,
 		},
 	})

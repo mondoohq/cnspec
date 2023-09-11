@@ -1,7 +1,7 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package policy
+package policy_test
 
 import (
 	"context"
@@ -11,10 +11,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnspec/policy"
 )
 
-func getChecksums(p *Policy) map[string]string {
+var schema llx.Schema
+
+func init() {
+	runtime := testutils.Local()
+	schema = runtime.Schema()
+}
+
+func getChecksums(p *policy.Policy) map[string]string {
 	return map[string]string{
 		"local content":   p.LocalContentChecksum,
 		"local execution": p.LocalExecutionChecksum,
@@ -47,22 +57,22 @@ func TestPolicyGroupCategory(t *testing.T) {
 	tests := []struct {
 		title string
 		yaml  string
-		typ   GroupType
+		typ   policy.GroupType
 	}{
-		{"empty", "", GroupType_UNCATEGORIZED},
-		{"uncategorized", "type: uncategorized", GroupType_UNCATEGORIZED},
-		{"uncategorized", "type: chapter", GroupType_CHAPTER},
-		{"uncategorized", "type: import", GroupType_IMPORT},
-		{"uncategorized", "type: override", GroupType_OVERRIDE},
-		{"uncategorized", "type: 1", GroupType_CHAPTER},
-		{"uncategorized", "type: 2", GroupType_IMPORT},
-		{"uncategorized", "type: 3", GroupType_OVERRIDE},
+		{"empty", "", policy.GroupType_UNCATEGORIZED},
+		{"uncategorized", "type: uncategorized", policy.GroupType_UNCATEGORIZED},
+		{"uncategorized", "type: chapter", policy.GroupType_CHAPTER},
+		{"uncategorized", "type: import", policy.GroupType_IMPORT},
+		{"uncategorized", "type: override", policy.GroupType_OVERRIDE},
+		{"uncategorized", "type: 1", policy.GroupType_CHAPTER},
+		{"uncategorized", "type: 2", policy.GroupType_IMPORT},
+		{"uncategorized", "type: 3", policy.GroupType_OVERRIDE},
 	}
 	for i := range tests {
 		cur := tests[i]
 		t.Run(cur.title, func(t *testing.T) {
 			fmt.Println(string(makeYamlCategory(cur.yaml)))
-			b, err := BundleFromYAML(makeYamlCategory(cur.yaml))
+			b, err := policy.BundleFromYAML(makeYamlCategory(cur.yaml))
 			require.NoError(t, err)
 			require.NotNil(t, b)
 			assert.Equal(t, cur.typ, b.Policies[0].Groups[0].Type)
@@ -78,19 +88,19 @@ func TestPolicyChecksums(t *testing.T) {
 
 	for _, file := range files {
 		t.Run(file, func(t *testing.T) {
-			b, err := BundleFromPaths(file)
+			b, err := policy.BundleFromPaths(file)
 			require.NoError(t, err)
 
 			// check that the checksum is identical
 			ctx := context.Background()
 
 			p := b.Policies[0]
-			_, err = b.Compile(ctx, nil)
+			_, err = b.Compile(ctx, schema, nil)
 			require.NoError(t, err)
 
 			// regular checksum tests
 
-			err = p.UpdateChecksums(ctx, nil, nil, b.ToMap())
+			err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), schema)
 			require.NoError(t, err, "computing initial checksums works")
 
 			checksums := getChecksums(p)
@@ -99,26 +109,26 @@ func TestPolicyChecksums(t *testing.T) {
 			}
 
 			p.InvalidateLocalChecksums()
-			err = p.UpdateChecksums(ctx, nil, nil, b.ToMap())
+			err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), schema)
 			assert.NoError(t, err, "computing checksums again")
 			assert.Equal(t, checksums, getChecksums(p), "recomputing yields same checksums")
 
 			// content updates
 
-			contentTests := map[string]func(p *Policy){
-				"author changed": func(p *Policy) {
+			contentTests := map[string]func(p *policy.Policy){
+				"author changed": func(p *policy.Policy) {
 					p.Authors = []*explorer.Author{{Name: "Bob"}}
 				},
-				"tags changed": func(p *Policy) {
+				"tags changed": func(p *policy.Policy) {
 					p.Tags = map[string]string{"key": "val"}
 				},
-				"name changed": func(p *Policy) {
+				"name changed": func(p *policy.Policy) {
 					p.Name = "nu name"
 				},
-				"version changed": func(p *Policy) {
+				"version changed": func(p *policy.Policy) {
 					p.Version = "1.2.3"
 				},
-				"group date changed": func(p *Policy) {
+				"group date changed": func(p *policy.Policy) {
 					if p.Groups == nil {
 						p.Specs[0].Created = 12345
 					} else {
@@ -127,12 +137,12 @@ func TestPolicyChecksums(t *testing.T) {
 				},
 			}
 
-			runContentTest := func(p *Policy, msg string, f func(p *Policy)) {
+			runContentTest := func(p *policy.Policy, msg string, f func(p *policy.Policy)) {
 				t.Run("content changed: "+msg, func(t *testing.T) {
 					checksums = getChecksums(p)
 					f(p)
 					p.InvalidateLocalChecksums()
-					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap())
+					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), schema)
 					assert.NoError(t, err, "computing checksums")
 					testChecksums(t, []bool{false, true, false, true}, checksums, getChecksums(p))
 				})
@@ -144,18 +154,18 @@ func TestPolicyChecksums(t *testing.T) {
 
 			// special handling for asset policies
 
-			assetMrn, err := mrn.NewMRN("//some.domain/" + MRN_RESOURCE_ASSET + "/assetname123")
+			assetMrn, err := mrn.NewMRN("//some.domain/" + policy.MRN_RESOURCE_ASSET + "/assetname123")
 			require.NoError(t, err)
 
-			assetPolicy := &Policy{
+			assetPolicy := &policy.Policy{
 				Mrn:  assetMrn.String(),
 				Name: assetMrn.String(),
 			}
-			assetBundle := &Bundle{Policies: []*Policy{assetPolicy}}
-			assetBundle.Compile(ctx, nil)
-			assetPolicy.UpdateChecksums(ctx, nil, nil, assetBundle.ToMap())
+			assetBundle := &policy.Bundle{Policies: []*policy.Policy{assetPolicy}}
+			assetBundle.Compile(ctx, schema, nil)
+			assetPolicy.UpdateChecksums(ctx, nil, nil, assetBundle.ToMap(), schema)
 
-			runContentTest(assetPolicy, "changing asset policy mrn", func(p *Policy) {
+			runContentTest(assetPolicy, "changing asset policy mrn", func(p *policy.Policy) {
 				p.Mrn += "bling"
 			})
 
@@ -164,7 +174,7 @@ func TestPolicyChecksums(t *testing.T) {
 			executionTests := map[string]func(){
 				"query spec set": func() {
 					if p.Groups == nil {
-						p.Specs[0].ScoringQueries = map[string]*DeprecatedV7_ScoringSpec{
+						p.Specs[0].ScoringQueries = map[string]*policy.DeprecatedV7_ScoringSpec{
 							"//local.cnspec.io/run/local-execution/queries/sshd-01": {
 								ScoringSystem: explorer.ScoringSystem_WORST,
 							},
@@ -194,7 +204,7 @@ func TestPolicyChecksums(t *testing.T) {
 					checksums = getChecksums(p)
 					f()
 					p.InvalidateLocalChecksums()
-					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap())
+					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), schema)
 					assert.NoError(t, err, "computing checksums")
 					updated := getChecksums(p)
 					testChecksums(t, []bool{false, false, false, false}, checksums, updated)
@@ -205,7 +215,7 @@ func TestPolicyChecksums(t *testing.T) {
 }
 
 func TestPolicyChecksummingWithVariantQueries(t *testing.T) {
-	bundleInitial, err := BundleFromYAML([]byte(`
+	bundleInitial, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
     name: Another policy
@@ -231,12 +241,12 @@ queries:
 	require.NoError(t, err)
 	pInitial := bundleInitial.Policies[0]
 	pInitial.InvalidateLocalChecksums()
-	initialBundleMap, err := bundleInitial.Compile(context.Background(), nil)
+	initialBundleMap, err := bundleInitial.Compile(context.Background(), schema, nil)
 	require.NoError(t, err)
-	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap)
+	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, schema)
 	assert.NoError(t, err, "computing checksums")
 
-	bundleUpdated, err := BundleFromYAML([]byte(`
+	bundleUpdated, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
     name: Another policy
@@ -262,9 +272,9 @@ queries:
 	require.NoError(t, err)
 	pUpdated := bundleUpdated.Policies[0]
 	pUpdated.InvalidateLocalChecksums()
-	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), nil)
+	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), schema, nil)
 	require.NoError(t, err)
-	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap)
+	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, schema)
 	assert.NoError(t, err, "computing checksums")
 
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
@@ -274,7 +284,7 @@ queries:
 }
 
 func TestPolicyChecksummingWithVariantChecks(t *testing.T) {
-	bundleInitial, err := BundleFromYAML([]byte(`
+	bundleInitial, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
     name: Another policy
@@ -300,12 +310,12 @@ queries:
 	require.NoError(t, err)
 	pInitial := bundleInitial.Policies[0]
 	pInitial.InvalidateLocalChecksums()
-	initialBundleMap, err := bundleInitial.Compile(context.Background(), nil)
+	initialBundleMap, err := bundleInitial.Compile(context.Background(), schema, nil)
 	require.NoError(t, err)
-	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap)
+	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, schema)
 	assert.NoError(t, err, "computing checksums")
 
-	bundleUpdated, err := BundleFromYAML([]byte(`
+	bundleUpdated, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
     name: Another policy
@@ -331,9 +341,9 @@ queries:
 	require.NoError(t, err)
 	pUpdated := bundleUpdated.Policies[0]
 	pUpdated.InvalidateLocalChecksums()
-	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), nil)
+	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), schema, nil)
 	require.NoError(t, err)
-	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap)
+	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, schema)
 	assert.NoError(t, err, "computing checksums")
 
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
@@ -344,7 +354,7 @@ queries:
 
 func TestPolicyChecksummingWithVariantChecksWithCycles(t *testing.T) {
 	{
-		bundleInitial, err := BundleFromYAML([]byte(`
+		bundleInitial, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
     name: Another policy
@@ -371,12 +381,12 @@ queries:
 		require.NoError(t, err)
 		pInitial := bundleInitial.Policies[0]
 		pInitial.InvalidateLocalChecksums()
-		_, err = bundleInitial.Compile(context.Background(), nil)
-		require.Equal(t, ErrVariantCycleDetected, err)
+		_, err = bundleInitial.Compile(context.Background(), schema, nil)
+		require.Equal(t, policy.ErrVariantCycleDetected, err)
 	}
 
 	{
-		bundleInitial, err := BundleFromYAML([]byte(`
+		bundleInitial, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
     name: Another policy
@@ -403,7 +413,7 @@ queries:
 		require.NoError(t, err)
 		pInitial := bundleInitial.Policies[0]
 		pInitial.InvalidateLocalChecksums()
-		_, err = bundleInitial.Compile(context.Background(), nil)
-		require.Equal(t, ErrVariantCycleDetected, err)
+		_, err = bundleInitial.Compile(context.Background(), schema, nil)
+		require.Equal(t, policy.ErrVariantCycleDetected, err)
 	}
 }

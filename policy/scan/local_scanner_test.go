@@ -4,14 +4,13 @@
 package scan
 
 import (
-	"net/http"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	v1 "go.mondoo.com/cnquery/motor/inventory/v1"
-	"go.mondoo.com/cnquery/upstream"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 )
 
 func TestFilterPreprocess(t *testing.T) {
@@ -34,30 +33,6 @@ func TestFilterPreprocess(t *testing.T) {
 }
 
 func TestGetUpstreamConfig(t *testing.T) {
-	t.Run("with upstream plugin", func(t *testing.T) {
-		opts := []ScannerOption{
-			WithUpstream("api-endpoint", "space-mrn", http.DefaultClient),
-		}
-		scanner := NewLocalScanner(opts...)
-		_, err := scanner.getUpstreamConfig(false, &Job{})
-		require.NoError(t, err)
-
-		_, err = scanner.getUpstreamConfig(true, &Job{})
-		require.NoError(t, err)
-	})
-
-	t.Run("with upstream plugin, but no http client", func(t *testing.T) {
-		opts := []ScannerOption{
-			WithUpstream("api-endpoint", "space-mrn", nil),
-		}
-		scanner := NewLocalScanner(opts...)
-		_, err := scanner.getUpstreamConfig(false, &Job{})
-		require.NoError(t, err)
-
-		_, err = scanner.getUpstreamConfig(true, &Job{})
-		require.NoError(t, err)
-	})
-
 	t.Run("with job creds", func(t *testing.T) {
 		opts := []ScannerOption{
 			AllowJobCredentials(),
@@ -70,8 +45,8 @@ func TestGetUpstreamConfig(t *testing.T) {
 		require.NoError(t, err)
 
 		job := &Job{
-			Inventory: &v1.Inventory{
-				Spec: &v1.InventorySpec{
+			Inventory: &inventory.Inventory{
+				Spec: &inventory.InventorySpec{
 					UpstreamCredentials: &upstream.ServiceAccountCredentials{
 						ApiEndpoint: "api",
 						ParentMrn:   "space-mrn",

@@ -18,9 +18,10 @@ import (
 	"go.mondoo.com/cnquery/cli/components"
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/motor/asset"
-	"go.mondoo.com/cnquery/stringx"
-	"go.mondoo.com/cnquery/upstream/mvd"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/utils/stringx"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -77,7 +78,7 @@ func (r *defaultReporter) print() error {
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	assetUrl := ""
-	assetsByPlatform := make(map[string][]*asset.Asset)
+	assetsByPlatform := make(map[string][]*inventory.Asset)
 	projectId := ""
 	assetsByScore := make(map[string]int)
 	for _, assetMrnName := range orderedAssets {
@@ -217,7 +218,7 @@ func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []s
 	return scores
 }
 
-func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*asset.Asset) []string {
+func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*inventory.Asset) []string {
 	assets := []string{}
 
 	maxPlatformLength := 0
@@ -236,7 +237,7 @@ func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*as
 	return assets
 }
 
-func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*asset.Asset) {
+func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*inventory.Asset) {
 	availablePlatforms := make([]string, 0, len(assetsByPlatform))
 	for k := range assetsByPlatform {
 		availablePlatforms = append(availablePlatforms, k)
@@ -366,7 +367,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 // Remove all this code and migrate it to tap or something
 // ============================= vv ============================================
 
-func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control, assetMrn string, asset *asset.Asset) {
+func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control, assetMrn string, asset *inventory.Asset) {
 	var scores []*policy.Score
 	for _, rj := range resolved.CollectorJob.ReportingJobs {
 		if rj.Type != policy.ReportingJob_CONTROL {
@@ -446,7 +447,7 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 	}
 }
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *asset.Asset) {
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
 	dataQueriesOutput := ""
@@ -583,7 +584,15 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	print := r.Printer
 
-	value, ok := results[vulnReportDatapointChecksum]
+	schema := providers.DefaultRuntime().Schema()
+	vulnChecksum, err := defaultChecksum(vulnReport, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
+		r.out.Write([]byte(print.Error("No vulnerabilities for this provider")))
+		return
+	}
+
+	value, ok := results[vulnChecksum]
 	if !ok {
 		return
 	}
@@ -611,8 +620,7 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	err := decoder.Decode(rawData)
-	if err != nil {
+	if err = decoder.Decode(rawData); err != nil {
 		r.out.Write([]byte(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter)))
 		return
 	}

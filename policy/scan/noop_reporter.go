@@ -4,7 +4,7 @@
 package scan
 
 import (
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 )
 
 type NoOpReporter struct{}
@@ -13,10 +13,10 @@ func NewNoOpReporter() Reporter {
 	return &NoOpReporter{}
 }
 
-func (r *NoOpReporter) AddReport(asset *asset.Asset, results *AssetReport) {
+func (r *NoOpReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 }
 
-func (r *NoOpReporter) AddScanError(asset *asset.Asset, err error) {
+func (r *NoOpReporter) AddScanError(asset *inventory.Asset, err error) {
 }
 
 func (r *NoOpReporter) Reports() *ScanResult {

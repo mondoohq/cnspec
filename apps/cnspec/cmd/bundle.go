@@ -13,10 +13,9 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	cnquery_cmd "go.mondoo.com/cnquery/apps/cnquery/cmd"
-	cnquery_config "go.mondoo.com/cnquery/apps/cnquery/cmd/config"
 	"go.mondoo.com/cnquery/cli/config"
-	"go.mondoo.com/cnquery/upstream"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/internal/bundle"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -94,7 +93,8 @@ var policyLintCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not find bundle files")
 		}
 
-		result, err := bundle.Lint(files...)
+		runtime := providers.DefaultRuntime()
+		result, err := bundle.Lint(runtime.Schema(), files...)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not lint bundle files")
 		}
@@ -157,7 +157,7 @@ var policyPublishCmd = &cobra.Command{
 		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		opts, optsErr := cnquery_config.ReadConfig()
+		opts, optsErr := config.Read()
 		if optsErr != nil {
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
 		}
@@ -172,7 +172,8 @@ var policyPublishCmd = &cobra.Command{
 
 		noLint := viper.GetBool("no-lint")
 		if !noLint {
-			result, err := bundle.Lint(files...)
+			runtime := providers.DefaultRuntime()
+			result, err := bundle.Lint(runtime.Schema(), files...)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not lint bundle files")
 			}
@@ -208,7 +209,7 @@ var policyPublishCmd = &cobra.Command{
 		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
 		if err != nil {
 			log.Error().Err(err).Msg(errorMessageServiceAccount)
-			os.Exit(cnquery_cmd.ConfigurationErrorCode)
+			os.Exit(ConfigurationErrorCode)
 		}
 
 		httpClient, err := opts.GetHttpClient()

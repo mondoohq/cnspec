@@ -4,7 +4,7 @@
 package scan
 
 import (
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -16,7 +16,7 @@ type AssetReport struct {
 }
 
 type Reporter interface {
-	AddReport(asset *asset.Asset, results *AssetReport)
-	AddScanError(asset *asset.Asset, err error)
+	AddReport(asset *inventory.Asset, results *AssetReport)
+	AddScanError(asset *inventory.Asset, err error)
 	Reports() *ScanResult
 }

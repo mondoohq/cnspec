@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/pkg/errors"
+	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/policy"
 )
@@ -23,7 +24,7 @@ func newFetcher() *fetcher {
 	}
 }
 
-func (f *fetcher) fetchBundles(ctx context.Context, urls ...string) (*policy.Bundle, error) {
+func (f *fetcher) fetchBundles(ctx context.Context, schema llx.Schema, urls ...string) (*policy.Bundle, error) {
 	var res *policy.Bundle = &policy.Bundle{}
 
 	for i := range urls {
@@ -39,7 +40,7 @@ func (f *fetcher) fetchBundles(ctx context.Context, urls ...string) (*policy.Bun
 		}
 
 		// need to generate MRNs for everything
-		if _, err := cur.Compile(ctx, nil); err != nil {
+		if _, err := cur.Compile(ctx, schema, nil); err != nil {
 			return nil, errors.Wrap(err, "failed to compile fetched bundle")
 		}
 

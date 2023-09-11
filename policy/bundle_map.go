@@ -12,7 +12,7 @@ import (
 	"go.mondoo.com/cnquery/explorer"
 	"go.mondoo.com/cnquery/llx"
 	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/sortx"
+	"go.mondoo.com/cnquery/utils/sortx"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
@@ -173,13 +173,13 @@ func sortPolicies(p *Policy, bundle *PolicyBundleMap, indexer map[string]struct{
 }
 
 // ValidatePolicy against the given bundle
-func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) error {
+func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy, schema llx.Schema) error {
 	if !mrn.IsValid(policy.Mrn) {
 		return errors.New("policy MRN is not valid: " + policy.Mrn)
 	}
 
 	for i := range policy.Groups {
-		if err := p.validateGroup(ctx, policy.Groups[i], policy.Mrn); err != nil {
+		if err := p.validateGroup(ctx, policy.Groups[i], policy.Mrn, schema); err != nil {
 			return err
 		}
 	}
@@ -195,7 +195,7 @@ func (p *PolicyBundleMap) ValidatePolicy(ctx context.Context, policy *Policy) er
 	return nil
 }
 
-func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup, policyMrn string) error {
+func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup, policyMrn string, schema llx.Schema) error {
 	if group == nil {
 		return errors.New("spec cannot be nil")
 	}
@@ -204,7 +204,7 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 		// since asset filters are run beforehand and don't make it into the report
 		// we don't store their code bundles separately
 		for _, query := range group.Filters.Items {
-			_, err := query.RefreshAsFilter(policyMrn)
+			_, err := query.RefreshAsFilter(policyMrn, schema)
 			if err != nil {
 				return err
 			}

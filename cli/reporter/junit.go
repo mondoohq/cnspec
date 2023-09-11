@@ -10,10 +10,12 @@ import (
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"github.com/mitchellh/mapstructure"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/motor/asset"
+	"go.mondoo.com/cnquery/providers"
+	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/shared"
-	"go.mondoo.com/cnquery/upstream/mvd"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -80,7 +82,7 @@ func ReportCollectionToJunit(r *policy.ReportCollection, out shared.OutputHelper
 }
 
 // assetPolicyTests converts asset scoring queries to Junit test cases
-func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
+func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
 	ts := junit.Testsuite{
 		Time:      "",
 		Testcases: []junit.Testcase{},
@@ -155,15 +157,21 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *ass
 }
 
 // assetPolicyTests converts asset vulnerability results to Junit test cases
-func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.Asset) *junit.Testsuite {
+func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset) *junit.Testsuite {
 	// check if we have a vulnerability report
 	results, ok := r.Reports[assetMrn]
 	if !ok {
 		return nil
 	}
 
+	schema := providers.DefaultRuntime().Schema()
+	vulnChecksum, err := defaultChecksum(vulnReport, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
+	}
+
 	rawResults := results.RawResults()
-	value, ok := rawResults[vulnReportDatapointChecksum]
+	value, ok := rawResults[vulnChecksum]
 	if !ok {
 		return nil
 	}
@@ -200,8 +208,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *asset.
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	err := decoder.Decode(rawData)
-	if err != nil {
+	if err = decoder.Decode(rawData); err != nil {
 		ts.Errors++
 		ts.Testcases = append(ts.Testcases, junit.Testcase{
 			Failure: &junit.Result{
