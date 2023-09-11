@@ -71,5 +71,6 @@ This generates and updates all required files for the build. At this point you c
 We love emojis in our commits. These are their meanings:
 
 🛑 breaking 🐛 bugfix 🧹 cleanup/internals ⚡ speed 📄 docs  
-✨⭐🌟🎉 smaller or larger features 🐎 race condition  
-🌙 MQL 🌈 visual 🍏 fix tests 🎫 auth 🦅 falcon 🐳 container  
+✨⭐🌟🌠 smaller or larger features 🐎 race condition  
+🌙 MQL 🌈 visual 🟢 fix tests 🎫 auth 🦅 falcon 🐳 container  
+
