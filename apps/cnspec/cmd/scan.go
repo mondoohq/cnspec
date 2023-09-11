@@ -39,11 +39,11 @@ func init() {
 
 	// bundles, packs & incognito mode
 	scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to  Mondoo Platform.")
-	scanCmd.Flags().StringSlice("querypack", nil, "Set the query packs to execute. This requires `querypack-bundle`. You can specify multiple UIDs.")
-	scanCmd.Flags().StringSliceP("querypack-bundle", "f", nil, "Path to local query pack file")
+	scanCmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.")
+	scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy file")
 	// flag completion command
-	scanCmd.RegisterFlagCompletionFunc("querypack", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return getQueryPacksForCompletion(), cobra.ShellCompDirectiveDefault
+	scanCmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
 	})
 	scanCmd.Flags().String("asset-name", "", "User-override for the asset name")
 	scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
@@ -59,14 +59,14 @@ var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Scan assets with one or more policies.",
 	Long: `
-This command scans an asset using a query pack. For example, you can scan
-the local system with its pre-configured query pack:
+This command scans an asset using a policy. For example, you can scan
+the local system with its pre-configured policies:
 
-		$ cnquery scan local
+		$ cnspec scan local
 
-To manually configure a query pack, use this:
+To manually configure a policy, use this:
 
-		$ cnquery scan local -f bundle.mql.yaml --incognito
+		$ cnspec scan local -f bundle.mql.yaml --incognito
 
 `,
 	PreRun: func(cmd *cobra.Command, args []string) {
@@ -84,14 +84,14 @@ To manually configure a query pack, use this:
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
 		viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
-		viper.BindPFlag("querypack-bundle", cmd.Flags().Lookup("querypack-bundle"))
+		viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
 		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
 		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 
 		// for all assets
 		viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
 		viper.BindPFlag("insecure", cmd.Flags().Lookup("insecure"))
-		viper.BindPFlag("querypacks", cmd.Flags().Lookup("querypack"))
+		viper.BindPFlag("policies", cmd.Flags().Lookup("policy"))
 		viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
 		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
@@ -113,7 +113,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	err = conf.loadPolicies()
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to resolve query packs")
+		log.Fatal().Err(err).Msg("failed to resolve policies")
 	}
 
 	report, err := RunScan(conf)
@@ -124,14 +124,14 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	printReports(report, conf, cmd)
 }
 
-// helper method to retrieve the list of query packs for autocomplete
-func getQueryPacksForCompletion() []string {
-	querypackList := []string{}
+// helper method to retrieve the list of policies for autocomplete
+func getPoliciesForCompletion() []string {
+	policyList := []string{}
 
 	// TODO: autocompletion
-	sort.Strings(querypackList)
+	sort.Strings(policyList)
 
-	return querypackList
+	return policyList
 }
 
 type scanConfig struct {

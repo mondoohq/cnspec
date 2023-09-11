@@ -5,13 +5,22 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
+	"os"
+	"regexp"
+	"runtime"
+	"strings"
+
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery"
+	cnquery_app "go.mondoo.com/cnquery/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/cli/config"
+	"go.mondoo.com/cnquery/cli/providers"
 	"go.mondoo.com/cnquery/cli/sysinfo"
 	"go.mondoo.com/cnquery/cli/theme"
 	"go.mondoo.com/cnquery/cli/theme/colors"
@@ -19,11 +28,6 @@ import (
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
-	"net/http"
-	"os"
-	"regexp"
-	"runtime"
-	"strings"
 )
 
 const (
@@ -78,6 +82,29 @@ var rootCmd = &cobra.Command{
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
+	err := providers.AttachCLIs(
+		rootCmd,
+		&providers.Command{
+			Command: shellCmd,
+			Run:     shellRun,
+			Action:  "Interactive shell with ",
+		},
+		&providers.Command{
+			Command: cnquery_app.RunCmd,
+			Run:     cnquery_app.RunCmdRun,
+			Action:  "Run a query with ",
+		},
+		&providers.Command{
+			Command: scanCmd,
+			Run:     scanCmdRun,
+			Action:  "Scan ",
+		},
+	)
+	if err != nil {
+		log.Error().Msg(err.Error())
+		os.Exit(1)
+	}
+
 	// normal cli handling
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
