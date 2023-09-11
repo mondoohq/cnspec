@@ -17,6 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery"
+	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/cli/execruntime"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/explorer"
@@ -27,7 +28,9 @@ import (
 	"go.mondoo.com/cnquery/providers"
 	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/providers-sdk/v1/inventory/manager"
+	"go.mondoo.com/cnquery/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnquery/utils/multierr"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
@@ -35,7 +38,13 @@ import (
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
+	"google.golang.org/protobuf/proto"
 )
+
+type assetWithRuntime struct {
+	asset   *inventory.Asset
+	runtime *providers.Runtime
+}
 
 type LocalScanner struct {
 	resolvedPolicyCache *inmemory.ResolvedPolicyCache
@@ -197,34 +206,7 @@ func preprocessPolicyFilters(filters []string) []string {
 	return res
 }
 
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConfig *upstream.UpstreamConfig) (*ScanResult, bool, error) {
-	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
-
-	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.Coordinator.NewRuntime()))
-	if err != nil {
-		return nil, false, errors.New("failed to resolve inventory for connection")
-	}
-	assetList := im.GetAssets()
-
-	if len(assetList) == 0 {
-		return nil, false, errors.New("could not find an asset that we can connect to")
-	}
-
-	if upstreamConfig.ApiEndpoint == "" || upstreamConfig.Incognito {
-		// ensure we have non-empty asset MRNs
-		for i := range assetList {
-			cur := assetList[i]
-			if cur.Mrn == "" && cur.Id == "" {
-				randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
-				x, err := mrn.NewMRN(randID)
-				if err != nil {
-					return nil, false, errors.Wrap(err, "failed to generate a random asset MRN")
-				}
-				cur.Mrn = x.String()
-			}
-		}
-	}
-
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, bool, error) {
 	// plan scan jobs
 	var reporter Reporter
 	switch job.ReportType {
@@ -238,35 +220,173 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		return nil, false, errors.Errorf("unknown report type: %s", job.ReportType)
 	}
 
-	progressBarElements := map[string]string{}
-	orderedKeys := []string{}
-	for i := range assetList {
-		// this shouldn't happen, but might
-		// it normally indicates a bug in the provider
-		if presentAsset, present := progressBarElements[assetList[i].PlatformIds[0]]; present {
-			return nil, false, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, assetList[i].Name, assetList[i].PlatformIds[0])
-		}
-		progressBarElements[assetList[i].PlatformIds[0]] = assetList[i].Name
-		orderedKeys = append(orderedKeys, assetList[i].PlatformIds[0])
+	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
+
+	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.Coordinator.NewRuntime()))
+	if err != nil {
+		return nil, false, errors.New("failed to resolve inventory for connection")
 	}
-	var multiprogress progress.MultiProgress
-	if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
-		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys, progress.WithScore())
+	assetList := im.GetAssets()
+	if len(assetList) == 0 {
+		return nil, false, errors.New("could not find an asset that we can connect to")
+	}
+
+	var assets []*assetWithRuntime
+	var assetCandidates []*inventory.Asset
+
+	// we connect and perform discovery for each asset in the job inventory
+	for i := range assetList {
+		asset := assetList[i]
+		resolvedAsset, err := im.ResolveAsset(asset)
 		if err != nil {
-			return nil, false, errors.Wrap(err, "could not create progress bar")
+			return nil, false, err
+		}
+		runtime := providers.Coordinator.NewRuntime()
+		runtime.DetectProvider(resolvedAsset)
+		if err := runtime.Connect(&plugin.ConnectReq{
+			Features: cnquery.GetFeatures(ctx),
+			Asset:    resolvedAsset,
+			Upstream: upstream,
+		}); err != nil {
+			log.Error().Err(err).Msg("unable to connect to asset")
+			continue
+		}
+		inventorySpec := runtime.Provider.Connection
+		if inventorySpec.Inventory != nil &&
+			inventorySpec.Inventory.Spec != nil &&
+			inventorySpec.Inventory.Spec.Assets != nil {
+			log.Debug().Msgf("adding %d discovered asset(s)", len(runtime.Provider.Connection.Inventory.Spec.Assets))
+			assetCandidates = append(assetCandidates, inventorySpec.Inventory.Spec.Assets...)
+		} else {
+			assetCandidates = append(assetCandidates, runtime.Provider.Connection.Asset)
+		}
+		// TODO: we want to keep better track of errors, since there may be
+		// multiple assets coming in. It's annoying to abort the scan if we get one
+		// error at this stage.
+
+		// we grab the asset from the connection, because it contains all the
+		// detected metadata (and IDs)
+		// assets = append(assets, runtime.Provider.Connection.Asset)
+	}
+
+	// for each asset candidate, we initialize a new runtime and connect to it.
+	for _, asset := range assetCandidates {
+		runtime := providers.Coordinator.NewRuntime()
+		// Make sure the provider for the asset is present
+		if err := runtime.DetectProvider(asset); err != nil {
+			return nil, false, err
+		}
+
+		err := runtime.Connect(&plugin.ConnectReq{
+			Features: config.Features,
+			Asset:    asset,
+			Upstream: upstream,
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("unable to connect to asset")
+			continue
+		}
+		assets = append(assets, &assetWithRuntime{
+			asset:   asset,
+			runtime: runtime,
+		})
+	}
+
+	if len(assets) == 0 {
+		return nil, false, nil
+	}
+
+	justAssets := []*inventory.Asset{}
+	for _, asset := range assets {
+		justAssets = append(justAssets, asset.asset)
+	}
+
+	// sync assets
+	if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
+		log.Info().Msg("synchronize assets")
+		client, err := upstream.InitClient()
+		if err != nil {
+			return nil, false, err
+		}
+
+		services, err := explorer.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
+		if err != nil {
+			return nil, false, err
+		}
+
+		resp, err := services.SynchronizeAssets(ctx, &explorer.SynchronizeAssetsReq{
+			SpaceMrn: client.SpaceMrn,
+			List:     justAssets,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
+		platformAssetMapping := make(map[string]*explorer.SynchronizeAssetsRespAssetDetail)
+		for i := range resp.Details {
+			log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
+			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
+		}
+
+		// attach the asset details to the assets list
+		for i := range assets {
+			log.Debug().Str("asset", assets[i].asset.Name).Strs("platform-ids", assets[i].asset.PlatformIds).Msg("update asset")
+			platformMrn := assets[i].asset.PlatformIds[0]
+			assets[i].asset.Mrn = platformAssetMapping[platformMrn].AssetMrn
+			assets[i].asset.Url = platformAssetMapping[platformMrn].Url
 		}
 	} else {
+		// ensure we have non-empty asset MRNs
+		for i := range assets {
+			cur := assets[i]
+			if cur.asset.Mrn == "" {
+				randID := "//" + explorer.SERVICE_NAME + "/" + explorer.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+				x, err := mrn.NewMRN(randID)
+				if err != nil {
+					return nil, false, multierr.Wrap(err, "failed to generate a random asset MRN")
+				}
+				cur.asset.Mrn = x.String()
+			}
+		}
+	}
+
+	// // if a bundle was provided check that it matches the filter, bundles can also be downloaded
+	// // later therefore we do not want to stop execution here
+	// if job.Bundle != nil && job.Bundle.FilterPolicies(job.PolicyFilters) {
+	// 	return nil, false, errors.New("all available packs filtered out. nothing to do.")
+	// }
+
+	progressBarElements := map[string]string{}
+	orderedKeys := []string{}
+	for i := range assets {
+		// this shouldn't happen, but might
+		// it normally indicates a bug in the provider
+		if presentAsset, present := progressBarElements[assets[i].asset.PlatformIds[0]]; present {
+			return nil, false, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, assets[i].asset.Name, assets[i].asset.PlatformIds[0])
+		}
+		progressBarElements[assets[i].asset.PlatformIds[0]] = assets[i].asset.Name
+		orderedKeys = append(orderedKeys, assets[i].asset.PlatformIds[0])
+	}
+	var multiprogress progress.MultiProgress
+	if isatty.IsTerminal(os.Stdout.Fd()) && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
+		var err error
+		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys)
+		if err != nil {
+			return nil, false, multierr.Wrap(err, "failed to create progress bars")
+		}
+	} else {
+		// TODO: adjust naming
 		multiprogress = progress.NoopMultiProgressBars{}
 	}
 
 	scanGroup := sync.WaitGroup{}
 	scanGroup.Add(1)
-
 	finished := false
 	go func() {
 		defer scanGroup.Done()
-		for i := range assetList {
-			asset := assetList[i]
+		for i := range assets {
+			asset := assets[i].asset
+			runtime := assets[i].runtime
 
 			// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
 			// we need to solve this at a different level.
@@ -282,15 +402,19 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 			p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: multiprogress}
 			s.RunAssetJob(&AssetJob{
 				DoRecord:         job.DoRecord,
-				UpstreamConfig:   upstreamConfig,
+				UpstreamConfig:   upstream,
 				Asset:            asset,
 				Bundle:           job.Bundle,
-				PolicyFilters:    preprocessPolicyFilters(job.PolicyFilters),
 				Props:            job.Props,
+				PolicyFilters:    preprocessPolicyFilters(job.PolicyFilters),
 				Ctx:              ctx,
 				Reporter:         reporter,
 				ProgressReporter: p,
+				runtime:          runtime,
 			})
+
+			// we don't need the runtime anymore, so close it
+			runtime.Close()
 		}
 		finished = true
 	}()
@@ -300,10 +424,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstreamConf
 		defer scanGroup.Done()
 		multiprogress.Open()
 	}()
-
 	scanGroup.Wait()
-
-	log.Debug().Msg("completed scanning all assets")
 	return reporter.Reports(), finished, nil
 }
 
@@ -349,6 +470,9 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 		platformId := job.Asset.PlatformIds[0]
 		job.Asset.Mrn = resp.Details[platformId].AssetMrn
 		job.Asset.Url = resp.Details[platformId].Url
+		if job.Asset.Labels == nil {
+			job.Asset.Labels = map[string]string{}
+		}
 		job.Asset.Labels["mondoo.com/project-id"] = resp.Details[platformId].ProjectId
 	}
 
@@ -520,33 +644,31 @@ func (s *LocalScanner) HealthCheck(ctx context.Context, req *HealthCheckRequest)
 }
 
 func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.UpstreamConfig, error) {
-	var endpoint, spaceMrn string
+	var res *upstream.UpstreamConfig
 	if s.upstream != nil {
-		endpoint = s.upstream.ApiEndpoint
-		spaceMrn = s.upstream.SpaceMrn
+		res = proto.Clone(s.upstream).(*upstream.UpstreamConfig)
+	} else {
+		res = &upstream.UpstreamConfig{}
 	}
-
-	res := upstream.UpstreamConfig{
-		SpaceMrn:    spaceMrn,
-		ApiEndpoint: endpoint,
-		Incognito:   incognito,
-	}
+	res.Incognito = incognito
 
 	jobCredentials := job.GetInventory().GetSpec().GetUpstreamCredentials()
 	if s.allowJobCredentials && jobCredentials != nil {
 		res.Creds = jobCredentials
-		endpoint = jobCredentials.GetApiEndpoint()
-		spaceMrn = jobCredentials.GetParentMrn()
+		res.ApiEndpoint = jobCredentials.GetApiEndpoint()
+		res.SpaceMrn = jobCredentials.GetParentMrn()
 	}
 
-	if endpoint == "" && !incognito {
-		return nil, errors.New("missing endpoint")
-	}
-	if spaceMrn == "" && !incognito {
-		return nil, errors.New("missing space mrn")
+	if !res.Incognito {
+		if res.ApiEndpoint == "" {
+			return nil, errors.New("missing API endpoint")
+		}
+		if res.SpaceMrn == "" {
+			return nil, errors.New("missing space mrn")
+		}
 	}
 
-	return &res, nil
+	return res, nil
 }
 
 type localAssetScanner struct {
