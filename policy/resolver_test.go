@@ -197,7 +197,7 @@ policies:
       mql: asset.name == "definitely not the asset name"
     queries:
     - uid: query1
-      mql: asset{*}
+      mql: asset.arch
 - uid: policy-ignored
   owner_mrn: //test.sth
   groups:
@@ -208,7 +208,7 @@ policies:
       mql: asset.name == "definitely not the asset name"
     queries:
     - uid: query1
-      mql: asset{*}
+      mql: asset.arch
 `)
 
 	srv := initResolver(t, []*testAsset{
@@ -223,9 +223,9 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
-		ignoreJob := rp.CollectorJob.ReportingJobs["KA46R+nvZXs="]
+		ignoreJob := rp.CollectorJob.ReportingJobs["lTbmPQz/DwA="]
 		require.NotNil(t, ignoreJob)
-		childJob := ignoreJob.ChildJobs["0yAvYregRkA="]
+		childJob := ignoreJob.ChildJobs["DmPNGpL6IXo="]
 		require.NotNil(t, childJob)
 		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 	})
