@@ -277,6 +277,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			return nil, false, err
 		}
 
+		// attach recording before connect, so it is tied to the asset
+		runtime.Recording = s.recording
+
 		err := runtime.Connect(&plugin.ConnectReq{
 			Features: config.Features,
 			Asset:    asset,
