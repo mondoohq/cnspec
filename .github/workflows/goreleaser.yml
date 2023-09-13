@@ -31,6 +31,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Skip Publish for Alpha and Beta Tags
+        id: skip-publish
+        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') || inputs.skip-publish == 'true'
+        run: |
+          echo "Skipping publish for alpha and beta tags"
+          echo "skip-publish=true" >> $GITHUB_OUTPUT
+          echo "skip-publish=true" >> $GITHUB_ENV
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
@@ -85,12 +93,30 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Run GoReleaser
+      - name: Run GoReleaser (w/ Docker Release)
+        if: ${{ ! steps.skip-publish.outputs.skip-publish }}
         uses: goreleaser/goreleaser-action@v4
         with:
           distribution: goreleaser
           version: latest
           args: release --clean --timeout 120m
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          CERT_PASSWORD: ${{ steps.gcp_secrets.outputs.code_sign_cert_challenge }}
+          QUILL_SIGN_PASSWORD: ''
+          QUILL_SIGN_P12: ${{ secrets.APPLE_SIGN_P12 }}
+          QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+
+      - name: Run GoReleaser (w/o Docker Release)
+        if: ${{ steps.skip-publish.outputs.skip-publish == 'true' }}
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --timeout 120m --skip-docker
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -111,13 +137,13 @@ jobs:
           rm -f ${CERT_PATH}
 
       - name: Publish Release to releases.mondoo.com
-        if: ${{ ! inputs.skip-publish }}
+        if: ${{ ! steps.skip-publish.outputs.skip-publish }}
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.RELEASR_ACTION_TOKEN }}
           repository: "mondoohq/releasr"
           event-type: publish-release
           client-payload: '{
-            "repository": "${{ github.event.repository.name }}",
-            "version":  "${{  github.ref_name }}"
-          }'
+              "repository": "${{ github.event.repository.name }}",
+              "version":  "${{  github.ref_name }}"
+            }'
