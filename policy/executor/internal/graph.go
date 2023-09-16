@@ -189,6 +189,7 @@ OUTER:
 
 func (ge *GraphExecutor) Debug() {
 	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
+	} else if val, ok := os.LookupEnv("TRACE"); ok && (val == "1" || val == "true") {
 	} else {
 		return
 	}
