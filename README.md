@@ -29,7 +29,6 @@ cnspec scan local -f core/mondoo-macos-security.mql.yaml
 cnspec scan local -f core/mondoo-windows-security.mql.yaml
 ```
 
-
 With the Open Security Registry
 
 ```bash
@@ -48,7 +47,6 @@ cnspec scan local --policy mondoohq/mondoo-macos-security
 # windows
 cnspec scan local --policy mondoohq/mondoo-windows-security
 ```
-
 
 ## Join the community!
 
