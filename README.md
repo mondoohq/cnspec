@@ -58,4 +58,4 @@ Additional certified security and compliance policies can be found in the Policy
 
 ## License
 
-[Mozilla Public License v2.0](https://github.com/mondoohq/mondoo-operator/blob/main/LICENSE)
+[Business Source License 1.1](LICENSE)
