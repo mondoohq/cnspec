@@ -6,6 +6,7 @@ package executor
 import (
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery"
 	"go.mondoo.com/cnquery/cli/progress"
 	"go.mondoo.com/cnquery/explorer"
@@ -47,14 +48,15 @@ func ExecuteResolvedPolicy(runtime llx.Runtime, collectorSvc policy.PolicyResolv
 }
 
 func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
-	var errs []error
 	queryMap := map[string]*explorer.Mquery{}
 
 	builder := internal.NewBuilder()
 	for _, m := range queries {
 		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures))
+		// Errors for filter queries are common when they reference resources for
+		// providers that are not found on the system.
 		if err != nil {
-			errs = append(errs, err)
+			log.Debug().Err(err).Str("mql", m.Mql).Msg("skipping filter query, not supported")
 			continue
 		}
 		builder.AddQuery(codeBundle, nil, nil)
@@ -79,10 +81,11 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
 
+	var errors []error
 	ge, err := builder.Build(runtime, "")
 	if err != nil {
-		errs = append(errs, err)
-		return nil, errs
+		errors = append(errors, err)
+		return nil, errors
 	}
 
 	if err := ge.Execute(); err != nil {
@@ -96,7 +99,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 		}
 	}
 
-	return filteredQueries, errs
+	return filteredQueries, errors
 }
 
 func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
