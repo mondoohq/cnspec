@@ -438,7 +438,7 @@ func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.S
 		return nil
 	}
 
-	client, err := s.upstreamClient()
+	client, err := s.upstreamClient(conf)
 	if err != nil {
 		log.Error().Err(err).Msg("could not init upstream client")
 		return nil
@@ -497,12 +497,12 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	}
 }
 
-func (s *LocalScanner) upstreamClient() (*upstream.UpstreamClient, error) {
+func (s *LocalScanner) upstreamClient(conf *upstream.UpstreamConfig) (*upstream.UpstreamClient, error) {
 	if s._upstreamClient != nil {
 		return s._upstreamClient, nil
 	}
 
-	client, err := s.upstream.InitClient()
+	client, err := conf.InitClient()
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +518,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	runtimeErr := inmemory.WithDb(s.runtime, s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			client, err := s.upstreamClient()
+			client, err := s.upstreamClient(job.UpstreamConfig)
 			if err != nil {
 				return err
 			}
@@ -592,7 +592,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		return nil, status.Errorf(codes.Internal, "missing upstream config in service")
 	}
 
-	client, err := s.upstreamClient()
+	client, err := s.upstreamClient(s.upstream)
 	if err != nil {
 		return nil, err
 	}
