@@ -30,17 +30,16 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230916224809-ce9f9f54eff1
+	go.mondoo.com/cnquery v0.0.0-20230922183435-36075f9419d9
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.18.0
 	golang.org/x/sync v0.3.0 // indirect
 	google.golang.org/genproto v0.0.0-20230913181813-007df8e322eb // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20230920204549-e6e6cdab5c13
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/yaml.v3 v3.0.1
 	sigs.k8s.io/yaml v1.3.0
 )
-
-require google.golang.org/genproto/googleapis/rpc v0.0.0-20230913181813-007df8e322eb
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
