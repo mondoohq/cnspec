@@ -56,7 +56,7 @@ var vulnCmd = &cobra.Command{
 
 // 		// v6 should make detect-cicd and category flag public, default for "detect-cicd" should switch to true
 // 		cmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If successful, sets the asset category to 'cicd'.")
-// 		cmd.Flags().String("category", "fleet", "Set the category for the assets to 'fleet|cicd'.")
+// 		cmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 // 		cmd.Flags().MarkHidden("category")
 
 // 		// output rendering

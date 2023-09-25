@@ -52,7 +52,7 @@ func init() {
 
 	// v6 should make detect-cicd and category flag public
 	scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
-	scanCmd.Flags().String("category", "fleet", "Set the category for the assets to 'fleet|cicd'.")
+	scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 	scanCmd.Flags().MarkHidden("category")
 }
 
