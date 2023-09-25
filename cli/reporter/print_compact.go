@@ -167,15 +167,15 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			url := ""
 			if len(orderedAssets) > 1 {
 				// we do not have a space url, so we extract it form the asset url
-				// https://console.mondoo.com/space/fleet/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
+				// https://console.mondoo.com/space/inventory/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
 				// an individual asset url wouldn't make sense here
 				// when runnin inside cicd, we create an url for the cicd project
-				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/fleet/[a-zA-Z0-9-]+(\?.+)$`)
+				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/inventory/[a-zA-Z0-9-]+(\?.+)$`)
 				m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
 				if projectId != "" {
 					url = m[1] + "/cicd/jobs" + m[2] + "&projectId=" + projectId
 				} else {
-					url = m[1] + "/fleet" + m[2]
+					url = m[1] + "/inventory" + m[2]
 				}
 
 			} else {
