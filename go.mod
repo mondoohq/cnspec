@@ -28,7 +28,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230926003547-e36b094d5e25
+	go.mondoo.com/cnquery v0.0.0-20230926233145-ad1c9d38e273
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.16.0
 	golang.org/x/sync v0.3.0 // indirect
@@ -333,7 +333,7 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
-	github.com/hashicorp/go-retryablehttp v0.7.1 // indirect
+	github.com/hashicorp/go-retryablehttp v0.7.2 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/mlock v0.1.1 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.6 // indirect
@@ -485,7 +485,7 @@ require (
 	github.com/vmware/go-vcloud-director/v2 v2.17.0 // indirect
 	github.com/vmware/goipmi v0.0.0-20181114221114-2333cd82d702 // indirect
 	github.com/vmware/govmomi v0.30.4 // indirect
-	github.com/xanzy/go-gitlab v0.74.0 // indirect
+	github.com/xanzy/go-gitlab v0.92.1 // indirect
 	github.com/yagipy/maintidx v1.0.0 // indirect
 	github.com/yeya24/promlinter v0.2.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
