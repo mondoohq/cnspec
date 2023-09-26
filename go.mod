@@ -23,14 +23,14 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/owenrumney/go-sarif/v2 v2.2.1
 	github.com/pkg/errors v0.9.1
-	github.com/rs/zerolog v1.30.0
+	github.com/rs/zerolog v1.31.0
 	github.com/segmentio/fasthash v1.0.3
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery v0.0.0-20230922183435-36075f9419d9
+	go.mondoo.com/cnquery v0.0.0-20230926082043-d4081a7bf7bb
 	go.mondoo.com/ranger-rpc v0.5.1
 	go.opentelemetry.io/otel v1.18.0
 	golang.org/x/sync v0.3.0 // indirect
