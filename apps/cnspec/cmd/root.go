@@ -117,7 +117,7 @@ func init() {
 	// since the log instance is already initialized, replace default zerolog color output with our own
 	// use color logger by default
 	logger.CliCompactLogger(logger.LogOutputWriter)
-	zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	config.DefaultConfigFile = "mondoo.yml"
 
