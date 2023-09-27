@@ -172,10 +172,12 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				// when runnin inside cicd, we create an url for the cicd project
 				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/inventory/[a-zA-Z0-9-]+(\?.+)$`)
 				m := spaceUrlRegexp.FindStringSubmatch(assetUrl)
-				if projectId != "" {
-					url = m[1] + "/cicd/jobs" + m[2] + "&projectId=" + projectId
-				} else {
-					url = m[1] + "/inventory" + m[2]
+				if len(m) > 0 {
+					if projectId != "" {
+						url = m[1] + "/cicd/jobs" + m[2] + "&projectId=" + projectId
+					} else {
+						url = m[1] + "/inventory" + m[2]
+					}
 				}
 
 			} else {
