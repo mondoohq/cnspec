@@ -315,12 +315,12 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			return nil, false, err
 		}
 
-		services, err := explorer.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
+		services, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
 		if err != nil {
 			return nil, false, err
 		}
 
-		resp, err := services.SynchronizeAssets(ctx, &explorer.SynchronizeAssetsReq{
+		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 			SpaceMrn: client.SpaceMrn,
 			List:     justAssets,
 		})
@@ -328,7 +328,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			return nil, false, err
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
-		platformAssetMapping := make(map[string]*explorer.SynchronizeAssetsRespAssetDetail)
+		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
 		for i := range resp.Details {
 			log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
 			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
@@ -346,7 +346,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		for i := range assets {
 			cur := assets[i]
 			if cur.asset.Mrn == "" {
-				randID := "//" + explorer.SERVICE_NAME + "/" + explorer.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+				randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
 				x, err := mrn.NewMRN(randID)
 				if err != nil {
 					return nil, false, multierr.Wrap(err, "failed to generate a random asset MRN")
