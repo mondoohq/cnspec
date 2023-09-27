@@ -346,7 +346,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		for i := range assets {
 			cur := assets[i]
 			if cur.asset.Mrn == "" {
-				randID := "//" + explorer.SERVICE_NAME + "/" + explorer.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+				randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
 				x, err := mrn.NewMRN(randID)
 				if err != nil {
 					return nil, false, multierr.Wrap(err, "failed to generate a random asset MRN")
