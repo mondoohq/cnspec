@@ -242,7 +242,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			return nil, false, err
 		}
 		runtime := providers.Coordinator.NewRuntime()
-		runtime.DetectProvider(resolvedAsset)
+		err = runtime.DetectProvider(resolvedAsset)
+		if err != nil {
+			return nil, false, err
+		}
 		if err := runtime.Connect(&plugin.ConnectReq{
 			Features: cnquery.GetFeatures(ctx),
 			Asset:    resolvedAsset,
