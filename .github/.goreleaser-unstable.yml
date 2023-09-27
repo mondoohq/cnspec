@@ -1,0 +1,310 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
+---
+project_name: cnspec
+env:
+  - CGO_ENABLED=0
+builds:
+  - id: linux
+    main: ./apps/cnspec/cnspec.go
+    binary: cnspec
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - 386
+      - arm64
+      - arm
+      - ppc64le
+    # ARM 6= Raspberry Pi A, A+, B, B+, Zero
+    # ARM 7= Raspberry Pi 2, 3, 4
+    goarm:
+      - 6
+      - 7
+    flags:
+      - -tags="production netgo"
+    ldflags:
+      - "-extldflags=-static"
+      - -s -w -X go.mondoo.com/cnspec.Version={{.Version}} -X go.mondoo.com/cnspec.Build={{.ShortCommit}} -X go.mondoo.com/cnspec.Date={{.Date}}
+      - -X go.mondoo.com/cnquery.Version={{.Version}} -X go.mondoo.com/cnquery.Build={{.ShortCommit}} -X go.mondoo.com/cnquery.Date={{.Date}}
+  - id: macos
+    main: ./apps/cnspec/cnspec.go
+    binary: cnspec
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags: -tags production
+    ldflags:
+      # clang + macos does not support static: - -extldflags "-static"
+      - -s -w -X go.mondoo.com/cnspec.Version={{.Version}} -X go.mondoo.com/cnspec.Build={{.ShortCommit}} -X go.mondoo.com/cnspec.Date={{.Date}}
+      - -X go.mondoo.com/cnquery.Version={{.Version}} -X go.mondoo.com/cnquery.Build={{.ShortCommit}} -X go.mondoo.com/cnquery.Date={{.Date}}
+    hooks:
+      post:
+        - cmd: /tmp/quill sign-and-notarize "{{ .Path }}" -vv
+          env:
+            - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+  - id: windows
+    main: ./apps/cnspec/cnspec.go
+    binary: cnspec
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # -buildmode exe is required since go 1.15.0 https://github.com/golang/go/issues/40795
+    flags: -tags production -buildmode exe
+    ldflags:
+      - "-extldflags -static"
+      - -s -w -X go.mondoo.com/cnspec.Version={{.Version}} -X go.mondoo.com/cnspec.Build={{.ShortCommit}} -X go.mondoo.com/cnspec.Date={{.Date}}
+      - -X go.mondoo.com/cnquery.Version={{.Version}} -X go.mondoo.com/cnquery.Build={{.ShortCommit}} -X go.mondoo.com/cnquery.Date={{.Date}}
+    hooks:
+      post:
+        - cmd: ./scripts/pkg/windows/windows-upx.sh '{{ .Path }}'
+          output: true
+          env:
+          - TARGET={{ .Target }}
+        - cmd: jsign --storetype DIGICERTONE --alias "{{ .Env.SM_CERT_ALIAS }}" --storepass "{{ .Env.SM_API_KEY }}|{{ .Env.SM_CLIENT_CERT_FILE}}|{{ .Env.SM_CLIENT_CERT_PASSWORD }}" --tsaurl "http://timestamp.digicert.com" '{{ .Path }}'
+nfpms:
+  -
+    maintainer: Mondoo <hello@mondoo.com>
+    description: Cloud-Native Security and Policy Framework
+    homepage: https://mondoo.com/
+    vendor: Mondoo, Inc
+    license: MPL-2.0
+    formats:
+      - deb
+      - rpm
+    dependencies:
+      - cnquery
+    contents:
+      - src: "scripts/pkg/linux/cnspec.service"
+        dst: "/etc/systemd/system/cnspec.service"
+        type: config
+        file_info:
+          mode: 0644
+      - src: "scripts/pkg/linux/cnspec.conf"
+        dst: "/etc/init/cnspec.conf"
+        type: config
+        file_info:
+          mode: 0644
+    scripts:
+      preinstall: "scripts/pkg/linux/preinstall.sh"
+      postinstall: "scripts/pkg/linux/postinstall.sh"
+      preremove: "scripts/pkg/linux/preremove.sh"
+    overrides:
+      deb:
+        contents:
+          - src: "scripts/pkg/debian/cnspec.service"
+            dst: "/etc/systemd/system/cnspec.service"
+            type: config
+            file_info:
+              mode: 0644
+          - src: "scripts/pkg/debian/cnspec.conf"
+            dst: "/etc/init/cnspec.conf"
+            type: config
+            file_info:
+              mode: 0644
+        scripts:
+          preinstall: "scripts/pkg/debian/preinstall.sh"
+          postinstall: "scripts/pkg/debian/postinstall.sh"
+          preremove: "scripts/pkg/debian/preremove.sh"
+    rpm:
+      signature:
+        key_file: '{{ .Env.GPG_KEY_PATH }}'
+archives:
+  - id: releases
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - none*
+checksum:
+  name_template: '{{ .ProjectName }}_v{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+snapshot:
+  name_template: "{{ .Tag }}-snapshot"
+changelog:
+  use: github-native
+dockers: # https://goreleaser.com/customization/docker/
+    # UBI containers
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-ubi"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-ubi"
+    # Standard containers
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-arm64v8"
+    build_flag_templates:
+      - "--platform=linux/arm64/v8"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}"
+  - use: buildx
+    goos: linux
+    goarch: arm
+    goarm: 6
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-armv6"
+    build_flag_templates:
+      - "--platform=linux/arm/v6"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}"
+  - use: buildx
+    goos: linux
+    goarch: arm
+    goarm: 7
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-armv7"
+    build_flag_templates:
+      - "--platform=linux/arm/v7"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}"
+  # Rootless
+    # UBI containers
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-amd64-rootless"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-ubi-rootless"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-arm64-rootless"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-ubi-rootless"
+    # Standard containers
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-amd64-rootless"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-rootless"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-arm64v8-rootless"
+    build_flag_templates:
+      - "--platform=linux/arm64/v8"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-rootless"
+  - use: buildx
+    goos: linux
+    goarch: arm
+    goarm: 6
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-armv6-rootless"
+    build_flag_templates:
+      - "--platform=linux/arm/v6"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-rootless"
+  - use: buildx
+    goos: linux
+    goarch: arm
+    goarm: 7
+    image_templates:
+      - "mondoo/{{ .ProjectName }}:{{ .Version }}-armv7-rootless"
+    build_flag_templates:
+      - "--platform=linux/arm/v7"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=VERSION={{ .Version }}-rootless"
+docker_manifests:  # https://goreleaser.com/customization/docker_manifest/
+    # UBI containers
+  - name_template: mondoo/{{ .ProjectName }}:{{ .Version }}-ubi
+    image_templates:
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-amd64
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-arm64
+    # Standard containers
+  - name_template: mondoo/{{ .ProjectName }}:{{ .Version }}
+    image_templates:
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-amd64
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-arm64v8
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-armv6
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-armv7
+  # Rootless
+    # UBI containers
+  - name_template: mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-rootless
+    image_templates:
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-amd64-rootless
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-ubi-arm64-rootless
+    # Standard containers
+  - name_template: mondoo/{{ .ProjectName }}:{{ .Version }}-rootless
+    image_templates:
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-amd64-rootless
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-arm64v8-rootless
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-armv6-rootless
+      - mondoo/{{ .ProjectName }}:{{ .Version }}-armv7-rootless
