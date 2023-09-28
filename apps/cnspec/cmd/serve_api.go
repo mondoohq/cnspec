@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/cli/config"
 	"go.mondoo.com/cnquery/logger"
+	"go.mondoo.com/cnquery/providers"
 	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
 	"go.mondoo.com/cnspec/policy/scan"
@@ -71,6 +72,7 @@ var serveApiCmd = &cobra.Command{
 		scanner := scan.NewLocalScanner(
 			scan.WithUpstream(&upstreamConfig),
 			scan.DisableProgressBar(),
+			scan.WithRecording(providers.NullRecording{}),
 		)
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
