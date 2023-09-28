@@ -373,7 +373,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		orderedKeys = append(orderedKeys, assets[i].asset.PlatformIds[0])
 	}
 	var multiprogress progress.MultiProgress
-	if isatty.IsTerminal(os.Stdout.Fd()) && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
+	if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
 		var err error
 		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys)
 		if err != nil {
