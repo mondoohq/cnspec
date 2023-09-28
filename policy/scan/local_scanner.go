@@ -254,15 +254,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			log.Error().Err(err).Msg("unable to connect to asset")
 			continue
 		}
-		inventorySpec := runtime.Provider.Connection
-		if inventorySpec.Inventory != nil &&
-			inventorySpec.Inventory.Spec != nil &&
-			inventorySpec.Inventory.Spec.Assets != nil {
-			log.Debug().Msgf("adding %d discovered asset(s)", len(runtime.Provider.Connection.Inventory.Spec.Assets))
-			assetCandidates = append(assetCandidates, inventorySpec.Inventory.Spec.Assets...)
-		} else {
-			assetCandidates = append(assetCandidates, runtime.Provider.Connection.Asset)
+
+		processedAssets, err := providers.ProcessAssetCandidates(runtime, runtime.Provider.Connection, upstream, "")
+		if err != nil {
+			return nil, false, err
 		}
+		assetCandidates = append(assetCandidates, processedAssets...)
+
 		// TODO: we want to keep better track of errors, since there may be
 		// multiple assets coming in. It's annoying to abort the scan if we get one
 		// error at this stage.
@@ -304,6 +302,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	justAssets := []*inventory.Asset{}
 	for _, asset := range assets {
+		asset.asset.KindString = asset.asset.GetPlatform().Kind
 		justAssets = append(justAssets, asset.asset)
 	}
 
