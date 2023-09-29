@@ -25,6 +25,12 @@ import (
 	"go.mondoo.com/cnspec/cli/reporter"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
+	policy_upstream "go.mondoo.com/cnspec/policy/upstream"
+)
+
+const (
+	// allow sending reports to alternative URLs
+	featureReportAlternateUrlEnv = "REPORT_URL"
 )
 
 func init() {
@@ -55,6 +61,7 @@ func init() {
 	scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 	scanCmd.Flags().MarkHidden("category")
 	scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
+	scanCmd.Flags().Bool("share", false, "create a web-based private reports when cnspec is unauthenticated. Defaults to false.")
 }
 
 var scanCmd = &cobra.Command{
@@ -90,6 +97,7 @@ To manually configure a policy, use this:
 		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
 		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
+		viper.BindPFlag("share", cmd.Flags().Lookup("share"))
 
 		// for all assets
 		viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
@@ -125,6 +133,26 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	printReports(report, conf, cmd)
+
+	var shareReport bool
+	if viper.IsSet("share") {
+		shareReportFlag := viper.GetBool("share")
+		shareReport = shareReportFlag
+	}
+
+	// if report sharing was requested, share the report and print the URL
+	if conf.IsIncognito && shareReport {
+		proxy, err := config.GetAPIProxy()
+		if err != nil {
+			log.Error().Err(err).Msg("error getting proxy information")
+		} else {
+			reportId, err := policy_upstream.UploadSharedReport(report, os.Getenv(featureReportAlternateUrlEnv), proxy)
+			if err != nil {
+				log.Fatal().Err(err).Msg("could not upload report results")
+			}
+			fmt.Printf("View report at %s\n", reportId.Url)
+		}
+	}
 
 	// if we had asset errors, we return a non-zero exit code
 	// asset errors are only connection issues
