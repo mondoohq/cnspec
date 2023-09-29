@@ -54,6 +54,7 @@ func init() {
 	scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
 	scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 	scanCmd.Flags().MarkHidden("category")
+	scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
 }
 
 var scanCmd = &cobra.Command{
@@ -88,6 +89,7 @@ To manually configure a policy, use this:
 		viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
 		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
 		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
+		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 
 		// for all assets
 		viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
@@ -123,6 +125,16 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	printReports(report, conf, cmd)
+
+	// if we had asset errors, we return a non-zero exit code
+	// asset errors are only connection issues
+	if len(report.Errors) > 0 {
+		os.Exit(1)
+	}
+
+	if report.GetWorstScore() < uint32(conf.ScoreThreshold) {
+		os.Exit(1)
+	}
 }
 
 // helper method to retrieve the list of policies for autocomplete
@@ -170,13 +182,14 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		log.Fatal().Err(err).Msg("failed to parse inventory")
 	}
 	conf := scanConfig{
-		Features:    opts.GetFeatures(),
-		IsIncognito: viper.GetBool("incognito"),
-		Inventory:   inv,
-		PolicyPaths: viper.GetStringSlice("policy-bundle"),
-		PolicyNames: viper.GetStringSlice("policies"),
-		Props:       props,
-		runtime:     runtime,
+		Features:       opts.GetFeatures(),
+		IsIncognito:    viper.GetBool("incognito"),
+		Inventory:      inv,
+		PolicyPaths:    viper.GetStringSlice("policy-bundle"),
+		PolicyNames:    viper.GetStringSlice("policies"),
+		ScoreThreshold: viper.GetInt("score-threshold"),
+		Props:          props,
+		runtime:        runtime,
 	}
 
 	// if users want to get more information on available output options,
