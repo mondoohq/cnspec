@@ -19,13 +19,13 @@ cnspec scan {TARGET} -f core/{POLICY_NAME}.mql.yaml
 Examples:
 
 ```bash
-# linux
+# Linux
 cnspec scan local -f core/mondoo-linux-security.mql.yaml
 
 # macOS
 cnspec scan local -f core/mondoo-macos-security.mql.yaml
 
-# windows
+# Windows
 cnspec scan local -f core/mondoo-windows-security.mql.yaml
 ```
 
@@ -38,13 +38,13 @@ cnspec scan {TARGET} --policy mondoohq/{POLICY_UID}
 Examples:
 
 ```bash
-# linux
+# Linux
 cnspec scan local --policy mondoohq/mondoo-linux-security
 
 # macOS
 cnspec scan local --policy mondoohq/mondoo-macos-security
 
-# windows
+# Windows
 cnspec scan local --policy mondoohq/mondoo-windows-security
 ```
 
