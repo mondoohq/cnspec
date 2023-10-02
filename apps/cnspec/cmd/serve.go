@@ -128,7 +128,7 @@ func getServeConfig() (*scanConfig, error) {
 	// we have to create a default runtime. This will be extended for anything
 	// that the job runner throws at it.
 
-	runtime := providers.Coordinator.NewRuntime()
+	runtime := providers.DefaultRuntime()
 
 	conf := scanConfig{
 		Features:   opts.GetFeatures(),
