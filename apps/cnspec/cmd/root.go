@@ -99,6 +99,11 @@ func Execute() {
 			Run:     scanCmdRun,
 			Action:  "Scan ",
 		},
+		&providers.Command{
+			Command: vulnCmd,
+			Run:     vulnCmdRun,
+			Action:  "Check for vulnerabilities ",
+		},
 	)
 	if err != nil {
 		log.Error().Msg(err.Error())
