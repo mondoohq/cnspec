@@ -35,7 +35,6 @@ import (
 	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor"
-	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
@@ -58,9 +57,7 @@ type LocalScanner struct {
 
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
-	// for remote connectivity
-	pluginsMap         map[string]ranger.ClientPlugin
-	disableProgressBar bool
+	disableProgressBar  bool
 }
 
 type ScannerOption func(*LocalScanner)
@@ -97,7 +94,6 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 		runtime:             runtime,
 		fetcher:             newFetcher(),
 		ctx:                 context.Background(),
-		pluginsMap:          map[string]ranger.ClientPlugin{},
 	}
 
 	for i := range opts {
@@ -599,11 +595,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		return nil, err
 	}
 
-	plugins := []ranger.ClientPlugin{}
-	for _, p := range s.pluginsMap {
-		plugins = append(plugins, p)
-	}
-	pClient, err := policy.NewRemoteServices(s.upstream.ApiEndpoint, plugins, client.HttpClient)
+	pClient, err := policy.NewRemoteServices(s.upstream.ApiEndpoint, client.Plugins, client.HttpClient)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not initialize asset synchronization")
 	}
