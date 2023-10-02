@@ -156,12 +156,14 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	// if we had asset errors, we return a non-zero exit code
 	// asset errors are only connection issues
-	if len(report.Errors) > 0 {
-		os.Exit(1)
-	}
+	if report != nil {
+		if len(report.Errors) > 0 {
+			os.Exit(1)
+		}
 
-	if report.GetWorstScore() < uint32(conf.ScoreThreshold) {
-		os.Exit(1)
+		if report.GetWorstScore() < uint32(conf.ScoreThreshold) {
+			os.Exit(1)
+		}
 	}
 }
 
