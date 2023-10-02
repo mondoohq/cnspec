@@ -232,15 +232,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	// we connect and perform discovery for each asset in the job inventory
 	for i := range assetList {
-		asset := assetList[i]
-		resolvedAsset, err := im.ResolveAsset(asset)
+		resolvedAsset, err := im.ResolveAsset(assetList[i])
 		if err != nil {
 			return nil, false, err
 		}
 
-		runtime, err := providers.Coordinator.RuntimeFor(asset, providers.DefaultRuntime())
+		runtime, err := providers.Coordinator.RuntimeFor(resolvedAsset, providers.DefaultRuntime())
 		if err != nil {
-			log.Error().Err(err).Str("asset", asset.Name).Msg("unable to create runtime for asset")
+			log.Error().Err(err).Str("asset", resolvedAsset.Name).Msg("unable to create runtime for asset")
 			continue
 		}
 		runtime.SetRecording(s.recording)
