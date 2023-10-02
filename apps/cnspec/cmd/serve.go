@@ -173,7 +173,7 @@ func getServeConfig() (*scanConfig, error) {
 		log.Info().Msg("configure inventory to scan local operating system")
 		conf.Inventory = inventory.New(inventory.WithAssets(&inventory.Asset{
 			Connections: []*inventory.Config{{
-				Backend: "local",
+				Type: "local",
 			}},
 		}))
 	}
