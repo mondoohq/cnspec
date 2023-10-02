@@ -567,7 +567,7 @@ func (s *LocalScanner) RunAdmissionReview(ctx context.Context, job *AdmissionRev
 		Spec: &inventory.InventorySpec{
 			Assets: []*inventory.Asset{{
 				Connections: []*inventory.Config{{
-					Backend:  "k8s",
+					Type:     "k8s",
 					Options:  opts,
 					Discover: job.Discovery,
 				}},
