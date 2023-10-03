@@ -320,6 +320,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			return nil, false, err
 		}
 
+		inventory.DeprecatedV8CompatAssets(justAssets)
 		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 			SpaceMrn: client.SpaceMrn,
 			List:     justAssets,
