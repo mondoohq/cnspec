@@ -301,9 +301,21 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, false, nil
 	}
 
+	runtimeEnv := execruntime.Detect()
+	var runtimeLabels map[string]string
+	if runtimeEnv != nil {
+		runtimeLabels = runtimeEnv.Labels()
+	}
+
 	justAssets := []*inventory.Asset{}
 	for _, asset := range assets {
 		asset.asset.KindString = asset.asset.GetPlatform().Kind
+		for k, v := range runtimeLabels {
+			if asset.asset.Labels == nil {
+				asset.asset.Labels = map[string]string{}
+			}
+			asset.asset.Labels[k] = v
+		}
 		justAssets = append(justAssets, asset.asset)
 	}
 
