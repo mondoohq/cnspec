@@ -451,9 +451,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			})
 
 			// shut down all ephemeral runtimes
-			if asset.Connections[0].Type != "k8s" {
-				runtime.Close()
-			}
+			runtime.Close()
 		}
 		finished = true
 	}()
