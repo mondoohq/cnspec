@@ -249,6 +249,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			Asset:    resolvedAsset,
 			Upstream: upstream,
 		}); err != nil {
+			reporter.AddScanError(resolvedAsset, err)
 			log.Error().Err(err).Msg("unable to connect to asset")
 			continue
 		}
@@ -292,6 +293,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			Upstream: upstream,
 		})
 		if err != nil {
+			reporter.AddScanError(candidate.asset, err)
 			log.Error().Err(err).Msg("unable to connect to asset")
 			continue
 		}
@@ -302,7 +304,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	}
 
 	if len(assets) == 0 {
-		return nil, false, nil
+		return reporter.Reports(), false, nil
 	}
 
 	runtimeEnv := execruntime.Detect()
