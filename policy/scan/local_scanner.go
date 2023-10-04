@@ -281,9 +281,17 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	for i := range assetCandidates {
 		candidate := assetCandidates[i]
 
-		runtime, err := providers.Coordinator.EphemeralRuntimeFor(candidate.asset)
-		if err != nil {
-			return nil, false, err
+		var runtime *providers.Runtime
+		if candidate.asset.Connections[0].Type == "k8s" {
+			runtime, err = providers.Coordinator.RuntimeFor(candidate.asset, providers.DefaultRuntime())
+			if err != nil {
+				return nil, false, err
+			}
+		} else {
+			runtime, err = providers.Coordinator.EphemeralRuntimeFor(candidate.asset)
+			if err != nil {
+				return nil, false, err
+			}
 		}
 
 		err = runtime.Connect(&plugin.ConnectReq{
