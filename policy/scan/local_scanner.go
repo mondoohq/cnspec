@@ -303,7 +303,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	runtimeEnv := execruntime.Detect()
 	var runtimeLabels map[string]string
-	if runtimeEnv != nil {
+	// If the runtime is an automated environment and the root asset is CI/CD, then we are doing a
+	// CI/CD scan and we need to apply the runtime labels to the assets
+	if runtimeEnv != nil &&
+		runtimeEnv.IsAutomatedEnv() &&
+		job.Inventory.Spec.Assets[0].Category == inventory.AssetCategory_CATEGORY_CICD {
 		runtimeLabels = runtimeEnv.Labels()
 	}
 
