@@ -305,9 +305,25 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, false, nil
 	}
 
+	runtimeEnv := execruntime.Detect()
+	var runtimeLabels map[string]string
+	// If the runtime is an automated environment and the root asset is CI/CD, then we are doing a
+	// CI/CD scan and we need to apply the runtime labels to the assets
+	if runtimeEnv != nil &&
+		runtimeEnv.IsAutomatedEnv() &&
+		job.Inventory.Spec.Assets[0].Category == inventory.AssetCategory_CATEGORY_CICD {
+		runtimeLabels = runtimeEnv.Labels()
+	}
+
 	justAssets := []*inventory.Asset{}
 	for _, asset := range assets {
 		asset.asset.KindString = asset.asset.GetPlatform().Kind
+		for k, v := range runtimeLabels {
+			if asset.asset.Labels == nil {
+				asset.asset.Labels = map[string]string{}
+			}
+			asset.asset.Labels[k] = v
+		}
 		justAssets = append(justAssets, asset.asset)
 	}
 
