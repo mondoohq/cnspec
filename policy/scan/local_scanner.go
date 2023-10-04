@@ -320,12 +320,19 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		// apply all annotations to the assets to be scanned
 		asset.asset.AddAnnotations(job.GetAnnotations())
 		asset.asset.KindString = asset.asset.GetPlatform().Kind
-		for k, v := range runtimeLabels {
-			if asset.asset.Labels == nil {
-				asset.asset.Labels = map[string]string{}
-			}
+		if asset.asset.Labels == nil {
+			asset.asset.Labels = map[string]string{}
+		}
+
+		// copy over the labels from the root asset
+		for k, v := range job.Inventory.Spec.Assets[0].Labels {
 			asset.asset.Labels[k] = v
 		}
+
+		for k, v := range runtimeLabels {
+			asset.asset.Labels[k] = v
+		}
+
 		justAssets = append(justAssets, asset.asset)
 	}
 
