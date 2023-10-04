@@ -185,6 +185,7 @@ type scanConfig struct {
 	PolicyPaths []string
 	PolicyNames []string
 	Props       map[string]string
+	Annotations map[string]string
 	Bundle      *policy.Bundle
 	runtime     *providers.Runtime
 
@@ -211,6 +212,20 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse inventory")
 	}
+
+	annotations, err := cmd.Flags().GetStringToString("annotation")
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse annotations")
+	}
+
+	// merge the config and the user-provided annotations with the latter having precedence
+	optAnnotations := opts.Annotations
+	if optAnnotations == nil {
+		optAnnotations = map[string]string{}
+	}
+	for k, v := range annotations {
+		optAnnotations[k] = v
+	}
 	conf := scanConfig{
 		Features:       opts.GetFeatures(),
 		IsIncognito:    viper.GetBool("incognito"),
@@ -220,6 +235,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		ScoreThreshold: viper.GetInt("score-threshold"),
 		Props:          props,
 		runtime:        runtime,
+		Annotations:    optAnnotations,
 	}
 
 	// if users want to get more information on available output options,
@@ -332,6 +348,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
 				Props:         config.Props,
+				Annotations:   config.Annotations,
 			})
 	} else {
 		res, err = scanner.Run(
@@ -341,6 +358,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
 				Props:         config.Props,
+				Annotations:   config.Annotations,
 			})
 	}
 
