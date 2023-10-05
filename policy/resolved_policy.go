@@ -5,8 +5,8 @@ package policy
 
 import (
 	"github.com/pkg/errors"
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/llx"
 )
 
 // WithDataQueries cycles through all data queries of the resolved policy and calls the given function

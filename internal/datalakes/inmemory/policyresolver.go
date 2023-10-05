@@ -10,10 +10,10 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/types"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/llx"
+	"go.mondoo.com/cnquery/v9/types"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 // return true if the framework was changed

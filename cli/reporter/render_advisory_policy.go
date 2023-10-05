@@ -12,13 +12,13 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/cli/printer"
-	"go.mondoo.com/cnquery/cli/theme/colors"
-	"go.mondoo.com/cnquery/providers"
-	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/utils/stringx"
-	"go.mondoo.com/cnspec/cli/components"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9/cli/printer"
+	"go.mondoo.com/cnquery/v9/cli/theme/colors"
+	"go.mondoo.com/cnquery/v9/providers"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v9/utils/stringx"
+	"go.mondoo.com/cnspec/v9/cli/components"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 // TODO: re-use the structure without importing all os resources

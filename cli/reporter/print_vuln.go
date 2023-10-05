@@ -11,8 +11,8 @@ import (
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/cli/theme"
-	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v9/cli/theme"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 )
 
 type defaultVulnReporter struct {

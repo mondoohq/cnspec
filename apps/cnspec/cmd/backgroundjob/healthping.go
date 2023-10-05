@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/health"
 )
 
 type healthPinger struct {

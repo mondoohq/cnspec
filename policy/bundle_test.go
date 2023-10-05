@@ -10,10 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/providers"
-	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/providers"
+	"go.mondoo.com/cnspec/v9/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 func TestBundleFromPaths(t *testing.T) {

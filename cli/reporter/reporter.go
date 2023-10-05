@@ -9,14 +9,14 @@ import (
 	"io"
 	"strings"
 
-	"go.mondoo.com/cnquery"
-	"go.mondoo.com/cnquery/cli/printer"
-	"go.mondoo.com/cnquery/cli/theme/colors"
-	"go.mondoo.com/cnquery/llx"
-	"go.mondoo.com/cnquery/mqlc"
-	"go.mondoo.com/cnquery/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/shared"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9"
+	"go.mondoo.com/cnquery/v9/cli/printer"
+	"go.mondoo.com/cnquery/v9/cli/theme/colors"
+	"go.mondoo.com/cnquery/v9/llx"
+	"go.mondoo.com/cnquery/v9/mqlc"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v9/shared"
+	"go.mondoo.com/cnspec/v9/policy"
 	"sigs.k8s.io/yaml"
 )
 

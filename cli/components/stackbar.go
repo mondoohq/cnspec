@@ -11,7 +11,7 @@ import (
 	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/v9/cli/theme/colors"
 )
 
 func sanitizeDatapoints(datapoints []float64) []float64 {

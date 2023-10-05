@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/checksums"
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9/checksums"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnspec/v9/policy"
 	"google.golang.org/protobuf/proto"
 )
 

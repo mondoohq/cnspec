@@ -10,7 +10,7 @@ import (
 	"net/url"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/v9/policy"
 	"go.mondoo.com/ranger-rpc"
 )
 

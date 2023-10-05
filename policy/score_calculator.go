@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/pkg/errors"
-	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/v9/explorer"
 	"google.golang.org/protobuf/proto"
 )
 
