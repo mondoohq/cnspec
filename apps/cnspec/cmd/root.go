@@ -25,7 +25,7 @@ import (
 	"go.mondoo.com/cnquery/v9/cli/theme"
 	"go.mondoo.com/cnquery/v9/cli/theme/colors"
 	"go.mondoo.com/cnquery/v9/logger"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )

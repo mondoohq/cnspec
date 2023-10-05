@@ -40,10 +40,7 @@ require (
 	sigs.k8s.io/yaml v1.3.0
 )
 
-require (
-	go.mondoo.com/cnquery/v9 v9.0.0-00010101000000-000000000000
-	go.mondoo.com/cnspec v0.0.0-20231005113344-e9ae1f23f83d
-)
+require go.mondoo.com/cnquery/v9 v9.0.0-00010101000000-000000000000
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
@@ -72,8 +69,10 @@ require (
 	github.com/go-jose/go-jose/v3 v3.0.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
+	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/hnakamur/go-scp v1.0.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/jtolds/gls v4.20.0+incompatible // indirect
 	github.com/kkHAIKE/contextcheck v1.1.4 // indirect
 	github.com/klauspost/compress v1.16.7 // indirect
 	github.com/maratori/testableexamples v1.0.0 // indirect
@@ -82,6 +81,7 @@ require (
 	github.com/nunnatsa/ginkgolinter v0.13.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.18 // indirect
 	github.com/sethvargo/go-retry v0.2.4 // indirect
+	github.com/smarty/assertions v1.15.1 // indirect
 	github.com/t-yuki/gocover-cobertura v0.0.0-20180217150009-aaee18c8195c // indirect
 	github.com/timonwong/loggercheck v0.9.4 // indirect
 	github.com/toravir/csd v0.0.0-20200911003203-13ae77ad849c // indirect

@@ -11,7 +11,7 @@ import (
 	cnquery_app "go.mondoo.com/cnquery/v9/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 )
 
 func init() {

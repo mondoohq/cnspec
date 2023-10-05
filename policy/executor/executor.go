@@ -16,7 +16,7 @@ import (
 	"go.mondoo.com/cnquery/v9/logger"
 	"go.mondoo.com/cnquery/v9/mqlc"
 	"go.mondoo.com/cnquery/v9/types"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/cnspec/v9/policy/executor/internal"
 )
 

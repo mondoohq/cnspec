@@ -13,7 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v9/cli/progress"
 	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/cnspec/v9/policy"
 )
 

@@ -20,7 +20,7 @@ import (
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/cnspec/v9/apps/cnspec/cmd/backgroundjob"
 	cnspec_config "go.mondoo.com/cnspec/v9/apps/cnspec/cmd/config"
 	"go.mondoo.com/cnspec/v9/policy/scan"

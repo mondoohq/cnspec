@@ -31,7 +31,7 @@ import (
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v9/utils/multierr"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/cnspec/v9/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v9/policy"
 	"go.mondoo.com/cnspec/v9/policy/executor"

@@ -10,7 +10,7 @@ import (
 
 	"github.com/pkg/errors"
 	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/cnspec/v9/policy"
 )
 
