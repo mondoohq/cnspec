@@ -2,7 +2,7 @@ module go.mondoo.com/cnspec/v9
 
 go 1.21
 
-replace go.mondoo.com/cnquery/v9 => ../cnquery
+// replace go.mondoo.com/cnquery/v9 => ../cnquery
 
 toolchain go1.21.0
 
@@ -40,7 +40,7 @@ require (
 	sigs.k8s.io/yaml v1.3.0
 )
 
-require go.mondoo.com/cnquery/v9 v9.0.0-00010101000000-000000000000
+require go.mondoo.com/cnquery/v9 v9.0.0-beta18
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
