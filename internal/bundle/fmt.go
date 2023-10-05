@@ -12,7 +12,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/v9/policy"
 	"gopkg.in/yaml.v3"
 	k8s_yaml "sigs.k8s.io/yaml"
 )

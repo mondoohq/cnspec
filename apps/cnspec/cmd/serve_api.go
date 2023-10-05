@@ -17,12 +17,12 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/cli/config"
-	"go.mondoo.com/cnquery/logger"
-	"go.mondoo.com/cnquery/providers"
-	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
-	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
-	"go.mondoo.com/cnspec/policy/scan"
+	"go.mondoo.com/cnquery/v9/cli/config"
+	"go.mondoo.com/cnquery/v9/logger"
+	"go.mondoo.com/cnquery/v9/providers"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
+	cnspec_config "go.mondoo.com/cnspec/v9/apps/cnspec/cmd/config"
+	"go.mondoo.com/cnspec/v9/policy/scan"
 )
 
 func init() {

@@ -8,11 +8,11 @@ import (
 	"math/rand"
 	"time"
 
-	"go.mondoo.com/cnquery/cli/progress"
-	"go.mondoo.com/cnquery/providers"
-	"go.mondoo.com/cnquery/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9/cli/progress"
+	"go.mondoo.com/cnquery/v9/providers"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 // Why do we want the scan stuff as a proto? Because we have a disk queue

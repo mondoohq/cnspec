@@ -8,8 +8,8 @@ package bundle
 import (
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnspec/v9/policy"
 	"gopkg.in/yaml.v3"
 )
 

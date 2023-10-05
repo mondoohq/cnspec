@@ -76,6 +76,7 @@ cli/generate:
 policy/generate:
 	go generate ./policy
 	go generate ./policy/scan
+	go generate ./policy/upstream
 
 upstream/generate:
 	go generate ./upstream

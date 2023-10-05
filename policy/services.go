@@ -7,8 +7,8 @@ import (
 	"context"
 	"net/http"
 
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/llx"
 	"go.mondoo.com/ranger-rpc"
 )
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/cli/theme/colors"
+	"go.mondoo.com/cnquery/v9/cli/theme/colors"
 )
 
 func maxWidth(labels []string) int {

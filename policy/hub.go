@@ -10,9 +10,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/explorer"
-	"go.mondoo.com/cnquery/logger"
-	"go.mondoo.com/cnquery/mrn"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/logger"
+	"go.mondoo.com/cnquery/v9/mrn"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
@@ -26,7 +26,7 @@ const (
 	CollectionIDPolicies  = "policies"
 )
 
-var tracer = otel.Tracer("go.mondoo.com/cnspec/policy")
+var tracer = otel.Tracer("go.mondoo.com/cnspec/v9/policy")
 
 func NewPolicyMrn(namespace string, uid string) string {
 	m := &mrn.MRN{

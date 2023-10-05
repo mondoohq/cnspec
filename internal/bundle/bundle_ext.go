@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/v9/explorer"
 	"gopkg.in/yaml.v3"
 )
 

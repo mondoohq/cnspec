@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/v9/explorer"
 )
 
 func TestV7Fill(t *testing.T) {

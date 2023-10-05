@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/llx"
+	"go.mondoo.com/cnquery/v9/llx"
 )
 
 type executionManager struct {

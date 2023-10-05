@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 func TestScoreDistributionAdd(t *testing.T) {

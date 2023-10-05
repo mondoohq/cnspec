@@ -9,9 +9,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/checksums"
-	"go.mondoo.com/cnquery/mrn"
-	"go.mondoo.com/cnquery/utils/sortx"
+	"go.mondoo.com/cnquery/v9/checksums"
+	"go.mondoo.com/cnquery/v9/mrn"
+	"go.mondoo.com/cnquery/v9/utils/sortx"
 )
 
 type ResolvedFrameworkNodeType int
@@ -639,7 +639,6 @@ func (r *ResolvedFramework) visit(node string, visited map[string]struct{}, sort
 	visited[node] = struct{}{}
 	for child := range r.ReportTargets[node] {
 		r.visit(child, visited, sorted)
-
 	}
 
 	*sorted = append(*sorted, node)

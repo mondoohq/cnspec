@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"go.mondoo.com/cnquery/explorer"
+	"go.mondoo.com/cnquery/v9/explorer"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/metadata"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
