@@ -64,15 +64,20 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 		return nil
 	}
 
-	qid2mrn := make(map[string]string, len(data.Bundle.Queries))
+	var qid2mrn map[string]string
 	aggregateQueries := []string{}
-	for i := range data.Bundle.Queries {
-		query := data.Bundle.Queries[i]
-		if query.CodeId == "" {
-			aggregateQueries = append(aggregateQueries, query.Mrn)
-		} else {
-			qid2mrn[query.CodeId] = query.Mrn
+	if data.Bundle != nil {
+		qid2mrn = make(map[string]string, len(data.Bundle.Queries))
+		for i := range data.Bundle.Queries {
+			query := data.Bundle.Queries[i]
+			if query.CodeId == "" {
+				aggregateQueries = append(aggregateQueries, query.Mrn)
+			} else {
+				qid2mrn[query.CodeId] = query.Mrn
+			}
 		}
+	} else {
+		qid2mrn = make(map[string]string, 0)
 	}
 
 	out.WriteString(
