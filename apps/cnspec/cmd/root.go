@@ -129,9 +129,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().String("log-level", "info", "Set log level: error, warn, info, debug, trace")
 	rootCmd.PersistentFlags().String("api-proxy", "", "Set proxy for communications with Mondoo API")
+	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic provider installation and update")
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 	viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
+	viper.BindPFlag("auto_update", rootCmd.PersistentFlags().Lookup("auto-update"))
 	viper.BindEnv("features")
 
 	config.Init(rootCmd)
