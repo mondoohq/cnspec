@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnquery/v9/cli/execruntime"
 	"go.mondoo.com/cnquery/v9/cli/inventoryloader"
 	"go.mondoo.com/cnquery/v9/cli/theme"
+	"go.mondoo.com/cnquery/v9/logger"
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/plugin"
@@ -132,6 +133,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
 
+	logger.DebugDumpJSON("report", report)
 	printReports(report, conf, cmd)
 
 	var shareReport bool
