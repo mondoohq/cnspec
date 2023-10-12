@@ -100,10 +100,10 @@ cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 cnspec/dist/goreleaser/stable:
-	goreleaser release --clean --skip-publish --skip-validate	-f .goreleaser.yml --timeout 120m
+	goreleaser release --clean --skip=validate,publish -f .goreleaser.yml --timeout 120m
 
 cnspec/dist/goreleaser/edge:
-	goreleaser release --clean --skip-publish --skip-validate	-f .goreleaser.yml --timeout 120m --snapshot
+	goreleaser release --clean --skip=validate,publish -f .goreleaser.yml --timeout 120m --snapshot
 
 
 #   ⛹🏽‍ Testing   #
