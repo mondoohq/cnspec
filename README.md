@@ -1,6 +1,6 @@
 # cnspec-policies
 
-This project contains security and operational best-practice policies (as code) for use with [`cnspec`](https://github.com/mondoohq/cnspec). The policies are published at the [Open Security Registry](https://mondoo.com/registry).
+This project contains security and operational best-practice policies (as code) for use with [cnspec](https://github.com/mondoohq/cnspec). The policies are published at the [Open Security Registry](https://mondoo.com/registry).
 
 We've organized them into these directories:
 
