@@ -21,6 +21,7 @@ const (
 	ResolvedFrameworkNodeTypeControl
 	ResolvedFrameworkNodeTypePolicy
 	ResolvedFrameworkNodeTypeCheck
+	ResolvedFrameworkNodeTypeQuery
 )
 
 type ResolvedFrameworkNode struct {
@@ -506,6 +507,18 @@ func (c *ControlMap) refreshMRNs(ownerMRN string, cache *bundleCache) error {
 		control.Uid = ""
 	}
 
+	for i := range c.Queries {
+		query := c.Queries[i]
+		if query.Uid == "" {
+			continue
+		}
+		query.Mrn, ok = cache.uid2mrn[query.Uid]
+		if !ok {
+			return errors.New("cannot find query '" + query.Uid + "' in this bundle, which is referenced by control " + c.Mrn)
+		}
+		query.Uid = ""
+	}
+
 	return nil
 }
 
@@ -586,6 +599,18 @@ func (r *ResolvedFramework) addControl(control *ControlMap) {
 			ResolvedFrameworkNode{
 				Mrn:  control.Controls[i].Mrn,
 				Type: ResolvedFrameworkNodeTypeControl,
+			},
+		)
+	}
+	for i := range control.Queries {
+		r.addReportLink(
+			ResolvedFrameworkNode{
+				Mrn:  control.Mrn,
+				Type: ResolvedFrameworkNodeTypeControl,
+			},
+			ResolvedFrameworkNode{
+				Mrn:  control.Queries[i].Mrn,
+				Type: ResolvedFrameworkNodeTypeQuery,
 			},
 		)
 	}
