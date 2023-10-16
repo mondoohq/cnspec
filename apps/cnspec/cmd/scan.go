@@ -215,6 +215,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		log.Fatal().Err(err).Msg("failed to parse inventory")
 	}
 
+	// annotations are user-added, editable labels for assets and are optional, therefore we do not need to check for err
 	annotations, _ := cmd.Flags().GetStringToString("annotation")
 	// merge the config and the user-provided annotations with the latter having precedence
 	optAnnotations := opts.Annotations
