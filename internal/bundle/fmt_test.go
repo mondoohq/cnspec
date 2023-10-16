@@ -58,7 +58,7 @@ queries:
       - name: Jane Doe
         email: jane@example.com
     groups:
-      - filters: platform.family.contains(_ == 'unix')
+      - filters: asset.family.contains(_ == 'unix')
         checks:
           - uid: query1
     scoring_system: 2
