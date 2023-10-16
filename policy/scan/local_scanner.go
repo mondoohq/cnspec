@@ -301,6 +301,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				return nil, false, err
 			}
 		}
+		runtime.UpstreamConfig = upstream
 
 		err = runtime.Connect(&plugin.ConnectReq{
 			Features: config.Features,
