@@ -23,7 +23,7 @@ policies:
     name: SSH Server Policy
     specs:
       - asset_filter:
-          query: asset.family.contains(_ == 'unix')
+          query: asset.family.contains('unix')
         scoring_queries:
           query1:
     version: "1.0.0"
@@ -58,7 +58,7 @@ queries:
       - name: Jane Doe
         email: jane@example.com
     groups:
-      - filters: asset.family.contains(_ == 'unix')
+      - filters: asset.family.contains('unix')
         checks:
           - uid: query1
     scoring_system: 2
