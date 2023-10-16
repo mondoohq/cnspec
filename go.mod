@@ -30,7 +30,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.17.0
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/ranger-rpc v0.5.1
+	go.mondoo.com/ranger-rpc v0.5.2
 	go.opentelemetry.io/otel v1.19.0
 	golang.org/x/sync v0.4.0 // indirect
 	google.golang.org/genproto v0.0.0-20231009173412-8bfb1ae86b6c // indirect
