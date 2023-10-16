@@ -23,7 +23,7 @@ policies:
     name: SSH Server Policy
     specs:
       - asset_filter:
-          query: platform.family.contains(_ == 'unix')
+          query: asset.family.contains(_ == 'unix')
         scoring_queries:
           query1:
     version: "1.0.0"
