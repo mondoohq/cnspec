@@ -90,7 +90,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		if val, ok := asset.Labels["mondoo.com/project-id"]; ok {
 			projectId = val
 		}
-		platformName := getPlatforNameForAsset(asset)
+		platformName := getPlatformNameForAsset(asset)
 		if platformName != "" {
 			assetsByPlatform[platformName] = append(assetsByPlatform[platformName], asset)
 		}
@@ -105,7 +105,11 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	}
 
 	if len(assetsByScore) > 0 {
-		header := fmt.Sprintf("Scanned %d assets", len(r.data.Assets))
+		assetsString := "asset"
+		if len(r.data.Assets) > 1 {
+			assetsString = "assets"
+		}
+		header := fmt.Sprintf("Scanned %d %s", len(r.data.Assets), assetsString)
 		r.out.Write([]byte(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String()))
 	}
 

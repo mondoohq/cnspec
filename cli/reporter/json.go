@@ -51,7 +51,7 @@ func prepareAssetsForPrinting(assets map[string]*inventory.Asset) map[string]*as
 			Mrn:          a.Mrn,
 			Name:         a.Name,
 			Url:          a.Url,
-			PlatformName: getPlatforNameForAsset(a),
+			PlatformName: getPlatformNameForAsset(a),
 		}
 		printableAssets[k] = pAsset
 	}
