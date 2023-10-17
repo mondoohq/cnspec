@@ -1597,9 +1597,18 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			// the query must exist, since validation happens earlier
 			mquery := cache.bundleMap.Queries[mrn]
 			execQuery := cache.executionQueries[mquery.Checksum]
-
+			uuid := cache.relativeChecksum(mquery.Mrn)
+			queryJob := &ReportingJob{
+				Uuid:      uuid,
+				QrId:      mquery.Mrn,
+				ChildJobs: map[string]*explorer.Impact{},
+				Type:      ReportingJob_DATA_QUERY,
+			}
+			nuJobs[uuid] = queryJob
 			for controlMrn := range targets {
 				controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
+				controlJob.ChildJobs[queryJob.Uuid] = nil
+				queryJob.Notify = append(queryJob.Notify, controlJob.Uuid)
 				err := connectDatapointsToReportingJob(execQuery, controlJob, job.Datapoints)
 				if err != nil {
 					return err

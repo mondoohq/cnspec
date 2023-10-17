@@ -469,6 +469,15 @@ framework_maps:
 			queryIdToReportingJob: map[string]*policy.ReportingJob{},
 			rjIdToReportingJob:    rp.CollectorJob.ReportingJobs,
 			rjIdToDatapointJob:    rp.CollectorJob.Datapoints,
+			dataQueriesMrns:       map[string]struct{}{},
+		}
+
+		for _, p := range bundleMap.Policies {
+			for _, g := range p.Groups {
+				for _, q := range g.Queries {
+					rjTester.dataQueriesMrns[q.Mrn] = struct{}{}
+				}
+			}
 		}
 
 		for _, rj := range rjTester.rjIdToReportingJob {
@@ -491,6 +500,8 @@ framework_maps:
 		rjTester.requireReportsTo(queryMrn("check-pass-1"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("check-pass-2"), controlMrn("control2"))
 		rjTester.requireReportsTo(queryMrn("check-fail"), controlMrn("control2"))
+		rjTester.requireReportsTo(queryMrn("active-query"), controlMrn("control1"))
+		rjTester.requireReportsTo(queryMrn("active-query-2"), controlMrn("control1"))
 
 		rjTester.requireReportsTo(controlMrn("control1"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(controlMrn("control1"), controlMrn("control4"))
@@ -504,10 +515,7 @@ framework_maps:
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass")])
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass-2")])
 
-		// data queries have no reporting jobs on their own
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-query")])
-		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("active-query")])
-		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("active-query-2")])
 	})
 
 	t.Run("test checksumming", func(t *testing.T) {
@@ -547,6 +555,7 @@ type frameworkReportingJobTester struct {
 	queryIdToReportingJob map[string]*policy.ReportingJob
 	rjIdToDatapointJob    map[string]*policy.DataQueryInfo
 	rjIdToReportingJob    map[string]*policy.ReportingJob
+	dataQueriesMrns       map[string]struct{}
 }
 
 func isFramework(queryId string) bool {
@@ -595,7 +604,12 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 	} else if isPolicy(childQueryId) {
 		require.Equal(tester.t, policy.ReportingJob_POLICY, childRj.Type)
 	} else {
-		require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
+		_, isData := tester.dataQueriesMrns[childQueryId]
+		if isData {
+			require.Equal(tester.t, policy.ReportingJob_DATA_QUERY, childRj.Type)
+		} else {
+			require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
+		}
 	}
 }
 
