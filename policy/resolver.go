@@ -1613,6 +1613,12 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 				if err != nil {
 					return err
 				}
+				// feed the datapoints into the query's reporting job too, not just the control job
+				err = connectDatapointsToReportingJob(execQuery, queryJob, job.Datapoints)
+				if err != nil {
+					return err
+				}
+
 			}
 
 			continue
