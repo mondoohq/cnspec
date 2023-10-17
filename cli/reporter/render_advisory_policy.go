@@ -36,21 +36,12 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	// render mini score card
 	score := report.Scores[policyObj.Mrn]
 
-	schema := providers.DefaultRuntime().Schema()
-	vulnChecksum, err := defaultChecksum(vulnReport, schema)
-	if err != nil {
-		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
-		b.WriteString(print.Error("no vulnerabilities for this provider"))
-		return b.String()
-	}
-
 	results := report.Data
-	value, ok := results[vulnChecksum]
-	if !ok {
-		b.WriteString(print.Error("could not find advisory report" + NewLineCharacter + NewLineCharacter))
+	value, err := getVulnReport(results)
+	if err != nil {
+		b.WriteString(print.Error(err.Error()))
 		return b.String()
 	}
-
 	if value == nil || value.Data == nil {
 		b.WriteString(print.Error("could not load advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
@@ -96,6 +87,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	}
 
 	// render additional information
+	schema := providers.DefaultRuntime().Schema()
 	kernelInstalledChecksum, err := defaultChecksum(kernelInstalled, schema)
 	if err != nil {
 		log.Debug().Err(err).Msg("could not determine installed kernel checksum")

@@ -10,9 +10,7 @@ import (
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"github.com/mitchellh/mapstructure"
-	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v9/shared"
@@ -164,18 +162,11 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 		return nil
 	}
 
-	schema := providers.DefaultRuntime().Schema()
-	vulnChecksum, err := defaultChecksum(vulnReport, schema)
-	if err != nil {
-		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
-	}
-
 	rawResults := results.RawResults()
-	value, ok := rawResults[vulnChecksum]
-	if !ok {
+	value, err := getVulnReport(rawResults)
+	if err != nil {
 		return nil
 	}
-
 	if value == nil || value.Data == nil {
 		return nil
 	}
