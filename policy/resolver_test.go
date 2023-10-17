@@ -351,8 +351,11 @@ policies:
       mql: 2 == 2
     queries:
     - uid: active-query
-      title: test
-      mql: 3 == 3
+      title: users
+      mql: users
+    - uid: active-query-2
+      title: users length
+      mql: users.length
 - uid: policy-inactive
   groups:
   - filters: "false"
@@ -407,6 +410,7 @@ framework_maps:
     - uid: check-pass-1
     queries:
     - uid: active-query
+    - uid: active-query-2
   - uid: control2
     checks:
     - uid: check-pass-2
@@ -458,7 +462,7 @@ framework_maps:
 			requireUnique(t, rj.Notify)
 		}
 
-		require.Len(t, rp.ExecutionJob.Queries, 4)
+		require.Len(t, rp.ExecutionJob.Queries, 5)
 
 		rjTester := frameworkReportingJobTester{
 			t:                     t,
@@ -482,7 +486,7 @@ framework_maps:
 
 		// TODO: how do we get a datapoint here so we can assert this more strictly?
 		control1 := rjTester.queryIdToReportingJob[controlMrn("control1")]
-		require.Equal(t, 1, len(control1.Datapoints))
+		require.Equal(t, 2, len(control1.Datapoints))
 
 		rjTester.requireReportsTo(queryMrn("check-pass-1"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("check-pass-2"), controlMrn("control2"))
@@ -499,8 +503,11 @@ framework_maps:
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-fail")])
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass")])
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass-2")])
+
+		// data queries have no reporting jobs on their own
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-query")])
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("active-query")])
+		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("active-query-2")])
 	})
 
 	t.Run("test checksumming", func(t *testing.T) {
