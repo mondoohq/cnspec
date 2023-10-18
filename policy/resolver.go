@@ -1314,15 +1314,8 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 					return nil, nil, errors.New("failed to connect datapoint to reporting job")
 				}
 
-				for dp := range executionQuery.Datapoints {
-					datapointID := executionQuery.Datapoints[dp]
-					datapointInfo, ok := collectorJob.Datapoints[datapointID]
-					if !ok {
-						return nil, nil, errors.New("failed to identity datapoint in collectorjob")
-					}
-
-					datapointInfo.Notify = append(datapointInfo.Notify, parentJob.Uuid)
-					parentJob.Datapoints[datapointID] = true
+				if err = connectDatapointsToReportingJob(executionQuery, parentJob, collectorJob.Datapoints); err != nil {
+					return nil, nil, err
 				}
 
 				// we don't need this any longer, since every datapoint now reports into
@@ -1334,6 +1327,23 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 	}
 
 	return executionJob, collectorJob, nil
+}
+
+func connectDatapointsToReportingJob(query *ExecutionQuery, job *ReportingJob, datapoints map[string]*DataQueryInfo) error {
+	for dp := range query.Datapoints {
+		datapointID := query.Datapoints[dp]
+		datapointInfo, ok := datapoints[datapointID]
+		if !ok {
+			return errors.New("failed to identity datapoint in collectorjob")
+		}
+
+		datapointInfo.Notify = append(datapointInfo.Notify, job.Uuid)
+		if job.Datapoints == nil {
+			job.Datapoints = map[string]bool{}
+		}
+		job.Datapoints[datapointID] = true
+	}
+	return nil
 }
 
 type queryLike interface {
@@ -1578,6 +1588,36 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 				rj.Notify = append(rj.Notify, queryJob.Uuid)
 				continue
 			}
+
+		case ResolvedFrameworkNodeTypeQuery:
+			if len(targets) == 0 {
+				continue
+			}
+
+			// the query must exist, since validation happens earlier
+			mquery := cache.bundleMap.Queries[mrn]
+			execQuery := cache.executionQueries[mquery.Checksum]
+			uuid := cache.relativeChecksum(mquery.Mrn)
+			queryJob := &ReportingJob{
+				Uuid:      uuid,
+				QrId:      mquery.Mrn,
+				ChildJobs: map[string]*explorer.Impact{},
+				Type:      ReportingJob_DATA_QUERY,
+			}
+			nuJobs[uuid] = queryJob
+			for controlMrn := range targets {
+				controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
+				controlJob.ChildJobs[queryJob.Uuid] = nil
+				queryJob.Notify = append(queryJob.Notify, controlJob.Uuid)
+				err := connectDatapointsToReportingJob(execQuery, queryJob, job.Datapoints)
+				if err != nil {
+					return err
+				}
+
+			}
+
+			continue
+
 		case ResolvedFrameworkNodeTypeControl:
 			// skip controls which are part of a FrameworkGroup with type DISABLE
 			if group, ok := frameworkGroupByControlMrn[mrn]; ok {

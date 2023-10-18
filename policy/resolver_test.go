@@ -349,6 +349,13 @@ policies:
       mql: 1 == 1
     - uid: check-pass-2
       mql: 2 == 2
+    queries:
+    - uid: active-query
+      title: users
+      mql: users
+    - uid: active-query-2
+      title: users length
+      mql: users.length
 - uid: policy-inactive
   groups:
   - filters: "false"
@@ -359,6 +366,10 @@ policies:
       mql: 1 == 1
     - uid: inactive-pass-2
       mql: 2 == 2
+    queries:
+    - uid: inactive-query
+      title: users group
+      mql: users { group}
 frameworks:
 - uid: framework1
   name: framework1
@@ -398,6 +409,9 @@ framework_maps:
   - uid: control1
     checks:
     - uid: check-pass-1
+    queries:
+    - uid: active-query
+    - uid: active-query-2
   - uid: control2
     checks:
     - uid: check-pass-2
@@ -449,12 +463,22 @@ framework_maps:
 			requireUnique(t, rj.Notify)
 		}
 
-		require.Len(t, rp.ExecutionJob.Queries, 3)
+		require.Len(t, rp.ExecutionJob.Queries, 5)
 
 		rjTester := frameworkReportingJobTester{
 			t:                     t,
 			queryIdToReportingJob: map[string]*policy.ReportingJob{},
 			rjIdToReportingJob:    rp.CollectorJob.ReportingJobs,
+			rjIdToDatapointJob:    rp.CollectorJob.Datapoints,
+			dataQueriesMrns:       map[string]struct{}{},
+		}
+
+		for _, p := range bundleMap.Policies {
+			for _, g := range p.Groups {
+				for _, q := range g.Queries {
+					rjTester.dataQueriesMrns[q.Mrn] = struct{}{}
+				}
+			}
 		}
 
 		for _, rj := range rjTester.rjIdToReportingJob {
@@ -470,9 +494,20 @@ framework_maps:
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-2")], queryMrn("check-pass-2"))
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], queryMrn("check-fail"))
 
+		// TODO: how do we get a datapoint here so we can assert this more strictly?
+		queryJob1 := rjTester.queryIdToReportingJob[queryMrn("active-query")]
+		require.Equal(t, 1, len(queryJob1.Datapoints))
+
+		queryJob2 := rjTester.queryIdToReportingJob[queryMrn("active-query-2")]
+		require.Equal(t, 1, len(queryJob2.Datapoints))
+
+		// scoring queries
 		rjTester.requireReportsTo(queryMrn("check-pass-1"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("check-pass-2"), controlMrn("control2"))
 		rjTester.requireReportsTo(queryMrn("check-fail"), controlMrn("control2"))
+		// data queries
+		rjTester.requireReportsTo(queryMrn("active-query"), controlMrn("control1"))
+		rjTester.requireReportsTo(queryMrn("active-query-2"), controlMrn("control1"))
 
 		rjTester.requireReportsTo(controlMrn("control1"), frameworkMrn("framework1"))
 		rjTester.requireReportsTo(controlMrn("control1"), controlMrn("control4"))
@@ -485,6 +520,8 @@ framework_maps:
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-fail")])
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass")])
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-pass-2")])
+
+		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-query")])
 	})
 
 	t.Run("test checksumming", func(t *testing.T) {
@@ -522,7 +559,9 @@ framework_maps:
 type frameworkReportingJobTester struct {
 	t                     *testing.T
 	queryIdToReportingJob map[string]*policy.ReportingJob
+	rjIdToDatapointJob    map[string]*policy.DataQueryInfo
 	rjIdToReportingJob    map[string]*policy.ReportingJob
+	dataQueriesMrns       map[string]struct{}
 }
 
 func isFramework(queryId string) bool {
@@ -571,7 +610,12 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 	} else if isPolicy(childQueryId) {
 		require.Equal(tester.t, policy.ReportingJob_POLICY, childRj.Type)
 	} else {
-		require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
+		_, isData := tester.dataQueriesMrns[childQueryId]
+		if isData {
+			require.Equal(tester.t, policy.ReportingJob_DATA_QUERY, childRj.Type)
+		} else {
+			require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
+		}
 	}
 }
 
