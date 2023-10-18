@@ -125,6 +125,20 @@ func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bun
 		ref.Uid = ""
 	}
 
+	for i := range fm.QueryPackDependencies {
+		// note: query packs currently come back as policies in the bundle
+		// there is no field that stores query packs separately
+		ref := fm.QueryPackDependencies[i]
+		if ref.Uid == "" {
+			continue
+		}
+		ref.Mrn, ok = cache.uid2mrn[ref.Uid]
+		if !ok {
+			return errors.New("cannot find query pack dependency '" + ref.Uid + "' in this bundle, which is referenced by framework map " + fm.Mrn)
+		}
+		ref.Uid = ""
+	}
+
 	for j := range fm.Controls {
 		control := fm.Controls[j]
 		if err := control.refreshMRNs(ownerMrn, cache); err != nil {
@@ -154,6 +168,10 @@ func (m *FrameworkMap) UpdateChecksums() {
 	}
 
 	for _, dep := range m.PolicyDependencies {
+		executionChecksum = executionChecksum.Add(dep.Mrn)
+	}
+
+	for _, dep := range m.QueryPackDependencies {
 		executionChecksum = executionChecksum.Add(dep.Mrn)
 	}
 

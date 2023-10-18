@@ -368,7 +368,8 @@ policies:
       mql: 2 == 2
     queries:
     - uid: inactive-query
-      mql: 4 == 4
+      title: users group
+      mql: users { group}
 frameworks:
 - uid: framework1
   name: framework1
@@ -494,12 +495,17 @@ framework_maps:
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], queryMrn("check-fail"))
 
 		// TODO: how do we get a datapoint here so we can assert this more strictly?
-		control1 := rjTester.queryIdToReportingJob[controlMrn("control1")]
-		require.Equal(t, 2, len(control1.Datapoints))
+		queryJob1 := rjTester.queryIdToReportingJob[queryMrn("active-query")]
+		require.Equal(t, 1, len(queryJob1.Datapoints))
 
+		queryJob2 := rjTester.queryIdToReportingJob[queryMrn("active-query-2")]
+		require.Equal(t, 1, len(queryJob2.Datapoints))
+
+		// scoring queries
 		rjTester.requireReportsTo(queryMrn("check-pass-1"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("check-pass-2"), controlMrn("control2"))
 		rjTester.requireReportsTo(queryMrn("check-fail"), controlMrn("control2"))
+		// data queries
 		rjTester.requireReportsTo(queryMrn("active-query"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("active-query-2"), controlMrn("control1"))
 
@@ -611,17 +617,6 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 			require.Equal(tester.t, policy.ReportingJob_CHECK, childRj.Type)
 		}
 	}
-}
-
-func (tester *frameworkReportingJobTester) requireHasADatapoint(parentQueryId string, childId string) {
-	tester.t.Helper()
-
-	_, ok := tester.rjIdToDatapointJob[childId]
-	require.True(tester.t, ok)
-	parentRj, ok := tester.queryIdToReportingJob[parentQueryId]
-	require.True(tester.t, ok)
-
-	require.True(tester.t, parentRj.Datapoints[childId])
 }
 
 func TestResolve_CheckValidUntil(t *testing.T) {

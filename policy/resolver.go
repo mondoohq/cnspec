@@ -1609,12 +1609,7 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 				controlJob := ensureControlJob(cache, nuJobs, controlMrn, framework, frameworkGroupByControlMrn)
 				controlJob.ChildJobs[queryJob.Uuid] = nil
 				queryJob.Notify = append(queryJob.Notify, controlJob.Uuid)
-				err := connectDatapointsToReportingJob(execQuery, controlJob, job.Datapoints)
-				if err != nil {
-					return err
-				}
-				// feed the datapoints into the query's reporting job too, not just the control job
-				err = connectDatapointsToReportingJob(execQuery, queryJob, job.Datapoints)
+				err := connectDatapointsToReportingJob(execQuery, queryJob, job.Datapoints)
 				if err != nil {
 					return err
 				}
