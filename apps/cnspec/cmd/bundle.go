@@ -45,6 +45,23 @@ func init() {
 	rootCmd.AddCommand(policyBundlesCmd)
 }
 
+// ensureProviders ensures that all providers are locally installed
+func ensureProviders() error {
+	providerList := []string{}
+
+	for k := range providers.DefaultProviders {
+		providerList = append(providerList, k)
+	}
+
+	// ensure that the providers are loaded
+	for _, connectionName := range providerList {
+		if _, err := providers.EnsureProvider(connectionName, "", true, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var policyBundlesCmd = &cobra.Command{
 	Use:   "bundle",
 	Short: "Manage policy bundles.",
@@ -87,6 +104,7 @@ var policyLintCmd = &cobra.Command{
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Info().Str("file", args[0]).Msg("lint policy bundle")
+		ensureProviders()
 
 		files, err := policy.WalkPolicyBundleFiles(args[0])
 		if err != nil {
@@ -135,6 +153,7 @@ var policyFmtCmd = &cobra.Command{
 	Short:   "Apply style formatting to one or more policy bundles.",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureProviders()
 		for _, path := range args {
 			err := bundle.FormatRecursive(path)
 			if err != nil {
@@ -162,6 +181,8 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(optsErr).Msg("could not load configuration")
 		}
 		config.DisplayUsedConfig()
+
+		ensureProviders()
 
 		filename := args[0]
 		log.Info().Str("file", filename).Msg("load policy bundle")
