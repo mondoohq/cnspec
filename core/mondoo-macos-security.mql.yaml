@@ -4,7 +4,7 @@
 policies:
   - uid: mondoo-macos-security
     name: macOS Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -57,7 +57,7 @@ policies:
       - title: Core
         filters: |
           asset.platform == "macos"
-          asset.version == /^10\./ || asset.version == /^11\./ || asset.version == /^12\./ ||  asset.version == /^13\./ || asset.version == /^14\./
+          asset.version >= "10"
         checks:
           - uid: mondoo-macos-security-disable-bluetooth-sharing
           - uid: mondoo-macos-security-disable-bonjour-advertising-service
@@ -84,7 +84,7 @@ policies:
       - title: Account Security
         filters: |
           asset.platform == "macos"
-          asset.version == /^10\./ || asset.version == /^11\./ || asset.version == /^12\./ ||  asset.version == /^13\./ || asset.version == /^14\./
+          asset.version >= "10"
         checks:
           - uid: mondoo-macos-security-do-not-enable-the-root-account
           - uid: mondoo-macos-security-password-age
@@ -94,7 +94,7 @@ policies:
       - title: Logging
         filters: |
           asset.platform == "macos"
-          asset.version == /^10\./ || asset.version == /^11\./ || asset.version == /^12\./ ||  asset.version == /^13\./ || asset.version == /^14\./
+          asset.version >= "10"
         checks:
           - uid: mondoo-macos-security-control-access-to-audit-records
           - uid: mondoo-macos-security-enable-security-auditing
@@ -132,8 +132,22 @@ queries:
         With remote Apple events turned on, an AppleScript program running on another Mac can interact with the local computer.
   - uid: mondoo-macos-security-disable-internet-sharing
     title: Disable Internet Sharing
-    impact: 30
-    mql: file('/Library/Preferences/com.apple.nat.plist').exists == false || parse.plist('/Library/Preferences/SystemConfiguration/com.apple.nat.plist').params['NAT']['Enabled'] == 0
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Preferences/SystemConfiguration/com.apple.nat.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params['NAT']['Enabled'] == 0
+        }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+          parse.plist(filePath2).params["com.apple.MCX"]["forceInternetSharingOff"]["value"] == true
+        }
+        filePath3 = "/Library/Managed Preferences/com.apple.MCX.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['forceInternetSharingOff'] == true
+        a || b || c
+      }
     docs:
       desc: Internet Sharing uses the open source `natd` process to share an internet connection with other computers and devices on a local network. This allows the Mac to function as a router and share the connection to other, possibly unauthorized, devices.
       remediation: |-
@@ -243,13 +257,12 @@ queries:
     title: Disable Bluetooth Sharing
     impact: 50
     mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ) {
-        file(home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist").exists
-        if( file(home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist").exists ) {
-          parse.plist( home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist" ) {
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 =  home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist"
+        file(filePath1).exists == true
+          parse.plist(filePath1) {
             params['PrefKeyServicesEnabled'] == null || params['PrefKeyServicesEnabled'] == false
           }
-        }
       }
     docs:
       desc: Bluetooth Sharing allows files to be exchanged with Bluetooth-enabled devices.
@@ -341,7 +354,21 @@ queries:
   - uid: mondoo-macos-security-disable-content-caching
     title: Disable Content Caching
     impact: 50
-    mql: parse.plist('/Library/Preferences/com.apple.AssetCache.plist').params['Activated'] == false
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.applicationaccess"]["allowContentCaching"]["value"] == false &&
+            parse.plist(filePath1).params["com.apple.AssetCache"]["Activated"]["value"] == false
+        }
+        filePath2 = "/Library/Preferences/com.apple.AssetCache.plist"
+        filePath3 = "/Library/Preferences/com.apple.applicationaccess.plist"
+        b = file(filePath2).exists &&
+          parse.plist(filePath2).params["Activated"] == false &&
+            file(filePath3).exists &&
+              parse.plist(filePath3).params["allowContentCaching"] == false
+        a || b
+      }
     docs:
       desc: |-
         Starting with 10.13 (macOS High Sierra) Apple introduced a service to make it easier to deploy data from Apple, including software updates, where there are bandwidth constraints to the Internet and fewer constraints and greater bandwidth on the local subnet. This capability can be very valuable for organizations that have throttled and possibly metered Internet connections. In heterogeneous enterprise networks with multiple subnets the effectiveness of this capability would be determined on how many Macs were on each subnet at the time new large updates were made available upstream.
@@ -373,7 +400,20 @@ queries:
   - uid: mondoo-macos-security-disable-media-sharing
     title: Disable Media Sharing
     impact: 50
-    mql: users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ).all( parse.plist(home + '/Library/Preferences/com.apple.amp.mediasharingd.plist').params['home-sharing-enabled'] == 0 )
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath = home + '/Library/Preferences/com.apple.amp.mediasharingd.plist'
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+            parse.plist(filePath).params['home-sharing-enabled'] == 0
+          }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+            parse.plist(filePath2).params["com.apple.preferences.sharing.SharingPrefsExtension"]["homeSharingUIStatus"]["value"] == 0
+          }
+        filePath3 = "/Library/Managed Preferences/com.apple.preferences.sharing.SharingPrefsExtension.plist"
+        c = file(filePath3).exists && parse.plist(filePath3).params["homeSharingUIStatus"] == 0
+        a || b || c
+      }
     docs:
       desc: |-
         Starting with macOS 10.15 Apple has provided a control to allow a user to share Apple downloaded content on all Apple devices that are signed in with the same Apple ID. This allows a user to share downloaded Movies, Music or TV shows with other controlled macOS, iOS and iPadOS devices as well as photos with Apple TVs.
@@ -418,12 +458,19 @@ queries:
     title: Ensure AirDrop Is Disabled
     impact: 50
     mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ) {
-         file( home + "/Library/Preferences/com.apple.NetworkBrowser.plist" ).exists
-         if( file( home + "/Library/Preferences/com.apple.NetworkBrowser.plist" ).exists ) {
-           parse.plist(home + '/Library/Preferences/com.apple.NetworkBrowser.plist').params['DisableAirDrop'] == true
-         }
-       }
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = home + "/Library/Preferences/com.apple.NetworkBrowser.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+            parse.plist(filePath1).params["allowAirDrop"]["value"] == false
+          }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+            parse.plist(filePath2).params["com.apple.applicationaccess"]["allowAirDrop"]["value"] == false
+          }
+        filePath3 = "/Library/Managed Preferences/com.apple.NetworkBrowser.plist"
+        c = file(filePath3).exists && parse.plist(filePath3).params['DisableAirDrop'] == true
+        a || b || c
+      }
     docs:
       desc: |-
         AirDrop is Apple's built-in on demand ad hoc file exchange system that is compatible with both macOS and iOS. It uses Bluetooth LE for discovery that limits connectivity to Mac or iOS users that are in close proximity. Depending on the setting it allows everyone or only Contacts to share files when they are nearby to each other.
@@ -462,7 +509,17 @@ queries:
   - uid: mondoo-macos-security-enable-filevault
     title: Enable FileVault
     impact: 80
-    mql: command('fdesetup status').stdout.contains("FileVault is On")
+    mql: |
+      command('fdesetup status').stdout.contains('FileVault is On')
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+            parse.plist(filePath).params["com.apple.MCX"]["dontAllowFDEDisable"]["value"] == true
+          }
+        filePath2 = "/Library/Managed Preferences/com.apple.MCX.plist"
+        b = file(filePath2).exists && parse.plist(filePath2).params['dontAllowFDEDisable'] == true
+        a || b
+      }
     docs:
       desc: |-
         FileVault secures a system's data by automatically encrypting its boot volume and requiring a password or recovery key to access it.
@@ -487,7 +544,21 @@ queries:
   - uid: mondoo-macos-security-enable-gatekeeper
     title: Enable Gatekeeper
     impact: 50
-    mql: command('spctl --status').stdout.contains("assessments enabled" )
+    mql: |
+      command('spctl --status').stdout.contains("assessments enabled")
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.systempolicy.control"]["AllowIdentifiedDevelopers"]["value"] == true
+          parse.plist(filePath1).params["com.apple.systempolicy.control"]["EnableAssessment"]["value"] == true
+        }
+        filePath2 = "/Library/Managed Preferences/com.apple.systempolicy.control.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+          parse.plist(filePath2).params["AllowIdentifiedDevelopers"] == true
+          parse.plist(filePath2).params["EnableAssessment"] == true
+        }
+        a || b
+      }
     docs:
       desc: Gatekeeper is Apple's application white-listing control that restricts downloaded applications from launching. It functions as a control to limit applications from unverified sources from running without authorization.
       remediation: |-
@@ -510,7 +581,18 @@ queries:
   - uid: mondoo-macos-security-enable-firewall
     title: Enable Firewall
     impact: 50
-    mql: parse.plist('/Library/Preferences/com.apple.alf.plist').params['globalstate'] == 1
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.security.firewall"]["EnableFirewall"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.alf.plist"
+        b = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['globalstate'] == 1
+        c = macos.alf.globalState == 1
+        a || b || c
+      }
     docs:
       desc: |-
         A firewall is a piece of software that blocks unwanted incoming connections to a system. Apple has posted general documentation about the application firewall.
@@ -545,7 +627,16 @@ queries:
   - uid: mondoo-macos-security-enable-firewall-stealth-mode
     title: Enable Firewall Stealth Mode
     impact: 60
-    mql: command('/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode').stdout.contains("Stealth mode enabled" )
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.security.firewall"]["EnableStealthMode"]["value"] == true
+        }
+        b = command('/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode').stdout.trim == "Stealth mode enabled"
+        c = macos.alf.stealthEnabled == 1
+        a || b || c
+      }
     docs:
       desc: |-
         While in Stealth mode the computer will not respond to unsolicited probes, dropping that traffic.
@@ -598,7 +689,7 @@ queries:
         ```
   - uid: mondoo-macos-security-retain-install-log-for-365-or-more-days
     title: Retain install.log for 365 or more days with no maximum size
-    impact: 30
+    impact: 40
     mql: |
       file('/etc/asl/com.apple.install') {
         content != /all_max/
@@ -634,7 +725,7 @@ queries:
         Without log files system maintenance and security forensics cannot be properly performed.
   - uid: mondoo-macos-security-ensure-security-auditing-retention
     title: Ensure security auditing retention
-    impact: 30
+    impact: 40
     mql: |
       file("/etc/security/audit_control").content.lines.where( _ == /^expire-after/) {
         _.split(":")[1] == /[6-9]\dd|\d{3,}d/ || _.split(":")[1] == /\d+0G|[1-9G]/
@@ -659,20 +750,39 @@ queries:
         The recommendation is that at least 60 days or 1 gigabyte of audit records are retained. Systems that have very little remaining disk space may have issues retaining sufficient data.
   - uid: mondoo-macos-security-control-access-to-audit-records
     title: Control access to audit records
-    impact: 50
+    impact: 40
     mql: |
-      file('/etc/security/audit_control').permissions {
-        user_readable
-        user_writeable == false
-        user_executable == false
+      file('/etc/security/audit_control') {
+        permissions.user_readable
+        permissions.user_writeable
+        permissions.user_executable == false
 
-        group_writeable == false
-        group_executable == false
+        permissions.group_writeable == false
+        permissions.group_executable == false
 
-        other_readable == false
-        other_writeable == false
-        other_executable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+
+        user.name == "root"
+        group.name == "wheel"
       }
+      file('/var/audit') {
+        permissions.user_readable
+        permissions.user_writeable
+        permissions.user_executable
+
+        permissions.group_writeable == false
+        permissions.group_executable == false
+
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+
+        user.name == "root"
+        group.name == "wheel"
+      }
+      files.find(from: "/var/audit/", type: "file", xdev: false).all(user.name == "root" && group.name == "wheel" && permissions.other_readable == false && permissions.other_writeable == false && permissions.other_executable == false)
     docs:
       desc: The audit system on macOS writes important operational and security information that can be both useful for an attacker and a place for an attacker to attempt to obfuscate unwanted changes that were recorded. As part of defense-in-depth the /etc/security/audit_control configuration and the files in /var/audit should be owned only by root with group wheel with read-only rights and no other access allowed. macOS ACLs should not be used for these files.
       remediation: |-
@@ -696,8 +806,8 @@ queries:
         This check ensures that unwanted access to audit records is not available.
   - uid: mondoo-macos-security-ensure-firewall-is-configured-to-log
     title: Ensure Firewall is configured to log
-    impact: 50
-    mql: command('/usr/libexec/ApplicationFirewall/socketfilterfw --getloggingmode').stdout.contains("Log mode is on")
+    impact: 20
+    mql: macos.alf.loggingEnabled == 1
     docs:
       desc: The socketfilter firewall is what is used when the firewall is turned on in the Security Preference Pane. In order to appropriately monitor what access is allowed and denied logging must be enabled.
       remediation: |-
@@ -716,8 +826,16 @@ queries:
     title: Disable Bonjour advertising service
     impact: 50
     mql: |
-      if (file('/Library/Preferences/com.apple.mDNSResponder.plist').exists) {
-        parse.plist('/Library/Preferences/com.apple.mDNSResponder.plist').params['NoMulticastAdvertisements'] != 0
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.mDNSResponder"]["NoMulticastAdvertisements"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.mDNSResponder.plist"
+        b = file(filePath2).exists && parse.plist(filePath2).params["com.apple.mDNSResponder"]["NoMulticastAdvertisements"]["value"] == true
+        filePath3 = "/Library/Managed Preferences/com.apple.mDNSResponder.plist"
+        c = file(filePath3).exists && parse.plist(filePath3).params["NoMulticastAdvertisements"] == true
+        a || b || c
       }
     docs:
       desc: Bonjour is an auto-discovery mechanism for TCP/IP devices which enumerate devices and services within a local subnet. DNS on macOS is integrated with Bonjour and should not be turned off, but the Bonjour advertising service can be disabled.
@@ -736,11 +854,18 @@ queries:
     title: Enable "Show Wi-Fi status in menu bar"
     impact: 20
     mql: |
-      users.where( name != /^_/ && shell != "/usr/bin/false" && name != "root" ) {
-        file(home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist").exists
-        if( file(home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist").exists ) {
-          parse.plist( home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist").params["WiFi"] == 18 || 2
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["WiFi"] == 18 || 2
         }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+          parse.plist(filePath2).params["com.apple.controlcenter"]["WiFi"]["value"] == 18 || 2
+        }
+        filePath3 = "/Library/Managed Preferences/com.apple.controlcenter.plist"
+        c = file(filePath3).exists == true && parse.plist(filePath3).params["WiFi"] == 18 || 2
+        a || b || c
       }
     docs:
       desc: The Wi-Fi status in the menu bar indicates if the system's wireless internet capabilities are enabled. If so, the system will scan for available wireless networks to connect to. At the time of this revision all computers Apple builds have wireless network capability, which has not always been the case. This check only pertains to systems that have a wireless NIC available. Operating systems running in a virtual environment may not score as expected either.
@@ -778,8 +903,10 @@ queries:
     title: Ensure http server is not running
     impact: 50
     mql: |
-      service('org.apache.httpd').enabled == false
-      service('org.apache.httpd').running == false
+      service('org.apache.httpd') {
+        enabled == false
+        running == false
+      }
     docs:
       desc: macOS used to have a graphical front-end to the embedded Apache web server in the Operating System. Personal web sharing could be enabled to allow someone on another computer to download files or information from the user's computer. Personal web sharing from a user endpoint has long been considered questionable, and Apple has removed that capability from the GUI. Apache however is still part of the Operating System and can be easily turned on to share files and provide remote connectivity to an end-user computer. Web sharing should only be done through hardened web servers and appropriate cloud services.
       remediation: |-
@@ -796,8 +923,10 @@ queries:
     title: Ensure NFS server is not running
     impact: 50
     mql: |
-      service('com.apple.nfsd').enabled == false
-      service('com.apple.nfsd').running == false
+      service('com.apple.nfsd') {
+        enabled == false
+        running == false
+      }
     docs:
       desc: macOS can act as an NFS file server. NFS sharing could be enabled to allow someone on another computer to mount shares and gain access to information from the user's computer. File sharing from a user endpoint has long been considered questionable, and Apple has removed that capability from the GUI. NFSD is still part of the Operating System and can be easily turned on to export shares and provide remote connectivity to an end-user computer.
       remediation: |-
@@ -820,7 +949,20 @@ queries:
   - uid: mondoo-macos-security-set-a-minimum-password-length
     title: Set a minimum password length
     impact: 80
-    mql: macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['minimumLength'] >= 15 )
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.mobiledevice.passwordpolicy"]["minLength"]["value"] != null &&
+            parse.plist(filePath1).params["com.apple.mobiledevice.passwordpolicy"]["minLength"]["value"] >= 15
+        }
+        b = macos.globalAccountPolicies['policyCategoryPasswordContent'] != null &&
+          macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['minimumLength'] >= 15)
+        filePath2 = "/Library/Managed Preferences/com.apple.mobiledevice.passwordpolicy.plist"
+        c = file(filePath2).exists == true &&
+          parse.plist(filePath2).params["minLength"] >= 15
+        a || b || c
+      }
     docs:
       desc: |-
         A minimum password length is the fewest number of characters a password can contain to meet a system's requirements.
@@ -848,7 +990,20 @@ queries:
   - uid: mondoo-macos-security-password-age
     title: Password Age
     impact: 50
-    mql: macos.globalAccountPolicies['policyCategoryPasswordChange'].any( _['policyParameters']['policyAttributeDaysUntilExpiration'] <= 365 )
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+          parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["maxPINAgeInDays"]["value"] != null &&
+            parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["maxPINAgeInDays"]["value"] <= 365
+        }
+        b = macos.globalAccountPolicies['policyCategoryPasswordChange'] != null &&
+          macos.globalAccountPolicies['policyCategoryPasswordChange'].any(_['policyParameters']['policyAttributeDaysUntilExpiration'] <= 365)
+        filePath2 = "/Library/Managed Preferences/com.apple.mobiledevice.passwordpolicy.plist"
+        c = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['maxPINAgeInDays'] <= 365
+        a || b || c
+      }
     docs:
       desc: |-
         Over time passwords can be captured by third-parties through mistakes, phishing attacks, third party breaches or merely brute force attacks. To reduce the risk of exposure and to decrease the incentives of password reuse (passwords that are not forced to be changed periodically generally are not ever changed) users should reset passwords periodically.
@@ -873,7 +1028,21 @@ queries:
   - uid: mondoo-macos-security-password-history
     title: Password History
     impact: 50
-    mql: macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['policyAttributePasswordHistoryDepth'] >= 15 )
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+          parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["pinHistory"]["value"] != null &&
+            parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["pinHistory"]["value"] >= 15
+          }
+        b = macos.globalAccountPolicies['policyCategoryPasswordContent'] != null &&
+          macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['policyAttributePasswordHistoryDepth'] >= 15 )
+        filePath2 = "/Library/Managed Preferences/com.apple.mobiledevice.passwordpolicy.plist"
+        c = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['pinHistory'] != null &&
+            parse.plist(filePath2).params['pinHistory'] >= 15
+        a || b || c
+      }
     docs:
       desc: |-
         Over time passwords can be captured by third-parties through mistakes, phishing attacks, third party breaches or merely brute force attacks. To reduce the risk of exposure and to decrease the incentives of password reuse (passwords that are not forced to be changed periodically generally are not ever changed) users must reset passwords periodically. This check ensures that previous passwords are not reused immediately by keeping a history of previous password hashes. Ensure that password history checks are part of the password policy on the computer. This check ensures the new password is different than the previous 15.
@@ -897,8 +1066,10 @@ queries:
         Required password changes will lead to some locked computers requiring admin assistance.
   - uid: mondoo-macos-security-reduce-the-sudo-timeout-period
     title: Reduce the sudo timeout period
-    impact: 50
-    mql: file('/etc/sudoers').content == /Defaults\s+timestamp_timeout=0/
+    impact: 40
+    mql: |
+      command("sudo -V").stdout.contains("Authentication timestamp timeout: 0.0 minutes") ||
+        command("sudo -V").stdout.contains("Authentication timestamp timeout: 0,0 minutes")
     docs:
       desc: The sudo command allows the user to run programs as the root user. Working as the root user allows the user an extremely high level of configurability within the system. This check along with the control to use a separate timestamp for each tty limits the window where an unauthorized user, process or attacker could utilize legitimate credentials that are valid for longer than required.
       remediation: |-
@@ -919,8 +1090,9 @@ queries:
         In some ways the use of sudo -s, which is undesirable, is better than a long grace period since that use does change the hash to show that it is a root shell rather than a normal shell where sudo commands will be implemented without a password.
   - uid: mondoo-macos-security-do-not-enable-the-root-account
     title: Do not enable the "root" account
+    impact: 85
     mql: |
-      command('dscl . -read /Users/root AuthenticationAuthority').stderr.contains("No such key: AuthenticationAuthority")
+      command("dscl . -read /Users/root AuthenticationAuthority").stderr.contains("No such key: AuthenticationAuthority")
     docs:
       desc: The root account is a superuser account that has access privileges to perform any actions and read/write to any file on the computer. With some Linux distros the system administrator may commonly use the root account to perform administrative functions.
       remediation: |-
@@ -951,7 +1123,20 @@ queries:
   - uid: mondoo-macos-security-software-updates-automatic-check-enabled
     title: Ensure automatic checking of software updates enabled
     impact: 80
-    mql: parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['AutomaticCheckEnabled'] != false
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["AutomaticCheckEnabled"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
+        b = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['AutomaticCheckEnabled'] != false
+        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['AutomaticCheckEnabled'] != false
+        a || b || c
+      }
     docs:
       desc: |
         This check determines where automatic checking for software updates is enabled
@@ -975,7 +1160,20 @@ queries:
   - uid: mondoo-macos-security-software-updates-automatic-download
     title: Ensure automatic download of software updates enabled
     impact: 80
-    mql: parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['AutomaticDownload'] != false
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["AutomaticDownload"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
+        b = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['AutomaticDownload'] != false
+        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['AutomaticDownload'] != false
+        a || b || c
+      }
     docs:
       desc: |
         This check determines whether automatic downloads of software updates is enabled
@@ -999,7 +1197,23 @@ queries:
   - uid: mondoo-macos-security-software-updates-install-critical-updates
     title: Ensure critical updates are installed automatically
     impact: 80
-    mql: parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['CriticalUpdateInstall'] != false
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["ConfigDataInstall"]["value"] == true
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["CriticalUpdateInstall"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
+        b = file(filePath2).exists &&
+          parse.plist(filePath2).params['ConfigDataInstall'] == true &&
+            parse.plist(filePath2).params['CriticalUpdateInstall'] == true
+        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['ConfigDataInstall'] == true &&
+            parse.plist(filePath3).params['CriticalUpdateInstall'] == true
+        a || b || c
+      }
     docs:
       desc: |
         This check determines whether critical software updates are installed automatically
