@@ -38,7 +38,7 @@ func NewPolicyMrn(namespace string, uid string) string {
 
 // ValidateBundle and check queries, relationships, MRNs, and versions
 func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
-	_, err := bundle.Compile(ctx, s.runtime.Schema(), s.DataLake)
+	_, err := bundle.Compile(ctx, s.Runtime.Schema(), s.DataLake)
 	return globalEmpty, err
 }
 
@@ -46,7 +46,7 @@ func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Em
 func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
 	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
 
-	bundleMap, err := bundle.Compile(ctx, s.runtime.Schema(), s.DataLake)
+	bundleMap, err := bundle.Compile(ctx, s.Runtime.Schema(), s.DataLake)
 	if err != nil {
 		return globalEmpty, err
 	}
@@ -96,7 +96,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 			s.DataLake.GetValidatedPolicy,
 			s.DataLake.GetQuery,
 			bundle,
-			s.runtime.Schema(),
+			s.Runtime.Schema(),
 		)
 		if err != nil {
 			return nil, nil, err
