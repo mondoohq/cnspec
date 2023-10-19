@@ -123,7 +123,7 @@ func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*
 	// validate that the queries compile and fill in checksums
 	for i := range req.Props {
 		prop := req.Props[i]
-		code, err := prop.RefreshChecksumAndType(s.runtime.Schema())
+		code, err := prop.RefreshChecksumAndType(s.Runtime.Schema())
 		if err != nil {
 			return nil, err
 		}
@@ -446,7 +446,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 
 	// phase 1: resolve asset filters and see if we can find a cached policy
 	// trying first with all asset filters
-	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters, s.runtime.Schema())
+	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters, s.Runtime.Schema())
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +484,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		assetFiltersMap[matchingFilters[i].CodeId] = struct{}{}
 	}
 
-	assetFiltersChecksum, err := ChecksumAssetFilters(matchingFilters, s.runtime.Schema())
+	assetFiltersChecksum, err := ChecksumAssetFilters(matchingFilters, s.Runtime.Schema())
 	if err != nil {
 		return nil, err
 	}
@@ -888,7 +888,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
 			check = check.Merge(base)
 			err := check.RefreshChecksum(ctx,
-				s.runtime.Schema(),
+				s.Runtime.Schema(),
 				explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery,
 			)
 			if err != nil {
@@ -945,7 +945,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
 			query = query.Merge(base)
 			err := query.RefreshChecksum(ctx,
-				s.runtime.Schema(),
+				s.Runtime.Schema(),
 				explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery,
 			)
 			if err != nil {
@@ -1211,7 +1211,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 					}
 				}
 
-				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false, s.runtime.Schema())
+				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false, s.Runtime.Schema())
 				if err != nil {
 					return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
 				}
@@ -1226,7 +1226,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			}
 		}
 
-		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery, s.runtime.Schema())
+		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery, s.Runtime.Schema())
 		if err != nil {
 			return nil, nil, errors.New("resolver> failed to compile query for MRN " + query.Mrn + ": " + err.Error())
 		}

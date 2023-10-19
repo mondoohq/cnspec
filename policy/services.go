@@ -41,7 +41,7 @@ type LocalServices struct {
 	DataLake  DataLake
 	Upstream  *Services
 	Incognito bool
-	runtime   llx.Runtime
+	Runtime   llx.Runtime
 }
 
 // NewLocalServices initializes a reasonably configured local services struct
@@ -50,7 +50,7 @@ func NewLocalServices(datalake DataLake, uuid string, runtime llx.Runtime) *Loca
 		DataLake:  datalake,
 		Upstream:  nil,
 		Incognito: false,
-		runtime:   runtime,
+		Runtime:   runtime,
 	}
 }
 
@@ -80,5 +80,5 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 }
 
 func (l *LocalServices) Schema() llx.Schema {
-	return l.runtime.Schema()
+	return l.Runtime.Schema()
 }
