@@ -9,11 +9,13 @@ import (
 	"io"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/cli/printer"
 	"go.mondoo.com/cnquery/v9/cli/theme/colors"
 	"go.mondoo.com/cnquery/v9/llx"
 	"go.mondoo.com/cnquery/v9/mqlc"
+	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v9/shared"
 	"go.mondoo.com/cnspec/v9/policy"
@@ -23,7 +25,8 @@ import (
 type mqlCode string
 
 const (
-	vulnReport      mqlCode = "platform.vulnerabilityReport"
+	vulnReportV8    mqlCode = "platform.vulnerabilityReport"
+	vulnReportV9    mqlCode = "asset.vulnerabilityReport"
 	kernelInstalled mqlCode = "kernel.installed"
 )
 
@@ -31,6 +34,28 @@ var _defaultChecksums = map[mqlCode]struct {
 	sum string
 	err error
 }{}
+
+func getVulnReport[T any](results map[string]*T) (*T, error) {
+	schema := providers.DefaultRuntime().Schema()
+	vulnChecksum, err := defaultChecksum(vulnReportV9, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
+		return nil, errors.New("No vulnerabilities for this provider")
+	}
+	if value, ok := results[vulnChecksum]; ok {
+		return value, nil
+	}
+
+	// FIXME: DEPRECATED, remove in v11.0 vv
+	vulnChecksum, err = defaultChecksum(vulnReportV8, schema)
+	if err != nil {
+		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
+		return nil, errors.New("No vulnerabilities for this provider")
+	}
+	value, _ := results[vulnChecksum]
+	return value, nil
+	// ^^
+}
 
 func defaultChecksum(code mqlCode, schema llx.Schema) (string, error) {
 	res, ok := _defaultChecksums[code]

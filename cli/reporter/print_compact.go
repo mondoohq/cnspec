@@ -18,7 +18,6 @@ import (
 	"go.mondoo.com/cnquery/v9/cli/components"
 	"go.mondoo.com/cnquery/v9/explorer"
 	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v9/utils/stringx"
@@ -590,16 +589,9 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	print := r.Printer
 
-	schema := providers.DefaultRuntime().Schema()
-	vulnChecksum, err := defaultChecksum(vulnReport, schema)
+	value, err := getVulnReport(results)
 	if err != nil {
-		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
-		r.out.Write([]byte(print.Error("No vulnerabilities for this provider")))
-		return
-	}
-
-	value, ok := results[vulnChecksum]
-	if !ok {
+		r.out.Write([]byte(print.Error(err.Error())))
 		return
 	}
 
