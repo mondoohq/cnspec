@@ -40,7 +40,7 @@ require (
 	sigs.k8s.io/yaml v1.3.0
 )
 
-require go.mondoo.com/cnquery/v9 v9.2.3
+require go.mondoo.com/cnquery/v9 v9.2.4-0.20231020125424-f2f6ce5a5ad0
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
