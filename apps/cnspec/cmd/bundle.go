@@ -47,15 +47,8 @@ func init() {
 
 // ensureProviders ensures that all providers are locally installed
 func ensureProviders() error {
-	providerList := []string{}
-
-	for k := range providers.DefaultProviders {
-		providerList = append(providerList, k)
-	}
-
-	// ensure that the providers are loaded
-	for _, connectionName := range providerList {
-		if _, err := providers.EnsureProvider(connectionName, "", true, nil); err != nil {
+	for _, v := range providers.DefaultProviders {
+		if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: v.ID}, true, nil); err != nil {
 			return err
 		}
 	}
