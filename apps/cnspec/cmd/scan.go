@@ -280,6 +280,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 			conf.runtime.UpstreamConfig = &upstream.UpstreamConfig{
 				SpaceMrn:    opts.GetParentMrn(),
 				ApiEndpoint: opts.UpstreamApiEndpoint(),
+				ApiProxy:    opts.APIProxy,
 				Incognito:   conf.IsIncognito,
 				Creds:       serviceAccount,
 			}
