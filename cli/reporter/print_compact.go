@@ -589,22 +589,16 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	print := r.Printer
 
-	value, err := getVulnReport(results)
-	if err != nil {
-		r.out.Write([]byte(print.Error(err.Error())))
+	value, _ := getVulnReport(results)
+	if value == nil || value.Data == nil {
+		return
+	}
+	if value.Data.Error != nil {
+		r.out.Write([]byte(print.Error("Could not load the vulnerability report: "+value.Data.Error.Error()) + NewLineCharacter + NewLineCharacter))
 		return
 	}
 
 	r.out.Write([]byte(print.Primary("Vulnerabilities:" + NewLineCharacter)))
-
-	if value == nil || value.Data == nil {
-		r.out.Write([]byte(print.Error("Could not find the vulnerability report.") + NewLineCharacter))
-		return
-	}
-	if value.Data.Error != nil {
-		r.out.Write([]byte(print.Error("Could not load the vulnerability report: "+value.Data.Error.Error()) + NewLineCharacter))
-		return
-	}
 
 	score := report.Scores[advisoryPolicyMrn]
 	_ = score
@@ -618,7 +612,7 @@ func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *po
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	if err = decoder.Decode(rawData); err != nil {
+	if err := decoder.Decode(rawData); err != nil {
 		r.out.Write([]byte(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter)))
 		return
 	}

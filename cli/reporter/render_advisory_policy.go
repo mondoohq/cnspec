@@ -37,18 +37,12 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 	score := report.Scores[policyObj.Mrn]
 
 	results := report.Data
-	value, err := getVulnReport(results)
-	if err != nil {
-		b.WriteString(print.Error(err.Error()))
-		return b.String()
-	}
+	value, _ := getVulnReport(results)
 	if value == nil || value.Data == nil {
-		b.WriteString(print.Error("could not load advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
-
 	if value.Error != "" {
-		b.WriteString(print.Error("could not load advisory report: " + value.Error + NewLineCharacter + NewLineCharacter))
+		b.Write([]byte(print.Error("Could not load the advisory report: "+value.Error) + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
 
@@ -61,7 +55,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	if err = decoder.Decode(rawData); err != nil {
+	if err := decoder.Decode(rawData); err != nil {
 		b.WriteString(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter))
 		return b.String()
 	}
