@@ -163,10 +163,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 	}
 
 	rawResults := results.RawResults()
-	value, err := getVulnReport(rawResults)
-	if err != nil {
-		return nil
-	}
+	value, _ := getVulnReport(rawResults)
 	if value == nil || value.Data == nil {
 		return nil
 	}
@@ -199,7 +196,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 		TagName:  "json",
 	}
 	decoder, _ := mapstructure.NewDecoder(cfg)
-	if err = decoder.Decode(rawData); err != nil {
+	if err := decoder.Decode(rawData); err != nil {
 		ts.Errors++
 		ts.Testcases = append(ts.Testcases, junit.Testcase{
 			Failure: &junit.Result{
