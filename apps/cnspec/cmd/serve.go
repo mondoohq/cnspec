@@ -158,6 +158,7 @@ func getServeConfig() (*scanConfig, error) {
 		runtime.UpstreamConfig = &upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
+			ApiProxy:    opts.APIProxy,
 			Creds:       serviceAccount,
 		}
 	}

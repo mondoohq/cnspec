@@ -65,6 +65,7 @@ var serveApiCmd = &cobra.Command{
 		upstreamConfig := upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
+			ApiProxy:    opts.APIProxy,
 			Incognito:   false, // because we serve, we interact with upstream, never incognito
 			Creds:       serviceAccount,
 		}
