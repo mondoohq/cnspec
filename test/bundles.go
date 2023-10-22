@@ -5,6 +5,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"go.mondoo.com/cnquery/v9/logger"
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
@@ -37,7 +38,6 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 	}
 
 	policyBundle.OwnerMrn = "//policy.api.mondoo.app"
-	var results *policy.Report
 
 	policyFilters := []string{}
 	if policyMrn != "" {
@@ -62,10 +62,9 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 	reports := result.GetFull().Reports
 	if len(reports) > 0 {
 		for _, report := range reports {
-			results = report
-			break
+			return report, nil
 		}
 	}
 
-	return results, err
+	return nil, errors.New("no report found")
 }
