@@ -16,7 +16,7 @@ require (
 	github.com/hashicorp/go-version v1.6.0
 	github.com/joncrlsn/dque v0.0.0-20211108142734-c2ef48c5192a
 	github.com/jstemmer/go-junit-report/v2 v2.0.0
-	github.com/mattn/go-isatty v0.0.19
+	github.com/mattn/go-isatty v0.0.20
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.15.2
