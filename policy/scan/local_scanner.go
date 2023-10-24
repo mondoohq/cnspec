@@ -261,9 +261,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			continue
 		}
 
-		// for all discovered assets, we apply mondoo-specific labels that come from the root asset
+		// for all discovered assets, we apply mondoo-specific labels and annotations that come from the root asset
 		for _, a := range runtime.Provider.Connection.GetInventory().GetSpec().GetAssets() {
 			a.AddMondooLabels(resolvedAsset)
+			a.AddAnnotations(resolvedAsset.GetAnnotations())
 		}
 		processedAssets, err := providers.ProcessAssetCandidates(runtime, runtime.Provider.Connection, upstream, "")
 		if err != nil {
@@ -334,8 +335,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	justAssets := []*inventory.Asset{}
 	for _, asset := range assets {
-		// apply all annotations to the assets to be scanned
-		asset.asset.AddAnnotations(job.GetAnnotations())
 		asset.asset.KindString = asset.asset.GetPlatform().Kind
 		for k, v := range runtimeLabels {
 			if asset.asset.Labels == nil {
