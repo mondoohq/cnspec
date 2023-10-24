@@ -524,6 +524,123 @@ framework_maps:
 		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-query")])
 	})
 
+	t.Run("test resolving with inactive data queries", func(t *testing.T) {
+		// test that creating a bundle with inactive data queries  (where the packs/policies are inactive)
+		// will still end up in a succesfully resolved policy for the asset
+		bundleStr := `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - filters: "true"
+    queries:
+    - uid: active-query
+      title: users
+      mql: users
+- uid: policy-inactive
+  groups:
+  - filters: "false"
+    queries:
+    - uid: inactive-query
+      title: users group
+      mql: users { group}
+frameworks:
+- uid: framework1
+  name: framework1
+  groups:
+  - title: group1
+    controls:
+    - uid: control1
+      title: control1
+    - uid: control2
+      title: control2
+- uid: parent-framework
+  dependencies:
+  - mrn: ` + frameworkMrn("framework1") + `
+
+framework_maps:
+- uid: framework-map1
+  framework_owner:
+    uid: framework1
+  policy_dependencies:
+  - uid: policy1
+  - uid: policy-inactive
+  controls:
+  - uid: control1
+    queries:
+    - uid: active-query
+  - uid: control2
+    queries:
+    - uid: inactive-query
+`
+		b := parseBundle(t, bundleStr)
+
+		// we do not activate policy-inactive, which means that its query should not get executed
+		srv := initResolver(t, []*testAsset{
+			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
+		}, []*policy.Bundle{b})
+
+		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		require.NoError(t, err)
+
+		bundleMap, err := bundle.Compile(context.Background(), schema, nil)
+		require.NoError(t, err)
+
+		mrnToQueryId := map[string]string{}
+		for _, q := range bundleMap.Queries {
+			mrnToQueryId[q.Mrn] = q.CodeId
+		}
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		// Check that there are no duplicates in the reporting job's notify list
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			requireUnique(t, rj.Notify)
+		}
+
+		require.Len(t, rp.ExecutionJob.Queries, 1)
+
+		rjTester := frameworkReportingJobTester{
+			t:                     t,
+			queryIdToReportingJob: map[string]*policy.ReportingJob{},
+			rjIdToReportingJob:    rp.CollectorJob.ReportingJobs,
+			rjIdToDatapointJob:    rp.CollectorJob.Datapoints,
+			dataQueriesMrns:       map[string]struct{}{},
+		}
+
+		for _, p := range bundleMap.Policies {
+			for _, g := range p.Groups {
+				for _, q := range g.Queries {
+					rjTester.dataQueriesMrns[q.Mrn] = struct{}{}
+				}
+			}
+		}
+
+		for _, rj := range rjTester.rjIdToReportingJob {
+			_, ok := rjTester.queryIdToReportingJob[rj.QrId]
+			require.False(t, ok)
+			rjTester.queryIdToReportingJob[rj.QrId] = rj
+		}
+
+		queryJob1 := rjTester.queryIdToReportingJob[queryMrn("active-query")]
+		require.Equal(t, 1, len(queryJob1.Datapoints))
+
+		// queries
+		rjTester.requireReportsTo(queryMrn("active-query"), controlMrn("control1"))
+		require.Nil(t, rjTester.queryIdToReportingJob[queryMrn("inactive-query")])
+
+		rjTester.requireReportsTo(controlMrn("control1"), frameworkMrn("framework1"))
+		// the data query here is disabled, control2 has no rj
+		require.Nil(t, rjTester.queryIdToReportingJob[controlMrn("control2")])
+		rjTester.requireReportsTo(frameworkMrn("framework1"), frameworkMrn("parent-framework"))
+		rjTester.requireReportsTo(frameworkMrn("parent-framework"), "root")
+	})
+
 	t.Run("test checksumming", func(t *testing.T) {
 		bInitial := parseBundle(t, bundleStr)
 

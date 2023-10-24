@@ -1594,8 +1594,12 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 				continue
 			}
 
-			// the query must exist, since validation happens earlier
+			// the query may not be active and therefore not part of the bundle
+			// there is a similar guard for checks where we verify if there's a rj with the check's mrn
 			mquery := cache.bundleMap.Queries[mrn]
+			if mquery == nil {
+				continue
+			}
 			execQuery := cache.executionQueries[mquery.Checksum]
 			uuid := cache.relativeChecksum(mquery.Mrn)
 			queryJob := &ReportingJob{
