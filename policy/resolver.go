@@ -1601,6 +1601,11 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 				continue
 			}
 			execQuery := cache.executionQueries[mquery.Checksum]
+			// the data query may be part of the bundle, but it may not match the curent asset,
+			// which means it will not be part of the execution
+			if execQuery == nil {
+				continue
+			}
 			uuid := cache.relativeChecksum(mquery.Mrn)
 			queryJob := &ReportingJob{
 				Uuid:      uuid,
