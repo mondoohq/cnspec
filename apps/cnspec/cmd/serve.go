@@ -163,8 +163,12 @@ func getServeConfig() (*scanConfig, error) {
 		}
 	}
 
+	optAnnotations := opts.Annotations
+	if optAnnotations == nil {
+		optAnnotations = map[string]string{}
+	}
 	var err error
-	conf.Inventory, err = inventoryloader.ParseOrUse(nil, viper.GetBool("insecure"))
+	conf.Inventory, err = inventoryloader.ParseOrUse(nil, viper.GetBool("insecure"), optAnnotations)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not load configuration")
 	}
