@@ -323,6 +323,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, false, nil
 	}
 
+	// if there is exactly one asset, assure that the --asset-name is used
+	// TODO: make it so that the --asset-name is set for the root asset only even if multiple assets are there
+	// This is a temporary fix that only works if there is only one asset
+	if len(assets) == 1 && assetList[0].Name != assets[0].asset.Name {
+		log.Debug().Str("asset", assets[0].asset.Name).Msg("Overriding asset name with --asset-name flag")
+		assets[0].asset.Name = assetList[0].Name
+	}
+
 	runtimeEnv := execruntime.Detect()
 	var runtimeLabels map[string]string
 	// If the runtime is an automated environment and the root asset is CI/CD, then we are doing a
@@ -393,13 +401,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				cur.asset.Mrn = x.String()
 			}
 		}
-	}
-
-	// if there is exactly one asset, assure that the --asset-name is used
-	// TOOD: make it so that the --asset-name is set for the root asset only even if multiple assets are there
-	if len(assets) == 1 {
-		log.Debug().Str("asset", assets[0].asset.Name).Msg("Overriding asset name with --asset-name flag")
-		assets[0].asset.Name = job.Inventory.Spec.Assets[0].Name
 	}
 
 	// // if a bundle was provided check that it matches the filter, bundles can also be downloaded
