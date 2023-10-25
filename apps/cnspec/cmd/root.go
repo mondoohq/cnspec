@@ -79,9 +79,7 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute() {
+func BuildRootCmd() (*cobra.Command, error) {
 	err := providers.AttachCLIs(
 		rootCmd,
 		&providers.Command{
@@ -105,6 +103,13 @@ func Execute() {
 			Action:  "Check for vulnerabilities ",
 		},
 	)
+	return rootCmd, err
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+// This is called by main.main(). It only needs to happen once to the rootCmd.
+func Execute() {
+	_, err := BuildRootCmd()
 	if err != nil {
 		log.Error().Msg(err.Error())
 		os.Exit(1)

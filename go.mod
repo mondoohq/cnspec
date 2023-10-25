@@ -6,9 +6,12 @@ go 1.21
 
 toolchain go1.21.3
 
+require go.mondoo.com/cnquery/v9 v9.4.0
+
 require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/cockroachdb/errors v1.11.1
+	github.com/google/go-cmdtest v0.4.0
 	github.com/google/uuid v1.3.1
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1
@@ -39,8 +42,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	sigs.k8s.io/yaml v1.3.0
 )
-
-require go.mondoo.com/cnquery/v9 v9.4.0
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
@@ -73,6 +74,7 @@ require (
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/google/renameio v0.1.0 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
 	github.com/hnakamur/go-scp v1.0.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
