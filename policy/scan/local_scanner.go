@@ -397,6 +397,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	// ensure that the root asset has keept his name from --asset-name
 	if job.Inventory.Spec.Assets[0].Name != assets[0].asset.Name {
+		log.Debug().Str("asset", assets[0].asset.Name).Msg("Overriding asset name with --asset-name flag")
 		assets[0].asset.Name = job.Inventory.Spec.Assets[0].Name
 	}
 
