@@ -231,6 +231,46 @@ policies:
 	})
 }
 
+func TestResolve_DisabledQuery(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy-1
+- uid: policy-1
+  owner_mrn: //test.sth
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: 1 == 1
+      action: 2
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy-1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with disabled query", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 2)
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.Type == policy.ReportingJob_CHECK {
+				require.Fail(t, "expected no check reporting job")
+			}
+		}
+	})
+}
+
 func TestResolve_ExpiredGroups(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth
@@ -848,12 +888,15 @@ func (tester *frameworkReportingJobTester) requireReportsTo(childQueryId string,
 }
 
 func TestResolve_CheckValidUntil(t *testing.T) {
-	stillValid := policy.CheckValidUntil(time.Now().Format(time.RFC3339), "test123")
+	stillValid := policy.CheckValidUntil(time.Now().Unix(), "test123")
 	require.False(t, stillValid)
-	stillValid = policy.CheckValidUntil(time.Now().Add(time.Hour*1).Format(time.RFC3339), "test123")
+	stillValid = policy.CheckValidUntil(time.Now().Add(time.Hour*1).Unix(), "test123")
 	require.True(t, stillValid)
-	// wrong format as input, should return false
-	stillValid = policy.CheckValidUntil(time.Now().Format(time.RFC1123), "test123")
+	// forever
+	stillValid = policy.CheckValidUntil(0, "test123")
+	require.True(t, stillValid)
+	// expired
+	stillValid = policy.CheckValidUntil(time.Now().Add(-time.Hour*1).Unix(), "test123")
 	require.False(t, stillValid)
 }
 
