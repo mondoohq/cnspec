@@ -221,6 +221,14 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		optAnnotations[k] = v
 	}
 
+	assetName, err := cmd.Flags().GetString("asset-name")
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse asset-name")
+	}
+	if assetName != "" {
+		cliRes.Asset.Name = assetName
+	}
+
 	inv, err := inventoryloader.ParseOrUse(cliRes.Asset, viper.GetBool("insecure"), optAnnotations)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse inventory")
