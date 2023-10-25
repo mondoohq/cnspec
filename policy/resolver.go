@@ -1687,7 +1687,7 @@ func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, as
 // Special case is a unix ts of 0, which is treated as forever.
 func CheckValidUntil(validUntil int64, mrn string) bool {
 	stillIgnore := false
-	// 0 validUntil means ignore forever
+	// empty validUntil means ignore forever
 	if validUntil == 0 {
 		stillIgnore = true
 		log.Debug().Str("mrn", mrn).Msg("control is ignored forever")

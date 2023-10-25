@@ -235,11 +235,6 @@ func TestResolve_DisabledQuery(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
-- owner_mrn: //test.sth
-  mrn: //test.sth
-  groups:
-  - policies:
-    - uid: policy-1
 - uid: policy-1
   owner_mrn: //test.sth
   groups:
@@ -255,20 +250,18 @@ policies:
 		{asset: "asset1", policies: []string{policyMrn("policy-1")}},
 	}, []*policy.Bundle{b})
 
-	t.Run("resolve with disabled query", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
-			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
-		})
-		require.NoError(t, err)
-		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 2)
-		for _, rj := range rp.CollectorJob.ReportingJobs {
-			if rj.Type == policy.ReportingJob_CHECK {
-				require.Fail(t, "expected no check reporting job")
-			}
-		}
+	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		PolicyMrn:    "asset1",
+		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+	require.Len(t, rp.CollectorJob.ReportingJobs, 2)
+	for _, rj := range rp.CollectorJob.ReportingJobs {
+		if rj.Type == policy.ReportingJob_CHECK {
+			require.Fail(t, "expected no check reporting job")
+		}
+	}
 }
 
 func TestResolve_ExpiredGroups(t *testing.T) {
