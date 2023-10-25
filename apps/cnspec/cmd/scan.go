@@ -96,6 +96,7 @@ To manually configure a policy, use this:
 		viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
 		viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
 		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
+		viper.BindPFlag("asset-name", cmd.Flags().Lookup("asset-name"))
 		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 		viper.BindPFlag("share", cmd.Flags().Lookup("share"))
@@ -218,6 +219,14 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	}
 	for k, v := range annotations {
 		optAnnotations[k] = v
+	}
+
+	assetName, err := cmd.Flags().GetString("asset-name")
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse asset-name")
+	}
+	if assetName != "" && cliRes.Asset != nil {
+		cliRes.Asset.Name = assetName
 	}
 
 	inv, err := inventoryloader.ParseOrUse(cliRes.Asset, viper.GetBool("insecure"), optAnnotations)
