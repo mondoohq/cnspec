@@ -225,7 +225,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse asset-name")
 	}
-	if assetName != "" {
+	if assetName != "" && cliRes.Asset != nil {
 		cliRes.Asset.Name = assetName
 	}
 
