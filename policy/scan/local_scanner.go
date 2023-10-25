@@ -16,6 +16,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
+	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/cli/config"
 	"go.mondoo.com/cnquery/v9/cli/execruntime"
@@ -374,14 +375,20 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 
 		// attach the asset details to the assets list
+		// also override asset name if flag --asset-name was used
 		for i := range assets {
 			log.Debug().Str("asset", assets[i].asset.Name).Strs("platform-ids", assets[i].asset.PlatformIds).Msg("update asset")
 			platformMrn := assets[i].asset.PlatformIds[0]
 			assets[i].asset.Mrn = platformAssetMapping[platformMrn].AssetMrn
 			assets[i].asset.Url = platformAssetMapping[platformMrn].Url
+			assetName := viper.GetString("asset-name")
+			if assetName != "" {
+				assets[i].asset.Name = viper.GetString("asset-name")
+			}
 		}
 	} else {
-		// ensure we have non-empty asset MRNs
+		// ensure we have no non-empty asset MRNs
+		// also override asset name if flag --asset-name was used
 		for i := range assets {
 			cur := assets[i]
 			if cur.asset.Mrn == "" {
@@ -391,6 +398,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 					return nil, false, multierr.Wrap(err, "failed to generate a random asset MRN")
 				}
 				cur.asset.Mrn = x.String()
+				assetName := viper.GetString("asset-name")
+				if assetName != "" {
+					cur.asset.Name = viper.GetString("asset-name")
+				}
 			}
 		}
 	}

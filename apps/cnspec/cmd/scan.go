@@ -96,6 +96,7 @@ To manually configure a policy, use this:
 		viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
 		viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
 		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
+		viper.BindPFlag("asset-name", cmd.Flags().Lookup("asset-name"))
 		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 		viper.BindPFlag("share", cmd.Flags().Lookup("share"))
