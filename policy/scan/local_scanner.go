@@ -381,7 +381,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			assets[i].asset.Url = platformAssetMapping[platformMrn].Url
 		}
 	} else {
-		// ensure we have no non-empty asset MRNs
+		// ensure we have non-empty asset MRNs
 		for i := range assets {
 			cur := assets[i]
 			if cur.asset.Mrn == "" {
