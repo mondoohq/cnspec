@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -14,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/cli/config"
+	cli_errors "go.mondoo.com/cnquery/v9/cli/errors"
 	"go.mondoo.com/cnquery/v9/cli/execruntime"
 	"go.mondoo.com/cnquery/v9/cli/inventoryloader"
 	"go.mondoo.com/cnquery/v9/cli/prof"
@@ -50,7 +50,7 @@ var serveCmd = &cobra.Command{
 		viper.BindPFlag("splay", cmd.Flags().Lookup("splay"))
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 	},
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
 
 		// prevent colors on windows
@@ -68,9 +68,8 @@ var serveCmd = &cobra.Command{
 		// determine the scan config from pipe or args
 		conf, err := getServeConfig()
 		if err != nil {
-			log.Error().Err(err).Msg("could not load configuration")
 			// we return the specific error code to prevent systemd from restarting
-			os.Exit(ConfigurationErrorCode)
+			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
 		}
 
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
@@ -78,7 +77,7 @@ var serveCmd = &cobra.Command{
 		if conf != nil && conf.runtime.UpstreamConfig != nil {
 			client, err := conf.runtime.UpstreamConfig.InitClient()
 			if err != nil {
-				log.Fatal().Err(err).Msg("failed to initialize upstream client")
+				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 			}
 
 			hc := backgroundjob.NewHealthPinger(ctx, client.HttpClient, client.ApiEndpoint, 5*time.Minute)
@@ -88,14 +87,14 @@ var serveCmd = &cobra.Command{
 
 		bj, err := backgroundjob.New()
 		if err != nil {
-			log.Fatal().Err(err).Msg("could not start background listener")
+			return cli_errors.NewCommandError(errors.Wrap(err, "could not start background listener"), 1)
 		}
 
 		bj.Run(func() error {
 			// TODO: check in every 5 min via timer, init time in Background job
 			result, err := RunScan(conf, scan.DisableProgressBar())
 			if err != nil {
-				log.Error().Err(err).Msg("could not successfully complete scan")
+				return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
 			}
 
 			// log errors
@@ -107,13 +106,14 @@ var serveCmd = &cobra.Command{
 			}
 			return nil
 		})
+		return nil
 	},
 }
 
 func getServeConfig() (*scanConfig, error) {
 	opts, optsErr := cnspec_config.ReadConfig()
 	if optsErr != nil {
-		log.Fatal().Err(optsErr).Msg("could not load configuration")
+		return nil, errors.Wrap(optsErr, "could not load configuration")
 	}
 	config.DisplayUsedConfig()
 
