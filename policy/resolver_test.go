@@ -264,6 +264,79 @@ policies:
 	}
 }
 
+func TestResolve_IgnoredQuery(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy-1
+  owner_mrn: //test.sth
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: 1 == 1
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy-1")}},
+	}, []*policy.Bundle{b})
+
+	bundleMap, err := b.Compile(context.Background(), schema, nil)
+	require.NoError(t, err)
+
+	// we get the asset policy, manually apply the ignored action and store it back
+	ap, err := srv.DataLake.GetRawPolicy(context.Background(), "asset1")
+	require.NoError(t, err)
+	require.NotNil(t, ap)
+	ap.Groups[0].Checks = []*explorer.Mquery{
+		{
+			Mrn:    queryMrn("check1"),
+			Action: explorer.Action_IGNORE,
+		},
+	}
+	ap.InvalidateExecutionChecksums()
+
+	err = srv.SetPolicyFromBundle(context.Background(), ap, nil)
+	require.NoError(t, err)
+
+	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		PolicyMrn:    "asset1",
+		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+	require.Len(t, rp.CollectorJob.ReportingJobs, 3)
+
+	mrnToQueryId := map[string]string{}
+	for _, q := range bundleMap.Queries {
+		mrnToQueryId[q.Mrn] = q.CodeId
+	}
+
+	rjTester := frameworkReportingJobTester{
+		t:                     t,
+		queryIdToReportingJob: map[string]*policy.ReportingJob{},
+		rjIdToReportingJob:    rp.CollectorJob.ReportingJobs,
+		rjIdToDatapointJob:    rp.CollectorJob.Datapoints,
+		dataQueriesMrns:       map[string]struct{}{},
+	}
+
+	for _, rj := range rjTester.rjIdToReportingJob {
+		_, ok := rjTester.queryIdToReportingJob[rj.QrId]
+		require.False(t, ok)
+		rjTester.queryIdToReportingJob[rj.QrId] = rj
+	}
+
+	queryRj := rjTester.queryIdToReportingJob[mrnToQueryId[queryMrn("check1")]]
+	// we ensure that even though ignored, theres an RJ for the query
+	require.NotNil(t, queryRj)
+	parent := queryRj.Notify[0]
+	parentRj := rjTester.rjIdToReportingJob[parent]
+	require.NotNil(t, parentRj)
+	require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, parentRj.ChildJobs[queryRj.Uuid].Scoring)
+}
+
 func TestResolve_ExpiredGroups(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth
