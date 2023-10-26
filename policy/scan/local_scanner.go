@@ -289,6 +289,20 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		// assets = append(assets, runtime.Provider.Connection.Asset)
 	}
 
+	// For each asset candidate, we initialize a new runtime and connect to it.
+	// Within this process, we set up a catch-all deferred function, that shuts
+	// down all runtimes, in case we exit early. The list of assets only gets
+	// set in the block below this deferred function.
+	defer func() {
+		for i := range assets {
+			asset := assets[i]
+			// we can call close multiple times and it will only execute once
+			if asset.runtime != nil {
+				asset.runtime.Close()
+			}
+		}
+	}()
+
 	// for each asset candidate, we initialize a new runtime and connect to it.
 	for i := range assetCandidates {
 		candidate := assetCandidates[i]
