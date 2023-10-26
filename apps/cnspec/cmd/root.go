@@ -20,6 +20,7 @@ import (
 	"go.mondoo.com/cnquery/v9"
 	cnquery_app "go.mondoo.com/cnquery/v9/apps/cnquery/cmd"
 	"go.mondoo.com/cnquery/v9/cli/config"
+	cli_errors "go.mondoo.com/cnquery/v9/cli/errors"
 	"go.mondoo.com/cnquery/v9/cli/providers"
 	"go.mondoo.com/cnquery/v9/cli/sysinfo"
 	"go.mondoo.com/cnquery/v9/cli/theme"
@@ -112,6 +113,12 @@ func Execute() {
 
 	// normal cli handling
 	if err := rootCmd.Execute(); err != nil {
+		if cErr, ok := err.(*cli_errors.CommandError); ok {
+			if cErr.HasError() {
+				fmt.Println(err)
+			}
+			os.Exit(cErr.ExitCode())
+		}
 		fmt.Println(err)
 		os.Exit(1)
 	}
