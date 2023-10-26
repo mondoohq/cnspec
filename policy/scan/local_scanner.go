@@ -211,6 +211,9 @@ func preprocessPolicyFilters(filters []string) []string {
 }
 
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, bool, error) {
+	// Always shut down the coordinator, to make sure providers are killed
+	defer providers.Coordinator.Shutdown()
+
 	// plan scan jobs
 	var reporter Reporter
 	switch job.ReportType {
@@ -478,7 +481,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		multiprogress.Open()
 	}()
 	scanGroup.Wait()
-	providers.Coordinator.Shutdown()
 	return reporter.Reports(), finished, nil
 }
 
