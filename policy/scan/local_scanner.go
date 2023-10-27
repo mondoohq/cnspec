@@ -210,6 +210,70 @@ func preprocessPolicyFilters(filters []string) []string {
 	return res
 }
 
+func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig, recording providers.Recording) ([]*inventory.Asset, []*assetWithRuntime, error) {
+	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.DefaultRuntime()))
+	if err != nil {
+		return nil, nil, errors.New("failed to resolve inventory for connection")
+	}
+	assetList := im.GetAssets()
+	if len(assetList) == 0 {
+		return nil, nil, errors.New("could not find an asset that we can connect to")
+	}
+
+	var assetCandidates []*assetWithRuntime
+
+	// we connect and perform discovery for each asset in the job inventory
+	for i := range assetList {
+		resolvedAsset, err := im.ResolveAsset(assetList[i])
+		if err != nil {
+			return nil, nil, err
+		}
+
+		runtime, err := providers.Coordinator.RuntimeFor(resolvedAsset, providers.DefaultRuntime())
+		if err != nil {
+			log.Error().Err(err).Str("asset", resolvedAsset.Name).Msg("unable to create runtime for asset")
+			continue
+		}
+		runtime.SetRecording(recording)
+
+		if err := runtime.Connect(&plugin.ConnectReq{
+			Features: cnquery.GetFeatures(ctx),
+			Asset:    resolvedAsset,
+			Upstream: upstream,
+		}); err != nil {
+			log.Error().Err(err).Msg("unable to connect to asset")
+			continue
+		}
+
+		// for all discovered assets, we apply mondoo-specific labels and annotations that come from the root asset
+		for _, a := range runtime.Provider.Connection.GetInventory().GetSpec().GetAssets() {
+			a.AddMondooLabels(resolvedAsset)
+			a.AddAnnotations(resolvedAsset.GetAnnotations())
+			a.ManagedBy = resolvedAsset.ManagedBy
+		}
+		processedAssets, err := providers.ProcessAssetCandidates(runtime, runtime.Provider.Connection, upstream, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		for i := range processedAssets {
+			assetCandidates = append(assetCandidates, &assetWithRuntime{
+				asset:   processedAssets[i],
+				runtime: runtime,
+			})
+		}
+
+		// TODO: we want to keep better track of errors, since there may be
+		// multiple assets coming in. It's annoying to abort the scan if we get one
+		// error at this stage.
+
+		// we grab the asset from the connection, because it contains all the
+		// detected metadata (and IDs)
+		// assets = append(assets, runtime.Provider.Connection.Asset)
+	}
+
+	return assetList, assetCandidates, nil
+}
+
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, bool, error) {
 	// Always shut down the coordinator, to make sure providers are killed
 	defer providers.Coordinator.Shutdown()
@@ -229,64 +293,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 
-	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.DefaultRuntime()))
-	if err != nil {
-		return nil, false, errors.New("failed to resolve inventory for connection")
-	}
-	assetList := im.GetAssets()
-	if len(assetList) == 0 {
-		return nil, false, errors.New("could not find an asset that we can connect to")
-	}
-
 	var assets []*assetWithRuntime
-	var assetCandidates []*assetWithRuntime
-
-	// we connect and perform discovery for each asset in the job inventory
-	for i := range assetList {
-		resolvedAsset, err := im.ResolveAsset(assetList[i])
-		if err != nil {
-			return nil, false, err
-		}
-
-		runtime, err := providers.Coordinator.RuntimeFor(resolvedAsset, providers.DefaultRuntime())
-		if err != nil {
-			log.Error().Err(err).Str("asset", resolvedAsset.Name).Msg("unable to create runtime for asset")
-			continue
-		}
-		runtime.SetRecording(s.recording)
-
-		if err := runtime.Connect(&plugin.ConnectReq{
-			Features: cnquery.GetFeatures(ctx),
-			Asset:    resolvedAsset,
-			Upstream: upstream,
-		}); err != nil {
-			log.Error().Err(err).Msg("unable to connect to asset")
-			continue
-		}
-
-		// for all discovered assets, we apply mondoo-specific labels and annotations that come from the root asset
-		for _, a := range runtime.Provider.Connection.GetInventory().GetSpec().GetAssets() {
-			a.AddMondooLabels(resolvedAsset)
-			a.AddAnnotations(resolvedAsset.GetAnnotations())
-		}
-		processedAssets, err := providers.ProcessAssetCandidates(runtime, runtime.Provider.Connection, upstream, "")
-		if err != nil {
-			return nil, false, err
-		}
-		for i := range processedAssets {
-			assetCandidates = append(assetCandidates, &assetWithRuntime{
-				asset:   processedAssets[i],
-				runtime: runtime,
-			})
-		}
-
-		// TODO: we want to keep better track of errors, since there may be
-		// multiple assets coming in. It's annoying to abort the scan if we get one
-		// error at this stage.
-
-		// we grab the asset from the connection, because it contains all the
-		// detected metadata (and IDs)
-		// assets = append(assets, runtime.Provider.Connection.Asset)
+	assetList, assetCandidates, err := createAssetCandidateList(ctx, job, upstream, s.recording)
+	if err != nil {
+		return nil, false, err
 	}
 
 	// For each asset candidate, we initialize a new runtime and connect to it.
@@ -457,6 +467,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		for i := range assets {
 			asset := assets[i].asset
 			runtime := assets[i].runtime
+
+			log.Debug().Interface("asset", asset).Msg("start scan")
 
 			// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
 			// we need to solve this at a different level.
