@@ -340,6 +340,12 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			log.Error().Err(err).Msg("unable to connect to asset")
 			continue
 		}
+
+		if candidate.asset.GetPlatform() == nil {
+			log.Error().Msgf("unable to detect platform for asset " + candidate.asset.Name)
+			continue
+		}
+
 		assets = append(assets, &assetWithRuntime{
 			asset:   candidate.asset,
 			runtime: runtime,
