@@ -18,7 +18,7 @@ import (
 	"go.mondoo.com/cnspec/v9/policy"
 )
 
-func TestJunitConverter(t *testing.T) {
+func TestCompactReporter(t *testing.T) {
 	reportCollectionRaw, err := os.ReadFile("./testdata/report-ubuntu.json")
 	require.NoError(t, err)
 

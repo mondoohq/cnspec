@@ -24,42 +24,45 @@ func ReportCollectionToJunit(r *policy.ReportCollection, out shared.OutputHelper
 	suites := junit.Testsuites{}
 
 	// render asset errors
-	for assetMrn, errMsg := range r.Errors {
-		a := r.Assets[assetMrn]
+	// r is nil if no assets were scanned
+	if r != nil {
+		for assetMrn, errMsg := range r.Errors {
+			a := r.Assets[assetMrn]
 
-		properties := []junit.Property{}
-		ts := junit.Testsuite{
-			Tests:      1,
-			Failures:   1,
-			Time:       "",
-			Name:       "Report for " + a.Name,
-			Properties: &properties,
-			Testcases: []junit.Testcase{
-				{
-					Classname: "scan",
-					Name:      "Scan " + a.Name,
-					Failure: &junit.Result{
-						Type:    "error",
-						Message: errMsg,
+			properties := []junit.Property{}
+			ts := junit.Testsuite{
+				Tests:      1,
+				Failures:   1,
+				Time:       "",
+				Name:       "Report for " + a.Name,
+				Properties: &properties,
+				Testcases: []junit.Testcase{
+					{
+						Classname: "scan",
+						Name:      "Scan " + a.Name,
+						Failure: &junit.Result{
+							Type:    "error",
+							Message: errMsg,
+						},
 					},
 				},
-			},
+			}
+			suites.Suites = append(suites.Suites, ts)
 		}
-		suites.Suites = append(suites.Suites, ts)
-	}
 
-	bundle := r.Bundle.ToMap()
-	queries := bundle.QueryMap()
+		bundle := r.Bundle.ToMap()
+		queries := bundle.QueryMap()
 
-	// iterate over asset mrns
-	for assetMrn, assetObj := range r.Assets {
-		// add check results
-		ts := assetPolicyTests(r, assetMrn, assetObj, queries)
-		suites.Suites = append(suites.Suites, ts)
+		// iterate over asset mrns
+		for assetMrn, assetObj := range r.Assets {
+			// add check results
+			ts := assetPolicyTests(r, assetMrn, assetObj, queries)
+			suites.Suites = append(suites.Suites, ts)
 
-		vulernabilityTests := assetMvdTests(r, assetMrn, assetObj)
-		if vulernabilityTests != nil {
-			suites.Suites = append(suites.Suites, *vulernabilityTests)
+			vulernabilityTests := assetMvdTests(r, assetMrn, assetObj)
+			if vulernabilityTests != nil {
+				suites.Suites = append(suites.Suites, *vulernabilityTests)
+			}
 		}
 	}
 
