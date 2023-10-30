@@ -83,7 +83,6 @@ func TestPolicyGroupCategory(t *testing.T) {
 func TestPolicyChecksums(t *testing.T) {
 	files := []string{
 		"../examples/example.mql.yaml",
-		"./deprecated_v7.mql.yaml",
 	}
 
 	for _, file := range files {
@@ -129,11 +128,7 @@ func TestPolicyChecksums(t *testing.T) {
 					p.Version = "1.2.3"
 				},
 				"group date changed": func(p *policy.Policy) {
-					if p.Groups == nil {
-						p.Specs[0].Created = 12345
-					} else {
-						p.Groups[0].Created = 12345
-					}
+					p.Groups[0].Created = 12345
 				},
 			}
 
@@ -173,19 +168,11 @@ func TestPolicyChecksums(t *testing.T) {
 
 			executionTests := map[string]func(){
 				"query spec set": func() {
-					if p.Groups == nil {
-						p.Specs[0].ScoringQueries = map[string]*policy.DeprecatedV7_ScoringSpec{
-							"//local.cnspec.io/run/local-execution/queries/sshd-01": {
-								ScoringSystem: explorer.ScoringSystem_WORST,
-							},
-						}
-					} else {
-						p.Groups[0].Checks[1] = &explorer.Mquery{
-							Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
-							Impact: &explorer.Impact{
-								Scoring: explorer.ScoringSystem_WORST,
-							},
-						}
+					p.Groups[0].Checks[1] = &explorer.Mquery{
+						Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
+						Impact: &explorer.Impact{
+							Scoring: explorer.ScoringSystem_WORST,
+						},
 					}
 				},
 				"query changed": func() {

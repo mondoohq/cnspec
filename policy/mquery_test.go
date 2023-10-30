@@ -4,25 +4,29 @@
 package policy
 
 import (
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestMquery_Whitespaces(t *testing.T) {
-	mq := DeprecatedV7_Mquery{
-		Query: "  mondoo { version \n}   \t\n  ",
+	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
+
+	mq := &explorer.Mquery{
+		Mql: "  mondoo { version \n}   \t\n  ",
 	}
 
-	mqexpect := DeprecatedV7_Mquery{
-		Query: "mondoo { version \n}",
+	mqexpect := &explorer.Mquery{
+		Mql: "mondoo { version \n}",
 	}
 
-	bundle, err := mq.RefreshChecksumAndType(nil)
+	bundle, err := mq.RefreshChecksumAndType(nil, nil, coreSchema)
 	assert.NoError(t, err)
 	assert.NotNil(t, bundle)
 
-	bundle, err = mqexpect.RefreshChecksumAndType(nil)
+	bundle, err = mqexpect.RefreshChecksumAndType(nil, nil, coreSchema)
 	assert.NoError(t, err)
 	assert.NotNil(t, bundle)
 
@@ -30,18 +34,19 @@ func TestMquery_Whitespaces(t *testing.T) {
 }
 
 func TestMquery_CodeIDs(t *testing.T) {
-	mqAssetFilter := DeprecatedV7_Mquery{
-		Query: "mondoo { version \n}",
+	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
+	mqAssetFilter := &explorer.Mquery{
+		Mql: "mondoo { version \n}",
 	}
 
-	mqReg := DeprecatedV7_Mquery{
-		Query: "mondoo { version \n}",
+	mqReg := &explorer.Mquery{
+		Mql: "mondoo { version \n}",
 	}
 
-	_, err := mqAssetFilter.RefreshAsAssetFilter("//some.mrn")
+	_, err := mqAssetFilter.RefreshAsFilter("//some.mrn", coreSchema)
 	assert.NoError(t, err)
 
-	_, err = mqReg.RefreshChecksumAndType(nil)
+	_, err = mqReg.RefreshChecksumAndType(nil, nil, coreSchema)
 	assert.NoError(t, err)
 
 	assert.Equal(t, mqReg.CodeId, mqAssetFilter.CodeId)
