@@ -5,6 +5,7 @@ package backgroundjob
 
 import (
 	"context"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -44,8 +45,8 @@ func (h *healthPinger) Start() {
 	// run health check once on startup
 	runHealthCheck()
 
-	// TODO we may want to add jitter and backoff
-	healthTicker := time.NewTicker(h.interval)
+	jitter := time.Duration(rand.Int63n(int64(h.interval)))
+	healthTicker := time.NewTicker(h.interval + jitter)
 	go func() {
 		defer h.wg.Done()
 		for {

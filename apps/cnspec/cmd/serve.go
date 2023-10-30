@@ -83,6 +83,10 @@ var serveCmd = &cobra.Command{
 			hc := backgroundjob.NewHealthPinger(ctx, client.HttpClient, client.ApiEndpoint, 5*time.Minute)
 			hc.Start()
 			defer hc.Stop()
+
+			checkin := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, conf.runtime.UpstreamConfig, 2*time.Hour)
+			checkin.Start()
+			defer checkin.Stop()
 		}
 
 		bj, err := backgroundjob.New()

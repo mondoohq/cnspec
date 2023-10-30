@@ -43,6 +43,8 @@ require (
 	sigs.k8s.io/yaml v1.3.0
 )
 
+require go.mondoo.com/cnquery/v9 v9.4.1-0.20231030152550-5d25283b8f03
+
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
 	cloud.google.com/go/storage v1.33.0 // indirect
