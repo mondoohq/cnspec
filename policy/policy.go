@@ -18,40 +18,9 @@ import (
 	"go.mondoo.com/cnquery/v9/mrn"
 	"go.mondoo.com/cnquery/v9/types"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v3"
 )
 
 //go:generate protoc --proto_path=../:../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. cnspec_policy.proto
-
-// FIXME: DEPRECATED, remove in v9.0 vv
-func (sv *DeprecatedV7_SeverityValue) UnmarshalJSON(data []byte) error {
-	var sev int64
-
-	if err := json.Unmarshal(data, &sev); err == nil {
-		sv.Value = sev
-	} else {
-		v := &struct {
-			Value int64 `json:"value"`
-		}{}
-		if err := json.Unmarshal(data, &v); err != nil {
-			return err
-		}
-		sv.Value = v.Value
-	}
-
-	if sv.Value < 0 || sv.Value > 100 {
-		return errors.New("severity must be between 0 and 100")
-	}
-
-	return nil
-}
-
-func (sv *DeprecatedV7_SeverityValue) UnmarshalYAML(node *yaml.Node) error {
-	// prevent recursive calls into UnmarshalYAML with a placeholder type
-	return node.Decode(&sv.Value)
-}
-
-// ^^
 
 type dataQueryInfo struct {
 	Type   types.Type `json:"type,omitempty"`
@@ -581,16 +550,6 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	p.GraphContentChecksum = graphContentChecksum.Add(p.LocalContentChecksum).String()
 
 	return nil
-}
-
-func checksumAddSpec(checksum checksums.Fast, spec *DeprecatedV7_ScoringSpec) checksums.Fast {
-	checksum = checksum.AddUint((uint64(spec.Action) << 32) | (uint64(spec.ScoringSystem)))
-	var weightIsPrecentage uint64
-	if spec.WeightIsPercentage {
-		weightIsPrecentage = 0x1 << 32
-	}
-	checksum = checksum.AddUint(weightIsPrecentage | uint64(spec.Weight))
-	return checksum.Add(spec.Id)
 }
 
 func (p *Policy) InvalidateGraphChecksums() {
