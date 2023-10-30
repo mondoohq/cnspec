@@ -12,7 +12,7 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/cockroachdb/errors v1.11.1
 	github.com/google/go-cmdtest v0.4.0
-	github.com/google/uuid v1.3.1
+	github.com/google/uuid v1.4.0
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-plugin v1.5.2 // indirect
