@@ -29,26 +29,6 @@ func TestParser(t *testing.T) {
 	}, baseline.Queries[0].Impact)
 }
 
-func TestParser_DeprecatedV7(t *testing.T) {
-	raw, err := os.ReadFile("../../policy/deprecated_v7.mql.yaml")
-	require.NoError(t, err)
-	require.NotEmpty(t, raw)
-
-	v8raw, err := DeprecatedV7_ToV8(raw)
-	require.NoError(t, err)
-
-	baseline, err := ParseYaml(v8raw)
-	require.NoError(t, err)
-	assert.NotNil(t, baseline)
-	assert.Equal(t, 5, len(baseline.Queries))
-	assert.Equal(t, &Impact{
-		Value: &ImpactValue{
-			Value: 30,
-		},
-		FileContext: FileContext{27, 13},
-	}, baseline.Queries[0].Impact)
-}
-
 func TestRemediationDecoding(t *testing.T) {
 	t.Run("simple remediation text", func(t *testing.T) {
 		desc := "remediation text"

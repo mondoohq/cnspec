@@ -68,7 +68,6 @@ func sanitizeStringForYaml(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// Format formats the .mql.yaml bundle
 func FormatFile(filename string) error {
 	log.Info().Str("file", filename).Msg("format file")
 	data, err := os.ReadFile(filename)
@@ -76,7 +75,25 @@ func FormatFile(filename string) error {
 		return err
 	}
 
+	data, err = FormatBundleData(data)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filename, data, 0o644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Format formats the .mql.yaml bundle
+func FormatBundleData(data []byte) ([]byte, error) {
 	b, err := ParseYaml(data)
+	if err != nil {
+		return nil, err
+	}
 
 	// to improve the formatting we need to remove the whitespace at the end of the lines
 	for i := range b.Queries {
@@ -108,25 +125,5 @@ func FormatFile(filename string) error {
 		}
 	}
 
-	data, err = Format(b)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(filename, data, 0o644)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func hasV7Structs(b *Bundle) bool {
-	for i := range b.Policies {
-		p := b.Policies[i]
-		if len(p.Specs) > 0 {
-			return true
-		}
-	}
-	return false
+	return Format(b)
 }
