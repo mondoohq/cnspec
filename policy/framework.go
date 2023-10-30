@@ -54,7 +54,7 @@ type ResolvedFramework struct {
 // Compile takes a framework and prepares it to be stored and further
 // used in the backend. It separates the framework definition from the
 // framework maps.
-func (f *Framework) compile(ctx context.Context, ownerMrn string, cache *bundleCache, library Library) error {
+func (f *Framework) compile(ctx context.Context, ownerMrn string, cache *bundleCache) error {
 	// 1. we start by turning frameworks and controls from UIDs to MRNs.
 	// First, we need all MRNs for existing controls.
 	if err := f.refreshMRN(ownerMrn, cache); err != nil {
@@ -74,7 +74,7 @@ func (f *Framework) compile(ctx context.Context, ownerMrn string, cache *bundleC
 	// 2. Now we pass through all the framework maps and update their MRNs,
 	// in case they were provided
 	for i := range f.FrameworkMaps {
-		if err := f.FrameworkMaps[i].compile(ctx, ownerMrn, cache, library); err != nil {
+		if err := f.FrameworkMaps[i].compile(ctx, ownerMrn, cache); err != nil {
 			return err
 		}
 	}
@@ -82,7 +82,7 @@ func (f *Framework) compile(ctx context.Context, ownerMrn string, cache *bundleC
 	return nil
 }
 
-func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bundleCache, library Library) error {
+func (fm *FrameworkMap) compile(ctx context.Context, ownerMrn string, cache *bundleCache) error {
 	var ok bool
 
 	if err := fm.refreshMRN(ownerMrn, cache); err != nil {
