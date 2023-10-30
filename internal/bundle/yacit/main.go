@@ -48,9 +48,10 @@ func main() {
 
 			"Authors": 51,
 
-			"Docs":   50,
-			"Refs":   49,
-			"Groups": 40,
+			"Docs":          50,
+			"Refs":          49,
+			"Groups":        40,
+			"ScoringSystem": 39,
 
 			// frameworks
 			"FrameworkOwner":        90,
@@ -62,7 +63,6 @@ func main() {
 	})
 
 	res.Add(&policy.Bundle{})
-	res.Add(&policy.DeprecatedV7_Bundle{})
 
 	code := res.String()
 	formatted, err := format.Source([]byte(code))

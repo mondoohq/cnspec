@@ -50,7 +50,6 @@ queries:
   - uid: sshd-server-policy
     name: SSH Server Policy
     version: 1.0.0
-    license: unspecified
     tags:
       another-key: another-value
       key: value
