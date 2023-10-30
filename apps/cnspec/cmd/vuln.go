@@ -26,6 +26,7 @@ func init() {
 	vulnCmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 	vulnCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
 	vulnCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
+	vulnCmd.Flags().String("asset-name", "", "User-override for the asset name")
 
 	vulnCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
 	vulnCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
