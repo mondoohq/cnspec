@@ -89,6 +89,11 @@ To manually configure a policy, use this:
 			os.Exit(0)
 		}
 
+		name := viper.GetString("name")
+		if name == "" {
+			name = "test"
+		}
+
 		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
