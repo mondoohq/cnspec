@@ -746,14 +746,19 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		if policy.ComputedFilters == nil || policy.ComputedFilters.Items == nil {
 			policy.ComputedFilters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
 		}
-		policy.ComputedFilters.Compile(ownerMrn, cache.conf.Schema)
+		if err = policy.ComputedFilters.Compile(ownerMrn, cache.conf.Schema); err != nil {
+			return nil, multierr.Wrap(err, "failed to compile policy filters")
+		}
 
 		// ---- GROUPs -------------
 		for i := range policy.Groups {
 			group := policy.Groups[i]
 
 			// When filters are initially added they haven't been compiled
-			group.Filters.Compile(ownerMrn, cache.conf.Schema)
+			if err = group.Filters.Compile(ownerMrn, cache.conf.Schema); err != nil {
+				return nil, multierr.Wrap(err, "failed to compile policy group filters")
+			}
+
 			if group.Filters != nil {
 				for j := range group.Filters.Items {
 					filter := group.Filters.Items[j]
