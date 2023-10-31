@@ -166,45 +166,7 @@ func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
 func BundleFromYAML(data []byte) (*Bundle, error) {
 	var res Bundle
 	err := yaml.Unmarshal(data, &res)
-
-	// FIXME: DEPRECATED, remove in v9.0 vv
-	// first we want to see if this looks like a new Bundle. If it does, just
-	// return it and we are done. But if it doesn't, then we will try to
-	// parse it as a v7 bundle instead and see if that works.
-	if err == nil {
-		// Only new policies and bundles support logic where you don't have
-		// any policy in the bundle at all.
-		if len(res.Policies) == 0 {
-			return &res, nil
-		}
-
-		// If the policy as the groups field, then we know it's a new one
-		for i := range res.Policies {
-			cur := res.Policies[i]
-			if cur.Groups != nil {
-				return &res, nil
-			}
-		}
-	}
-
-	// We either got here because there is an error, or because it may also
-	// be an old bundle. So let's try to parse it as an old bundle.
-	var altRes DeprecatedV7_Bundle
-	altErr := yaml.Unmarshal(data, &altRes)
-	if altErr == nil && len(altRes.Policies) != 0 {
-		// we still want to do a sanity check that this is a valid v7 policy
-		for i := range altRes.Policies {
-			cur := altRes.Policies[i]
-			if cur.Specs != nil {
-				return altRes.ToV8(), nil
-			}
-		}
-	}
-
-	// This is the final fallthrough, where we either have an error or
-	// it's not a valid v7 policy
 	return &res, err
-	// ^^
 }
 
 // ToYAML returns the policy bundle as yaml
@@ -611,10 +573,6 @@ func (p *Bundle) Compile(ctx context.Context, schema llx.Schema, library Library
 		// this only happens for local bundles where queries have no mrn yet
 		ownerMrn = "//local.cnspec.io/run/local-execution"
 	}
-
-	// FIXME: DEPRECATED, remove in v9.0 vv
-	p.DeprecatedV7Conversions()
-	// ^^
 
 	cache := &bundleCache{
 		ownerMrn:    ownerMrn,

@@ -77,6 +77,7 @@ policy/generate:
 	go generate ./policy
 	go generate ./policy/scan
 	go generate ./policy/upstream
+	go generate ./internal/bundle/yacit
 
 upstream/generate:
 	go generate ./upstream

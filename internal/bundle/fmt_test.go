@@ -21,11 +21,10 @@ policies:
       key: value
       another-key: another-value
     name: SSH Server Policy
-    specs:
-      - asset_filter:
-          query: asset.family.contains('unix')
-        scoring_queries:
-          query1:
+    groups:
+      - filters: asset.family.contains('unix')
+        checks:
+          - uid: query1
     version: "1.0.0"
     scoring_system: 2
 queries:
@@ -37,20 +36,19 @@ queries:
         Run the "mokutil --sb-state" command and check whether it prints "SecureBoot enabled"
       remediation: |
         Enable Secure Boot in your computer's firmware and use a Linux distribution supporting Secure Boot
-    query: |
+    mql: |
       command('mokutil --sb-state').stdout.downcase.contains('secureboot enabled')
-    severity: 100
+    impact: 100
     title: Ensure Secure Boot is enabled
 `
 
-	formatted, err := DeprecatedV7_ToV8([]byte(data))
+	formatted, err := FormatBundleData([]byte(data))
 	require.NoError(t, err)
 
 	expected := `policies:
   - uid: sshd-server-policy
     name: SSH Server Policy
     version: 1.0.0
-    license: unspecified
     tags:
       another-key: another-value
       key: value
