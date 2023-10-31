@@ -80,9 +80,9 @@ var serveCmd = &cobra.Command{
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 			}
 
-			hc := backgroundjob.NewHealthPinger(ctx, client.HttpClient, client.ApiEndpoint, 5*time.Minute)
-			hc.Start()
-			defer hc.Stop()
+			checkin := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, conf.runtime.UpstreamConfig, 2*time.Hour)
+			checkin.Start()
+			defer checkin.Stop()
 		}
 
 		bj, err := backgroundjob.New()
