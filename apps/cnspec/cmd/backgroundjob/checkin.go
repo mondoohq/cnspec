@@ -12,7 +12,6 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/cli/sysinfo"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
@@ -101,11 +100,6 @@ func (c *checkinPinger) checkIn(sysInfo *sysinfo.SystemInfo) error {
 	client, err := upstream.NewAgentManagerClient(c.endpoint, c.httpClient, plugins...)
 	if err != nil {
 		return errors.Wrap(err, "could not connect to mondoo platform")
-	}
-
-	name := viper.GetString("name")
-	if name == "" {
-		name = sysInfo.Hostname
 	}
 
 	_, err = client.HealthCheck(context.Background(), &upstream.AgentInfo{
