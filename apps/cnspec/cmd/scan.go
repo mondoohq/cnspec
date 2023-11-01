@@ -238,7 +238,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		Features:       opts.GetFeatures(),
 		IsIncognito:    viper.GetBool("incognito"),
 		Inventory:      inv,
-		PolicyPaths:    viper.GetStringSlice("policy-bundle"),
+		PolicyPaths:    dedupe(viper.GetStringSlice("policy-bundle")),
 		PolicyNames:    viper.GetStringSlice("policies"),
 		ScoreThreshold: viper.GetInt("score-threshold"),
 		Props:          props,
@@ -322,7 +322,14 @@ func (c *scanConfig) loadPolicies() error {
 			return err
 		}
 
-		_, err = bundle.Compile(context.Background(), c.runtime.Schema(), nil)
+		_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+			Schema: c.runtime.Schema(),
+			// We don't care about failing queries for local runs. We may only
+			// process a subset of all the queries in the bundle. When we receive
+			// things from the server, upstream can filter things for us. But running
+			// them locally requires us to do it in here.
+			RemoveFailing: true,
+		})
 		if err != nil {
 			return errors.Wrap(err, "failed to compile bundle")
 		}
@@ -385,4 +392,16 @@ func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.
 	if err = r.Print(report, os.Stdout); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
+}
+
+func dedupe[T string | int](sliceList []T) []T {
+	allKeys := make(map[T]bool)
+	list := []T{}
+	for _, item := range sliceList {
+		if _, value := allKeys[item]; !value {
+			allKeys[item] = true
+			list = append(list, item)
+		}
+	}
+	return list
 }
