@@ -6,7 +6,7 @@ go 1.21
 
 toolchain go1.21.3
 
-require go.mondoo.com/cnquery/v9 v9.4.1-0.20231031202107-d2f48999c4e2
+require go.mondoo.com/cnquery/v9 v9.5.0
 
 require (
 	github.com/Masterminds/semver v1.5.0
