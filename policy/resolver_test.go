@@ -276,28 +276,24 @@ policies:
     checks:
     - uid: check1
       mql: 1 == 1
+- mrn: asset1
+  owner_mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy-1
+  - checks:
+    - uid: check1
+      action: 4
 `)
 
-	srv := initResolver(t, []*testAsset{
-		{asset: "asset1", policies: []string{policyMrn("policy-1")}},
-	}, []*policy.Bundle{b})
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = srv.SetBundle(ctx, b)
+	require.NoError(t, err)
 
 	bundleMap, err := b.Compile(context.Background(), schema, nil)
-	require.NoError(t, err)
-
-	// we get the asset policy, manually apply the ignored action and store it back
-	ap, err := srv.DataLake.GetRawPolicy(context.Background(), "asset1")
-	require.NoError(t, err)
-	require.NotNil(t, ap)
-	ap.Groups[0].Checks = []*explorer.Mquery{
-		{
-			Mrn:    queryMrn("check1"),
-			Action: explorer.Action_IGNORE,
-		},
-	}
-	ap.InvalidateExecutionChecksums()
-
-	err = srv.SetPolicyFromBundle(context.Background(), ap, nil)
 	require.NoError(t, err)
 
 	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
