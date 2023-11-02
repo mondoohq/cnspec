@@ -80,9 +80,14 @@ var serveCmd = &cobra.Command{
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 			}
 
-			checkin := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, conf.runtime.UpstreamConfig, 2*time.Hour)
-			checkin.Start()
-			defer checkin.Stop()
+			checkin, err := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, conf.AgentMrn, conf.runtime.UpstreamConfig, 2*time.Hour)
+			if err != nil {
+				log.Error().Err(err).Msg("could not initialize upstream check-in")
+			} else {
+				checkin.Start()
+				defer checkin.Stop()
+			}
+
 		}
 
 		bj, err := backgroundjob.New()
@@ -136,6 +141,7 @@ func getServeConfig() (*scanConfig, error) {
 		ReportType: scan.ReportType_ERROR,
 		Output:     "",
 		runtime:    runtime,
+		AgentMrn:   opts.AgentMrn,
 	}
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory

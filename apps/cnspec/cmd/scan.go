@@ -195,6 +195,7 @@ type scanConfig struct {
 	ScoreThreshold int
 
 	DoRecord bool
+	AgentMrn string
 }
 
 func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) (*scanConfig, error) {
@@ -243,6 +244,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		ScoreThreshold: viper.GetInt("score-threshold"),
 		Props:          props,
 		runtime:        runtime,
+		AgentMrn:       opts.AgentMrn,
 	}
 
 	// if users want to get more information on available output options,
