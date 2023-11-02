@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v9/explorer"
 	"go.mondoo.com/cnquery/v9/providers"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/v9/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v9/policy"
 )
@@ -76,6 +77,48 @@ func TestBundleCompile(t *testing.T) {
 	require.NotNil(t, variant1, "variant cannot be nil")
 
 	assert.Equal(t, base.Title, variant1.Title)
+}
+
+func TestBundleCompile_RemoveFailingQueries(t *testing.T) {
+	bundleStr := `
+  owner_mrn: //test.sth
+  policies:
+  - uid: policy1
+    groups:
+    - filters: "true"
+      checks:
+      - uid: check-1
+        mql: 1 == 2
+      - uid: check-2
+        mql: muser.name != ""
+      queries:
+      - uid: query-1
+        mql: 1 == 1
+      - uid: query-2
+        mql: muser.name`
+
+	bundle := parseBundle(t, bundleStr)
+	require.NotNil(t, bundle)
+	runtime := testutils.Local()
+	s := runtime.Schema()
+	delete(s.AllResources(), "muser")
+	bundlemap, err := bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s,
+		Library:       nil,
+		RemoveFailing: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, bundlemap)
+
+	// since we can't compile the muser queries, they should not be part of the
+	// bundle
+	require.NotNil(t, bundlemap.Queries[queryMrn("query-1")])
+	require.Nil(t, bundlemap.Queries[queryMrn("query-2")])
+	require.NotNil(t, bundlemap.Queries[queryMrn("check-1")])
+	require.Nil(t, bundlemap.Queries[queryMrn("check-2")])
+	require.Equal(t, 1, len(bundlemap.Policies[policyMrn("policy1")].Groups))
+	require.Equal(t, 1, len(bundlemap.Policies[policyMrn("policy1")].Groups[0].Queries))
+	require.Equal(t, 1, len(bundlemap.Policies[policyMrn("policy1")].Groups[0].Checks))
 }
 
 func TestBundleFrameworkGraphExecutionChecksum(t *testing.T) {
