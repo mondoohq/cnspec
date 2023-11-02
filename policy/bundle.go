@@ -579,7 +579,8 @@ func (c *bundleCache) removeFailing(res *Bundle) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 			group.Queries = explorer.FilterQueryMRNs(c.removeQueries, group.Queries)
-			if len(group.Queries) != 0 {
+			group.Checks = explorer.FilterQueryMRNs(c.removeQueries, group.Checks)
+			if len(group.Queries)+len(group.Checks) > 0 {
 				groups = append(groups, group)
 			}
 		}
