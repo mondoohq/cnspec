@@ -30,16 +30,19 @@ type checkinPinger struct {
 	creds      *upstream.ServiceAccountCredentials
 }
 
-func NewCheckinPinger(ctx context.Context, httpClient *http.Client, endpoint string, config *upstream.UpstreamConfig, interval time.Duration) *checkinPinger {
+func NewCheckinPinger(ctx context.Context, httpClient *http.Client, endpoint string, agentMrn string, config *upstream.UpstreamConfig, interval time.Duration) (*checkinPinger, error) {
+	if agentMrn == "" {
+		return nil, errors.New("could not determine agent MRN")
+	}
 	return &checkinPinger{
 		ctx:        ctx,
 		interval:   interval,
 		quit:       make(chan struct{}),
 		endpoint:   endpoint,
 		httpClient: httpClient,
-		mrn:        config.Creds.Mrn,
+		mrn:        agentMrn,
 		creds:      config.Creds,
-	}
+	}, nil
 }
 
 func (c *checkinPinger) Start() {
