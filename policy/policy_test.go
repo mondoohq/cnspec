@@ -369,7 +369,7 @@ queries:
 		pInitial := bundleInitial.Policies[0]
 		pInitial.InvalidateLocalChecksums()
 		_, err = bundleInitial.Compile(context.Background(), schema, nil)
-		require.Equal(t, policy.ErrVariantCycleDetected, err)
+		require.Equal(t, policy.ErrVariantCycleDetected("//local.cnspec.io/run/local-execution/queries/variant1"), err)
 	}
 
 	{
@@ -401,6 +401,6 @@ queries:
 		pInitial := bundleInitial.Policies[0]
 		pInitial.InvalidateLocalChecksums()
 		_, err = bundleInitial.Compile(context.Background(), schema, nil)
-		require.Equal(t, policy.ErrVariantCycleDetected, err)
+		require.Equal(t, policy.ErrVariantCycleDetected("//local.cnspec.io/run/local-execution/queries/variant1"), err)
 	}
 }

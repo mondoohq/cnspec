@@ -601,7 +601,9 @@ const (
 	VISITED
 )
 
-var ErrVariantCycleDetected = errors.New("variant cycle detected")
+var ErrVariantCycleDetected = func(mrn string) error {
+	return fmt.Errorf("variant cycle in %s detected", mrn)
+}
 
 func detectVariantCycles(queries map[string]*explorer.Mquery) error {
 	statusMap := map[string]nodeVisitStatus{}
@@ -623,7 +625,7 @@ func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, qu
 	if s == VISITED {
 		return nil
 	} else if s == ACTIVE {
-		return ErrVariantCycleDetected
+		return ErrVariantCycleDetected(mrn)
 	}
 	statusMap[q.Mrn] = ACTIVE
 	for _, variant := range q.Variants {
