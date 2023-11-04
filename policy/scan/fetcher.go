@@ -40,7 +40,11 @@ func (f *fetcher) fetchBundles(ctx context.Context, schema llx.Schema, urls ...s
 		}
 
 		// need to generate MRNs for everything
-		if _, err := cur.Compile(ctx, schema, nil); err != nil {
+		if _, err := cur.CompileExt(ctx, policy.BundleCompileConf{
+			Schema:        schema,
+			Library:       nil,
+			RemoveFailing: true,
+		}); err != nil {
 			return nil, errors.Wrap(err, "failed to compile fetched bundle")
 		}
 
