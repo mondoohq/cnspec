@@ -79,6 +79,72 @@ func TestBundleCompile(t *testing.T) {
 	assert.Equal(t, base.Title, variant1.Title)
 }
 
+func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
+	// this bundle has both built-in queries and group queries
+	bundleStr := `
+  owner_mrn: //test.sth
+  packs:
+  - uid: pack-1
+    authors:
+     - name: author1
+       email: author@author.com
+    filters: 2 == 2
+    queries:
+    - uid: built-in q
+      mql: 1 == 1
+      title: built-in q
+    groups:
+    - filters: "true"
+      queries:
+      - uid: check-1
+        mql: 1 == 2
+`
+
+	bundle := parseBundle(t, bundleStr)
+	require.NotNil(t, bundle)
+	require.Equal(t, 0, len(bundle.Policies))
+
+	bundle.ConvertQuerypacks()
+
+	require.Equal(t, 1, len(bundle.Packs))
+	require.Equal(t, 1, len(bundle.Policies))
+	require.Equal(t, 2, len(bundle.Policies[0].Groups))
+	expectedAuthors := []*explorer.Author{
+		{
+			Name:  "author1",
+			Email: "author@author.com",
+		},
+	}
+	require.Equal(t, expectedAuthors, bundle.Policies[0].Authors)
+
+	// built in group
+	expectedBuiltInFilters := &explorer.Filters{
+		Items: map[string]*explorer.Mquery{
+			"": {
+				Mql: "2 == 2",
+			},
+		},
+	}
+
+	require.Equal(t, 1, len(bundle.Policies[0].Groups[0].Queries))
+	require.Equal(t, "Default Queries", bundle.Policies[0].Groups[0].Title)
+	require.Equal(t, "built-in q", bundle.Policies[0].Groups[0].Queries[0].Title)
+	require.Equal(t, "1 == 1", bundle.Policies[0].Groups[0].Queries[0].Mql)
+	require.Equal(t, expectedBuiltInFilters, bundle.Policies[0].Groups[0].Filters)
+
+	expectedGrpFilters := &explorer.Filters{
+		Items: map[string]*explorer.Mquery{
+			"": {
+				Mql: "true",
+			},
+		},
+	}
+	require.Equal(t, 1, len(bundle.Policies[0].Groups[1].Queries))
+	require.Equal(t, "check-1", bundle.Policies[0].Groups[1].Queries[0].Uid)
+	require.Equal(t, "1 == 2", bundle.Policies[0].Groups[1].Queries[0].Mql)
+	require.Equal(t, expectedGrpFilters, bundle.Policies[0].Groups[1].Filters)
+}
+
 func TestBundleCompile_RemoveFailingQueries(t *testing.T) {
 	bundleStr := `
   owner_mrn: //test.sth
