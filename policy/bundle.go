@@ -215,15 +215,16 @@ func convertQueryPackDocs(q *explorer.QueryPackDocs) *PolicyDocs {
 func convertQueryPackGroups(p *explorer.QueryPack) []*PolicyGroup {
 	var res []*PolicyGroup
 
-	// any builtin queries need to be put into a group for policies
-	res = append(res, &PolicyGroup{
-		Queries: p.Queries,
-		Type:    GroupType_CHAPTER,
-		Uid:     "default-queries",
-		Title:   "Default Queries",
-		Filters: p.Filters,
-	})
-
+	if len(p.Queries) > 0 {
+		// any builtin queries need to be put into a group for policies
+		res = append(res, &PolicyGroup{
+			Queries: p.Queries,
+			Type:    GroupType_CHAPTER,
+			Uid:     "default-queries",
+			Title:   "Default Queries",
+			Filters: p.Filters,
+		})
+	}
 	for i := range p.Groups {
 		g := p.Groups[i]
 		res = append(res, &PolicyGroup{
