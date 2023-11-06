@@ -102,6 +102,7 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 
 	bundle := parseBundle(t, bundleStr)
 	require.NotNil(t, bundle)
+	require.Equal(t, 0, len(bundle.Policies))
 
 	bundle.ConvertQuerypacks()
 
