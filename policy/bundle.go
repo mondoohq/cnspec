@@ -120,7 +120,7 @@ func aggregateFilesToBundle(paths []string) (*Bundle, error) {
 			return nil, errors.Wrap(err, "could not load file: "+path)
 		}
 
-		mergedBundle = aggregateBundles(mergedBundle, bundle)
+		mergedBundle = Merge(mergedBundle, bundle)
 	}
 
 	return mergedBundle, nil
@@ -136,9 +136,9 @@ func bundleFromSingleFile(path string) (*Bundle, error) {
 	return BundleFromYAML(bundleData)
 }
 
-// aggregateBundles combines two PolicyBundle and merges the data additive into one
+// Merge combines two PolicyBundle and merges the data additive into one
 // single PolicyBundle structure
-func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
+func Merge(a *Bundle, b *Bundle) *Bundle {
 	res := &Bundle{}
 
 	res.OwnerMrn = a.OwnerMrn
@@ -1111,4 +1111,22 @@ func translateGroupUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]s
 	}
 
 	return nil
+}
+
+// Takes a query pack bundle and converts it to a policy bundle.
+// It copies over the owner, the packs, the props and the queries from the bundle
+// and converts all query packs into data-only policies.
+func FromQueryPackBundle(bundle *explorer.Bundle) *Bundle {
+	if bundle == nil {
+		return nil
+	}
+	b := &Bundle{
+		OwnerMrn: bundle.OwnerMrn,
+		Packs:    bundle.Packs,
+		Props:    bundle.Props,
+		Queries:  bundle.Queries,
+	}
+	b.ConvertQuerypacks()
+
+	return b
 }
