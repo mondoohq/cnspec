@@ -204,6 +204,9 @@ func (p *Bundle) ConvertQuerypacks() {
 }
 
 func convertQueryPackDocs(q *explorer.QueryPackDocs) *PolicyDocs {
+	if q == nil {
+		return nil
+	}
 	return &PolicyDocs{
 		Desc: q.Desc,
 	}
