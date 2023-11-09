@@ -148,6 +148,7 @@ func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
 
 	// merge in a
 	res.Policies = append(res.Policies, a.Policies...)
+	res.Packs = append(res.Packs, a.Packs...)
 	res.Props = append(res.Props, a.Props...)
 	res.Queries = append(res.Queries, a.Queries...)
 	res.Frameworks = append(res.Frameworks, a.Frameworks...)
@@ -155,6 +156,7 @@ func aggregateBundles(a *Bundle, b *Bundle) *Bundle {
 
 	// merge in b
 	res.Policies = append(res.Policies, b.Policies...)
+	res.Packs = append(res.Packs, b.Packs...)
 	res.Props = append(res.Props, b.Props...)
 	res.Queries = append(res.Queries, b.Queries...)
 	res.Frameworks = append(res.Frameworks, b.Frameworks...)
@@ -180,6 +182,10 @@ func (p *Bundle) ToYAML() ([]byte, error) {
 func (p *Bundle) ConvertQuerypacks() {
 	for i := range p.Packs {
 		pack := p.Packs[i]
+
+		// Remove this once we reach v10 vv
+		pack.DeprecatedV9_ensureUIDs()
+		// ^^
 
 		policy := Policy{
 			Mrn:      pack.Mrn,

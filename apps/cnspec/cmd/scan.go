@@ -324,6 +324,8 @@ func (c *scanConfig) loadPolicies() error {
 			return err
 		}
 
+		bundle.ConvertQuerypacks()
+
 		_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
 			Schema: c.runtime.Schema(),
 			// We don't care about failing queries for local runs. We may only
