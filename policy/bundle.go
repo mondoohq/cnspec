@@ -612,7 +612,7 @@ const (
 )
 
 var ErrVariantCycleDetected = func(mrn string) error {
-	return fmt.Errorf("variant cycle in %s detected", mrn)
+	return fmt.Errorf("variant cycle detected in %s", mrn)
 }
 
 func detectVariantCycles(queries map[string]*explorer.Mquery) error {
