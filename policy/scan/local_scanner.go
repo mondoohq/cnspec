@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -828,6 +829,26 @@ func noPolicyErr(availablePolicies []string, filter []string) error {
 	return errors.New(sb.String())
 }
 
+func filterPolicyMrns(b *policy.Bundle, filters []string) []string {
+	if len(filters) == 0 {
+		res := make([]string, len(b.Policies))
+		for i := range b.Policies {
+			res[i] = b.Policies[i].Mrn
+		}
+		return res
+	}
+
+	var res []string
+	for i := range b.Policies {
+		cur := b.Policies[i]
+		uid, _ := mrn.GetResource(cur.Mrn, policy.MRN_RESOURCE_POLICY)
+		if slices.Contains(filters, uid) || slices.Contains(filters, cur.Mrn) {
+			res = append(res, cur.Mrn)
+		}
+	}
+	return res
+}
+
 func (s *localAssetScanner) prepareAsset() error {
 	var hub policy.PolicyHub = s.services
 
@@ -844,25 +865,12 @@ func (s *localAssetScanner) prepareAsset() error {
 		return errors.New("no bundle provided to run")
 	}
 
-	availablePolicies := s.job.Bundle.PolicyMRNs()
-
-	// filter bundle by user-provided policy filter
-	s.job.Bundle.FilterPolicies(s.job.PolicyFilters)
-
-	// if no policies are left, return an error
-	if len(s.job.Bundle.Policies) == 0 {
-		return noPolicyErr(availablePolicies, s.job.PolicyFilters)
-	}
-
 	_, err := hub.SetBundle(s.job.Ctx, s.job.Bundle)
 	if err != nil {
 		return err
 	}
 
-	policyMrns := make([]string, len(s.job.Bundle.Policies))
-	for i := range s.job.Bundle.Policies {
-		policyMrns[i] = s.job.Bundle.Policies[i].Mrn
-	}
+	policyMrns := filterPolicyMrns(s.job.Bundle, s.job.PolicyFilters)
 
 	frameworkMrns := make([]string, len(s.job.Bundle.Frameworks))
 	for i := range s.job.Bundle.Frameworks {
