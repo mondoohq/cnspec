@@ -90,9 +90,9 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
        email: author@author.com
     filters: 2 == 2
     queries:
-    - uid: built-in q
+    - uid: built-in-q
       mql: 1 == 1
-      title: built-in q
+      title: built-in-q
     groups:
     - filters: "true"
       queries:
@@ -116,6 +116,7 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 		},
 	}
 	require.Equal(t, expectedAuthors, bundle.Policies[0].Authors)
+	require.Equal(t, explorer.ScoringSystem_DATA_ONLY, bundle.Policies[0].ScoringSystem)
 
 	// built in group
 	expectedBuiltInFilters := &explorer.Filters{
@@ -128,7 +129,7 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 
 	require.Equal(t, 1, len(bundle.Policies[0].Groups[0].Queries))
 	require.Equal(t, "Default Queries", bundle.Policies[0].Groups[0].Title)
-	require.Equal(t, "built-in q", bundle.Policies[0].Groups[0].Queries[0].Title)
+	require.Equal(t, "built-in-q", bundle.Policies[0].Groups[0].Queries[0].Title)
 	require.Equal(t, "1 == 1", bundle.Policies[0].Groups[0].Queries[0].Mql)
 	require.Equal(t, expectedBuiltInFilters, bundle.Policies[0].Groups[0].Filters)
 
@@ -143,6 +144,45 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 	require.Equal(t, "check-1", bundle.Policies[0].Groups[1].Queries[0].Uid)
 	require.Equal(t, "1 == 2", bundle.Policies[0].Groups[1].Queries[0].Mql)
 	require.Equal(t, expectedGrpFilters, bundle.Policies[0].Groups[1].Filters)
+}
+
+func TestBundleCompile_FromQueryPackBundle(t *testing.T) {
+	// this bundle has both built-in queries and group queries
+	qBundleStr := `
+  owner_mrn: //test.sth
+  packs:
+  - uid: pack-1
+    authors:
+     - name: author1
+       email: author@author.com
+    filters: 2 == 2
+    queries:
+    - uid: built-in-q
+      mql: 1 == 1
+      title: built-in-q
+    groups:
+    - filters: "true"
+      queries:
+      - uid: check-1
+        mql: 1 == 2
+      - uid: check-2
+  queries:
+  - uid: check-2
+    mql: 3 == 3
+    title: check-2
+`
+
+	qBundle, err := explorer.BundleFromYAML([]byte(qBundleStr))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(qBundle.Packs))
+	require.Equal(t, 1, len(qBundle.Queries))
+
+	converted := policy.FromQueryPackBundle(qBundle)
+	require.Equal(t, 1, len(converted.Packs))
+	require.Equal(t, 1, len(converted.Policies))
+	require.Equal(t, 1, len(converted.Queries))
+	// built-in group + group from pack
+	require.Equal(t, 2, len(converted.Policies[0].Groups))
 }
 
 func TestBundleCompile_RemoveFailingQueries(t *testing.T) {
