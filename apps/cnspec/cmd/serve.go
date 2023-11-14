@@ -87,7 +87,6 @@ var serveCmd = &cobra.Command{
 				checkin.Start()
 				defer checkin.Stop()
 			}
-
 		}
 
 		bj, err := backgroundjob.New()
@@ -96,6 +95,11 @@ var serveCmd = &cobra.Command{
 		}
 
 		bj.Run(func() error {
+			// Try to update the os provider before each scan
+			err = updateProviders()
+			if err != nil {
+				log.Error().Err(err).Msg("could not update providers")
+			}
 			// TODO: check in every 5 min via timer, init time in Background job
 			result, err := RunScan(conf, scan.DisableProgressBar())
 			if err != nil {
@@ -207,4 +211,36 @@ func logClientInfo(spaceMrn string, clientMrn string, serviceAccountMrn string) 
 		version = "unstable"
 	}
 	log.Info().Str("version", version).Str("space", spaceMrn).Str("service_account", serviceAccountMrn).Str("client", clientMrn).Msg("start cnspec")
+}
+
+func updateProviders() error {
+	log.Debug().Msg("checking for provider updates")
+	// force re-load from disk, in case it got updated outside the serve mode
+	providers.CachedProviders = nil
+	allProviders, err := providers.ListActive()
+	if err != nil {
+		return err
+	}
+	updatedProviders := []*providers.Provider{}
+	for _, provider := range allProviders {
+		if provider.Name == "mock" || provider.Name == "core" {
+			continue
+		}
+		latestVersion, err := providers.LatestVersion(provider.Name)
+		if err != nil {
+			return err
+		}
+		if latestVersion != provider.Version {
+			installed, err := providers.Install(provider.Name, "")
+			if err != nil {
+				return err
+			}
+			updatedProviders = append(updatedProviders, installed)
+		} else {
+			log.Debug().Str("provider", provider.Name).Str("version", provider.Version).Msg("provider is already up to date")
+		}
+
+	}
+	providers.PrintInstallResults(updatedProviders)
+	return nil
 }
