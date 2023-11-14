@@ -221,6 +221,7 @@ func updateProviders() error {
 	if err != nil {
 		return err
 	}
+	updatedProviders := []*providers.Provider{}
 	for _, provider := range allProviders {
 		if provider.Name == "mock" || provider.Name == "core" {
 			continue
@@ -234,11 +235,12 @@ func updateProviders() error {
 			if err != nil {
 				return err
 			}
-			providers.PrintInstallResults([]*providers.Provider{installed})
+			updatedProviders = append(updatedProviders, installed)
 		} else {
 			log.Debug().Str("provider", provider.Name).Str("version", provider.Version).Msg("provider is already up to date")
 		}
 
 	}
+	providers.PrintInstallResults(updatedProviders)
 	return nil
 }
