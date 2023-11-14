@@ -29,7 +29,7 @@ require (
 	github.com/rs/zerolog v1.31.0
 	github.com/segmentio/fasthash v1.0.3
 	github.com/segmentio/ksuid v1.0.4
-	github.com/spf13/cobra v1.7.0
+	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.17.0
 	github.com/stretchr/testify v1.8.4
