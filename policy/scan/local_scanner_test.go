@@ -10,9 +10,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/llx"
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 func TestFilterPreprocess(t *testing.T) {
@@ -108,4 +113,225 @@ func TestDefaultConfig(t *testing.T) {
 
 		require.Equal(t, providers.NullRecording{}, scanner.recording)
 	})
+}
+
+type LocalScannerSuite struct {
+	suite.Suite
+	ctx    context.Context
+	schema llx.Schema
+	job    *Job
+}
+
+func (s *LocalScannerSuite) SetupSuite() {
+	s.ctx = context.Background()
+	runtime := testutils.Local()
+	s.schema = runtime.Schema()
+}
+
+func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
+	s.job = &Job{
+		Inventory: &inventory.Inventory{
+			Spec: &inventory.InventorySpec{
+				Assets: []*inventory.Asset{
+					{
+						Connections: []*inventory.Config{
+							{
+								Type: "k8s",
+								Options: map[string]string{
+									"path": "./testdata/2pods.yaml",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
+	bundle, err := policy.BundleFromPaths("./testdata/exception-groups.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+	s.job.PolicyFilters = []string{"asset-policy"}
+	bundleMap := bundle.ToMap()
+
+	ctx := context.Background()
+	scanner := NewLocalScanner()
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for k, r := range full.Reports {
+		// Verify the score is 100
+		s.Equal(uint32(100), r.GetScore().Value)
+
+		p := full.ResolvedPolicies[k]
+
+		// Get the code id for all the executed queries
+		executedQueries := []string{}
+		for qCodeId := range p.ExecutionJob.Queries {
+			executedQueries = append(executedQueries, qCodeId)
+		}
+
+		expectedQueries := []string{
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+		}
+		s.ElementsMatch(expectedQueries, executedQueries)
+
+		queryIdToReportingJob := map[string]*policy.ReportingJob{}
+		for _, rj := range p.CollectorJob.ReportingJobs {
+			_, ok := queryIdToReportingJob[rj.QrId]
+			s.Require().False(ok)
+			queryIdToReportingJob[rj.QrId] = rj
+		}
+
+		// Make sure the ignored query is ignored
+		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
+		s.Require().NotNil(queryRj)
+
+		parent := queryRj.Notify[0]
+		parentJob := p.CollectorJob.ReportingJobs[parent]
+		s.Require().NotNil(parentJob)
+		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+	}
+}
+
+func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
+	bundle, err := policy.BundleFromPaths("./testdata/exceptions.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+	s.job.PolicyFilters = []string{"asset-policy"}
+	bundleMap := bundle.ToMap()
+
+	ctx := context.Background()
+	scanner := NewLocalScanner()
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for k, r := range full.Reports {
+		// Verify the score is 100
+		s.Equal(uint32(100), r.GetScore().Value)
+
+		p := full.ResolvedPolicies[k]
+
+		// Get the code id for all the executed queries
+		executedQueries := []string{}
+		for qCodeId := range p.ExecutionJob.Queries {
+			executedQueries = append(executedQueries, qCodeId)
+		}
+
+		expectedQueries := []string{
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+		}
+		s.ElementsMatch(expectedQueries, executedQueries)
+
+		queryIdToReportingJob := map[string]*policy.ReportingJob{}
+		for _, rj := range p.CollectorJob.ReportingJobs {
+			_, ok := queryIdToReportingJob[rj.QrId]
+			s.Require().False(ok)
+			queryIdToReportingJob[rj.QrId] = rj
+		}
+
+		// Make sure the ignored query is ignored
+		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
+		s.Require().NotNil(queryRj)
+
+		parent := queryRj.Notify[0]
+		parentJob := p.CollectorJob.ReportingJobs[parent]
+		s.Require().NotNil(parentJob)
+		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+	}
+}
+
+func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
+	bundle, err := policy.BundleFromPaths("./testdata/exceptions-multiple-groups.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+	s.job.PolicyFilters = []string{"asset-policy"}
+	bundleMap := bundle.ToMap()
+
+	ctx := context.Background()
+	scanner := NewLocalScanner()
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for k, r := range full.Reports {
+		// Verify the score is 100
+		s.Equal(uint32(100), r.GetScore().Value)
+
+		p := full.ResolvedPolicies[k]
+
+		// Get the code id for all the executed queries
+		executedQueries := []string{}
+		for qCodeId := range p.ExecutionJob.Queries {
+			executedQueries = append(executedQueries, qCodeId)
+		}
+
+		expectedQueries := []string{
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+		}
+		s.ElementsMatch(expectedQueries, executedQueries)
+
+		queryIdToReportingJob := map[string]*policy.ReportingJob{}
+		for _, rj := range p.CollectorJob.ReportingJobs {
+			_, ok := queryIdToReportingJob[rj.QrId]
+			s.Require().False(ok)
+			queryIdToReportingJob[rj.QrId] = rj
+		}
+
+		// Make sure the ignored query is ignored
+		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
+		s.Require().NotNil(queryRj)
+
+		parent := queryRj.Notify[0]
+		parentJob := p.CollectorJob.ReportingJobs[parent]
+		s.Require().NotNil(parentJob)
+		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+	}
+}
+
+func TestLocalScannerSuite(t *testing.T) {
+	suite.Run(t, new(LocalScannerSuite))
 }
