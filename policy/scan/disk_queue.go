@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joncrlsn/dque"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/pdque"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,7 +40,7 @@ type queuePayload struct {
 }
 
 type diskQueueClient struct {
-	queue   *dque.DQue
+	queue   *pdque.Queue
 	once    sync.Once
 	wg      sync.WaitGroup
 	entries chan Job
@@ -68,13 +68,9 @@ func newDqueClient(config diskQueueConfig, handler func(job *Job)) (*diskQueueCl
 		return nil, fmt.Errorf("cannot create queue directory: %s", err)
 	}
 
-	q.queue, err = dque.NewOrOpen(config.filename, config.dir, config.segmentSize, diskQueueEntryBuilder)
+	q.queue, err = pdque.NewOrOpen(config.filename, config.dir, config.segmentSize, diskQueueEntryBuilder)
 	if err != nil {
 		return nil, err
-	}
-
-	if !config.sync {
-		_ = q.queue.TurboOn()
 	}
 
 	q.entries = make(chan Job)
@@ -127,7 +123,7 @@ func (c *diskQueueClient) popper() {
 		entry, err := c.queue.DequeueBlock()
 		if err != nil {
 			switch err {
-			case dque.ErrQueueClosed:
+			case pdque.ErrQueueClosed:
 				return
 			default:
 				log.Error().Err(err).Msg("could not pop job from disk queue")
