@@ -657,6 +657,58 @@ func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, qu
 	return nil
 }
 
+func topologicalSortQueries(queries []*explorer.Mquery) ([]*explorer.Mquery, error) {
+	// Gather all top-level queries with variants
+	queriesMap := map[string]*explorer.Mquery{}
+	for _, q := range queries {
+		if q == nil {
+			continue
+		}
+		if q.Mrn == "" {
+			// This should never happen. This function is called after all
+			// queries have their MRNs set.
+			panic("BUG: expected query MRN to be set for topological sort")
+		}
+		queriesMap[q.Mrn] = q
+	}
+
+	// Topologically sort the queries
+	sorted := &explorer.Mqueries{}
+	visited := map[string]struct{}{}
+	for _, q := range queriesMap {
+		err := topologicalSortQueriesDFS(q.Mrn, queriesMap, visited, sorted)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return sorted.Items, nil
+}
+
+func topologicalSortQueriesDFS(queryMrn string, queriesMap map[string]*explorer.Mquery, visited map[string]struct{}, sorted *explorer.Mqueries) error {
+	if _, ok := visited[queryMrn]; ok {
+		return nil
+	}
+	visited[queryMrn] = struct{}{}
+	q := queriesMap[queryMrn]
+	if q == nil {
+		return nil
+	}
+	for _, variant := range q.Variants {
+		if variant.Mrn == "" {
+			// This should never happen. This function is called after all
+			// queries have their MRNs set.
+			panic("BUG: expected variant MRN to be set for topological sort")
+		}
+		err := topologicalSortQueriesDFS(variant.Mrn, queriesMap, visited, sorted)
+		if err != nil {
+			return err
+		}
+	}
+	sorted.Items = append(sorted.Items, q)
+	return nil
+}
+
 // Compile a bundle. See CompileExt for a full description.
 func (p *Bundle) Compile(ctx context.Context, schema llx.Schema, library Library) (*PolicyBundleMap, error) {
 	return p.CompileExt(ctx, BundleCompileConf{
@@ -931,6 +983,13 @@ func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy)
 		return err
 	}
 
+	// Topologically sort the queries so that variant queries are compiled after the
+	// actual query they include.
+	topoSortedQueries, err := topologicalSortQueries(mergedQueries)
+	if err != nil {
+		return err
+	}
+
 	// After the first pass we may have errors. We try to collect as many errors
 	// as we can before returning, so more problems can be fixed at once.
 	// We have to return at this point, because these errors will prevent us from
@@ -939,11 +998,14 @@ func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy)
 		return c.error()
 	}
 
+	// Compile queries
+	for _, m := range topoSortedQueries {
+		c.compileQuery(m)
+	}
+
 	for i := range mergedQueries {
 		query := mergedQueries[i]
 		if query != nil {
-			c.compileQuery(query)
-
 			if query != queries[i] {
 				queries[i].Checksum = query.Checksum
 				queries[i].CodeId = query.CodeId
@@ -964,6 +1026,10 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 	if query == nil {
 		c.errors = append(c.errors, errors.New("query or check is null"))
 		return nil
+	}
+
+	if query.Title == "" {
+		query.Title = query.Mql
 	}
 
 	// remove leading and trailing whitespace of docs, refs and tags
