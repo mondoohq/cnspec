@@ -15,14 +15,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNextAvailableFilename(t *testing.T) {
 	// Create a temporary directory for testing
 	testDir, err := os.MkdirTemp("", "diskqueue_test")
-	if err != nil {
-		t.Fatalf("Failed to create temporary directory: %s", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir) // Clean up
 
 	// Initialize a new Queue
@@ -38,9 +37,7 @@ func TestNextAvailableFilename(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			filename, err := q.nextAvailableFilename()
-			if err != nil {
-				t.Errorf("Failed to generate filename: %s", err)
-			}
+			require.NoError(t, err)
 			mu.Lock()
 			if _, exists := timestamps.Load(filename); exists {
 				t.Errorf("Duplicate filename generated: %s", filename)
@@ -50,9 +47,8 @@ func TestNextAvailableFilename(t *testing.T) {
 
 			// Create a file to simulate an existing job
 			filePath := filepath.Join(testDir, filename+jobFileExt)
-			if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
-				t.Errorf("Failed to write test file: %s", err)
-			}
+			err = os.WriteFile(filePath, []byte("test"), 0o644)
+			require.NoError(t, err)
 		}()
 	}
 
@@ -61,34 +57,27 @@ func TestNextAvailableFilename(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			filename, err := q.nextAvailableFilename()
-			if err != nil {
-				t.Errorf("Failed to generate filename in goroutine: %s", err)
-			}
+			require.NoError(t, err)
 			timestamps.Store(filename, struct{}{})
 		}()
 	}
 
 	// Test if the function properly handles existing files with incremented names
 	filename, err := q.nextAvailableFilename()
-	if err != nil {
-		t.Fatalf("Failed to generate filename for increment test: %s", err)
-	}
+	require.NoError(t, err)
 
 	// Manually create files that would conflict to ensure our function increments properly
 	baseFilename := strings.TrimSuffix(filename, jobFileExt)
 	for i := 0; i < 3; i++ {
 		conflictFilename := baseFilename + "_" + strconv.Itoa(i) + jobFileExt
 		filePath := filepath.Join(testDir, conflictFilename)
-		if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
-			t.Fatalf("Failed to write conflict file: %s", err)
-		}
+		err := os.WriteFile(filePath, []byte("test"), 0o644)
+		require.NoError(t, err)
 	}
 
 	// Next filename should be incremented
 	nextFilename, err := q.nextAvailableFilename()
-	if err != nil {
-		t.Fatalf("Failed to generate next filename: %s", err)
-	}
+	require.NoError(t, err)
 
 	if nextFilename == filename {
 		t.Errorf("Expected next filename to be different, got: %s", nextFilename)
@@ -98,18 +87,14 @@ func TestNextAvailableFilename(t *testing.T) {
 func TestEnqueue(t *testing.T) {
 	// Setup: create a temporary directory to act as the queue directory.
 	testDir, err := os.MkdirTemp("", "test_queue")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
 	// Instantiate the Queue.
 	queue, err := New("testQueue", testDir, 1000, func() interface{} {
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Failed to create queue: %v", err)
-	}
+	require.NoError(t, err)
 
 	testJob := struct {
 		Data string
@@ -119,15 +104,11 @@ func TestEnqueue(t *testing.T) {
 
 	// Enqueue the job.
 	err = queue.Enqueue([]byte(fmt.Sprintf("%v", testJob)))
-	if err != nil {
-		t.Errorf("Failed to enqueue job: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Verify that a file has been created in the queue directory.
 	files, err := os.ReadDir(testDir)
-	if err != nil {
-		t.Fatalf("Failed to read queue directory: %v", err)
-	}
+	require.NoError(t, err)
 
 	if len(files) != 1 {
 		t.Fatalf("Expected 1 file in queue directory, found %d", len(files))
@@ -136,18 +117,15 @@ func TestEnqueue(t *testing.T) {
 
 func TestClose(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "test_queue")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
 	// Create some temporary files to simulate the state of the queue with pending jobs.
 	tempFiles := []string{".tmp1", ".tmp2", ".tmp3"}
 	for _, f := range tempFiles {
 		tmpFilePath := filepath.Join(testDir, f)
-		if err := os.WriteFile(tmpFilePath, []byte("data"), 0o644); err != nil {
-			t.Fatalf("Failed to create temp file: %v", err)
-		}
+		err := os.WriteFile(tmpFilePath, []byte("data"), 0o644)
+		require.NoError(t, err)
 	}
 
 	// Instantiate the Queue.
@@ -159,9 +137,9 @@ func TestClose(t *testing.T) {
 	}
 
 	// Close the queue.
-	if err := queue.Close(); err != nil {
-		t.Errorf("Failed to close queue: %v", err)
-	}
+	err = queue.Close()
+	require.NoError(t, err)
+
 
 	// Verify that the queue is marked as closed.
 	if !queue.closed {
@@ -347,7 +325,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	}
 	defer os.RemoveAll(testDir)
 
-	const numJobs = 1000
+	const numJobs = 2000
 
 	// Create a new queue
 	q, err := NewOrOpen("testConcurrentQueue", testDir, numJobs, func() interface{} { return &testObj{} })
@@ -359,10 +337,19 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrently enqueue jobs
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < numJobs; i++ {
+		for i := 0; i < (numJobs / 2); i++ {
+			err := q.Enqueue(&testObj{ID: i})
+			if err != nil {
+				t.Errorf("Failed to enqueue job %d: %v", i, err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 999; i < numJobs; i++ {
 			err := q.Enqueue(&testObj{ID: i})
 			if err != nil {
 				t.Errorf("Failed to enqueue job %d: %v", i, err)
