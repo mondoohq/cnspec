@@ -102,6 +102,10 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 		opts[i](ls)
 	}
 
+	if ls.recording == nil {
+		ls.recording = providers.NullRecording{}
+	}
+
 	return ls
 }
 
