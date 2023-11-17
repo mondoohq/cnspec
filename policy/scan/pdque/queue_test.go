@@ -305,7 +305,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 1000; i < numJobs; i++ {
+		for i := 100; i < numJobs; i++ {
 			err := q.Enqueue(&testObj{ID: i})
 			require.NoError(t, err)
 		}
