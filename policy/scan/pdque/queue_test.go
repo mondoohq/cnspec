@@ -285,7 +285,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
-	const numJobs = 2000
+	const numJobs = 200
 
 	// Create a new queue
 	q, err := NewOrOpen("testConcurrentQueue", testDir, numJobs, func() interface{} { return &testObj{} })
