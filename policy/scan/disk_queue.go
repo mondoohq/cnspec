@@ -121,8 +121,6 @@ func (c *diskQueueClient) popper() {
 	defer c.wg.Done()
 	for {
 		// pop next item from queue
-		time.Sleep(30 * time.Second)
-		fmt.Println("Popping job from the queue")
 		entry, err := c.queue.DequeueBlock()
 		if err != nil {
 			switch err {
