@@ -106,7 +106,6 @@ func (c *diskQueueClient) pusher() {
 			continue
 		}
 
-		fmt.Println("Putting job in the queue")
 		err = c.queue.Enqueue(&queueMsg{time.Now(), queuePayload{
 			ScanJob: data,
 		}})

@@ -6,7 +6,6 @@ package scan
 import (
 	"os"
 	"testing"
-	"time"
 
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 )
@@ -22,9 +21,10 @@ func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 	testConfig := defaultDqueConfig
 	testConfig.dir = tempDir
 
-	handlerCalled := false
+	completionChannel := make(chan struct{}, 50) // Channel to signal job completion
+
 	handler := func(job *Job) {
-		handlerCalled = true
+		completionChannel <- struct{}{} // Signal completion
 		// Perform additional checks on job if necessary
 	}
 
@@ -57,13 +57,16 @@ func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 			},
 		},
 	}
-	for i := 1; i < 50; i++ {
+	for i := 0; i < 50; i++ {
 		client.Channel() <- *testJob
 	}
-	// Allow some time to process
-	time.Sleep(2 * time.Second)
 
-	if !handlerCalled {
-		t.Errorf("Expected handler to be called after dequeue")
+	for i := 0; i < 50; i++ {
+		<-completionChannel
+	}
+
+	// Verify that all jobs have been processed
+	if len(completionChannel) != 0 {
+		t.Errorf("Expected handler to be called 50 times, but was called %d times", 50-len(completionChannel))
 	}
 }
