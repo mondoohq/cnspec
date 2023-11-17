@@ -16,7 +16,7 @@ var testQueueConfig = diskQueueConfig{
 }
 
 func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test-queue")
+	tempDir, err := os.MkdirTemp("", "testdir")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}

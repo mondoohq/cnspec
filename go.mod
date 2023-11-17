@@ -3,13 +3,11 @@ module go.mondoo.com/cnspec/v9
 go 1.21.1
 
 // replace go.mondoo.com/cnquery/v9 => ../cnquery
-replace go.mondoo.com/pdque => ../pdque
 
 toolchain go1.21.3
 
 require (
 	go.mondoo.com/cnquery/v9 v9.5.0
-	go.mondoo.com/pdque v0.0.0-00010101000000-000000000000
 )
 
 require (

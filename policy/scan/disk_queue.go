@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/pdque"
 	"google.golang.org/protobuf/proto"
+	"go.mondoo.com/cnspec/v9/policy/scan/pdque"
 )
 
 type diskQueueConfig struct {
@@ -106,6 +106,7 @@ func (c *diskQueueClient) pusher() {
 			continue
 		}
 
+		fmt.Println("Putting job in the queue")
 		err = c.queue.Enqueue(&queueMsg{time.Now(), queuePayload{
 			ScanJob: data,
 		}})
@@ -120,6 +121,8 @@ func (c *diskQueueClient) popper() {
 	defer c.wg.Done()
 	for {
 		// pop next item from queue
+		time.Sleep(30 * time.Second)
+		fmt.Println("Popping job from the queue")
 		entry, err := c.queue.DequeueBlock()
 		if err != nil {
 			switch err {
