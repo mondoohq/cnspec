@@ -246,56 +246,125 @@ func (q *Queue) Dequeue() (interface{}, error) {
 	return nil, errors.New("no jobs in queue")
 }
 
+//func (q *Queue) DequeueBlock() (interface{}, error) {
+//	q.mu.Lock()
+//	defer q.mu.Unlock()
+//
+//	for {
+//		if q.closed {
+//			return nil, ErrQueueClosed
+//		}
+//
+//		files, err := os.ReadDir(q.path)
+//		if err != nil {
+//			return nil, err
+//		}
+//
+//		// Sort job files by name (which is the timestamp)
+//		sort.Slice(files, func(i, j int) bool {
+//			return files[i].Name() < files[j].Name()
+//		})
+//
+//		for _, file := range files {
+//			if filepath.Ext(file.Name()) == jobFileExt {
+//				jobPath := filepath.Join(q.path, file.Name())
+//
+//				data, err := os.ReadFile(jobPath)
+//				if err != nil {
+//					return nil, err
+//				}
+//
+//				// Decode the bytes into an object
+//				obj := q.builder()
+//				if err := gob.NewDecoder(bytes.NewReader(data)).Decode(obj); err != nil {
+//					return nil, ErrUnableToDecode{
+//						Path: q.path,
+//						Err:  err,
+//					}
+//				}
+//
+//				// Remove the job file
+//				if err := os.Remove(jobPath); err != nil {
+//					return nil, err
+//				}
+//
+//				return obj, nil
+//			}
+//		}
+//
+//		// No jobs in queue, wait for a new job to be enqueued
+//		q.cond.Wait()
+//	}
+//}
+
 func (q *Queue) DequeueBlock() (interface{}, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	for {
-		if q.closed {
-			return nil, ErrQueueClosed
-		}
-
-		files, err := os.ReadDir(q.path)
-		if err != nil {
-			return nil, err
-		}
-
-		// Sort job files by name (which is the timestamp)
-		sort.Slice(files, func(i, j int) bool {
-			return files[i].Name() < files[j].Name()
-		})
-
-		for _, file := range files {
-			if filepath.Ext(file.Name()) == jobFileExt {
-				jobPath := filepath.Join(q.path, file.Name())
-
-				data, err := os.ReadFile(jobPath)
-				if err != nil {
-					return nil, err
-				}
-
-				// Decode the bytes into an object
-				obj := q.builder()
-				if err := gob.NewDecoder(bytes.NewReader(data)).Decode(obj); err != nil {
-					return nil, ErrUnableToDecode{
-						Path: q.path,
-						Err:  err,
-					}
-				}
-
-				// Remove the job file
-				if err := os.Remove(jobPath); err != nil {
-					return nil, err
-				}
-
-				return obj, nil
+			if q.closed {
+					return nil, ErrQueueClosed
 			}
-		}
 
-		// No jobs in queue, wait for a new job to be enqueued
-		q.cond.Wait()
+			obj, err := q.dequeueJob()
+			if err != nil {
+					if errors.Is(err, ErrNoJobs) {
+							// No jobs in queue, wait for a new job to be enqueued
+							q.cond.Wait()
+					} else {
+							return nil, err
+					}
+			} else {
+					return obj, nil
+			}
 	}
 }
+
+// dequeueJob tries to dequeue a job from the queue without waiting.
+// It returns an ErrNoJobs error if there are no jobs to dequeue.
+func (q *Queue) dequeueJob() (interface{}, error) {
+	files, err := os.ReadDir(q.path)
+	if err != nil {
+			return nil, err
+	}
+
+	// Sort job files by name (which is the timestamp)
+	sort.Slice(files, func(i, j int) bool {
+			return files[i].Name() < files[j].Name()
+	})
+
+	for _, file := range files {
+			if filepath.Ext(file.Name()) == jobFileExt {
+					jobPath := filepath.Join(q.path, file.Name())
+
+					data, err := os.ReadFile(jobPath)
+					if err != nil {
+							return nil, err
+					}
+
+					// Decode the bytes into an object
+					obj := q.builder()
+					if err := gob.NewDecoder(bytes.NewReader(data)).Decode(obj); err != nil {
+							return nil, ErrUnableToDecode{
+									Path: q.path,
+									Err:  err,
+							}
+					}
+
+					// Remove the job file
+					if err := os.Remove(jobPath); err != nil {
+							return nil, err
+					}
+
+					return obj, nil
+			}
+	}
+
+	return nil, ErrNoJobs // Custom error to indicate no jobs are available
+}
+
+// ErrNoJobs is a custom error to indicate that no jobs are available in the queue.
+var ErrNoJobs = errors.New("no jobs in queue")
 
 func (q *Queue) nextAvailableFilename() (string, error) {
 	timestamp := time.Now().UnixNano()
