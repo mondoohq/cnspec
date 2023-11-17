@@ -27,28 +27,35 @@ func TestNextAvailableFilename(t *testing.T) {
 	// Initialize a new Queue
 	q := &Queue{Name: "testQueue", path: testDir}
 
-	// Test that filenames are generated with increasing timestamps
 	var timestamps sync.Map
 	var wg sync.WaitGroup
 	var mu sync.Mutex // Mutex to protect map operations
+
+	// Use a channel to collect errors from goroutines
+	errChan := make(chan error, 1010) // Buffer should be the number of goroutines
 
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			filename, err := q.nextAvailableFilename()
-			require.NoError(t, err)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to generate filename: %s", err)
+				return
+			}
 			mu.Lock()
 			if _, exists := timestamps.Load(filename); exists {
-				t.Errorf("Duplicate filename generated: %s", filename)
+				errChan <- fmt.Errorf("duplicate filename generated: %s", filename)
+			} else {
+				timestamps.Store(filename, struct{}{})
 			}
-			timestamps.Store(filename, struct{}{})
 			mu.Unlock()
 
 			// Create a file to simulate an existing job
 			filePath := filepath.Join(testDir, filename+jobFileExt)
-			err = os.WriteFile(filePath, []byte("test"), 0o644)
-			require.NoError(t, err)
+			if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
+				errChan <- fmt.Errorf("failed to write test file: %s", err)
+			}
 		}()
 	}
 
@@ -56,6 +63,7 @@ func TestNextAvailableFilename(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			filename, err := q.nextAvailableFilename()
 			require.NoError(t, err)
 			timestamps.Store(filename, struct{}{})
@@ -81,6 +89,15 @@ func TestNextAvailableFilename(t *testing.T) {
 
 	if nextFilename == filename {
 		t.Errorf("Expected next filename to be different, got: %s", nextFilename)
+	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+	close(errChan)
+
+	// Check for any errors sent by goroutines
+	for err := range errChan {
+		t.Error(err)
 	}
 }
 
