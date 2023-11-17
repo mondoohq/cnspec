@@ -138,7 +138,6 @@ func TestClose(t *testing.T) {
 	err = queue.Close()
 	require.NoError(t, err)
 
-
 	// Verify that the queue is marked as closed.
 	if !queue.closed {
 		t.Errorf("Queue should be marked as closed.")

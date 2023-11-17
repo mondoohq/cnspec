@@ -10,22 +10,22 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"google.golang.org/protobuf/proto"
 	"go.mondoo.com/cnspec/v9/policy/scan/pdque"
+	"google.golang.org/protobuf/proto"
 )
 
 type diskQueueConfig struct {
-	dir         string
-	filename    string
-	maxSize int
-	sync        bool
+	dir      string
+	filename string
+	maxSize  int
+	sync     bool
 }
 
 var defaultDqueConfig = diskQueueConfig{
-	dir:         "/tmp/cnspec-queue", // TODO: consider configurable path
-	filename:    "disk-queue",
-	maxSize: 500,
-	sync:        false,
+	dir:      "/tmp/cnspec-queue", // TODO: consider configurable path
+	filename: "disk-queue",
+	maxSize:  500,
+	sync:     false,
 }
 
 // queueMsg is the being stored in disk queue
