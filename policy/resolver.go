@@ -725,13 +725,13 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 		}
 		for i := range group.Checks {
 			check := group.Checks[i]
-			if check.Action == explorer.Action_DEACTIVATE {
+			if check.Action == explorer.Action_DEACTIVATE || group.Type == GroupType_DISABLE {
 				cache.removedQueries[check.Mrn] = struct{}{}
 			}
 		}
 		for i := range group.Queries {
 			query := group.Queries[i]
-			if query.Action == explorer.Action_DEACTIVATE {
+			if query.Action == explorer.Action_DEACTIVATE || group.Type == GroupType_DISABLE {
 				cache.removedQueries[query.Mrn] = struct{}{}
 			}
 		}
@@ -891,7 +891,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			continue
 		}
 
-		if check.Action == explorer.Action_IGNORE {
+		if check.Action == explorer.Action_IGNORE || group.Type == GroupType_IGNORED {
 			stillValid := CheckValidUntil(group.EndDate, check.Mrn)
 			if !stillValid {
 				// the exception is no longer valid => score the check
@@ -904,20 +904,20 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		if impact == nil {
 			impact = &explorer.Impact{}
 		}
-		if check.Action == explorer.Action_IGNORE {
+		if check.Action == explorer.Action_IGNORE || group.Type == GroupType_IGNORED {
 			impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
 			impact.Action = explorer.Action_IGNORE
 		}
 
 		cache.global.propsCache.Add(check.Props...)
 
-		if check.Action == explorer.Action_UNSPECIFIED || check.Action == explorer.Action_ACTIVATE {
+		if (check.Action == explorer.Action_UNSPECIFIED || check.Action == explorer.Action_ACTIVATE) && group.Type != GroupType_IGNORED {
 			cache.addCheckJob(ctx, check, impact, ownerJob)
 			continue
 		}
 
 		// TODO: can we simplify this to simply IGNORE?
-		if check.Action == explorer.Action_MODIFY || check.Action == explorer.Action_IGNORE {
+		if check.Action == explorer.Action_MODIFY || check.Action == explorer.Action_IGNORE || group.Type == GroupType_IGNORED {
 			cache.modifyCheckJob(check, impact)
 		}
 	}
@@ -977,12 +977,11 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 		cache.global.reportingJobsByUUID[uuid] = queryJob
 		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], queryJob)
 		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], queryJob)
+		ownerJob.ChildJobs[queryJob.Uuid] = impact
 	}
 
 	// local aspects for the resolved policy
 	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
-
-	ownerJob.ChildJobs[queryJob.Uuid] = impact
 
 	if len(check.Variants) != 0 {
 		err := cache.addCheckJobVariants(ctx, check, queryJob)
