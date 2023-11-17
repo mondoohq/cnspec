@@ -132,9 +132,7 @@ func TestClose(t *testing.T) {
 	queue, err := New("testQueue", testDir, 1000, func() interface{} {
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Failed to create queue: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Close the queue.
 	err = queue.Close()
@@ -148,9 +146,8 @@ func TestClose(t *testing.T) {
 
 	// Verify that temporary files are cleaned up.
 	files, err := os.ReadDir(testDir)
-	if err != nil {
-		t.Fatalf("Failed to read queue directory: %v", err)
-	}
+	require.NoError(t, err)
+
 	for _, file := range files {
 		if strings.HasPrefix(file.Name(), ".") {
 			t.Errorf("Temporary file %s was not cleaned up", file.Name())
@@ -158,14 +155,11 @@ func TestClose(t *testing.T) {
 	}
 
 	// Verify that no new actions can be performed on the queue.
-	if err := queue.Enqueue([]byte("data")); err == nil {
-		t.Errorf("Enqueue should fail on a closed queue")
-	}
+	err = queue.Enqueue([]byte("data"))
+	require.Error(t, err)
 
-	// Verify that the Dequeue method also behaves as expected.
-	if _, err := queue.Dequeue(); err == nil {
-		t.Errorf("Dequeue should fail on a closed queue")
-	}
+	_, err = queue.Dequeue()
+	require.Error(t, err)
 }
 
 type testObj struct {
@@ -175,61 +169,47 @@ type testObj struct {
 
 func TestEnqueueDequeue(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "test_enqueue_dequeue")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 	// Setup: Initialize the queue
 	queue, err := NewOrOpen("testQueue", testDir, 10, func() interface{} {
 		return new(testObj)
 	})
-	if err != nil {
-		t.Fatalf("Failed to create queue: %v", err)
-	}
+	require.NoError(t, err)
 	defer queue.Close()
 
 	// Test enqueue
 	testObj := &testObj{Name: "test"}
-	if err := queue.Enqueue(testObj); err != nil {
-		t.Errorf("Failed to enqueue object: %v", err)
-	}
+	err = queue.Enqueue(testObj)
+	require.NoError(t, err)
 
 	// Test dequeue
 	dequeuedObj, err := queue.Dequeue()
-	if err != nil {
-		t.Errorf("Failed to dequeue object: %v", err)
-	}
+	require.NoError(t, err)
 
 	assert.Equal(t, testObj, dequeuedObj)
 }
 
 func TestQueueMaxSize(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "test_maxSize")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 	maxSize := 5
 	queue, err := NewOrOpen("testQueue", testDir, maxSize, func() interface{} {
 		return new(testObj)
 	})
-	if err != nil {
-		t.Fatalf("Failed to create queue: %v", err)
-	}
+	require.NoError(t, err)
 	defer queue.Close()
 
 	// Enqueue items up to the maximum size
 	for i := 0; i < maxSize; i++ {
-		if err := queue.Enqueue(&testObj{Name: fmt.Sprintf("test%d", i)}); err != nil {
-			t.Fatalf("Failed to enqueue object: %v", err)
-		}
+		err := queue.Enqueue(&testObj{Name: fmt.Sprintf("test%d", i)})
+		require.NoError(t, err)
 	}
 
 	// Attempt to enqueue one more item, which should fail
 	err = queue.Enqueue(&testObj{Name: "overflow"})
-	if err == nil {
-		t.Errorf("Expected an error when enqueuing an item after reaching max size, but got none")
-	}
+	require.Error(t, err)
 
 	if !errors.Is(err, ErrQueueFull) {
 		t.Errorf("Expected ErrQueueFull, but got %v", err)
@@ -237,64 +217,47 @@ func TestQueueMaxSize(t *testing.T) {
 
 	// Dequeue an item
 	_, err = queue.Dequeue()
-	if err != nil {
-		t.Fatalf("Failed to dequeue object: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Attempt to enqueue again, which should now succeed
 	err = queue.Enqueue(&testObj{Name: "shouldSucceed"})
-	if err != nil {
-		t.Errorf("Failed to enqueue object after dequeuing: %v", err)
-	}
+	require.NoError(t, err)
 }
 
 // TestEnqueueDequeue tests enqueuing and dequeuing of jobs
 func TestEnqueueDequeueMore(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "test_enqueue_dequeue")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
 	// Create a new queue
 	q, err := NewOrOpen("testQueue", testDir, 1000, func() interface{} { return new(testObj) })
-	if err != nil {
-		t.Fatalf("Failed to create queue: %v", err)
-	}
+	require.NoError(t, err)
 	defer q.Close()
 
 	// Enqueue 1000 jobs
 	for i := 0; i < 1000; i++ {
 		err := q.Enqueue(&testObj{ID: i})
-		if err != nil {
-			t.Fatalf("Failed to enqueue job %d: %v", i, err)
-		}
+		require.NoError(t, err)
 	}
 
 	// Verify there are 1000 job files
 	jobCount, err := countJobFiles(testDir)
-	if err != nil {
-		t.Fatalf("Failed to count job files: %v", err)
-	}
-	if jobCount != 1000 {
-		t.Errorf("Expected 1000 job files, found %d", jobCount)
-	}
+	require.NoError(t, err)
+
+	require.Equal(t, jobCount, 1000)
 
 	// Dequeue and check each job
 	for i := 0; i < 1000; i++ {
 		obj, err := q.Dequeue()
-		if err != nil {
-			t.Fatalf("Failed to dequeue job %d: %v", i, err)
-		}
+		require.NoError(t, err)
 
 		job, ok := obj.(*testObj)
 		if !ok {
 			t.Fatalf("Dequeued object is not of type *TestJob")
 		}
 
-		if job.ID != i {
-			t.Errorf("Dequeued job has ID %d; want %d", job.ID, i)
-		}
+		assert.Equal(t, job.ID, i)
 	}
 
 	if obj, _ := q.Dequeue(); obj != nil {
@@ -320,18 +283,14 @@ func countJobFiles(dir string) (int, error) {
 // TestConcurrentEnqueueDequeue tests concurrent enqueuing and dequeuing of jobs
 func TestConcurrentEnqueueDequeue(t *testing.T) {
 	testDir, err := os.MkdirTemp("", "test_enqueue_dequeue")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
 	const numJobs = 2000
 
 	// Create a new queue
 	q, err := NewOrOpen("testConcurrentQueue", testDir, numJobs, func() interface{} { return &testObj{} })
-	if err != nil {
-		t.Fatalf("Failed to create queue: %v", err)
-	}
+	require.NoError(t, err)
 	defer q.Close()
 
 	var wg sync.WaitGroup
@@ -342,18 +301,14 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < (numJobs / 2); i++ {
 			err := q.Enqueue(&testObj{ID: i})
-			if err != nil {
-				t.Errorf("Failed to enqueue job %d: %v", i, err)
-			}
+			require.NoError(t, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 999; i < numJobs; i++ {
+		for i := 1000; i < numJobs; i++ {
 			err := q.Enqueue(&testObj{ID: i})
-			if err != nil {
-				t.Errorf("Failed to enqueue job %d: %v", i, err)
-			}
+			require.NoError(t, err)
 		}
 	}()
 
@@ -365,10 +320,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < numJobs; i++ {
 			obj, err := q.DequeueBlock()
-			if err != nil {
-				t.Errorf("Failed to dequeue job: %v", err)
-				continue
-			}
+			require.NoError(t, err)
 
 			job, ok := obj.(*testObj)
 			if !ok {
@@ -385,7 +337,5 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	wg.Wait()
 
 	// Verify all jobs were dequeued
-	if len(dequeuedJobs) != numJobs {
-		t.Errorf("Not all jobs were dequeued: expected %d, got %d", numJobs, len(dequeuedJobs))
-	}
+	assert.Equal(t, len(dequeuedJobs), numJobs)
 }
