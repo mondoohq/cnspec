@@ -193,7 +193,7 @@ func (q *Queue) Enqueue(obj interface{}) error {
 	}
 
 	// After successfully enqueueing a job, wake up one of the waiting goroutines, if any.
-	q.cond.Signal()
+	q.cond.Broadcast()
 
 	return nil
 }
