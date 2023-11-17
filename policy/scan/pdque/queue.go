@@ -74,7 +74,7 @@ func NewOrOpen(name string, path string, maxSize int, builder func() interface{}
 	var que *Queue
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		err = os.MkdirAll(path, 0755)
+		err = os.MkdirAll(path, 0o755)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +181,7 @@ func (q *Queue) Enqueue(obj interface{}) error {
 	}
 
 	// Write to a temporary file
-	err = os.WriteFile(tempPath, buff.Bytes(), 0644)
+	err = os.WriteFile(tempPath, buff.Bytes(), 0o644)
 	if err != nil {
 		return err
 	}

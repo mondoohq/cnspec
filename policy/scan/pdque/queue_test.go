@@ -50,7 +50,7 @@ func TestNextAvailableFilename(t *testing.T) {
 
 			// Create a file to simulate an existing job
 			filePath := filepath.Join(testDir, filename+jobFileExt)
-			if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
 				t.Errorf("Failed to write test file: %s", err)
 			}
 		}()
@@ -79,7 +79,7 @@ func TestNextAvailableFilename(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		conflictFilename := baseFilename + "_" + strconv.Itoa(i) + jobFileExt
 		filePath := filepath.Join(testDir, conflictFilename)
-		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+		if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
 			t.Fatalf("Failed to write conflict file: %s", err)
 		}
 	}
@@ -146,7 +146,7 @@ func TestClose(t *testing.T) {
 	tempFiles := []string{".tmp1", ".tmp2", ".tmp3"}
 	for _, f := range tempFiles {
 		tmpFilePath := filepath.Join(testDir, f)
-		if err := os.WriteFile(tmpFilePath, []byte("data"), 0644); err != nil {
+		if err := os.WriteFile(tmpFilePath, []byte("data"), 0o644); err != nil {
 			t.Fatalf("Failed to create temp file: %v", err)
 		}
 	}

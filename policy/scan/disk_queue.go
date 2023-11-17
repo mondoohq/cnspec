@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"google.golang.org/protobuf/proto"
 	"go.mondoo.com/cnspec/v9/policy/scan/pdque"
+	"google.golang.org/protobuf/proto"
 )
 
 type diskQueueConfig struct {

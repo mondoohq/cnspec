@@ -11,13 +11,6 @@ import (
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 )
 
-var testQueueConfig = diskQueueConfig{
-	dir:         "testdir", // TODO: consider configurable path
-	filename:    "disk-queue",
-	segmentSize: 500,
-	sync:        false,
-}
-
 func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "testdir")
 	if err != nil {
