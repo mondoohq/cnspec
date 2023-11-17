@@ -111,7 +111,6 @@ func TestEnqueue(t *testing.T) {
 		t.Fatalf("Failed to create queue: %v", err)
 	}
 
-	// Define a test job (could be any struct or type that you will be enqueueing).
 	testJob := struct {
 		Data string
 	}{
@@ -315,13 +314,11 @@ func TestEnqueueDequeueMore(t *testing.T) {
 			t.Fatalf("Dequeued object is not of type *TestJob")
 		}
 
-		// Additional check: you might want to ensure that the dequeued job has the expected ID
 		if job.ID != i {
 			t.Errorf("Dequeued job has ID %d; want %d", job.ID, i)
 		}
 	}
 
-	// Optionally, verify the queue is empty now
 	if obj, _ := q.Dequeue(); obj != nil {
 		t.Errorf("Expected queue to be empty, but got a job")
 	}

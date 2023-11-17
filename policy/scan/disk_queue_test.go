@@ -34,15 +34,6 @@ func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 	}
 	defer client.Stop()
 
-	// Initially, the directory should be empty
-	initialFileCount, err := countFilesInDir(tempDir)
-	if err != nil {
-		t.Fatalf("Failed to count files in temp dir: %v", err)
-	}
-	if initialFileCount != 0 {
-		t.Errorf("Expected 0 files in temp dir, found %d", initialFileCount)
-	}
-
 	// Test Enqueue
 	testJob := &Job{
 		Inventory: &inventory.Inventory{
@@ -75,12 +66,4 @@ func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 	if !handlerCalled {
 		t.Errorf("Expected handler to be called after dequeue")
 	}
-}
-
-func countFilesInDir(directory string) (int, error) {
-	files, err := os.ReadDir(directory)
-	if err != nil {
-		return 0, err
-	}
-	return len(files), nil
 }

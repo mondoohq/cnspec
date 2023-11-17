@@ -10,21 +10,21 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v9/policy/scan/pdque"
 	"google.golang.org/protobuf/proto"
+	"go.mondoo.com/cnspec/v9/policy/scan/pdque"
 )
 
 type diskQueueConfig struct {
 	dir         string
 	filename    string
-	segmentSize int
+	maxSize int
 	sync        bool
 }
 
 var defaultDqueConfig = diskQueueConfig{
 	dir:         "/tmp/cnspec-queue", // TODO: consider configurable path
 	filename:    "disk-queue",
-	segmentSize: 500,
+	maxSize: 500,
 	sync:        false,
 }
 
@@ -68,7 +68,7 @@ func newDqueClient(config diskQueueConfig, handler func(job *Job)) (*diskQueueCl
 		return nil, fmt.Errorf("cannot create queue directory: %s", err)
 	}
 
-	q.queue, err = pdque.NewOrOpen(config.filename, config.dir, config.segmentSize, diskQueueEntryBuilder)
+	q.queue, err = pdque.NewOrOpen(config.filename, config.dir, config.maxSize, diskQueueEntryBuilder)
 	if err != nil {
 		return nil, err
 	}
