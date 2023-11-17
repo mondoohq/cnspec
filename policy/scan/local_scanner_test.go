@@ -100,3 +100,12 @@ func TestCreateAssetList(t *testing.T) {
 		require.Equal(t, "mondoo-operator-123", candidates[2].asset.ManagedBy)
 	})
 }
+
+func TestDefaultConfig(t *testing.T) {
+	t.Run("without opts", func(t *testing.T) {
+		scanner := NewLocalScanner()
+		require.NotNil(t, scanner)
+
+		require.Equal(t, providers.NullRecording{}, scanner.recording)
+	})
+}
