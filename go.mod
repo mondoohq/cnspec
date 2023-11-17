@@ -1,14 +1,12 @@
 module go.mondoo.com/cnspec/v9
 
-go 1.21.1
+go 1.21
 
 // replace go.mondoo.com/cnquery/v9 => ../cnquery
 
 toolchain go1.21.3
 
-require (
-	go.mondoo.com/cnquery/v9 v9.5.0
-)
+require go.mondoo.com/cnquery/v9 v9.5.0
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -19,6 +17,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-plugin v1.5.2 // indirect
 	github.com/hashicorp/go-version v1.6.0
+	github.com/joncrlsn/dque v0.0.0-20211108142734-c2ef48c5192a
 	github.com/jstemmer/go-junit-report/v2 v2.1.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mitchellh/mapstructure v1.5.0
