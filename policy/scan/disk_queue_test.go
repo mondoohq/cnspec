@@ -25,7 +25,6 @@ func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 
 	handler := func(job *Job) {
 		completionChannel <- struct{}{} // Signal completion
-		// Perform additional checks on job if necessary
 	}
 
 	client, err := newDqueClient(testConfig, handler)
