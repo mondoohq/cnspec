@@ -395,7 +395,7 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 		return scores[i].QrId < scores[j].QrId
 	})
 
-	r.out.Write([]byte("Compliance controls:" + NewLineCharacter))
+	_, _ = r.out.Write([]byte("Compliance controls:" + NewLineCharacter))
 
 	for i := range scores {
 		score := scores[i]
