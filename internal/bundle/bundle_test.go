@@ -64,3 +64,19 @@ items:
 		assert.Equal(t, "something", r.Items[0].Id)
 	})
 }
+
+func TestPreserveHeadComment(t *testing.T) {
+	example := `# test
+policies:
+    - uid: sample-policy
+      name: Sample Policy
+      version: 1.0.0
+`
+	var b Bundle
+	err := yaml.Unmarshal([]byte(example), &b)
+	require.NoError(t, err)
+
+	out, err := yaml.Marshal(&b)
+	require.NoError(t, err)
+	assert.Equal(t, example, string(out))
+}
