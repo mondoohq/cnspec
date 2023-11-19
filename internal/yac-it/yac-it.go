@@ -38,6 +38,12 @@ type FileContext struct {
 	Column int
 }
 
+type Comments struct {
+	HeadComment string
+	LineComment string
+	FootComment string
+}
+
 `
 
 func New(conf YacItConfig) *YacIt {
@@ -111,7 +117,6 @@ func (t *YacIt) createStruct(typ reflect.Type) {
 
 	var res strings.Builder
 	res.WriteString("type " + name + " struct {\n")
-
 	nuFields := make([]reflect.StructField, 0)
 	for i := 0; i < typ.NumField(); i++ {
 		cur := typ.Field(i)
@@ -160,6 +165,7 @@ func (t *YacIt) createStruct(typ reflect.Type) {
 	}
 
 	res.WriteString("\tFileContext FileContext `json:\"-\" yaml:\"-\"`\n")
+	res.WriteString("\tComments Comments `json:\"-\" yaml:\"-\"`\n")
 	res.WriteString("}\n")
 
 	if _, isCustom := t.customUnmarshal[name]; !isCustom {
@@ -174,14 +180,47 @@ func (x *%s) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
 }
-`, name, name))
+
+func (d %s) MarshalYAML() (interface{}, error) {
+	type alias %s
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+`, name, name, name, name))
 	} else {
 		res.WriteString(fmt.Sprintf(`
 func (x *%s) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 `, name))
 	}
@@ -229,7 +268,8 @@ func (s *{{.Name}}) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	return errors.New("failed to unmarshal {{.Name}}")
-}`))
+}
+`))
 
 func (t *YacIt) createProtoEnum(typ reflect.Type) {
 	name := typ.Name()

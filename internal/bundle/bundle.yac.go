@@ -18,6 +18,12 @@ type FileContext struct {
 	Column int
 }
 
+type Comments struct {
+	HeadComment string
+	LineComment string
+	FootComment string
+}
+
 type Action explorer.Action
 
 func (s *Action) UnmarshalYAML(node *yaml.Node) error {
@@ -47,6 +53,7 @@ type Author struct {
 	Name        string      `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
 	Email       string      `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty" yaml:"email,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *Author) UnmarshalYAML(node *yaml.Node) error {
@@ -59,7 +66,37 @@ func (x *Author) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Author) MarshalYAML() (interface{}, error) {
+	type alias Author
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type Bundle struct {
@@ -72,6 +109,7 @@ type Bundle struct {
 	Queries       []*Mquery       `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
 	Docs          *PolicyDocs     `protobuf:"bytes,5,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext   FileContext     `json:"-" yaml:"-"`
+	Comments      Comments        `json:"-" yaml:"-"`
 }
 
 func (x *Bundle) UnmarshalYAML(node *yaml.Node) error {
@@ -84,7 +122,37 @@ func (x *Bundle) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Bundle) MarshalYAML() (interface{}, error) {
+	type alias Bundle
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type Control struct {
@@ -97,6 +165,7 @@ type Control struct {
 	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Manual      bool              `protobuf:"varint,50,opt,name=manual,proto3" json:"manual,omitempty" yaml:"manual,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
+	Comments    Comments          `json:"-" yaml:"-"`
 }
 
 func (x *Control) UnmarshalYAML(node *yaml.Node) error {
@@ -109,13 +178,44 @@ func (x *Control) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Control) MarshalYAML() (interface{}, error) {
+	type alias Control
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type ControlDocs struct {
 	Refs        []*MqueryRef `protobuf:"bytes,4,rep,name=refs,proto3" json:"refs,omitempty" yaml:"refs,omitempty"`
 	Desc        string       `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	FileContext FileContext  `json:"-" yaml:"-"`
+	Comments    Comments     `json:"-" yaml:"-"`
 }
 
 func (x *ControlDocs) UnmarshalYAML(node *yaml.Node) error {
@@ -128,7 +228,37 @@ func (x *ControlDocs) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d ControlDocs) MarshalYAML() (interface{}, error) {
+	type alias ControlDocs
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type ControlMap struct {
@@ -139,6 +269,7 @@ type ControlMap struct {
 	Controls    []*ControlRef `protobuf:"bytes,9,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
 	Queries     []*ControlRef `protobuf:"bytes,10,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
 	FileContext FileContext   `json:"-" yaml:"-"`
+	Comments    Comments      `json:"-" yaml:"-"`
 }
 
 func (x *ControlMap) UnmarshalYAML(node *yaml.Node) error {
@@ -151,7 +282,37 @@ func (x *ControlMap) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d ControlMap) MarshalYAML() (interface{}, error) {
+	type alias ControlMap
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type ControlRef struct {
@@ -159,6 +320,7 @@ type ControlRef struct {
 	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *ControlRef) UnmarshalYAML(node *yaml.Node) error {
@@ -171,17 +333,51 @@ func (x *ControlRef) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d ControlRef) MarshalYAML() (interface{}, error) {
+	type alias ControlRef
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type Filters struct {
 	Items       map[string]*Mquery `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"items,omitempty"`
 	FileContext FileContext        `json:"-" yaml:"-"`
+	Comments    Comments           `json:"-" yaml:"-"`
 }
 
 func (x *Filters) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 
 type Framework struct {
@@ -205,6 +401,7 @@ type Framework struct {
 	Docs                   *PolicyDocs       `protobuf:"bytes,41,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	Groups                 []*FrameworkGroup `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
 	FileContext            FileContext       `json:"-" yaml:"-"`
+	Comments               Comments          `json:"-" yaml:"-"`
 }
 
 func (x *Framework) UnmarshalYAML(node *yaml.Node) error {
@@ -217,7 +414,37 @@ func (x *Framework) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Framework) MarshalYAML() (interface{}, error) {
+	type alias Framework
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type FrameworkGroup struct {
@@ -235,6 +462,7 @@ type FrameworkGroup struct {
 	Authors      []*Author        `protobuf:"bytes,26,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
 	Docs         *PolicyGroupDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext  FileContext      `json:"-" yaml:"-"`
+	Comments     Comments         `json:"-" yaml:"-"`
 }
 
 func (x *FrameworkGroup) UnmarshalYAML(node *yaml.Node) error {
@@ -247,7 +475,37 @@ func (x *FrameworkGroup) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d FrameworkGroup) MarshalYAML() (interface{}, error) {
+	type alias FrameworkGroup
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type FrameworkMap struct {
@@ -261,6 +519,7 @@ type FrameworkMap struct {
 	FrameworkDependencies  []*ObjectRef  `protobuf:"bytes,3,rep,name=framework_dependencies,json=frameworkDependencies,proto3" json:"framework_dependencies,omitempty" yaml:"framework_dependencies,omitempty"`
 	Controls               []*ControlMap `protobuf:"bytes,5,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
 	FileContext            FileContext   `json:"-" yaml:"-"`
+	Comments               Comments      `json:"-" yaml:"-"`
 }
 
 func (x *FrameworkMap) UnmarshalYAML(node *yaml.Node) error {
@@ -273,7 +532,37 @@ func (x *FrameworkMap) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d FrameworkMap) MarshalYAML() (interface{}, error) {
+	type alias FrameworkMap
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type FrameworkRef struct {
@@ -281,6 +570,7 @@ type FrameworkRef struct {
 	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *FrameworkRef) UnmarshalYAML(node *yaml.Node) error {
@@ -293,7 +583,37 @@ func (x *FrameworkRef) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d FrameworkRef) MarshalYAML() (interface{}, error) {
+	type alias FrameworkRef
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type GroupType policy.GroupType
@@ -327,21 +647,29 @@ type Impact struct {
 	Weight      int32                  `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty" yaml:"weight,omitempty"`
 	Action      Action                 `protobuf:"varint,4,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	FileContext FileContext            `json:"-" yaml:"-"`
+	Comments    Comments               `json:"-" yaml:"-"`
 }
 
 func (x *Impact) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 
 type ImpactValue struct {
 	Value       int32       `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty" yaml:"value,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *ImpactValue) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 
 type Mquery struct {
@@ -364,6 +692,7 @@ type Mquery struct {
 	Variants    []*ObjectRef      `protobuf:"bytes,39,rep,name=variants,proto3" json:"variants,omitempty" yaml:"variants,omitempty"`
 	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
+	Comments    Comments          `json:"-" yaml:"-"`
 }
 
 func (x *Mquery) UnmarshalYAML(node *yaml.Node) error {
@@ -376,7 +705,37 @@ func (x *Mquery) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Mquery) MarshalYAML() (interface{}, error) {
+	type alias Mquery
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type MqueryDocs struct {
@@ -385,6 +744,7 @@ type MqueryDocs struct {
 	Audit       string       `protobuf:"bytes,2,opt,name=audit,proto3" json:"audit,omitempty" yaml:"audit,omitempty"`
 	Remediation *Remediation `protobuf:"bytes,5,opt,name=remediation,proto3" json:"remediation,omitempty" yaml:"remediation,omitempty"`
 	FileContext FileContext  `json:"-" yaml:"-"`
+	Comments    Comments     `json:"-" yaml:"-"`
 }
 
 func (x *MqueryDocs) UnmarshalYAML(node *yaml.Node) error {
@@ -397,13 +757,44 @@ func (x *MqueryDocs) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d MqueryDocs) MarshalYAML() (interface{}, error) {
+	type alias MqueryDocs
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type MqueryRef struct {
 	Url         string      `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty" yaml:"url,omitempty"`
 	Title       string      `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *MqueryRef) UnmarshalYAML(node *yaml.Node) error {
@@ -416,13 +807,44 @@ func (x *MqueryRef) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d MqueryRef) MarshalYAML() (interface{}, error) {
+	type alias MqueryRef
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type ObjectRef struct {
 	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *ObjectRef) UnmarshalYAML(node *yaml.Node) error {
@@ -435,7 +857,37 @@ func (x *ObjectRef) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d ObjectRef) MarshalYAML() (interface{}, error) {
+	type alias ObjectRef
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type Policy struct {
@@ -461,6 +913,7 @@ type Policy struct {
 	Groups                 []*PolicyGroup         `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
 	ScoringSystem          explorer.ScoringSystem `protobuf:"varint,10,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
 	FileContext            FileContext            `json:"-" yaml:"-"`
+	Comments               Comments               `json:"-" yaml:"-"`
 }
 
 func (x *Policy) UnmarshalYAML(node *yaml.Node) error {
@@ -473,12 +926,43 @@ func (x *Policy) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Policy) MarshalYAML() (interface{}, error) {
+	type alias Policy
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type PolicyDocs struct {
 	Desc        string      `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *PolicyDocs) UnmarshalYAML(node *yaml.Node) error {
@@ -491,7 +975,37 @@ func (x *PolicyDocs) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d PolicyDocs) MarshalYAML() (interface{}, error) {
+	type alias PolicyDocs
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type PolicyGroup struct {
@@ -500,6 +1014,8 @@ type PolicyGroup struct {
 	StartDate    int64            `protobuf:"varint,21,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty" yaml:"start_date,omitempty"`
 	EndDate      int64            `protobuf:"varint,22,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty" yaml:"end_date,omitempty"`
 	ReminderDate int64            `protobuf:"varint,23,opt,name=reminder_date,json=reminderDate,proto3" json:"reminder_date,omitempty" yaml:"reminder_date,omitempty"`
+	Reviewers    []*Author        `protobuf:"bytes,27,rep,name=reviewers,proto3" json:"reviewers,omitempty" yaml:"reviewers,omitempty"`
+	ReviewStatus ReviewStatus     `protobuf:"varint,28,opt,name=review_status,json=reviewStatus,proto3,enum=cnspec.policy.v1.ReviewStatus" json:"review_status,omitempty" yaml:"review_status,omitempty"`
 	Created      int64            `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified     int64            `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
 	Policies     []*PolicyRef     `protobuf:"bytes,1,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
@@ -510,6 +1026,7 @@ type PolicyGroup struct {
 	Authors      []*Author        `protobuf:"bytes,26,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
 	Docs         *PolicyGroupDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext  FileContext      `json:"-" yaml:"-"`
+	Comments     Comments         `json:"-" yaml:"-"`
 }
 
 func (x *PolicyGroup) UnmarshalYAML(node *yaml.Node) error {
@@ -522,13 +1039,44 @@ func (x *PolicyGroup) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d PolicyGroup) MarshalYAML() (interface{}, error) {
+	type alias PolicyGroup
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type PolicyGroupDocs struct {
 	Desc          string      `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	Justification string      `protobuf:"bytes,2,opt,name=justification,proto3" json:"justification,omitempty" yaml:"justification,omitempty"`
 	FileContext   FileContext `json:"-" yaml:"-"`
+	Comments      Comments    `json:"-" yaml:"-"`
 }
 
 func (x *PolicyGroupDocs) UnmarshalYAML(node *yaml.Node) error {
@@ -541,7 +1089,37 @@ func (x *PolicyGroupDocs) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d PolicyGroupDocs) MarshalYAML() (interface{}, error) {
+	type alias PolicyGroupDocs
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type PolicyRef struct {
@@ -551,6 +1129,7 @@ type PolicyRef struct {
 	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Impact      *Impact     `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *PolicyRef) UnmarshalYAML(node *yaml.Node) error {
@@ -563,7 +1142,37 @@ func (x *PolicyRef) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d PolicyRef) MarshalYAML() (interface{}, error) {
+	type alias PolicyRef
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type Property struct {
@@ -578,6 +1187,7 @@ type Property struct {
 	Desc        string       `protobuf:"bytes,35,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	Mql         string       `protobuf:"bytes,1,opt,name=mql,proto3" json:"mql,omitempty" yaml:"mql,omitempty"`
 	FileContext FileContext  `json:"-" yaml:"-"`
+	Comments    Comments     `json:"-" yaml:"-"`
 }
 
 func (x *Property) UnmarshalYAML(node *yaml.Node) error {
@@ -590,7 +1200,37 @@ func (x *Property) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d Property) MarshalYAML() (interface{}, error) {
+	type alias Property
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type QueryCounts struct {
@@ -598,6 +1238,7 @@ type QueryCounts struct {
 	DataCount    int64       `protobuf:"varint,2,opt,name=data_count,json=dataCount,proto3" json:"data_count,omitempty" yaml:"data_count,omitempty"`
 	TotalCount   int64       `protobuf:"varint,3,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty" yaml:"total_count,omitempty"`
 	FileContext  FileContext `json:"-" yaml:"-"`
+	Comments     Comments    `json:"-" yaml:"-"`
 }
 
 func (x *QueryCounts) UnmarshalYAML(node *yaml.Node) error {
@@ -610,7 +1251,37 @@ func (x *QueryCounts) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d QueryCounts) MarshalYAML() (interface{}, error) {
+	type alias QueryCounts
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type QueryGroup struct {
@@ -620,6 +1291,7 @@ type QueryGroup struct {
 	Filters     *Filters    `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
 	Queries     []*Mquery   `protobuf:"bytes,3,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *QueryGroup) UnmarshalYAML(node *yaml.Node) error {
@@ -632,7 +1304,37 @@ func (x *QueryGroup) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d QueryGroup) MarshalYAML() (interface{}, error) {
+	type alias QueryGroup
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type QueryPack struct {
@@ -659,6 +1361,7 @@ type QueryPack struct {
 	Created                int64              `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64              `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
 	FileContext            FileContext        `json:"-" yaml:"-"`
+	Comments               Comments           `json:"-" yaml:"-"`
 }
 
 func (x *QueryPack) UnmarshalYAML(node *yaml.Node) error {
@@ -671,12 +1374,43 @@ func (x *QueryPack) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d QueryPack) MarshalYAML() (interface{}, error) {
+	type alias QueryPack
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type QueryPackDocs struct {
 	Desc        string      `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *QueryPackDocs) UnmarshalYAML(node *yaml.Node) error {
@@ -689,17 +1423,51 @@ func (x *QueryPackDocs) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d QueryPackDocs) MarshalYAML() (interface{}, error) {
+	type alias QueryPackDocs
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type Remediation struct {
 	Items       []*TypedDoc `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty" yaml:"items,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *Remediation) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 
 type ReviewStatus policy.ReviewStatus
@@ -731,6 +1499,7 @@ type TypedDoc struct {
 	Id          string      `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
 	Desc        string      `protobuf:"bytes,2,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
 }
 
 func (x *TypedDoc) UnmarshalYAML(node *yaml.Node) error {
@@ -743,5 +1512,35 @@ func (x *TypedDoc) UnmarshalYAML(node *yaml.Node) error {
 
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
 	return nil
+}
+
+func (d TypedDoc) MarshalYAML() (interface{}, error) {
+	type alias TypedDoc
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
