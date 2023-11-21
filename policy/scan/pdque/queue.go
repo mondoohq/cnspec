@@ -25,9 +25,8 @@ const (
 	tempFilePrefix = "."
 )
 
-// ErrQueueClosed is the error returned when a queue is closed.
 var ErrQueueClosed = errors.New("queue is closed")
-
+var ErrNoJobs = errors.New("no jobs in queue")
 var ErrQueueFull = errors.New("queue is full")
 
 // ErrUnableToDecode is returned when an object cannot be decoded.
@@ -246,57 +245,6 @@ func (q *Queue) Dequeue() (interface{}, error) {
 	return nil, errors.New("no jobs in queue")
 }
 
-//func (q *Queue) DequeueBlock() (interface{}, error) {
-//	q.mu.Lock()
-//	defer q.mu.Unlock()
-//
-//	for {
-//		if q.closed {
-//			return nil, ErrQueueClosed
-//		}
-//
-//		files, err := os.ReadDir(q.path)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		// Sort job files by name (which is the timestamp)
-//		sort.Slice(files, func(i, j int) bool {
-//			return files[i].Name() < files[j].Name()
-//		})
-//
-//		for _, file := range files {
-//			if filepath.Ext(file.Name()) == jobFileExt {
-//				jobPath := filepath.Join(q.path, file.Name())
-//
-//				data, err := os.ReadFile(jobPath)
-//				if err != nil {
-//					return nil, err
-//				}
-//
-//				// Decode the bytes into an object
-//				obj := q.builder()
-//				if err := gob.NewDecoder(bytes.NewReader(data)).Decode(obj); err != nil {
-//					return nil, ErrUnableToDecode{
-//						Path: q.path,
-//						Err:  err,
-//					}
-//				}
-//
-//				// Remove the job file
-//				if err := os.Remove(jobPath); err != nil {
-//					return nil, err
-//				}
-//
-//				return obj, nil
-//			}
-//		}
-//
-//		// No jobs in queue, wait for a new job to be enqueued
-//		q.cond.Wait()
-//	}
-//}
-
 func (q *Queue) DequeueBlock() (interface{}, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -362,9 +310,6 @@ func (q *Queue) dequeueJob() (interface{}, error) {
 
 	return nil, ErrNoJobs // Custom error to indicate no jobs are available
 }
-
-// ErrNoJobs is a custom error to indicate that no jobs are available in the queue.
-var ErrNoJobs = errors.New("no jobs in queue")
 
 func (q *Queue) nextAvailableFilename() (string, error) {
 	timestamp := time.Now().UnixNano()
