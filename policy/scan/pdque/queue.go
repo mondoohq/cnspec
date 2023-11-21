@@ -50,6 +50,10 @@ type Queue struct {
 }
 
 func New(name string, path string, maxSize int, builder func() interface{}) (*Queue, error) {
+	err := os.MkdirAll(path, 0o755)
+	if err != nil {
+		return nil, err
+	}
 	overlyPermissive, err := isOverlyPermissive(path)
 	if err != nil {
 		return nil, err
@@ -73,10 +77,6 @@ func NewOrOpen(name string, path string, maxSize int, builder func() interface{}
 	var que *Queue
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		err = os.MkdirAll(path, 0o755)
-		if err != nil {
-			return nil, err
-		}
 		que, err = New(name, path, maxSize, builder)
 		if err != nil {
 			return nil, err
