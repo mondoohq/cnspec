@@ -30,6 +30,7 @@ func init() {
 	policyBundlesCmd.AddCommand(policyLintCmd)
 
 	// fmt
+	policyFmtCmd.Flags().StringArray("sort", []string{}, "sort the selected fields in the bundle.")
 	policyBundlesCmd.AddCommand(policyFmtCmd)
 
 	// docs
@@ -146,14 +147,14 @@ var policyFmtCmd = &cobra.Command{
 	Short:   "Apply style formatting to one or more policy bundles.",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		sort, _ := cmd.Flags().GetStringArray("sort")
 		ensureProviders()
 		for _, path := range args {
-			err := bundle.FormatRecursive(path)
+			err := bundle.FormatRecursive(path, sort)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-
 		}
 		log.Info().Msg("completed formatting policy bundle(s)")
 	},

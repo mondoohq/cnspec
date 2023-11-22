@@ -424,15 +424,69 @@ func (p *Bundle) PolicyMRNs() []string {
 	return mrns
 }
 
-// SortContents of this policy bundle sorts Queries and Policies by MRNs
+// Deprecated: Use SortContentsV2
 func (p *Bundle) SortContents() {
-	sort.SliceStable(p.Queries, func(i, j int) bool {
-		return p.Queries[i].Mrn < p.Queries[j].Mrn
+	err := p.SortContentsV2(SortConfig{
+		SortQueries: &SortField{
+			Mrn: true,
+		},
+		SortPolicies: &SortField{
+			Mrn: true,
+		},
 	})
+	if err != nil {
+		panic(err)
+	}
+}
 
-	sort.SliceStable(p.Policies, func(i, j int) bool {
-		return p.Policies[i].Mrn < p.Policies[j].Mrn
-	})
+type SortConfig struct {
+	SortQueries  *SortField
+	SortPolicies *SortField
+}
+
+type SortField struct {
+	Uid bool
+	Mrn bool
+}
+
+func (s *SortField) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.Uid && s.Mrn {
+		return errors.New("cannot sort by both UID and MRN, only one must be set")
+	}
+	return nil
+}
+
+func (p *Bundle) SortContentsV2(config SortConfig) error {
+	if p == nil {
+		return nil
+	}
+	if config.SortQueries != nil {
+		if err := config.SortQueries.Validate(); err != nil {
+			return err
+		}
+		sort.SliceStable(p.Queries, func(i, j int) bool {
+			if config.SortQueries.Uid {
+				return p.Queries[i].Uid < p.Queries[j].Uid
+			}
+			return p.Queries[i].Mrn < p.Queries[j].Mrn
+		})
+	}
+	if config.SortPolicies != nil {
+		if err := config.SortPolicies.Validate(); err != nil {
+			return err
+		}
+		sort.SliceStable(p.Policies, func(i, j int) bool {
+			if config.SortPolicies.Uid {
+				return p.Policies[i].Uid < p.Policies[j].Uid
+			}
+			return p.Policies[i].Mrn < p.Policies[j].Mrn
+		})
+	}
+
+	return nil
 }
 
 type docsPrinter interface {
