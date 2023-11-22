@@ -150,6 +150,9 @@ func SortBundleData(data []byte, sortFields []string) ([]byte, error) {
 		if s == "policies" {
 			config.SortPolicies = &policy.SortField{Uid: true}
 		}
+		if s == "variants" {
+			config.SortVariants = &policy.SortField{Uid: true}
+		}
 	}
 	err = b.SortContentsV2(config)
 	if err != nil {

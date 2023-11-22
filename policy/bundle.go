@@ -442,6 +442,7 @@ func (p *Bundle) SortContents() {
 type SortConfig struct {
 	SortQueries  *SortField
 	SortPolicies *SortField
+	SortVariants *SortField
 }
 
 type SortField struct {
@@ -473,7 +474,9 @@ func (p *Bundle) SortContentsV2(config SortConfig) error {
 			}
 			return p.Queries[i].Mrn < p.Queries[j].Mrn
 		})
+
 	}
+
 	if config.SortPolicies != nil {
 		if err := config.SortPolicies.Validate(); err != nil {
 			return err
@@ -486,6 +489,36 @@ func (p *Bundle) SortContentsV2(config SortConfig) error {
 		})
 	}
 
+	if config.SortVariants != nil {
+		for _, q := range p.Queries {
+			sort.SliceStable(q.Variants, func(i, j int) bool {
+				if config.SortQueries.Uid {
+					return q.Variants[i].Uid < q.Variants[j].Uid
+				}
+				return q.Variants[i].Mrn < q.Variants[j].Mrn
+			})
+		}
+		for _, pl := range p.Policies {
+			for _, g := range pl.Groups {
+				for _, q := range g.Queries {
+					sort.SliceStable(q.Variants, func(i, j int) bool {
+						if config.SortQueries.Uid {
+							return q.Variants[i].Uid < q.Variants[j].Uid
+						}
+						return q.Variants[i].Mrn < q.Variants[j].Mrn
+					})
+				}
+				for _, c := range g.Checks {
+					sort.SliceStable(c.Variants, func(i, j int) bool {
+						if config.SortQueries.Uid {
+							return c.Variants[i].Uid < c.Variants[j].Uid
+						}
+						return c.Variants[i].Mrn < c.Variants[j].Mrn
+					})
+				}
+			}
+		}
+	}
 	return nil
 }
 

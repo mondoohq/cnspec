@@ -92,10 +92,16 @@ policies:
       - filters: asset.family.contains('unix')
         checks:
           - uid: query1
+            variants:
+              - uid: variant2
+              - uid: variant1
     version: "1.0.0"
     scoring_system: 2
 queries:
   - uid: query2
+    variants:
+      - uid: variant1
+      - uid: variant2
     docs:
       desc: |
         Secure Boot is required in order to ensure that the booting kernel hasn't been modified. It needs to be enabled in your computer's firmware and be supported by your Linux distribution.
@@ -121,7 +127,7 @@ queries:
     title: Ensure Secure Boot is enabled
 `
 
-	sorted, err := SortBundleData([]byte(data), []string{"queries"})
+	sorted, err := SortBundleData([]byte(data), []string{"queries", "variants"})
 	require.NoError(t, err)
 	formatted, err := FormatBundleData(sorted)
 	require.NoError(t, err)
@@ -139,6 +145,9 @@ queries:
       - filters: asset.family.contains('unix')
         checks:
           - uid: query1
+            variants:
+              - uid: variant1
+              - uid: variant2
     scoring_system: 2
 queries:
   - uid: query1
@@ -165,6 +174,9 @@ queries:
         Run the "mokutil --sb-state" command and check whether it prints "SecureBoot enabled"
       remediation: |
         Enable Secure Boot in your computer's firmware and use a Linux distribution supporting Secure Boot
+    variants:
+      - uid: variant1
+      - uid: variant2
 `
 	assert.Equal(t, expected, string(formatted))
 }
