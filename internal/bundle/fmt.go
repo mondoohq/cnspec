@@ -28,7 +28,7 @@ func Format(bundle *Bundle) ([]byte, error) {
 }
 
 // FormatRecursive iterates recursively through all .mql.yaml files and formats them
-func FormatRecursive(mqlBundlePath string, sortFields []string) error {
+func FormatRecursive(mqlBundlePath string, sort bool) error {
 	log.Info().Str("file", mqlBundlePath).Msg("format policy bundle(s)")
 	_, err := os.Stat(mqlBundlePath)
 	if err != nil {
@@ -42,7 +42,7 @@ func FormatRecursive(mqlBundlePath string, sortFields []string) error {
 
 	for i := range files {
 		f := files[i]
-		err := FormatAndSortFile(f, sortFields)
+		err := FormatFile(f, sort)
 		if err != nil {
 			return errors.Wrap(err, "could not format file: "+f)
 		}
@@ -68,16 +68,24 @@ func sanitizeStringForYaml(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-func FormatAndSortFile(filename string, sortFields []string) error {
+func FormatFile(filename string, sort bool) error {
 	log.Info().Str("file", filename).Msg("format file")
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
 
-	data, err = SortBundleData(data, sortFields)
-	if err != nil {
-		return err
+	if sort {
+		b, err := policy.BundleFromYAML(data)
+		if err != nil {
+			return err
+		}
+
+		b.SortContents()
+		data, err = b.ToYAML()
+		if err != nil {
+			return err
+		}
 	}
 
 	data, err = FormatBundleData(data)
@@ -131,32 +139,4 @@ func FormatBundleData(data []byte) ([]byte, error) {
 	}
 
 	return Format(b)
-}
-
-func SortBundleData(data []byte, sortFields []string) ([]byte, error) {
-	if len(sortFields) == 0 {
-		// nothing to do, no sorting needed
-		return data, nil
-	}
-	b, err := policy.BundleFromYAML(data)
-	if err != nil {
-		return nil, err
-	}
-	config := policy.SortConfig{}
-	for _, s := range sortFields {
-		if s == "queries" {
-			config.SortQueries = &policy.SortField{Uid: true}
-		}
-		if s == "policies" {
-			config.SortPolicies = &policy.SortField{Uid: true}
-		}
-		if s == "variants" {
-			config.SortVariants = &policy.SortField{Uid: true}
-		}
-	}
-	err = b.SortContentsV2(config)
-	if err != nil {
-		return nil, err
-	}
-	return b.ToYAML()
 }

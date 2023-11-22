@@ -424,102 +424,50 @@ func (p *Bundle) PolicyMRNs() []string {
 	return mrns
 }
 
-// Deprecated: Use SortContentsV2
+// Sorts the queries, policies and queries' variants in the bundle.
 func (p *Bundle) SortContents() {
-	err := p.SortContentsV2(SortConfig{
-		SortQueries: &SortField{
-			Mrn: true,
-		},
-		SortPolicies: &SortField{
-			Mrn: true,
-		},
+	sort.SliceStable(p.Queries, func(i, j int) bool {
+		if p.Queries[i].Mrn == "" || p.Queries[j].Mrn == "" {
+			return p.Queries[i].Uid < p.Queries[j].Uid
+		}
+		return p.Queries[i].Mrn < p.Queries[j].Mrn
 	})
-	if err != nil {
-		panic(err)
-	}
-}
 
-type SortConfig struct {
-	SortQueries  *SortField
-	SortPolicies *SortField
-	SortVariants *SortField
-}
-
-type SortField struct {
-	Uid bool
-	Mrn bool
-}
-
-func (s *SortField) Validate() error {
-	if s == nil {
-		return nil
-	}
-	if s.Uid && s.Mrn {
-		return errors.New("cannot sort by both UID and MRN, only one must be set")
-	}
-	return nil
-}
-
-func (p *Bundle) SortContentsV2(config SortConfig) error {
-	if p == nil {
-		return nil
-	}
-	if config.SortQueries != nil {
-		if err := config.SortQueries.Validate(); err != nil {
-			return err
+	sort.SliceStable(p.Policies, func(i, j int) bool {
+		if p.Policies[i].Mrn == "" || p.Policies[j].Mrn == "" {
+			return p.Policies[i].Uid < p.Policies[j].Uid
 		}
-		sort.SliceStable(p.Queries, func(i, j int) bool {
-			if config.SortQueries.Uid {
-				return p.Queries[i].Uid < p.Queries[j].Uid
-			}
-			return p.Queries[i].Mrn < p.Queries[j].Mrn
-		})
+		return p.Policies[i].Mrn < p.Policies[j].Mrn
+	})
 
-	}
-
-	if config.SortPolicies != nil {
-		if err := config.SortPolicies.Validate(); err != nil {
-			return err
-		}
-		sort.SliceStable(p.Policies, func(i, j int) bool {
-			if config.SortPolicies.Uid {
-				return p.Policies[i].Uid < p.Policies[j].Uid
+	for _, q := range p.Queries {
+		sort.SliceStable(q.Variants, func(i, j int) bool {
+			if q.Variants[i].Mrn == "" || q.Variants[j].Mrn == "" {
+				return q.Variants[i].Uid < q.Variants[j].Uid
 			}
-			return p.Policies[i].Mrn < p.Policies[j].Mrn
+			return q.Variants[i].Mrn < q.Variants[j].Mrn
 		})
 	}
-
-	if config.SortVariants != nil {
-		for _, q := range p.Queries {
-			sort.SliceStable(q.Variants, func(i, j int) bool {
-				if config.SortQueries.Uid {
-					return q.Variants[i].Uid < q.Variants[j].Uid
-				}
-				return q.Variants[i].Mrn < q.Variants[j].Mrn
-			})
-		}
-		for _, pl := range p.Policies {
-			for _, g := range pl.Groups {
-				for _, q := range g.Queries {
-					sort.SliceStable(q.Variants, func(i, j int) bool {
-						if config.SortQueries.Uid {
-							return q.Variants[i].Uid < q.Variants[j].Uid
-						}
-						return q.Variants[i].Mrn < q.Variants[j].Mrn
-					})
-				}
-				for _, c := range g.Checks {
-					sort.SliceStable(c.Variants, func(i, j int) bool {
-						if config.SortQueries.Uid {
-							return c.Variants[i].Uid < c.Variants[j].Uid
-						}
-						return c.Variants[i].Mrn < c.Variants[j].Mrn
-					})
-				}
+	for _, pl := range p.Policies {
+		for _, g := range pl.Groups {
+			for _, q := range g.Queries {
+				sort.SliceStable(q.Variants, func(i, j int) bool {
+					if q.Variants[i].Mrn == "" || q.Variants[j].Mrn == "" {
+						return q.Variants[i].Uid < q.Variants[j].Uid
+					}
+					return q.Variants[i].Mrn < q.Variants[j].Mrn
+				})
+			}
+			for _, c := range g.Checks {
+				sort.SliceStable(c.Variants, func(i, j int) bool {
+					if c.Variants[i].Mrn == "" || c.Variants[j].Mrn == "" {
+						return c.Variants[i].Uid < c.Variants[j].Uid
+					}
+					return c.Variants[i].Mrn < c.Variants[j].Mrn
+				})
 			}
 		}
 	}
-	return nil
 }
 
 type docsPrinter interface {

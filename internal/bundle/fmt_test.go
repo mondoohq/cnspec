@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/v9/policy"
 )
 
 func TestBundleFormatter(t *testing.T) {
@@ -127,9 +128,12 @@ queries:
     title: Ensure Secure Boot is enabled
 `
 
-	sorted, err := SortBundleData([]byte(data), []string{"queries", "variants"})
+	b, err := policy.BundleFromYAML([]byte(data))
 	require.NoError(t, err)
-	formatted, err := FormatBundleData(sorted)
+	b.SortContents()
+	byteData, err := b.ToYAML()
+	require.NoError(t, err)
+	formatted, err := FormatBundleData(byteData)
 	require.NoError(t, err)
 	expected := `policies:
   - uid: sshd-server-policy
