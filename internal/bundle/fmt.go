@@ -28,7 +28,7 @@ func Format(bundle *Bundle) ([]byte, error) {
 }
 
 // FormatRecursive iterates recursively through all .mql.yaml files and formats them
-func FormatRecursive(mqlBundlePath string) error {
+func FormatRecursive(mqlBundlePath string, sort bool) error {
 	log.Info().Str("file", mqlBundlePath).Msg("format policy bundle(s)")
 	_, err := os.Stat(mqlBundlePath)
 	if err != nil {
@@ -42,7 +42,7 @@ func FormatRecursive(mqlBundlePath string) error {
 
 	for i := range files {
 		f := files[i]
-		err := FormatFile(f)
+		err := FormatFile(f, sort)
 		if err != nil {
 			return errors.Wrap(err, "could not format file: "+f)
 		}
@@ -68,11 +68,24 @@ func sanitizeStringForYaml(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-func FormatFile(filename string) error {
+func FormatFile(filename string, sort bool) error {
 	log.Info().Str("file", filename).Msg("format file")
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
+	}
+
+	if sort {
+		b, err := policy.BundleFromYAML(data)
+		if err != nil {
+			return err
+		}
+
+		b.SortContents()
+		data, err = b.ToYAML()
+		if err != nil {
+			return err
+		}
 	}
 
 	data, err = FormatBundleData(data)
