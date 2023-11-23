@@ -9,23 +9,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joncrlsn/dque"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v9/policy/scan/pdque"
 	"google.golang.org/protobuf/proto"
 )
 
 type diskQueueConfig struct {
-	dir         string
-	filename    string
-	segmentSize int
-	sync        bool
+	dir      string
+	filename string
+	maxSize  int
+	sync     bool
 }
 
 var defaultDqueConfig = diskQueueConfig{
-	dir:         "/tmp/cnspec-queue", // TODO: consider configurable path
-	filename:    "disk-queue",
-	segmentSize: 500,
-	sync:        false,
+	dir:      "/tmp/cnspec-queue", // TODO: consider configurable path
+	filename: "disk-queue",
+	maxSize:  500,
+	sync:     false,
 }
 
 // queueMsg is the being stored in disk queue
@@ -40,7 +40,7 @@ type queuePayload struct {
 }
 
 type diskQueueClient struct {
-	queue   *dque.DQue
+	queue   *pdque.Queue
 	once    sync.Once
 	wg      sync.WaitGroup
 	entries chan Job
@@ -68,13 +68,9 @@ func newDqueClient(config diskQueueConfig, handler func(job *Job)) (*diskQueueCl
 		return nil, fmt.Errorf("cannot create queue directory: %s", err)
 	}
 
-	q.queue, err = dque.NewOrOpen(config.filename, config.dir, config.segmentSize, diskQueueEntryBuilder)
+	q.queue, err = pdque.NewOrOpen(config.filename, config.dir, config.maxSize, diskQueueEntryBuilder)
 	if err != nil {
 		return nil, err
-	}
-
-	if !config.sync {
-		_ = q.queue.TurboOn()
 	}
 
 	q.entries = make(chan Job)
@@ -127,7 +123,7 @@ func (c *diskQueueClient) popper() {
 		entry, err := c.queue.DequeueBlock()
 		if err != nil {
 			switch err {
-			case dque.ErrQueueClosed:
+			case pdque.ErrQueueClosed:
 				return
 			default:
 				log.Error().Err(err).Msg("could not pop job from disk queue")
