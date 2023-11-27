@@ -615,6 +615,9 @@ func (c *bundleCache) removeFailing(res *Bundle) {
 		return
 	}
 
+	for k := range c.removeQueries {
+		log.Debug().Str("query", k).Msg("removing query from bundle")
+	}
 	res.Queries = explorer.FilterQueryMRNs(c.removeQueries, res.Queries)
 
 	for i := range res.Policies {
