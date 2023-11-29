@@ -12,6 +12,7 @@ import (
 
 func TestBundleFormatter(t *testing.T) {
 	data := `
+# This is a comment
 policies:
   - uid: sshd-server-policy
     authors:
@@ -47,7 +48,8 @@ queries:
 	formatted, err := FormatBundle(b, false)
 	require.NoError(t, err)
 
-	expected := `policies:
+	expected := `# This is a comment
+policies:
   - uid: sshd-server-policy
     name: SSH Server Policy
     version: 1.0.0
