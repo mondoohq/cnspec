@@ -43,6 +43,7 @@ queries:
 `
 
 	b, err := ParseYaml([]byte(data))
+	require.NoError(t, err)
 	formatted, err := FormatBundle(b, false)
 	require.NoError(t, err)
 

@@ -74,11 +74,11 @@ func FormatFile(filename string, sort bool) error {
 	if err != nil {
 		return err
 	}
-	yacB, err := ParseYaml(data)
+	b, err := ParseYaml(data)
 	if err != nil {
 		return err
 	}
-	fmtData, err := FormatBundle(yacB, sort)
+	fmtData, err := FormatBundle(b, sort)
 	if err != nil {
 		return err
 	}
@@ -91,7 +91,7 @@ func FormatFile(filename string, sort bool) error {
 	return nil
 }
 
-// Format formats the ßbundle
+// Format formats the Bundle
 func FormatBundle(b *Bundle, sort bool) ([]byte, error) {
 	// to improve the formatting we need to remove the whitespace at the end of the lines
 	for i := range b.Queries {
