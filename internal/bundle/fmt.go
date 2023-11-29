@@ -74,26 +74,16 @@ func FormatFile(filename string, sort bool) error {
 	if err != nil {
 		return err
 	}
-
-	if sort {
-		b, err := policy.BundleFromYAML(data)
-		if err != nil {
-			return err
-		}
-
-		b.SortContents()
-		data, err = b.ToYAML()
-		if err != nil {
-			return err
-		}
+	b, err := ParseYaml(data)
+	if err != nil {
+		return err
 	}
-
-	data, err = FormatBundleData(data)
+	fmtData, err := FormatBundle(b, sort)
 	if err != nil {
 		return err
 	}
 
-	err = os.WriteFile(filename, data, 0o644)
+	err = os.WriteFile(filename, fmtData, 0o644)
 	if err != nil {
 		return err
 	}
@@ -101,13 +91,8 @@ func FormatFile(filename string, sort bool) error {
 	return nil
 }
 
-// Format formats the .mql.yaml bundle
-func FormatBundleData(data []byte) ([]byte, error) {
-	b, err := ParseYaml(data)
-	if err != nil {
-		return nil, err
-	}
-
+// Format formats the Bundle
+func FormatBundle(b *Bundle, sort bool) ([]byte, error) {
 	// to improve the formatting we need to remove the whitespace at the end of the lines
 	for i := range b.Queries {
 		query := b.Queries[i]
@@ -136,6 +121,10 @@ func FormatBundleData(data []byte) ([]byte, error) {
 				}
 			}
 		}
+	}
+
+	if sort {
+		b.SortContents()
 	}
 
 	return Format(b)

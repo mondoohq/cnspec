@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v9/policy"
 )
 
 func TestBundleFormatter(t *testing.T) {
 	data := `
+# This is a comment
 policies:
   - uid: sshd-server-policy
     authors:
@@ -43,10 +43,13 @@ queries:
     title: Ensure Secure Boot is enabled
 `
 
-	formatted, err := FormatBundleData([]byte(data))
+	b, err := ParseYaml([]byte(data))
+	require.NoError(t, err)
+	formatted, err := FormatBundle(b, false)
 	require.NoError(t, err)
 
-	expected := `policies:
+	expected := `# This is a comment
+policies:
   - uid: sshd-server-policy
     name: SSH Server Policy
     version: 1.0.0
@@ -128,12 +131,9 @@ queries:
     title: Ensure Secure Boot is enabled
 `
 
-	b, err := policy.BundleFromYAML([]byte(data))
+	b, err := ParseYaml([]byte(data))
 	require.NoError(t, err)
-	b.SortContents()
-	byteData, err := b.ToYAML()
-	require.NoError(t, err)
-	formatted, err := FormatBundleData(byteData)
+	formatted, err := FormatBundle(b, true)
 	require.NoError(t, err)
 	expected := `policies:
   - uid: sshd-server-policy
