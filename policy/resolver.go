@@ -977,6 +977,9 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 		cache.global.reportingJobsByUUID[uuid] = queryJob
 		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], queryJob)
 		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], queryJob)
+	}
+
+	if ownerJob.ChildJobs[queryJob.Uuid] == nil {
 		ownerJob.ChildJobs[queryJob.Uuid] = impact
 	}
 
