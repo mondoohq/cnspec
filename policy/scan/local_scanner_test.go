@@ -149,6 +149,49 @@ func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
 	}
 }
 
+func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
+	bundle, err := policy.BundleFromPaths("./testdata/shared-query.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+	bundleMap := bundle.ToMap()
+
+	ctx := context.Background()
+	scanner := NewLocalScanner()
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for k, r := range full.Reports {
+		// Verify the score is 100
+		s.Equal(uint32(100), r.GetScore().Value)
+
+		p := full.ResolvedPolicies[k]
+
+		// Get the code id for all the executed queries
+		executedQueries := []string{}
+		for qCodeId := range p.ExecutionJob.Queries {
+			executedQueries = append(executedQueries, qCodeId)
+		}
+
+		expectedQueries := []string{
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-01"].CodeId,
+		}
+		s.ElementsMatch(expectedQueries, executedQueries)
+	}
+}
+
 func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	bundle, err := policy.BundleFromPaths("./testdata/exception-groups.mql.yaml")
 	s.Require().NoError(err)
