@@ -891,7 +891,9 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 			continue
 		}
 
-		if check.Action == explorer.Action_IGNORE || group.Type == GroupType_IGNORED {
+		// The type is IGNORED and the review status is not REJECTED
+		ignoreGroup := group.Type == GroupType_IGNORED && group.ReviewStatus != ReviewStatus_REJECTED
+		if check.Action == explorer.Action_IGNORE || ignoreGroup {
 			stillValid := CheckValidUntil(group.EndDate, check.Mrn)
 			if !stillValid {
 				// the exception is no longer valid => score the check
@@ -904,7 +906,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		if impact == nil {
 			impact = &explorer.Impact{}
 		}
-		if check.Action == explorer.Action_IGNORE || group.Type == GroupType_IGNORED {
+		if check.Action == explorer.Action_IGNORE || ignoreGroup {
 			impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
 			impact.Action = explorer.Action_IGNORE
 		}
@@ -917,7 +919,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		}
 
 		// TODO: can we simplify this to simply IGNORE?
-		if check.Action == explorer.Action_MODIFY || check.Action == explorer.Action_IGNORE || group.Type == GroupType_IGNORED {
+		if check.Action == explorer.Action_MODIFY || check.Action == explorer.Action_IGNORE || ignoreGroup {
 			cache.modifyCheckJob(check, impact)
 		}
 	}
