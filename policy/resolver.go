@@ -725,13 +725,13 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 		}
 		for i := range group.Checks {
 			check := group.Checks[i]
-			if check.Action == explorer.Action_DEACTIVATE || group.Type == GroupType_DISABLE {
+			if check.Action == explorer.Action_DEACTIVATE || (group.Type == GroupType_DISABLE && group.ReviewStatus != ReviewStatus_REJECTED) {
 				cache.removedQueries[check.Mrn] = struct{}{}
 			}
 		}
 		for i := range group.Queries {
 			query := group.Queries[i]
-			if query.Action == explorer.Action_DEACTIVATE || group.Type == GroupType_DISABLE {
+			if query.Action == explorer.Action_DEACTIVATE || (group.Type == GroupType_DISABLE && group.ReviewStatus != ReviewStatus_REJECTED) {
 				cache.removedQueries[query.Mrn] = struct{}{}
 			}
 		}
