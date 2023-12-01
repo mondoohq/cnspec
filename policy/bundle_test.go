@@ -185,6 +185,23 @@ func TestBundleCompile_FromQueryPackBundle(t *testing.T) {
 	require.Equal(t, 2, len(converted.Policies[0].Groups))
 }
 
+func TestStableMqueryChecksum(t *testing.T) {
+	bundle, err := policy.BundleFromPaths("../examples/complex.mql.yaml")
+	require.NoError(t, err)
+	require.NotNil(t, bundle)
+
+	bundlemap, err := bundle.Compile(context.Background(), schema, nil)
+	require.NoError(t, err)
+	require.NotNil(t, bundlemap)
+
+	for _, m := range bundlemap.Queries {
+		initialChecksum := m.Checksum
+		err := m.RefreshChecksum(context.Background(), schema, explorer.QueryMap(bundlemap.Queries).GetQuery)
+		require.NoError(t, err)
+		assert.Equal(t, initialChecksum, m.Checksum, "checksum for %s changed", m.Mrn)
+	}
+}
+
 func TestBundleCompile_RemoveFailingQueries(t *testing.T) {
 	bundleStr := `
   owner_mrn: //test.sth
