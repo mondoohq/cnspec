@@ -31,6 +31,7 @@ import (
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory/manager"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v9/utils/multierr"
 	"go.mondoo.com/cnspec/v9"
 	"go.mondoo.com/cnspec/v9/internal/datalakes/inmemory"
@@ -581,6 +582,21 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	}
 
 	job.Reporter.AddReport(job.Asset, results)
+
+	if upstream != nil {
+		// get new gql client
+		mondooClient, err := gql.NewClient(*job.UpstreamConfig, s._upstreamClient.HttpClient)
+		if err != nil {
+			return
+		}
+
+		gqlVulnReport, err := mondooClient.GetVulnCompactReport(job.Asset.Mrn)
+		if err != nil {
+			log.Error().Err(err).Msg("could not get vulnerability report")
+			return
+		}
+		job.Reporter.AddVulnReport(job.Asset, gqlVulnReport)
+	}
 
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
 	// such that it is visible from the logs.

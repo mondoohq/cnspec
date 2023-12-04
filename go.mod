@@ -2,7 +2,9 @@ module go.mondoo.com/cnspec/v9
 
 go 1.21
 
-// replace go.mondoo.com/cnquery/v9 => ../cnquery
+replace go.mondoo.com/cnquery/v9 => ../cnquery
+
+replace go.mondoo.com/mondoo-go => /home/christian/workspace/mondoo/github.com/mondoo-go
 
 toolchain go1.21.3
 
@@ -117,6 +119,7 @@ require (
 	go.tmz.dev/musttag v0.7.2 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20231127180814-3a041ad873d4 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
+	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	k8s.io/api v0.28.4 // indirect
 	k8s.io/apimachinery v0.28.4 // indirect
 	k8s.io/component-base v0.28.4 // indirect

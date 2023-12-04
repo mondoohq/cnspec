@@ -11,7 +11,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mitchellh/mapstructure"
 	"github.com/muesli/ansi"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
@@ -362,7 +361,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
 		r.out.Write([]byte(NewLineCharacter))
 		// TODO: we should re-use the report results
-		r.printVulns(resolved, report, report.RawResults())
+		r.printVulns(report, assetMrn)
 
 	}
 	r.out.Write([]byte(NewLineCharacter))
@@ -586,39 +585,21 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 
 // ============================= ^^ ============================================
 
-func (r *defaultReporter) printVulns(resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
 	print := r.Printer
 
-	value, _ := getVulnReport(results)
-	if value == nil || value.Data == nil {
-		return
-	}
-	if value.Data.Error != nil {
-		r.out.Write([]byte(print.Error("Could not load the vulnerability report: "+value.Data.Error.Error()) + NewLineCharacter + NewLineCharacter))
-		return
-	}
+	vulnReport := r.data.VulnReports[assetMrn]
 
+	if vulnReport == nil {
+		return
+	}
 	r.out.Write([]byte(print.Primary("Vulnerabilities:" + NewLineCharacter)))
 
 	score := report.Scores[advisoryPolicyMrn]
 	_ = score
 
-	rawData := value.Data.Value
-
-	var vulnReport mvd.VulnReport
-	cfg := &mapstructure.DecoderConfig{
-		Metadata: nil,
-		Result:   &vulnReport,
-		TagName:  "json",
-	}
-	decoder, _ := mapstructure.NewDecoder(cfg)
-	if err := decoder.Decode(rawData); err != nil {
-		r.out.Write([]byte(print.Error("could not decode advisory report" + NewLineCharacter + NewLineCharacter)))
-		return
-	}
-
-	r.printVulnList(&vulnReport)
-	r.printVulnSummary(&vulnReport)
+	r.printVulnList(vulnReport)
+	r.printVulnSummary(vulnReport)
 }
 
 func (r *defaultReporter) printVulnList(report *mvd.VulnReport) {

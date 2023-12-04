@@ -7,12 +7,15 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnspec/v9/policy"
 )
 
 type AggregateReporter struct {
 	assets           map[string]*inventory.Asset
 	assetReports     map[string]*policy.Report
+	assetVulnReports map[string]*mvd.VulnReport
 	assetErrors      map[string]error
 	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
@@ -25,6 +28,7 @@ func NewAggregateReporter() *AggregateReporter {
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
+		assetVulnReports: map[string]*mvd.VulnReport{},
 	}
 }
 
@@ -39,6 +43,17 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
 		r.worstScore = results.Report.Score
 	}
+}
+
+func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
+	if vulnReport == nil {
+		return
+	}
+	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
+
+	mvdVulnReport := gql.ConvertToMvdVulnReport(vulnReport)
+	r.assets[asset.Mrn] = asset
+	r.assetVulnReports[asset.Mrn] = mvdVulnReport
 }
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
@@ -63,6 +78,7 @@ func (r *AggregateReporter) Reports() *ScanResult {
 				Errors:           errors,
 				Bundle:           r.bundle,
 				ResolvedPolicies: r.resolvedPolicies,
+				VulnReports:      r.assetVulnReports,
 			},
 		},
 	}
