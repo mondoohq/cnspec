@@ -164,7 +164,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {
 	// print the output using the specified output format
-	r, err := reporter.New("full")
+	r, err := reporter.NewReporter("full")
 	if err != nil {
 		log.Fatal().Msg(err.Error())
 	}

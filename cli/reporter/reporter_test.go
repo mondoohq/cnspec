@@ -61,14 +61,14 @@ func TestVulnReporter(t *testing.T) {
 	buf := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &buf}
 
-	r, err := New("summary")
+	r, err := NewReporter("summary")
 	require.NoError(t, err)
 
 	target := "index.docker.io/library/ubuntu@669e010b58ba"
 	err = r.PrintVulns(report, &writer, target)
 	require.NoError(t, err)
 
-	r, err = New("compact")
+	r, err = NewReporter("compact")
 	require.NoError(t, err)
 
 	err = r.PrintVulns(report, &writer, target)
@@ -77,7 +77,7 @@ func TestVulnReporter(t *testing.T) {
 	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
 	assert.NotContains(t, buf.String(), "USN-5279-1")
 
-	r, err = New("full")
+	r, err = NewReporter("full")
 	require.NoError(t, err)
 
 	err = r.PrintVulns(report, &writer, target)
@@ -86,7 +86,7 @@ func TestVulnReporter(t *testing.T) {
 	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
 	assert.Contains(t, buf.String(), "USN-5279-1")
 
-	r, err = New("yaml")
+	r, err = NewReporter("yaml")
 	require.NoError(t, err)
 
 	err = r.PrintVulns(report, &writer, target)

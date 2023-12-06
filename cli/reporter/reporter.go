@@ -40,7 +40,7 @@ func getVulnReport[T any](results map[string]*T) (*T, error) {
 	vulnChecksum, err := defaultChecksum(vulnReportV9, schema)
 	if err != nil {
 		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
-		return nil, errors.New("No vulnerabilities for this provider")
+		return nil, errors.New("no vulnerabilities for this provider")
 	}
 	if value, ok := results[vulnChecksum]; ok {
 		return value, nil
@@ -50,7 +50,7 @@ func getVulnReport[T any](results map[string]*T) (*T, error) {
 	vulnChecksum, err = defaultChecksum(vulnReportV8, schema)
 	if err != nil {
 		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
-		return nil, errors.New("No vulnerabilities for this provider")
+		return nil, errors.New("no vulnerabilities for this provider")
 	}
 	value, _ := results[vulnChecksum]
 	return value, nil
@@ -89,12 +89,11 @@ type Reporter struct {
 	IsVerbose   bool
 }
 
-func New(typ string) (*Reporter, error) {
+func NewReporter(typ string) (*Reporter, error) {
 	format, ok := Formats[strings.ToLower(typ)]
 	if !ok {
 		return nil, errors.New("unknown output format '" + typ + "'. Available: " + AllFormats())
 	}
-
 	return &Reporter{
 		Format:  format,
 		Printer: &printer.DefaultPrinter,

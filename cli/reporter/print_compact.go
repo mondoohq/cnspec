@@ -305,13 +305,6 @@ func failureHbar(stats *policy.Stats) string {
 	return res
 }
 
-func addSpace(s string) string {
-	if s == "" {
-		return s
-	}
-	return s + " "
-}
-
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 	if len(orderedAssets) == 0 {
 		return
