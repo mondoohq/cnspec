@@ -222,7 +222,7 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
 		ignoreJob := rp.CollectorJob.ReportingJobs["lTbmPQz/DwA="]
 		require.NotNil(t, ignoreJob)
 		childJob := ignoreJob.ChildJobs["DmPNGpL6IXo="]
