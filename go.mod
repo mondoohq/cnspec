@@ -6,7 +6,10 @@ go 1.21
 
 toolchain go1.21.3
 
-require go.mondoo.com/cnquery/v9 v9.10.0
+require (
+	github.com/felixge/fgprof v0.9.3
+	go.mondoo.com/cnquery/v9 v9.10.0
+)
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -78,6 +81,7 @@ require (
 	github.com/go-jose/go-jose/v3 v3.0.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/google/pprof v0.0.0-20221118152302-e6195bd50e26 // indirect
 	github.com/google/renameio v1.0.1 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
 	github.com/hnakamur/go-scp v1.0.2 // indirect

@@ -31,6 +31,8 @@ import (
 	policy_upstream "go.mondoo.com/cnspec/v9/policy/upstream"
 
 	_ "net/http/pprof"
+
+	"github.com/felixge/fgprof"
 )
 
 const (
@@ -128,6 +130,14 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		prefix += "-"
 	}
 
+	fgproff, err := os.Create(prefix + "fgprof.prof")
+	if err != nil {
+		panic(err)
+	}
+	defer fgproff.Close()
+	stop := fgprof.Start(fgproff, fgprof.FormatPprof)
+	defer stop()
+
 	// Create a CPU profile file
 	cpu, err := os.Create(prefix + "cpu.prof")
 	if err != nil {
@@ -190,6 +200,13 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err := pprof.WriteHeapProfile(heap); err != nil {
 		panic(err)
 	}
+
+	block, err := os.Create(prefix + "block.prof")
+	if err != nil {
+		panic(err)
+	}
+	defer block.Close()
+	pprof.Lookup("block").WriteTo(block, 0)
 	time.Sleep(10 * time.Second)
 
 	// if we had asset errors, we return a non-zero exit code
