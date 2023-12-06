@@ -4,15 +4,18 @@
 package policy
 
 import (
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.mondoo.com/cnquery/v9"
+	"go.mondoo.com/cnquery/v9/explorer"
+	"go.mondoo.com/cnquery/v9/mqlc"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
 )
 
 func TestMquery_Whitespaces(t *testing.T) {
 	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
+	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
 
 	mq := &explorer.Mquery{
 		Mql: "  mondoo { version \n}   \t\n  ",
@@ -22,11 +25,11 @@ func TestMquery_Whitespaces(t *testing.T) {
 		Mql: "mondoo { version \n}",
 	}
 
-	bundle, err := mq.RefreshChecksumAndType(nil, nil, coreSchema)
+	bundle, err := mq.RefreshChecksumAndType(nil, nil, conf)
 	assert.NoError(t, err)
 	assert.NotNil(t, bundle)
 
-	bundle, err = mqexpect.RefreshChecksumAndType(nil, nil, coreSchema)
+	bundle, err = mqexpect.RefreshChecksumAndType(nil, nil, conf)
 	assert.NoError(t, err)
 	assert.NotNil(t, bundle)
 
@@ -35,6 +38,8 @@ func TestMquery_Whitespaces(t *testing.T) {
 
 func TestMquery_CodeIDs(t *testing.T) {
 	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
+	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
+
 	mqAssetFilter := &explorer.Mquery{
 		Mql: "mondoo { version \n}",
 	}
@@ -43,10 +48,10 @@ func TestMquery_CodeIDs(t *testing.T) {
 		Mql: "mondoo { version \n}",
 	}
 
-	_, err := mqAssetFilter.RefreshAsFilter("//some.mrn", coreSchema)
+	_, err := mqAssetFilter.RefreshAsFilter("//some.mrn", conf)
 	assert.NoError(t, err)
 
-	_, err = mqReg.RefreshChecksumAndType(nil, nil, coreSchema)
+	_, err = mqReg.RefreshChecksumAndType(nil, nil, conf)
 	assert.NoError(t, err)
 
 	assert.Equal(t, mqReg.CodeId, mqAssetFilter.CodeId)

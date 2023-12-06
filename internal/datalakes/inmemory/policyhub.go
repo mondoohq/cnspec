@@ -538,7 +538,7 @@ func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error 
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
-		db.services.Schema(),
+		db.services.NewCompilerConfig(),
 	)
 
 	ok := db.cache.Set(dbIDPolicy+wrap.Policy.Mrn, *wrap, 2)

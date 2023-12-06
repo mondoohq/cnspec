@@ -96,7 +96,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 			s.DataLake.GetValidatedPolicy,
 			s.DataLake.GetQuery,
 			bundle,
-			s.Runtime.Schema(),
+			s.NewCompilerConfig(),
 		)
 		if err != nil {
 			return nil, nil, err

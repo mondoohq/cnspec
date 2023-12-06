@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v9/explorer"
 	"go.mondoo.com/cnquery/v9/providers"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/v9/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v9/policy"
 )
@@ -232,7 +231,7 @@ func TestBundleCompile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, bundle)
 
-	bundlemap, err := bundle.Compile(context.Background(), schema, nil)
+	bundlemap, err := bundle.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bundlemap)
 
@@ -357,13 +356,13 @@ func TestStableMqueryChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, bundle)
 
-	bundlemap, err := bundle.Compile(context.Background(), schema, nil)
+	bundlemap, err := bundle.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bundlemap)
 
 	for _, m := range bundlemap.Queries {
 		initialChecksum := m.Checksum
-		err := m.RefreshChecksum(context.Background(), schema, explorer.QueryMap(bundlemap.Queries).GetQuery)
+		err := m.RefreshChecksum(context.Background(), conf, explorer.QueryMap(bundlemap.Queries).GetQuery)
 		require.NoError(t, err)
 		assert.Equal(t, initialChecksum, m.Checksum, "checksum for %s changed", m.Mrn)
 	}
@@ -380,22 +379,19 @@ func TestBundleCompile_RemoveFailingQueries(t *testing.T) {
       - uid: check-1
         mql: 1 == 2
       - uid: check-2
-        mql: muser.name != ""
+        mql: failme.name != ""
       queries:
       - uid: query-1
         mql: 1 == 1
       - uid: query-2
-        mql: muser.name`
+        mql: failme.name`
 
 	bundle := parseBundle(t, bundleStr)
 	require.NotNil(t, bundle)
-	runtime := testutils.Local()
-	s := runtime.Schema()
-	delete(s.AllResources(), "muser")
 	bundlemap, err := bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s,
-		Library:       nil,
-		RemoveFailing: true,
+		CompilerConfig: conf,
+		Library:        nil,
+		RemoveFailing:  true,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, bundlemap)

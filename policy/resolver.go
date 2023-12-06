@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnquery/v9/explorer"
 	"go.mondoo.com/cnquery/v9/llx"
 	"go.mondoo.com/cnquery/v9/logger"
+	"go.mondoo.com/cnquery/v9/mqlc"
 	"go.mondoo.com/cnquery/v9/mrn"
 	"go.mondoo.com/cnquery/v9/utils/sortx"
 	"go.mondoo.com/ranger-rpc/codes"
@@ -121,9 +122,10 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 
 func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*explorer.Empty, error) {
 	// validate that the queries compile and fill in checksums
+	conf := s.NewCompilerConfig()
 	for i := range req.Props {
 		prop := req.Props[i]
-		code, err := prop.RefreshChecksumAndType(s.Runtime.Schema())
+		code, err := prop.RefreshChecksumAndType(conf)
 		if err != nil {
 			return nil, err
 		}
@@ -359,6 +361,8 @@ type resolverCache struct {
 	reportingJobsActive map[string]bool
 	errors              []*policyResolutionError
 	bundleMap           *PolicyBundleMap
+
+	compilerConfig mqlc.CompilerConfig
 }
 
 type policyResolverCache struct {
@@ -443,10 +447,11 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
 	now := time.Now()
+	conf := s.NewCompilerConfig()
 
 	// phase 1: resolve asset filters and see if we can find a cached policy
 	// trying first with all asset filters
-	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters, s.Runtime.Schema())
+	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters, conf)
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +489,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		assetFiltersMap[matchingFilters[i].CodeId] = struct{}{}
 	}
 
-	assetFiltersChecksum, err := ChecksumAssetFilters(matchingFilters, s.Runtime.Schema())
+	assetFiltersChecksum, err := ChecksumAssetFilters(matchingFilters, conf)
 	if err != nil {
 		return nil, err
 	}
@@ -519,6 +524,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		reportingJobsByMsum:  map[string][]*ReportingJob{},
 		reportingJobsActive:  map[string]bool{},
 		bundleMap:            bundleMap,
+		compilerConfig:       conf,
 	}
 
 	rjUUID := cache.relativeChecksum(policyObj.GraphExecutionChecksum)
@@ -904,7 +910,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		if base, ok := cache.global.bundleMap.Queries[check.Mrn]; ok {
 			check = check.Merge(base)
 			err := check.RefreshChecksum(ctx,
-				s.Runtime.Schema(),
+				cache.global.compilerConfig,
 				explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery,
 			)
 			if err != nil {
@@ -963,7 +969,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 		if base, ok := cache.global.bundleMap.Queries[query.Mrn]; ok {
 			query = query.Merge(base)
 			err := query.RefreshChecksum(ctx,
-				s.Runtime.Schema(),
+				cache.global.compilerConfig,
 				explorer.QueryMap(cache.global.bundleMap.Queries).GetQuery,
 			)
 			if err != nil {
@@ -1209,7 +1215,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 					}
 				}
 
-				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false, s.Runtime.Schema())
+				executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, collectorJob, false, cache.compilerConfig)
 				if err != nil {
 					return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
 				}
@@ -1224,7 +1230,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			}
 		}
 
-		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery, s.Runtime.Schema())
+		executionQuery, _, err := mquery2executionQuery(query, propTypes, propToChecksums, collectorJob, !isDataQuery, cache.compilerConfig)
 		if err != nil {
 			return nil, nil, errors.New("resolver> failed to compile query for MRN " + query.Mrn + ": " + err.Error())
 		}
@@ -1327,13 +1333,13 @@ func connectDatapointsToReportingJob(query *ExecutionQuery, job *ReportingJob, d
 }
 
 type queryLike interface {
-	Compile(props map[string]*llx.Primitive, schema llx.Schema) (*llx.CodeBundle, error)
+	Compile(props map[string]*llx.Primitive, conf mqlc.CompilerConfig) (*llx.CodeBundle, error)
 	GetChecksum() string
 	GetMql() string
 }
 
-func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool, schema llx.Schema) (*ExecutionQuery, string, error) {
-	bundle, err := query.Compile(props, schema)
+func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool, conf mqlc.CompilerConfig) (*ExecutionQuery, string, error) {
+	bundle, err := query.Compile(props, conf)
 	if err != nil {
 		return nil, "", err
 	}

@@ -994,7 +994,8 @@ func (s *localAssetScanner) ensureBundle() error {
 		return errors.New("cannot find any default policies for this asset (" + platform + ")")
 	}
 
-	s.job.Bundle, err = s.fetcher.fetchBundles(s.job.Ctx, s.Runtime.Schema(), urls.Urls...)
+	conf := s.services.NewCompilerConfig()
+	s.job.Bundle, err = s.fetcher.fetchBundles(s.job.Ctx, conf, urls.Urls...)
 	return err
 }
 
