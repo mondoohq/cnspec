@@ -114,8 +114,10 @@ func (c *BufferedCollector) run() {
 }
 
 func (c *BufferedCollector) FlushAndStop() {
+	now := time.Now()
 	close(c.stopChan)
 	c.wg.Wait()
+	log.Warn().Dur("duration", time.Since(now)).Msg("FlushAndStop")
 }
 
 func (c *BufferedCollector) SinkData(results []*llx.RawResult) {

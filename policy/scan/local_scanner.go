@@ -966,10 +966,12 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	var resolver policy.PolicyResolver = s.services
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
+	now := time.Now()
 	assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
 	if err != nil {
 		return nil, nil, err
 	}
+	log.Warn().Str("asset", s.job.Asset.Mrn).Dur("duration", time.Since(now)).Msg("client> got policies bundle for asset")
 	log.Debug().Msg("client> got policy bundle")
 	logger.TraceJSON(assetBundle)
 	logger.DebugDumpJSON("assetBundle", assetBundle)
