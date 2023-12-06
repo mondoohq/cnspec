@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"sort"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -27,6 +29,8 @@ import (
 	"go.mondoo.com/cnspec/v9/policy"
 	"go.mondoo.com/cnspec/v9/policy/scan"
 	policy_upstream "go.mondoo.com/cnspec/v9/policy/upstream"
+
+	_ "net/http/pprof"
 )
 
 const (
@@ -119,6 +123,24 @@ To manually configure a policy, use this:
 }
 
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
+	prefix := os.Getenv("PROFILE_PREFIX")
+	if prefix != "" {
+		prefix += "-"
+	}
+
+	// Create a CPU profile file
+	cpu, err := os.Create(prefix + "cpu.prof")
+	if err != nil {
+		panic(err)
+	}
+	defer cpu.Close()
+
+	// Start CPU profiling
+	if err := pprof.StartCPUProfile(cpu); err != nil {
+		panic(err)
+	}
+	defer pprof.StopCPUProfile()
+
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to prepare config")
@@ -156,6 +178,19 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 			fmt.Printf("View report at %s\n", reportId.Url)
 		}
 	}
+
+	// Create a heap profile file
+	heap, err := os.Create(prefix + "heap.prof")
+	if err != nil {
+		panic(err)
+	}
+	defer heap.Close()
+
+	// Start heap profiling
+	if err := pprof.WriteHeapProfile(heap); err != nil {
+		panic(err)
+	}
+	time.Sleep(10 * time.Second)
 
 	// if we had asset errors, we return a non-zero exit code
 	// asset errors are only connection issues
