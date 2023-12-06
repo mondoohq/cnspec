@@ -59,15 +59,14 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Msg(unauthedErrorMsg)
 	}
 
-	res, err := runtime.Provider.Instance.Plugin.Connect(&plugin.ConnectReq{
+	err = runtime.Connect(&plugin.ConnectReq{
 		Features: conf.Features,
 		Asset:    cliRes.Asset,
 		Upstream: runtime.UpstreamConfig,
-	}, nil)
+	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not load asset information")
 	}
-	runtime.Provider.Connection = res
 
 	// when we close the shell, we need to close the backend and store the recording
 	onCloseHandler := func() {
