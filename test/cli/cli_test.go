@@ -14,10 +14,8 @@ import (
 	"go.mondoo.com/cnspec/v9/apps/cnspec/cmd"
 )
 
-var (
-	once      sync.Once
-	cnspecCmd *cobra.Command
-)
+var once sync.Once
+var cnspecCmd *cobra.Command
 
 func setup() {
 	var err error
