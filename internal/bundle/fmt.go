@@ -63,7 +63,23 @@ func ParseYaml(data []byte) (*Bundle, error) {
 func sanitizeStringForYaml(s string) string {
 	lines := strings.Split(s, "\n")
 	for j := range lines {
-		lines[j] = strings.TrimRightFunc(lines[j], unicode.IsSpace)
+		content := lines[j]
+		content = strings.TrimRightFunc(content, unicode.IsSpace)
+		content = strings.ReplaceAll(content, "\t", "  ")
+		content = strings.ReplaceAll(content, "\r", "\n")
+		// remove all non-printable characters
+		content = strings.Map(func(r rune) rune {
+			if r == 0x00 {
+				return -1
+			} else if unicode.IsSpace(r) {
+				return r
+			} else if unicode.IsGraphic(r) {
+				return r
+			}
+			return -1
+		}, content)
+
+		lines[j] = content
 	}
 	return strings.Join(lines, "\n")
 }
@@ -94,10 +110,24 @@ func FormatFile(filename string, sort bool) error {
 // Format formats the Bundle
 func FormatBundle(b *Bundle, sort bool) ([]byte, error) {
 	// to improve the formatting we need to remove the whitespace at the end of the lines
+
+	for i := range b.Policies {
+		p := b.Policies[i]
+		p.Name = sanitizeStringForYaml(p.Name)
+		if p.Docs != nil {
+			p.Docs.Desc = sanitizeStringForYaml(p.Docs.Desc)
+		}
+	}
+
 	for i := range b.Queries {
 		query := b.Queries[i]
 		query.Title = sanitizeStringForYaml(query.Title)
 		query.Mql = sanitizeStringForYaml(query.Mql)
+		for j := range query.Props {
+			query.Props[j].Title = sanitizeStringForYaml(query.Props[j].Title)
+			query.Props[j].Mql = sanitizeStringForYaml(query.Props[j].Mql)
+			query.Props[j].Desc = sanitizeStringForYaml(query.Props[j].Desc)
+		}
 		if query.Docs != nil {
 			query.Docs.Desc = sanitizeStringForYaml(query.Docs.Desc)
 			query.Docs.Audit = sanitizeStringForYaml(query.Docs.Audit)
