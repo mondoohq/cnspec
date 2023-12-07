@@ -87,7 +87,8 @@ func TestPolicyChecksums(t *testing.T) {
 
 	for _, file := range files {
 		t.Run(file, func(t *testing.T) {
-			b, err := policy.BundleFromPaths(file)
+			loader := policy.DefaultBundleLoader()
+			b, err := loader.BundleFromPaths(file)
 			require.NoError(t, err)
 
 			// check that the checksum is identical

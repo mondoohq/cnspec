@@ -150,7 +150,8 @@ func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
 }
 
 func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
-	bundle, err := policy.BundleFromPaths("./testdata/shared-query.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/shared-query.mql.yaml")
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
@@ -193,7 +194,8 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 }
 
 func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
-	bundle, err := policy.BundleFromPaths("./testdata/exception-groups.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/exception-groups.mql.yaml")
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
@@ -254,7 +256,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 }
 
 func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
-	bundle, err := policy.BundleFromPaths("./testdata/exception-groups.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/exception-groups.mql.yaml")
 	s.Require().NoError(err)
 
 	bundle.Policies[1].Groups[0].ReviewStatus = policy.ReviewStatus_REJECTED
@@ -319,7 +322,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 }
 
 func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
-	bundle, err := policy.BundleFromPaths("./testdata/exceptions.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/exceptions.mql.yaml")
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
@@ -380,7 +384,8 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 }
 
 func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
-	bundle, err := policy.BundleFromPaths("./testdata/exceptions-multiple-groups.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/exceptions-multiple-groups.mql.yaml")
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{

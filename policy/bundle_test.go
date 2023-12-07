@@ -19,7 +19,8 @@ import (
 
 func TestBundleFromPaths(t *testing.T) {
 	t.Run("mql bundle file with multiple queries", func(t *testing.T) {
-		bundle, err := policy.BundleFromPaths("../examples/example.mql.yaml")
+		loader := policy.DefaultBundleLoader()
+		bundle, err := loader.BundleFromPaths("../examples/example.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 1)
@@ -30,7 +31,8 @@ func TestBundleFromPaths(t *testing.T) {
 	})
 
 	t.Run("mql bundle file with multiple policies and queries", func(t *testing.T) {
-		bundle, err := policy.BundleFromPaths("../examples/complex.mql.yaml")
+		loader := policy.DefaultBundleLoader()
+		bundle, err := loader.BundleFromPaths("../examples/complex.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 5)
@@ -38,7 +40,8 @@ func TestBundleFromPaths(t *testing.T) {
 	})
 
 	t.Run("mql bundle file with directory structure", func(t *testing.T) {
-		bundle, err := policy.BundleFromPaths("../examples/directory")
+		loader := policy.DefaultBundleLoader()
+		bundle, err := loader.BundleFromPaths("../examples/directory")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 5)
@@ -47,10 +50,11 @@ func TestBundleFromPaths(t *testing.T) {
 }
 
 func TestPolicyBundleSort(t *testing.T) {
-	pb, err := policy.BundleFromPaths("./testdata/policybundle-deps.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/policybundle-deps.mql.yaml")
 	require.NoError(t, err)
-	assert.Equal(t, 3, len(pb.Policies))
-	pbm := pb.ToMap()
+	assert.Equal(t, 3, len(bundle.Policies))
+	pbm := bundle.ToMap()
 
 	policies, err := pbm.PoliciesSortedByDependency()
 	require.NoError(t, err)
@@ -62,7 +66,8 @@ func TestPolicyBundleSort(t *testing.T) {
 }
 
 func TestBundleCompile(t *testing.T) {
-	bundle, err := policy.BundleFromPaths("../examples/complex.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("../examples/complex.mql.yaml")
 	require.NoError(t, err)
 	require.NotNil(t, bundle)
 
@@ -186,7 +191,8 @@ func TestBundleCompile_FromQueryPackBundle(t *testing.T) {
 }
 
 func TestStableMqueryChecksum(t *testing.T) {
-	bundle, err := policy.BundleFromPaths("../examples/complex.mql.yaml")
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("../examples/complex.mql.yaml")
 	require.NoError(t, err)
 	require.NotNil(t, bundle)
 

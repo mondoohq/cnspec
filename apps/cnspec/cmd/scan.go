@@ -319,7 +319,8 @@ func (c *scanConfig) loadPolicies() error {
 			return nil
 		}
 
-		bundle, err := policy.BundleFromPaths(c.PolicyPaths...)
+		bundleLoader := policy.DefaultBundleLoader()
+		bundle, err := bundleLoader.BundleFromPaths(c.PolicyPaths...)
 		if err != nil {
 			return err
 		}
