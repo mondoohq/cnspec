@@ -23,6 +23,7 @@ type PolicyHub interface {
 	SetBundle(context.Context, *Bundle) (*Empty, error)
 	ValidateBundle(context.Context, *Bundle) (*Empty, error)
 	GetBundle(context.Context, *Mrn) (*Bundle, error)
+	GetMinimalBundle(context.Context, *Mrn) (*Bundle, error)
 	GetPolicy(context.Context, *Mrn) (*Policy, error)
 	DeletePolicy(context.Context, *Mrn) (*Empty, error)
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
@@ -72,6 +73,11 @@ func (c *PolicyHubClient) ValidateBundle(ctx context.Context, in *Bundle) (*Empt
 func (c *PolicyHubClient) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
 	out := new(Bundle)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundle"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyHubClient) GetMinimalBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
+	out := new(Bundle)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetMinimalBundle"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyHubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
@@ -140,6 +146,7 @@ func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.H
 			"SetBundle":        srv.SetBundle,
 			"ValidateBundle":   srv.ValidateBundle,
 			"GetBundle":        srv.GetBundle,
+			"GetMinimalBundle": srv.GetMinimalBundle,
 			"GetPolicy":        srv.GetPolicy,
 			"DeletePolicy":     srv.DeletePolicy,
 			"GetPolicyFilters": srv.GetPolicyFilters,
@@ -229,6 +236,30 @@ func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.M
 		return nil, err
 	}
 	return p.handler.GetBundle(ctx, &req)
+}
+func (p *PolicyHubServer) GetMinimalBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req Mrn
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetMinimalBundle(ctx, &req)
 }
 func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
