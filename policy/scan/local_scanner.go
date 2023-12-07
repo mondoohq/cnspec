@@ -549,6 +549,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 
 	upstream := s.upstreamServices(job.UpstreamConfig)
 	if upstream != nil {
+		now := time.Now()
 		resp, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
 			SpaceMrn: job.UpstreamConfig.SpaceMrn,
 			List:     []*inventory.Asset{job.Asset},
@@ -560,6 +561,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			job.ProgressReporter.Errored()
 			return
 		}
+		log.Warn().Dur("duration", time.Since(now)).Msg("synchronize asset")
 
 		log.Debug().Str("asset", job.Asset.Name).Strs("platform-ids", job.Asset.PlatformIds).Msg("update asset")
 		platformId := job.Asset.PlatformIds[0]
