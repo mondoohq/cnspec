@@ -461,7 +461,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 
 	// next we will try to only use the matching asset filters for the given policy...
-	bundle, err := s.DataLake.GetValidatedBundle(ctx, bundleMrn)
+	bundle, err := s.DataLake.GetValidatedBundle(ctx, &BundleReq{Mrn: bundleMrn})
 	if err != nil {
 		return nil, err
 	}

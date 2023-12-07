@@ -37,7 +37,7 @@ type DataLake interface {
 	DeletePolicy(ctx context.Context, mrn string) error
 	// GetValidatedBundle retrieves and if necessary updates the policy bundle
 	// Note: the checksum and graphchecksum of the policy must be computed to the right number
-	GetValidatedBundle(ctx context.Context, mrn string) (*Bundle, error)
+	GetValidatedBundle(ctx context.Context, mrn *BundleReq) (*Bundle, error)
 
 	// SetFramework stores a given framework in the data lake. Note: it does not
 	// store any framework maps, there is a separate call for them.

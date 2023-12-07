@@ -176,7 +176,7 @@ func (s *LocalServices) SetPolicyFromBundle(ctx context.Context, policyObj *Poli
 	}
 
 	// necessary to refresh the bundle
-	_, err = s.DataLake.GetValidatedBundle(ctx, policyObj.Mrn)
+	_, err = s.DataLake.GetValidatedBundle(ctx, &BundleReq{Mrn: policyObj.Mrn})
 	if err != nil {
 		logCtx.Error().
 			Str("name", policyObj.Name).
@@ -266,7 +266,7 @@ func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error)
 	}
 
 	// try upstream; once it's cached, try again
-	_, err = s.cacheUpstreamPolicy(ctx, in.Mrn, false)
+	_, err = s.cacheUpstreamPolicyOld(ctx, in.Mrn)
 	if err != nil {
 		return nil, err
 	}
@@ -275,21 +275,13 @@ func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error)
 
 // GetBundle retrieves the given policy and all its dependencies (policies/queries)
 func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
-	return s.getBundle(ctx, in, false)
-}
-
-// GetBGetMinimalBundleundle retrieves the given policy and all its dependencies (policies/queries).
-// All docs and tags are stripped from policies, queries, frameworks and controls.
-func (s *LocalServices) GetMinimalBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
-	return s.getBundle(ctx, in, true)
-}
-
-func (s *LocalServices) getBundle(ctx context.Context, in *Mrn, minimal bool) (*Bundle, error) {
+	// TODO: once the backend implements GetBundleForMrn, we can remove this implementation
+	// and directly call GetBundleForMrn
 	if in == nil || len(in.Mrn) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
 
-	b, err := s.DataLake.GetValidatedBundle(ctx, in.Mrn)
+	b, err := s.DataLake.GetValidatedBundle(ctx, &BundleReq{Mrn: in.Mrn})
 	if err == nil {
 		return b, nil
 	}
@@ -298,7 +290,24 @@ func (s *LocalServices) getBundle(ctx context.Context, in *Mrn, minimal bool) (*
 	}
 
 	// try upstream
-	return s.cacheUpstreamPolicy(ctx, in.Mrn, minimal)
+	return s.cacheUpstreamPolicyOld(ctx, in.Mrn)
+}
+
+func (s *LocalServices) GetBundleForMrn(ctx context.Context, in *BundleReq) (*Bundle, error) {
+	if in == nil || len(in.Mrn) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	}
+
+	b, err := s.DataLake.GetValidatedBundle(ctx, in)
+	if err == nil {
+		return b, nil
+	}
+	if s.Upstream == nil {
+		return nil, err
+	}
+
+	// try upstream
+	return s.cacheUpstreamPolicy(ctx, in)
 }
 
 // GetPolicyFilters retrieves the asset filter queries for a given policy
@@ -498,7 +507,7 @@ func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *Poli
 		for i := range group.Policies {
 			policy := group.Policies[i]
 
-			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, policy.Mrn)
+			nuBundle, err := s.DataLake.GetValidatedBundle(ctx, &BundleReq{Mrn: policy.Mrn})
 			if err != nil {
 				return err
 			}
@@ -552,7 +561,34 @@ func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *Poli
 
 // cacheUpstreamPolicy by storing a copy of the upstream policy bundle in this db
 // Note: upstream marketplace has to be defined
-func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string, minimal bool) (*Bundle, error) {
+func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, in *BundleReq) (*Bundle, error) {
+	logCtx := logger.FromContext(ctx)
+	mrn := in.Mrn
+	if s.Upstream == nil {
+		return nil, errors.New("failed to retrieve upstream policy " + mrn + " since upstream is not defined")
+	}
+
+	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetch policy bundle from upstream")
+	bundle, err := s.Upstream.GetBundleForMrn(ctx, in)
+	if err != nil {
+		logCtx.Error().Err(err).Str("policy", mrn).Msg("marketplace> failed to retrieve policy bundle from upstream")
+		return nil, errors.New("failed to retrieve upstream policy " + mrn + ": " + err.Error())
+	}
+
+	bundleMap := bundle.ToMap()
+
+	err = s.SetBundleMap(ctx, bundleMap)
+	if err != nil {
+		logCtx.Error().Err(err).Str("policy", mrn).Msg("marketplace> failed to set policy bundle retrieved from upstream")
+		return nil, errors.New("failed to cache upstream policy " + mrn + ": " + err.Error())
+	}
+
+	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetched policy bundle from upstream")
+	return bundle, nil
+}
+
+// TODO: this can be removed once the backend implements GetBundleForMrn
+func (s *LocalServices) cacheUpstreamPolicyOld(ctx context.Context, mrn string) (*Bundle, error) {
 	logCtx := logger.FromContext(ctx)
 	if s.Upstream == nil {
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + " since upstream is not defined")
@@ -562,11 +598,7 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, mrn string, min
 	var bundle *Bundle
 	var err error
 
-	if minimal {
-		bundle, err = s.Upstream.GetMinimalBundle(ctx, &Mrn{Mrn: mrn})
-	} else {
-		bundle, err = s.Upstream.GetBundle(ctx, &Mrn{Mrn: mrn})
-	}
+	bundle, err = s.Upstream.GetBundle(ctx, &Mrn{Mrn: mrn})
 	if err != nil {
 		logCtx.Error().Err(err).Str("policy", mrn).Msg("marketplace> failed to retrieve policy bundle from upstream")
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + ": " + err.Error())

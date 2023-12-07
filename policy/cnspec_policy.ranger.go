@@ -23,7 +23,7 @@ type PolicyHub interface {
 	SetBundle(context.Context, *Bundle) (*Empty, error)
 	ValidateBundle(context.Context, *Bundle) (*Empty, error)
 	GetBundle(context.Context, *Mrn) (*Bundle, error)
-	GetMinimalBundle(context.Context, *Mrn) (*Bundle, error)
+	GetBundleForMrn(context.Context, *BundleReq) (*Bundle, error)
 	GetPolicy(context.Context, *Mrn) (*Policy, error)
 	DeletePolicy(context.Context, *Mrn) (*Empty, error)
 	GetPolicyFilters(context.Context, *Mrn) (*Mqueries, error)
@@ -75,9 +75,9 @@ func (c *PolicyHubClient) GetBundle(ctx context.Context, in *Mrn) (*Bundle, erro
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundle"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyHubClient) GetMinimalBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
+func (c *PolicyHubClient) GetBundleForMrn(ctx context.Context, in *BundleReq) (*Bundle, error) {
 	out := new(Bundle)
-	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetMinimalBundle"}, ""), in, out)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundleForMrn"}, ""), in, out)
 	return out, err
 }
 func (c *PolicyHubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
@@ -146,7 +146,7 @@ func NewPolicyHubServer(handler PolicyHub, opts ...PolicyHubServerOption) http.H
 			"SetBundle":        srv.SetBundle,
 			"ValidateBundle":   srv.ValidateBundle,
 			"GetBundle":        srv.GetBundle,
-			"GetMinimalBundle": srv.GetMinimalBundle,
+			"GetBundleForMrn":  srv.GetBundleForMrn,
 			"GetPolicy":        srv.GetPolicy,
 			"DeletePolicy":     srv.DeletePolicy,
 			"GetPolicyFilters": srv.GetPolicyFilters,
@@ -237,8 +237,8 @@ func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.GetBundle(ctx, &req)
 }
-func (p *PolicyHubServer) GetMinimalBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req Mrn
+func (p *PolicyHubServer) GetBundleForMrn(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req BundleReq
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -259,7 +259,7 @@ func (p *PolicyHubServer) GetMinimalBundle(ctx context.Context, reqBytes *[]byte
 	if err != nil {
 		return nil, err
 	}
-	return p.handler.GetMinimalBundle(ctx, &req)
+	return p.handler.GetBundleForMrn(ctx, &req)
 }
 func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn

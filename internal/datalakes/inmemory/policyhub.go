@@ -413,7 +413,8 @@ func (db *Db) DeletePolicy(ctx context.Context, mrn string) error {
 
 // GetValidatedBundle retrieves and if necessary updates the policy bundle
 // Note: the checksum and graphchecksum of the policy must be computed to the right number
-func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.Bundle, error) {
+func (db *Db) GetValidatedBundle(ctx context.Context, in *policy.BundleReq) (*policy.Bundle, error) {
+	mrn := in.Mrn
 	sum, err := db.EntityGraphContentChecksum(ctx, mrn)
 	if err != nil {
 		return nil, err
