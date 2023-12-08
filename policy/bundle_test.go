@@ -5,9 +5,14 @@ package policy_test
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v9/explorer"
@@ -17,7 +22,43 @@ import (
 	"go.mondoo.com/cnspec/v9/policy"
 )
 
-func TestBundleFromPaths(t *testing.T) {
+type s3Fake struct {
+	bucketObjects map[string]map[string][]byte
+}
+
+func (s *s3Fake) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	key := *params.Key
+	bucket := *params.Bucket
+	items := s.bucketObjects[bucket]
+	if items == nil {
+		return nil, errors.New("not found")
+	}
+	if data, ok := items[key]; ok {
+		return &s3.GetObjectOutput{
+			Body: io.NopCloser(strings.NewReader(string(data))),
+		}, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (s *s3Fake) ListObjects(ctx context.Context, params *s3.ListObjectsInput, optFns ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+	var objects []types.Object
+	bucket := *params.Bucket
+	items := s.bucketObjects[bucket]
+	if items == nil {
+		return nil, errors.New("not found")
+	}
+	for k := range items {
+		objects = append(objects, types.Object{
+			Key: &k,
+		})
+	}
+	return &s3.ListObjectsOutput{
+		Contents: objects,
+	}, nil
+}
+
+func TestBundleFromLocal(t *testing.T) {
 	t.Run("mql bundle file with multiple queries", func(t *testing.T) {
 		loader := policy.DefaultBundleLoader()
 		bundle, err := loader.BundleFromPaths("../examples/example.mql.yaml")
@@ -46,6 +87,126 @@ func TestBundleFromPaths(t *testing.T) {
 		require.NotNil(t, bundle)
 		assert.Len(t, bundle.Queries, 5)
 		assert.Len(t, bundle.Policies, 2)
+	})
+}
+
+func TestBundleFromS3(t *testing.T) {
+	t.Run("mql bundle file with multiple queries via a specific s3 key", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data, err := os.ReadFile("../examples/example.mql.yaml")
+		require.NoError(t, err)
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"example.mql.yaml": data}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake))
+		bundle, err := loader.BundleFromPaths("s3://test-bucket/example.mql.yaml")
+
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Queries, 1)
+		require.Len(t, bundle.Policies, 1)
+		require.Len(t, bundle.Policies[0].Groups, 1)
+		assert.Len(t, bundle.Policies[0].Groups[0].Checks, 3)
+		assert.Len(t, bundle.Policies[0].Groups[0].Queries, 2)
+	})
+
+	t.Run("mql bundle file with multiple policies and queries via a specific s3 key", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data, err := os.ReadFile("../examples/complex.mql.yaml")
+		require.NoError(t, err)
+
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"complex.mql.yaml": data}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake))
+		bundle, err := loader.BundleFromPaths("s3://test-bucket/complex.mql.yaml")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Queries, 5)
+		assert.Len(t, bundle.Policies, 2)
+	})
+
+	t.Run("mql bundle file via an entire s3 bucket", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data1, err := os.ReadFile("../examples/directory/example1.mql.yaml")
+		require.NoError(t, err)
+		data2, err := os.ReadFile("../examples/directory/example2.mql.yaml")
+		require.NoError(t, err)
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"example1.mql.yaml": data1, "example2.mql.yaml": data2}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake))
+		bundle, err := loader.BundleFromPaths("s3://test-bucket")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Policies, 2)
+	})
+}
+
+func TestBundleFromMixedSources(t *testing.T) {
+	t.Run("mql bundle file via a local file and a s3 key", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data, err := os.ReadFile("../examples/directory/example1.mql.yaml")
+		require.NoError(t, err)
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"example1.mql.yaml": data}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake), policy.NewFileBundleResolver())
+		bundle, err := loader.BundleFromPaths("s3://test-bucket/example1.mql.yaml", "../examples/directory/example2.mql.yaml")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Policies, 2)
+	})
+
+	t.Run("mql bundle file via a local file and a s3 bucket", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data, err := os.ReadFile("../examples/directory/example1.mql.yaml")
+		require.NoError(t, err)
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"example1.mql.yaml": data}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake), policy.NewFileBundleResolver())
+		bundle, err := loader.BundleFromPaths("s3://test-bucket", "../examples/directory/example2.mql.yaml")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Policies, 2)
+	})
+
+	t.Run("mql bundle file via a directory and a s3 key", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data, err := os.ReadFile("../examples/directory/example1.mql.yaml")
+		require.NoError(t, err)
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"example1.mql.yaml": data}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake), policy.NewFileBundleResolver())
+		bundle, err := loader.BundleFromPaths("s3://test-bucket/example1.mql.yaml", "../examples/directory/queries")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Queries, 5)
+		assert.Len(t, bundle.Policies, 1)
+	})
+
+	t.Run("mql bundle file via a directory and a s3 bucket", func(t *testing.T) {
+		s3Fake := &s3Fake{
+			bucketObjects: map[string]map[string][]byte{},
+		}
+		data, err := os.ReadFile("../examples/directory/example1.mql.yaml")
+		require.NoError(t, err)
+		s3Fake.bucketObjects["test-bucket"] = map[string][]byte{"example1.mql.yaml": data}
+
+		loader := policy.NewBundleLoader(policy.NewS3BundleResolver(s3Fake), policy.NewFileBundleResolver())
+		bundle, err := loader.BundleFromPaths("s3://test-bucket", "../examples/directory/queries")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		assert.Len(t, bundle.Queries, 5)
+		assert.Len(t, bundle.Policies, 1)
 	})
 }
 

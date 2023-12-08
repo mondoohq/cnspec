@@ -14,17 +14,21 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type fileResolver struct{}
+type fileBundleResolver struct{}
 
-func defaultFileResolver() *fileResolver {
-	return &fileResolver{}
+func defaultFileBundleResolver() *fileBundleResolver {
+	return NewFileBundleResolver()
 }
 
-func (l *fileResolver) Load(ctx context.Context, path string) (*Bundle, error) {
+func (l *fileBundleResolver) Load(ctx context.Context, path string) (*Bundle, error) {
 	return loadBundlesFromPaths(path)
 }
 
-func (r *fileResolver) IsApplicable(path string) bool {
+func NewFileBundleResolver() *fileBundleResolver {
+	return &fileBundleResolver{}
+}
+
+func (r *fileBundleResolver) IsApplicable(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }

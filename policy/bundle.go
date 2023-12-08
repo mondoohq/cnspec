@@ -40,27 +40,21 @@ type BundleLoader struct {
 	resolvers []BundleResolver
 }
 
-var defaultBundleResolvers = []BundleResolver{
-	defaultS3BundleResolver(),
-	defaultFileResolver(),
-}
-
 func NewBundleLoader(resolvers ...BundleResolver) *BundleLoader {
 	return &BundleLoader{resolvers: resolvers}
 }
 
 func DefaultBundleLoader() *BundleLoader {
-	return NewBundleLoader(defaultBundleResolvers...)
+	return NewBundleLoader(defaultS3BundleResolver(), defaultFileBundleResolver())
 }
 
-func (l *BundleLoader) getResolver(path string) BundleResolver {
+func (l *BundleLoader) getResolver(path string) (BundleResolver, error) {
 	for _, resolver := range l.resolvers {
 		if resolver.IsApplicable(path) {
-			return resolver
+			return resolver, nil
 		}
 	}
-	// we fallback to using the file resolver if none of the resolvers are applicable
-	return &fileResolver{}
+	return nil, fmt.Errorf("no resolver found for path '%s'", path)
 }
 
 // Deprecated: Use BundleLoader.BundleFromPaths instead
@@ -75,7 +69,10 @@ func (l *BundleLoader) BundleFromPaths(paths ...string) (*Bundle, error) {
 	ctx := context.Background()
 	aggregatedBundle := &Bundle{}
 	for _, path := range paths {
-		resolver := l.getResolver(path)
+		resolver, err := l.getResolver(path)
+		if err != nil {
+			return nil, err
+		}
 		bundle, err := resolver.Load(ctx, path)
 		if err != nil {
 			log.Error().Err(err).Msg("could not resolve bundle files")
