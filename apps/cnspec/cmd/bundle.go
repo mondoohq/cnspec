@@ -204,7 +204,8 @@ var policyPublishCmd = &cobra.Command{
 		}
 
 		// compile manipulates the bundle, therefore we read it again
-		policyBundle, err := policy.BundleFromPaths(filename)
+		bundleLoader := policy.DefaultBundleLoader()
+		policyBundle, err := bundleLoader.BundleFromPaths(filename)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not load policy bundle")
 		}
@@ -271,7 +272,8 @@ var policyDocsCmd = &cobra.Command{
 		viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		bundle, err := policy.BundleFromPaths(args...)
+		bundleLoader := policy.DefaultBundleLoader()
+		bundle, err := bundleLoader.BundleFromPaths(args...)
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to load bundle")
 		}

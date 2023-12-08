@@ -171,7 +171,8 @@ func Lint(schema llx.Schema, files ...string) (*Results, error) {
 
 	// Note: we only run compile on the aggregated level to ensure the bundle in combination is valid
 	// Invalid yaml files are already caught by the individual linting, therefore we do not need extra error handling here
-	policyBundle, err := policy.BundleFromPaths(files...)
+	bundleLoader := policy.DefaultBundleLoader()
+	policyBundle, err := bundleLoader.BundleFromPaths(files...)
 	if err == nil {
 		_, err = policyBundle.Compile(context.Background(), schema, nil)
 		if err != nil {
