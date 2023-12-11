@@ -142,20 +142,18 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	logger.DebugDumpJSON("report", report)
-	outputHandler, err := reporter.NewOutputHandler(conf.OutputTarget, conf.OutputFormat)
+
+	cliConf := reporter.ReportConfig{
+		Format:       conf.OutputFormat,
+		OutputTarget: conf.OutputTarget,
+		Incognito:    conf.IsIncognito,
+	}
+	outputHandler, err := reporter.NewOutputHandler(cliConf)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create an output handler")
 	}
 	if err := outputHandler.WriteReport(ctx, report); err != nil {
 		log.Fatal().Err(err).Msg("failed to write report to output target")
-	}
-	reporter, err := reporter.NewReporter(conf.OutputFormat)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create a reporter")
-	}
-	reporter.IsIncognito = conf.IsIncognito
-	if err := reporter.Print(report, os.Stdout); err != nil {
-		log.Fatal().Err(err).Msg("failed to print report")
 	}
 
 	var shareReport bool
