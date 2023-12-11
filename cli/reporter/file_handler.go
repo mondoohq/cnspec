@@ -6,6 +6,7 @@ package reporter
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v9/policy"
@@ -19,7 +20,8 @@ type localFileHandler struct {
 // we reuse the already implemented Reporter's WriteReport method by simply pointing the writer
 // towards a file instead of stdout
 func (h *localFileHandler) WriteReport(ctx context.Context, report *policy.ReportCollection) error {
-	f, err := os.Create(h.file)
+	trimmedFile := strings.TrimPrefix(h.file, "file://")
+	f, err := os.Create(trimmedFile)
 	if err != nil {
 		return err
 	}
@@ -33,6 +35,6 @@ func (h *localFileHandler) WriteReport(ctx context.Context, report *policy.Repor
 	if err != nil {
 		return err
 	}
-	log.Info().Str("file", h.file).Msg("wrote report to file")
+	log.Info().Str("file", trimmedFile).Msg("wrote report to file")
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,21 +26,44 @@ func TestFileHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	now := time.Now().Format(time.RFC3339)
-	fileName := fmt.Sprintf("/tmp/%s-testfilehandler.json", now)
-	config := HandlerConfig{Format: "compact", OutputTarget: fileName}
-	handler, err := NewOutputHandler(config)
-	require.NoError(t, err)
-	err = handler.WriteReport(context.Background(), yr)
-	require.NoError(t, err)
-	data, err := os.ReadFile(fileName)
-	require.NoError(t, err)
+	t.Run("with no prefix", func(t *testing.T) {
+		fileName := fmt.Sprintf("/tmp/%s-testfilehandler.json", now)
+		config := HandlerConfig{Format: "compact", OutputTarget: fileName}
+		handler, err := NewOutputHandler(config)
+		require.NoError(t, err)
+		err = handler.WriteReport(context.Background(), yr)
+		require.NoError(t, err)
+		data, err := os.ReadFile(fileName)
+		require.NoError(t, err)
 
-	strData := string(data)
-	assert.Contains(t, strData, "✕ Fail:         Ensure")
-	assert.Contains(t, strData, ". Skipped:      Set")
-	assert.Contains(t, strData, "! Error:        Set")
-	assert.Contains(t, strData, "✓ Pass:  A 100  Ensure")
-	assert.Contains(t, strData, "✕ Fail:  F   0  Ensure")
-	err = os.Remove(fileName)
-	require.NoError(t, err)
+		strData := string(data)
+		assert.Contains(t, strData, "✕ Fail:         Ensure")
+		assert.Contains(t, strData, ". Skipped:      Set")
+		assert.Contains(t, strData, "! Error:        Set")
+		assert.Contains(t, strData, "✓ Pass:  A 100  Ensure")
+		assert.Contains(t, strData, "✕ Fail:  F   0  Ensure")
+		err = os.Remove(fileName)
+		require.NoError(t, err)
+	})
+
+	t.Run("with file:// prefix", func(t *testing.T) {
+		fileName := fmt.Sprintf("file:///tmp/%s-testfilehandler.json", now)
+		config := HandlerConfig{Format: "compact", OutputTarget: fileName}
+		handler, err := NewOutputHandler(config)
+		require.NoError(t, err)
+		err = handler.WriteReport(context.Background(), yr)
+		require.NoError(t, err)
+		trimmed := strings.TrimPrefix(fileName, "file://")
+		data, err := os.ReadFile(trimmed)
+		require.NoError(t, err)
+
+		strData := string(data)
+		assert.Contains(t, strData, "✕ Fail:         Ensure")
+		assert.Contains(t, strData, ". Skipped:      Set")
+		assert.Contains(t, strData, "! Error:        Set")
+		assert.Contains(t, strData, "✓ Pass:  A 100  Ensure")
+		assert.Contains(t, strData, "✕ Fail:  F   0  Ensure")
+		err = os.Remove(trimmed)
+		require.NoError(t, err)
+	})
 }
