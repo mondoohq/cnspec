@@ -31,7 +31,7 @@ func TestCompactReporter(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  Formats["compact"],
+		Format:  Compact,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 	}
@@ -112,14 +112,14 @@ func TestJsonOutput(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  Formats["json"],
+		Format:  JSON,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 		out:     &writer,
 	}
 
-	r.WriteReport(context.Background(), yr)
-
+	err = r.WriteReport(context.Background(), yr)
+	require.NoError(t, err)
 	valid := json.Valid(buf.Bytes())
 	require.True(t, valid)
 
@@ -139,14 +139,14 @@ func TestJsonOutputOnlyErrors(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  Formats["json"],
+		Format:  JSON,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 		out:     &writer,
 	}
 
-	r.WriteReport(context.Background(), yr)
-
+	err = r.WriteReport(context.Background(), yr)
+	require.NoError(t, err)
 	valid := json.Valid(buf.Bytes())
 	require.True(t, valid)
 
