@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-type ReportConfig struct {
+type HandlerConfig struct {
 	Format       string
 	OutputTarget string
 	Incognito    bool
@@ -33,7 +33,7 @@ type OutputHandler interface {
 	WriteReport(ctx context.Context, report *policy.ReportCollection) error
 }
 
-func NewOutputHandler(config ReportConfig) (OutputHandler, error) {
+func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 	format, ok := Formats[strings.ToLower(config.Format)]
 	if !ok {
 		return nil, errors.New("unknown output format '" + config.Format + "'. Available: " + AllFormats())

@@ -20,7 +20,7 @@ func TestOutputHandlerAwsSqs(t *testing.T) {
 	}
 
 	for i, sqsUrl := range sqsUrls {
-		rep, err := NewOutputHandler(ReportConfig{Format: "JSON", OutputTarget: sqsUrl})
+		rep, err := NewOutputHandler(HandlerConfig{Format: "JSON", OutputTarget: sqsUrl})
 		require.NoError(t, err, i)
 		require.IsType(t, &awsSqsHandler{}, rep, i)
 	}
@@ -36,14 +36,14 @@ func TestOutputHandlerFileLocal(t *testing.T) {
 	}
 
 	for i, f := range fileTargets {
-		rep, err := NewOutputHandler(ReportConfig{Format: "JSON", OutputTarget: f})
+		rep, err := NewOutputHandler(HandlerConfig{Format: "JSON", OutputTarget: f})
 		require.NoError(t, err, i)
 		require.IsType(t, &localFileHandler{}, rep, i)
 	}
 }
 
 func TestCliReporter(t *testing.T) {
-	rep, err := NewOutputHandler(ReportConfig{})
+	rep, err := NewOutputHandler(HandlerConfig{})
 	require.NoError(t, err)
 	require.IsType(t, &Reporter{}, rep)
 }

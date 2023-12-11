@@ -143,12 +143,12 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	logger.DebugDumpJSON("report", report)
 
-	cliConf := reporter.ReportConfig{
+	handlerConf := reporter.HandlerConfig{
 		Format:       conf.OutputFormat,
 		OutputTarget: conf.OutputTarget,
 		Incognito:    conf.IsIncognito,
 	}
-	outputHandler, err := reporter.NewOutputHandler(cliConf)
+	outputHandler, err := reporter.NewOutputHandler(handlerConf)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create an output handler")
 	}

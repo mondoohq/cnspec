@@ -26,7 +26,7 @@ func TestFileHandler(t *testing.T) {
 
 	now := time.Now().Format(time.RFC3339)
 	fileName := fmt.Sprintf("/tmp/%s-testfilehandler.json", now)
-	config := ReportConfig{Format: "compact", OutputTarget: fileName}
+	config := HandlerConfig{Format: "compact", OutputTarget: fileName}
 	handler, err := NewOutputHandler(config)
 	require.NoError(t, err)
 	err = handler.WriteReport(context.Background(), yr)
