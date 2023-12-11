@@ -82,13 +82,12 @@ func defaultChecksum(code mqlCode, schema llx.Schema) (string, error) {
 	return res.sum, res.err
 }
 
-// implements the OutputHandler interface and can be used as such
+// note: implements the OutputHandler interface
 type Reporter struct {
 	Format      Format
 	Printer     *printer.Printer
 	Colors      *colors.Theme
 	IsIncognito bool
-	IsVerbose   bool
 	out         io.Writer
 }
 
