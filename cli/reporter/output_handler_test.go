@@ -35,9 +35,8 @@ func TestOutputHandlerFileLocal(t *testing.T) {
 		"test.json",
 	}
 
-	for i, sqsUrl := range fileTargets {
-
-		rep, err := NewOutputHandler(ReportConfig{Format: "JSON", OutputTarget: sqsUrl})
+	for i, f := range fileTargets {
+		rep, err := NewOutputHandler(ReportConfig{Format: "JSON", OutputTarget: f})
 		require.NoError(t, err, i)
 		require.IsType(t, &localFileHandler{}, rep, i)
 	}
