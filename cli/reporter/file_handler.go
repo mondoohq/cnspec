@@ -9,7 +9,6 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v9/policy"
-	_ "gocloud.dev/pubsub/awssnssqs"
 )
 
 type localFileHandler struct {

@@ -45,7 +45,6 @@ func (h *awsSqsHandler) WriteReport(ctx context.Context, report *policy.ReportCo
 	return nil
 }
 
-
 func (h *awsSqsHandler) convertReport(report *policy.ReportCollection) ([]byte, error) {
 	switch h.format {
 	case YAML:
