@@ -137,6 +137,10 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		}
 	}
 	mondooClient, err := gql.NewClient(*runtime.UpstreamConfig, client.HttpClient)
+	if err != nil {
+		log.Error().Err(err).Msg("could not initialize mondoo client")
+		return
+	}
 
 	platform := runtime.Provider.Connection.GetAsset().GetPlatform()
 	gqlVulnReport, err := mondooClient.GetIncognitoVulnReport(mondoogql.PlatformInput{
