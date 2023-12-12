@@ -410,7 +410,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	scanGroups.Add(1)
 	go func() {
 		defer scanGroups.Done()
-		multiprogress.Open()
+		if err := multiprogress.Open(); err != nil {
+			log.Error().Err(err).Msg("failed to open progress bar")
+		}
 	}()
 
 	assetBatches := batch(assets, 10)
