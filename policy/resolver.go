@@ -1138,8 +1138,6 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 		Queries: map[string]*ExecutionQuery{},
 	}
 
-	// fill in all reporting jobs. we will remove the data query jobs and replace
-	// them with direct collections into their parent job later
 	for _, rj := range cache.reportingJobsByUUID {
 		collectorJob.ReportingJobs[rj.Uuid] = rj
 	}

@@ -132,11 +132,6 @@ policies:
 		{asset: "asset1", policies: []string{policyMrn("policy1")}},
 	}, []*policy.Bundle{b})
 
-	checkResolvedPolicy := func(t *testing.T, rp *policy.ResolvedPolicy) {
-		require.Len(t, rp.ExecutionJob.Queries, 3)
-		require.Len(t, rp.Filters, 1)
-	}
-
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
@@ -144,7 +139,21 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		checkResolvedPolicy(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 3)
+		require.Len(t, rp.Filters, 1)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 3)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+		// scoring queries report by code id
+		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
+		// data queries report by mrn
+		require.NotNil(t, qrIdToRj[queryMrn("query1")])
+
+		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Datapoints, 3)
+		require.Len(t, qrIdToRj[queryMrn("query1")].Datapoints, 1)
 	})
 
 	t.Run("resolve with many filters (one is correct)", func(t *testing.T) {
@@ -596,7 +605,6 @@ framework_maps:
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-pass-2")], queryMrn("check-pass-2"))
 		rjTester.requireReportsTo(mrnToQueryId[queryMrn("check-fail")], queryMrn("check-fail"))
 
-		// TODO: how do we get a datapoint here so we can assert this more strictly?
 		queryJob1 := rjTester.queryIdToReportingJob[queryMrn("active-query")]
 		require.Equal(t, 1, len(queryJob1.Datapoints))
 
@@ -607,7 +615,7 @@ framework_maps:
 		rjTester.requireReportsTo(queryMrn("check-pass-1"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("check-pass-2"), controlMrn("control2"))
 		rjTester.requireReportsTo(queryMrn("check-fail"), controlMrn("control2"))
-		// data queries
+		// note: data queries RJs are reporting by MRN, not code id
 		rjTester.requireReportsTo(queryMrn("active-query"), controlMrn("control1"))
 		rjTester.requireReportsTo(queryMrn("active-query-2"), controlMrn("control1"))
 
