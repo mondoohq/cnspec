@@ -8,6 +8,7 @@ import (
 
 	"go.mondoo.com/cnquery/v9/cli/theme"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnspec/v9/policy"
 	pbStatus "go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -27,6 +28,9 @@ func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) 
 	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
 		r.worstScore = results.Report.Score
 	}
+}
+
+func (r *ErrorReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
 }
 
 func (c *ErrorReporter) AddScanError(asset *inventory.Asset, err error) {

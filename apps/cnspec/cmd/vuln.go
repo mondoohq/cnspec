@@ -4,9 +4,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 
-	"github.com/mitchellh/mapstructure"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,8 +15,10 @@ import (
 	"go.mondoo.com/cnquery/v9/logger"
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/plugin"
+	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnspec/v9/cli/reporter"
+	mondoogql "go.mondoo.com/mondoo-go"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -87,60 +89,77 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Error().Err(err).Msg("failed to initialize cnspec shell")
 	}
 
-	vulnReportQuery := "asset.vulnerabilityReport"
-	vulnReportDatapointChecksum := executor.MustGetOneDatapoint(executor.MustCompile(vulnReportQuery))
-	_, results, err := sh.RunOnce(vulnReportQuery)
+	packagesQuery := "packages{ name version }"
+	packagesDatapointChecksum := executor.MustGetOneDatapoint(executor.MustCompile(packagesQuery))
+	codeBundle, results, err := sh.RunOnce(packagesQuery)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to run query")
 		return
 	}
 
 	// render vulnerability report
-	var vulnReport mvd.VulnReport
-	value, ok := results[vulnReportDatapointChecksum]
+	value, ok := results[packagesDatapointChecksum]
 	if !ok {
-		log.Error().Msg("could not find advisory report\n\n")
+		log.Error().Msg("could not find packages data\n\n")
 		return
 	}
 
 	if value == nil || value.Data == nil {
-		log.Error().Msg("could not load advisory report\n\n")
+		log.Error().Msg("could not load packages data\n\n")
 		return
 	}
 
 	if value.Data.Error != nil {
-		err := value.Data.Error
+		log.Err(value.Data.Error).Msg("could not load packages data\n\n")
+		return
+	}
+
+	packagesJson := value.Data.JSON(packagesDatapointChecksum, codeBundle)
+
+	gqlPackages := []mondoogql.PackageInput{}
+	err = json.Unmarshal(packagesJson, &gqlPackages)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to unmarshal packages")
+		return
+	}
+
+	client, err := runtime.UpstreamConfig.InitClient()
+	if err != nil {
 		if status, ok := status.FromError(err); ok {
 			code := status.Code()
 			switch code {
 			case codes.Unauthenticated:
 				log.Fatal().Msg(unauthedErrorMsg)
 			default:
-				log.Err(value.Data.Error).Msg("could not load advisory report")
+				log.Err(err).Msg("could not authenticate upstream")
 				return
 			}
 		}
 	}
-
-	rawData := value.Data.Value
-	cfg := &mapstructure.DecoderConfig{
-		Metadata: nil,
-		Result:   &vulnReport,
-		TagName:  "json",
-	}
-	decoder, _ := mapstructure.NewDecoder(cfg)
-	err = decoder.Decode(rawData)
+	mondooClient, err := gql.NewClient(*runtime.UpstreamConfig, client.HttpClient)
 	if err != nil {
-		log.Error().Msg("could not decode advisory report\n\n")
+		log.Error().Err(err).Msg("could not initialize mondoo client")
 		return
 	}
+
+	platform := runtime.Provider.Connection.GetAsset().GetPlatform()
+	gqlVulnReport, err := mondooClient.GetIncognitoVulnReport(mondoogql.PlatformInput{
+		Name:    mondoogql.NewStringPtr(mondoogql.String(platform.Name)),
+		Release: mondoogql.NewStringPtr(mondoogql.String(platform.Version)),
+	}, gqlPackages)
+	if err != nil {
+		log.Error().Err(err).Msg("could not load advisory report")
+		return
+	}
+
+	vulnReport := gql.ConvertToMvdVulnReport(gqlVulnReport)
 
 	target := runtime.Provider.Connection.Asset.Name
 	if target == "" {
 		target = runtime.Provider.Connection.Asset.Mrn
 	}
 
-	printVulns(&vulnReport, conf, target)
+	printVulns(vulnReport, conf, target)
 }
 
 func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {

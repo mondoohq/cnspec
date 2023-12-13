@@ -6,7 +6,10 @@ go 1.21
 
 toolchain go1.21.3
 
-require go.mondoo.com/cnquery/v9 v9.11.0
+require (
+	go.mondoo.com/cnquery/v9 v9.11.0
+	go.mondoo.com/mondoo-go v0.0.0-20231208095824-90b6fcd58afb
+)
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -112,7 +115,6 @@ require (
 	github.com/xen0n/gosmopolitan v1.2.2 // indirect
 	github.com/ykadowak/zerologlint v0.1.4 // indirect
 	go-simpler.org/sloglint v0.3.0 // indirect
-	go.mondoo.com/mondoo-go v0.0.0-20231208095824-90b6fcd58afb // indirect
 	go.opentelemetry.io/otel/metric v1.21.0 // indirect
 	go.tmz.dev/musttag v0.7.2 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20231127180814-3a041ad873d4 // indirect
