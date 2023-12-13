@@ -415,7 +415,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}()
 
-	assetBatches := batch(assets, 10)
+	assetBatches := batch(assets, 100)
 	for i := range assetBatches {
 		batch := assetBatches[i]
 		justAssets := []*inventory.Asset{}
@@ -487,9 +487,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		// 	return nil, false, errors.New("all available packs filtered out. nothing to do.")
 		// }
 
-		scanGroups.Add(1)
+		wg := sync.WaitGroup{}
+		wg.Add(1)
 		go func() {
-			defer scanGroups.Done()
+			defer wg.Done()
 			for i := range batch {
 				asset := batch[i].asset
 				runtime := batch[i].runtime
@@ -525,6 +526,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				runtime.Close()
 			}
 		}()
+		wg.Wait()
 	}
 	scanGroups.Wait() // wait for all scans to complete
 	return reporter.Reports(), nil
