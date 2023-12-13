@@ -40,29 +40,32 @@ func (r *Report) ComputeStats(resolved *ResolvedPolicy) {
 
 	r.Stats = &res
 }
-
 func (s *Stats) Add(score *Score) {
-	s.Total++
+	s.AddCount(score, 1)
+}
+
+func (s *Stats) AddCount(score *Score, count uint32) {
+	s.Total += count
 	switch score.Type {
 	case ScoreType_Unknown:
-		s.Unknown++
+		s.Unknown += count
 	case ScoreType_Result:
 		if score.Value < 100 {
-			s.Failed.Add(score)
+			s.Failed.AddCount(score, count)
 
 			if score.Value < s.Worst {
 				s.Worst = score.Value
 			}
 
 		} else {
-			s.Passed.Add(score)
+			s.Passed.AddCount(score, count)
 		}
 	case ScoreType_Error:
-		s.Errors.Add(score)
+		s.Errors.AddCount(score, count)
 	case ScoreType_Skip:
-		s.Skipped++
+		s.Skipped += count
 	case ScoreType_Unscored:
-		s.Unknown++
+		s.Unknown += count
 	default:
 		log.Warn().Uint32("type", score.Type).Str("id", score.QrId).Msg("ran into unknown score type")
 	}
@@ -70,7 +73,11 @@ func (s *Stats) Add(score *Score) {
 
 // this function also handles nil scores and updates the score distribution accordingly
 func (sd *ScoreDistribution) Add(score *Score) {
-	sd.AddRating(score.Rating())
+	sd.AddCount(score, 1)
+}
+
+func (sd *ScoreDistribution) AddCount(score *Score, count uint32) {
+	sd.AddRatingCount(score.Rating(), count)
 }
 
 // this function also handles nil scores and updates the score distribution accordingly
@@ -79,22 +86,26 @@ func (sd *ScoreDistribution) Remove(score *Score) {
 }
 
 func (sd *ScoreDistribution) AddRating(scoreRating ScoreRating) {
-	sd.Total++
+	sd.AddRatingCount(scoreRating, 1)
+}
+
+func (sd *ScoreDistribution) AddRatingCount(scoreRating ScoreRating, count uint32) {
+	sd.Total += count
 	switch scoreRating {
 	case ScoreRating_aPlus, ScoreRating_a, ScoreRating_aMinus:
-		sd.A++
+		sd.A += count
 	case ScoreRating_bPlus, ScoreRating_b, ScoreRating_bMinus:
-		sd.B++
+		sd.B += count
 	case ScoreRating_cPlus, ScoreRating_c, ScoreRating_cMinus:
-		sd.C++
+		sd.C += count
 	case ScoreRating_dPlus, ScoreRating_d, ScoreRating_dMinus:
-		sd.D++
+		sd.D += count
 	case ScoreRating_failed:
-		sd.F++
+		sd.F += count
 	case ScoreRating_error:
-		sd.Error++
+		sd.Error += count
 	case ScoreRating_unrated:
-		sd.Unrated++
+		sd.Unrated += count
 	}
 }
 
