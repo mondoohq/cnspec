@@ -325,7 +325,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		candidate := assetCandidates[i]
 
 		var runtime *providers.Runtime
-		if candidate.asset.Connections[0].Type == "k8s" {
+		if candidate.asset.Connections[0].Type == "k8s" || candidate.asset.Connections[0].Type == "aws" {
 			runtime, err = providers.Coordinator.RuntimeFor(candidate.asset, providers.DefaultRuntime())
 			if err != nil {
 				return nil, err
