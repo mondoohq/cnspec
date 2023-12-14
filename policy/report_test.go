@@ -40,6 +40,23 @@ func TestScoreDistributionAdd(t *testing.T) {
 	require.Equal(t, uint32(16), scoreDist.GetTotal())
 }
 
+func TestScoreDistributionAddCount(t *testing.T) {
+	scoreDist := &policy.ScoreDistribution{}
+	scoreDist.AddCount(&policy.Score{Value: 100, Type: policy.ScoreType_Result, ScoreCompletion: 100}, 3)
+	scoreDist.AddCount(&policy.Score{Value: 75, Type: policy.ScoreType_Result, ScoreCompletion: 100}, 4)
+	scoreDist.AddCount(&policy.Score{Value: 50, Type: policy.ScoreType_Result, ScoreCompletion: 100}, 5)
+	scoreDist.AddCount(&policy.Score{Type: policy.ScoreType_Error}, 6)
+	scoreDist.AddCount(&policy.Score{Type: policy.ScoreType_Unscored}, 7)
+
+	require.Equal(t, uint32(3), scoreDist.GetA())
+	require.Equal(t, uint32(4), scoreDist.GetB())
+	require.Equal(t, uint32(5), scoreDist.GetC())
+	require.Equal(t, uint32(6), scoreDist.GetError())
+	require.Equal(t, uint32(7), scoreDist.GetUnrated())
+
+	require.Equal(t, uint32(25), scoreDist.GetTotal())
+}
+
 func TestScoreDistributionRemove(t *testing.T) {
 	scoreDist := &policy.ScoreDistribution{
 		Total:   19,
