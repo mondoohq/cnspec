@@ -466,6 +466,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				platformMrn := batch[i].asset.PlatformIds[0]
 				batch[i].asset.Mrn = platformAssetMapping[platformMrn].AssetMrn
 				batch[i].asset.Url = platformAssetMapping[platformMrn].Url
+				if batch[i].asset.Labels == nil {
+					batch[i].asset.Labels = map[string]string{}
+				}
+				batch[i].asset.Labels["mondoo.com/project-id"] = platformAssetMapping[platformMrn].ProjectId
 			}
 		} else {
 			// ensure we have non-empty asset MRNs
@@ -569,30 +573,6 @@ func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.S
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	log.Debug().Msgf("connecting to asset %s", job.Asset.HumanName())
 
-	upstream := s.upstreamServices(job.UpstreamConfig)
-	if upstream != nil {
-		resp, err := upstream.SynchronizeAssets(job.Ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: job.UpstreamConfig.SpaceMrn,
-			List:     []*inventory.Asset{job.Asset},
-		})
-		if err != nil {
-			log.Error().Err(err).Msgf("failed to synchronize asset to Mondoo Platform %s", job.Asset.Mrn)
-			job.Reporter.AddScanError(job.Asset, err)
-			job.ProgressReporter.Score("X")
-			job.ProgressReporter.Errored()
-			return
-		}
-
-		log.Debug().Str("asset", job.Asset.Name).Strs("platform-ids", job.Asset.PlatformIds).Msg("update asset")
-		platformId := job.Asset.PlatformIds[0]
-		job.Asset.Mrn = resp.Details[platformId].AssetMrn
-		job.Asset.Url = resp.Details[platformId].Url
-		if job.Asset.Labels == nil {
-			job.Asset.Labels = map[string]string{}
-		}
-		job.Asset.Labels["mondoo.com/project-id"] = resp.Details[platformId].ProjectId
-	}
-
 	results, err := s.runMotorizedAsset(job)
 	if err != nil {
 		log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
@@ -604,6 +584,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 
 	job.Reporter.AddReport(job.Asset, results)
 
+	upstream := s.upstreamServices(job.UpstreamConfig)
 	if upstream != nil {
 		// get new gql client
 		mondooClient, err := gql.NewClient(*job.UpstreamConfig, s._upstreamClient.HttpClient)
