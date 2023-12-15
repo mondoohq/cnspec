@@ -13,7 +13,7 @@ import (
 	explorer "go.mondoo.com/cnquery/v9/explorer"
 	llx "go.mondoo.com/cnquery/v9/llx"
 	inventory "go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	mvd "go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd/mvd"
+	mvd "go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"

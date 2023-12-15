@@ -275,8 +275,8 @@ func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error)
 
 // GetBundle retrieves the given policy and all its dependencies (policies/queries)
 func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
-	// TODO: once the backend implements GetBundleForMrn, we can remove this implementation
-	// and directly call GetBundleForMrn
+	// TODO: once the backend implements GetBundleV2, we can remove this implementation
+	// and directly call GetBundleV2
 	if in == nil || len(in.Mrn) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
@@ -293,7 +293,7 @@ func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error)
 	return s.cacheUpstreamPolicyOld(ctx, in.Mrn)
 }
 
-func (s *LocalServices) GetBundleForMrn(ctx context.Context, in *BundleReq) (*Bundle, error) {
+func (s *LocalServices) GetBundleV2(ctx context.Context, in *BundleReq) (*Bundle, error) {
 	if in == nil || len(in.Mrn) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
@@ -569,7 +569,7 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, in *BundleReq) 
 	}
 
 	logCtx.Debug().Str("policy", mrn).Msg("marketplace> fetch policy bundle from upstream")
-	bundle, err := s.Upstream.GetBundleForMrn(ctx, in)
+	bundle, err := s.Upstream.GetBundleV2(ctx, in)
 	if err != nil {
 		logCtx.Error().Err(err).Str("policy", mrn).Msg("marketplace> failed to retrieve policy bundle from upstream")
 		return nil, errors.New("failed to retrieve upstream policy " + mrn + ": " + err.Error())
@@ -587,7 +587,7 @@ func (s *LocalServices) cacheUpstreamPolicy(ctx context.Context, in *BundleReq) 
 	return bundle, nil
 }
 
-// TODO: this can be removed once the backend implements GetBundleForMrn
+// TODO: this can be removed once the backend implements GetBundleV2
 func (s *LocalServices) cacheUpstreamPolicyOld(ctx context.Context, mrn string) (*Bundle, error) {
 	logCtx := logger.FromContext(ctx)
 	if s.Upstream == nil {
