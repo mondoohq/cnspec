@@ -32,6 +32,9 @@ func init() {
 	// policy list
 	policyCmd.AddCommand(policyListCmd)
 
+	// policy show
+	policyCmd.AddCommand(policyShowCmd)
+
 	// validate
 	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
 	policyLintCmd.Flags().String("output-file", "", "Set output file")
@@ -54,23 +57,10 @@ func init() {
 	rootCmd.AddCommand(policyCmd)
 }
 
-// ensureProviders ensures that all providers are locally installed
-func ensureProviders() error {
-	for _, v := range providers.DefaultProviders {
-		if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: v.ID}, true, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 var policyCmd = &cobra.Command{
 	Use:   "policy",
 	Short: "Manage policies.",
 }
-
-//go:embed policy-example.mql.yaml
-var embedPolicyTemplate []byte
 
 var policyListCmd = &cobra.Command{
 	Use:   "list",
@@ -101,6 +91,44 @@ var policyListCmd = &cobra.Command{
 			// Printing policy MRN in gray
 			fmt.Printf("\033[90m  %s\033[0m\n", policy.Mrn)
 		}
+	},
+}
+
+var policyShowCmd = &cobra.Command{
+	Use:   "show [UID/MRN]",
+	Short: "show more info about policies, including: summary, docs, etc.",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		registryEndpoint := os.Getenv("REGISTRY_URL")
+		if registryEndpoint == "" {
+			registryEndpoint = defaultRegistryUrl
+		}
+
+		// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
+		// it is used without upstream config
+		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
+		if err != nil {
+			log.Fatal().Err(err)
+		}
+
+		policyMrn := &policy.Mrn{
+			Mrn: args[0],
+		}
+		fmt.Println(policyMrn)
+		policy, err := client.GetPolicy(context.Background(), policyMrn)
+		if err != nil {
+			log.Fatal().Err(err)
+		}
+		if policy == nil {
+			fmt.Println("Schade aber auch")
+		}
+		fmt.Println(policy)
+		fmt.Println(policy.Mrn)
+		fmt.Println("→ Name:      ", policy.Name)
+		fmt.Println("→ Version:   ", policy.Version)
+		fmt.Println("→ UID:       ", policy.Uid)
+		fmt.Println("→ MRN:       ", policy.Mrn)
+
 	},
 }
 
@@ -142,7 +170,7 @@ var policyUploadCmd = &cobra.Command{
 	},
 }
 
-var policyInitCmd = &cobra.Command{
+var newPolicyInitCmd = &cobra.Command{
 	Use:   "init [path]",
 	Short: "Create an example policy that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
 	Args:  cobra.MaximumNArgs(1),
@@ -165,7 +193,7 @@ var policyInitCmd = &cobra.Command{
 	},
 }
 
-var policyLintCmd = &cobra.Command{
+var newPolicyLintCmd = &cobra.Command{
 	Use:     "lint [path]",
 	Aliases: []string{"validate"},
 	Short:   "Lint a policy.",
@@ -219,7 +247,7 @@ var policyLintCmd = &cobra.Command{
 	},
 }
 
-var policyFmtCmd = &cobra.Command{
+var newPolicyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
 	Short:   "Apply style formatting to one or more policy bundles.",
@@ -238,7 +266,7 @@ var policyFmtCmd = &cobra.Command{
 	},
 }
 
-var policyPublishCmd = &cobra.Command{
+var newPolicyPublishCmd = &cobra.Command{
 	Use:     "publish [path]",
 	Aliases: []string{"upload"},
 	Short:   "Add a user-owned policy to the Mondoo Security Registry.",
@@ -339,7 +367,7 @@ var policyPublishCmd = &cobra.Command{
 	},
 }
 
-var policyDocsCmd = &cobra.Command{
+var newPolicyDocsCmd = &cobra.Command{
 	Use:     "docs [path]",
 	Aliases: []string{},
 	Short:   "Retrieve only the docs for a bundle.",

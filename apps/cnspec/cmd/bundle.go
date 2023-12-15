@@ -20,32 +20,32 @@ import (
 	"go.mondoo.com/cnspec/v9/policy"
 )
 
-func init() {
-	// policy init
-	policyBundlesCmd.AddCommand(policyInitCmd)
-
-	// validate
-	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
-	policyLintCmd.Flags().String("output-file", "", "Set output file")
-	policyBundlesCmd.AddCommand(policyLintCmd)
-
-	// fmt
-	policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
-	policyBundlesCmd.AddCommand(policyFmtCmd)
-
-	// docs
-	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
-	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
-	policyBundlesCmd.AddCommand(policyDocsCmd)
-
-	// publish
-	policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
-	policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
-	policyBundlesCmd.AddCommand(policyPublishCmd)
-
-	rootCmd.AddCommand(policyBundlesCmd)
-}
-
+//	func init() {
+//		// policy init
+//		policyBundlesCmd.AddCommand(policyInitCmd)
+//
+//		// validate
+//		policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
+//		policyLintCmd.Flags().String("output-file", "", "Set output file")
+//		policyBundlesCmd.AddCommand(policyLintCmd)
+//
+//		// fmt
+//		policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
+//		policyBundlesCmd.AddCommand(policyFmtCmd)
+//
+//		// docs
+//		policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
+//		policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+//		policyBundlesCmd.AddCommand(policyDocsCmd)
+//
+//		// publish
+//		policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
+//		policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
+//		policyBundlesCmd.AddCommand(policyPublishCmd)
+//
+//		rootCmd.AddCommand(policyBundlesCmd)
+//	}
+//
 // ensureProviders ensures that all providers are locally installed
 func ensureProviders() error {
 	for _, v := range providers.DefaultProviders {
