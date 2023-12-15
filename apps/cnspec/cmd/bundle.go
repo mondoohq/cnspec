@@ -18,40 +18,32 @@ import (
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/v9/internal/bundle"
 	"go.mondoo.com/cnspec/v9/policy"
-	"go.mondoo.com/ranger-rpc"
-)
-
-const (
-	defaultRegistryUrl = "https://registry.api.mondoo.com"
 )
 
 func init() {
 	// policy init
-	policyCmd.AddCommand(policyInitCmd)
-
-	// policy list
-	policyCmd.AddCommand(policyListCmd)
+	policyBundlesCmd.AddCommand(policyInitCmd)
 
 	// validate
 	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
 	policyLintCmd.Flags().String("output-file", "", "Set output file")
-	policyCmd.AddCommand(policyLintCmd)
+	policyBundlesCmd.AddCommand(policyLintCmd)
 
 	// fmt
 	policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
-	policyCmd.AddCommand(policyFmtCmd)
+	policyBundlesCmd.AddCommand(policyFmtCmd)
 
 	// docs
 	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
 	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
-	policyCmd.AddCommand(policyDocsCmd)
+	policyBundlesCmd.AddCommand(policyDocsCmd)
 
 	// publish
 	policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
 	policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
-	policyCmd.AddCommand(policyPublishCmd)
+	policyBundlesCmd.AddCommand(policyPublishCmd)
 
-	rootCmd.AddCommand(policyCmd)
+	rootCmd.AddCommand(policyBundlesCmd)
 }
 
 // ensureProviders ensures that all providers are locally installed
@@ -64,87 +56,17 @@ func ensureProviders() error {
 	return nil
 }
 
-var policyCmd = &cobra.Command{
-	Use:   "policy",
-	Short: "Manage policies.",
+var policyBundlesCmd = &cobra.Command{
+	Use:   "bundle",
+	Short: "Manage policy bundles.",
 }
 
 //go:embed policy-example.mql.yaml
 var embedPolicyTemplate []byte
 
-var policyListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "list currently active policies in the connected space",
-	Args:  cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		registryEndpoint := os.Getenv("REGISTRY_URL")
-		if registryEndpoint == "" {
-			registryEndpoint = defaultRegistryUrl
-		}
-
-		// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
-		// it is used without upstream config
-		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
-		if err != nil {
-			log.Fatal().Err(err)
-		}
-
-		listReq := policy.ListReq{}
-		policyList, err := client.List(context.Background(), &listReq)
-		if err != nil {
-			log.Fatal().Err(err)
-		}
-		for _, policy := range policyList.Items {
-			// Printing policy name and version
-			fmt.Println(policy.Name + " " + policy.Version)
-
-			// Printing policy MRN in gray
-			fmt.Printf("\033[90m  %s\033[0m\n", policy.Mrn)
-		}
-	},
-}
-
-var policyUploadCmd = &cobra.Command{
-	Use:   "upload",
-	Short: "upload a policy to the connected space",
-	Args:  cobra.MinimumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		policyFile := ""
-		if len(args) == 1 {
-			policyFile = args[0]
-		}
-
-		registryEndpoint := os.Getenv("REGISTRY_URL")
-		if registryEndpoint == "" {
-			registryEndpoint = defaultRegistryUrl
-		}
-
-		// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
-		// it is used without upstream config
-		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
-		if err != nil {
-			log.Fatal().Err(err)
-		}
-
-		bundleLoader := policy.DefaultBundleLoader()
-		policyBundle, err := bundleLoader.BundleFromPaths(policyFile)
-
-		_, err = client.SetBundle(context.Background(), policyBundle)
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to upload policies")
-		}
-		// Success message in green
-		fmt.Printf("\033[32m→ successfully uploaded %d policies to the space\033[0m", len(policyBundle.Policies))
-		for _, policy := range policyBundle.Policies {
-			fmt.Println("  policy: " + policy.Name + " " + policy.Version)
-			fmt.Printf("\033[90m          %s\033[0m\n", policy.Mrn)
-		}
-	},
-}
-
 var policyInitCmd = &cobra.Command{
 	Use:   "init [path]",
-	Short: "Create an example policy that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
+	Short: "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := "example-policy.mql.yaml"
@@ -168,7 +90,7 @@ var policyInitCmd = &cobra.Command{
 var policyLintCmd = &cobra.Command{
 	Use:     "lint [path]",
 	Aliases: []string{"validate"},
-	Short:   "Lint a policy.",
+	Short:   "Lint a policy bundle.",
 	Args:    cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
