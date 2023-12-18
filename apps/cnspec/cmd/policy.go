@@ -31,9 +31,13 @@ func init() {
 
 	// policy list
 	policyCmd.AddCommand(policyListCmd)
+	policyListCmd.Flags().StringP("file", "f", "", "list policies in a bundle file")
 
 	// policy show
 	policyCmd.AddCommand(policyShowCmd)
+
+	// policy delete
+	policyCmd.AddCommand(policyDeleteCmd)
 
 	// validate
 	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
@@ -66,30 +70,67 @@ var policyListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "list currently active policies in the connected space",
 	Args:  cobra.MaximumNArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		registryEndpoint := os.Getenv("REGISTRY_URL")
-		if registryEndpoint == "" {
-			registryEndpoint = defaultRegistryUrl
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
 		}
 
-		// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
-		// it is used without upstream config
-		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
 		}
 
-		listReq := policy.ListReq{}
-		policyList, err := client.List(context.Background(), &listReq)
+		httpClient, err := opts.GetHttpClient()
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
 		}
-		for _, policy := range policyList.Items {
+		client, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+
+		bundleFile := viper.GetString("file")
+		var policies []*policy.Policy
+
+		if bundleFile != "" {
+			bundleLoader := policy.DefaultBundleLoader()
+			policyBundle, err := bundleLoader.BundleFromPaths(bundleFile)
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			policies = policyBundle.Policies
+		} else {
+			listReq := policy.ListReq{
+				OwnerMrn: opts.SpaceMrn,
+			}
+			policyList, err := client.List(context.Background(), &listReq)
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			policies = policyList.Items
+		}
+
+		for _, policy := range policies {
 			// Printing policy name and version
 			fmt.Println(policy.Name + " " + policy.Version)
 
 			// Printing policy MRN in gray
-			fmt.Printf("\033[90m  %s\033[0m\n", policy.Mrn)
+			if policy.Mrn != "" {
+				fmt.Printf("\033[90m  %s\033[0m\n", policy.Mrn)
+			} else {
+				fmt.Printf("\033[90m  %s\033[0m\n", policy.Uid)
+			}
 		}
 	},
 }
@@ -99,16 +140,30 @@ var policyShowCmd = &cobra.Command{
 	Short: "show more info about policies, including: summary, docs, etc.",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		registryEndpoint := os.Getenv("REGISTRY_URL")
-		if registryEndpoint == "" {
-			registryEndpoint = defaultRegistryUrl
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
 		}
 
-		// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
-		// it is used without upstream config
-		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		client, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
 		}
 
 		policyMrn := &policy.Mrn{
@@ -120,15 +175,88 @@ var policyShowCmd = &cobra.Command{
 			log.Fatal().Err(err)
 		}
 		if policy == nil {
-			fmt.Println("Schade aber auch")
+			log.Fatal().Msg("Failed to get policy")
 		}
-		fmt.Println(policy)
-		fmt.Println(policy.Mrn)
+		if policy.Mrn == "" {
+			log.Fatal().Msg("Something went wrong")
+		}
 		fmt.Println("→ Name:      ", policy.Name)
 		fmt.Println("→ Version:   ", policy.Version)
 		fmt.Println("→ UID:       ", policy.Uid)
 		fmt.Println("→ MRN:       ", policy.Mrn)
+		fmt.Println("→ License:   ", policy.License)
+		fmt.Println("→ Authors:   ", policy.Authors[0].Name)
+		if len(policy.Authors) > 1 {
+			for i := range policy.Authors {
+				if i == 0 {
+					continue
+				}
+				fmt.Println("             ", policy.Authors[i].Name)
+			}
+		}
+		if policy.QueryCounts.TotalCount > 0 {
+			fmt.Println("→ Checks:    ", policy.QueryCounts.TotalCount)
+		}
+		if policy.QueryCounts.DataCount > 0 {
+			fmt.Println("→ Querys:    ", policy.QueryCounts.DataCount)
+		}
+		if len(policy.DependentPolicyMrns()) > 0 {
+			fmt.Println("→ Policies:  ", len(policy.DependentPolicyMrns()))
+		}
+		if policy.Summary != "" {
+			fmt.Println("→ Summary:   ", policy.Summary)
+		}
+	},
+}
 
+var policyDeleteCmd = &cobra.Command{
+	Use:   "delete [UID/MRN]",
+	Short: "remove a policy from the connected space",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
+		}
+
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		client, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+
+		policyMrn := &policy.Mrn{
+			Mrn: args[0],
+		}
+		policy, err := client.GetPolicy(context.Background(), policyMrn)
+		if err != nil {
+			log.Fatal().Err(err)
+		}
+		_, err = client.DeletePolicy(context.Background(), policyMrn)
+		if err != nil {
+			log.Fatal().Err(err)
+		}
+		// Success message in green
+		fmt.Printf("\033[32m→ successfully removed policy from space\033[0m\n")
+		fmt.Println("  policy: " + policy.Name + " " + policy.Version)
+		fmt.Printf("\033[90m          %s\033[0m\n", policy.Mrn)
+		fmt.Println("  space: " + opts.SpaceMrn)
+		fmt.Printf("\033[90m          %s\033[0m\n", opts.SpaceMrn)
 	},
 }
 
