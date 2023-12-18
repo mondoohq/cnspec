@@ -140,6 +140,9 @@ func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
 								Options: map[string]string{
 									"path": "./testdata/2pods.yaml",
 								},
+								Discover: &inventory.Discovery{
+									Targets: []string{"auto"},
+								},
 							},
 						},
 					},
@@ -164,7 +167,7 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner()
+	scanner := NewLocalScanner(DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -172,7 +175,7 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.Equal(3, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -209,7 +212,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner()
+	scanner := NewLocalScanner(DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -217,7 +220,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.Equal(3, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -274,7 +277,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner()
+	scanner := NewLocalScanner(DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -282,7 +285,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.Equal(3, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 16
@@ -337,7 +340,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner()
+	scanner := NewLocalScanner(DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -345,7 +348,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.Equal(3, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -399,7 +402,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner()
+	scanner := NewLocalScanner(DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -407,7 +410,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.Equal(3, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
