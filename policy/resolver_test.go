@@ -1171,6 +1171,37 @@ framework_maps:
 		require.Len(t, frameworkJob.ChildJobs, 2)
 	})
 
+	t.Run("resolve with out of scope control", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
+		b.Frameworks[0].Groups[1].Type = policy.GroupType_OUT_OF_SCOPE
+
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{"//test.sth/framework/mondoo-ucf"},
+			},
+		}, []*policy.Bundle{b})
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 11)
+		var frameworkJob *policy.ReportingJob
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
+				frameworkJob = rj
+				break
+			}
+		}
+		require.NotNil(t, frameworkJob)
+		require.Equal(t, frameworkJob.Type, policy.ReportingJob_FRAMEWORK)
+		require.Len(t, frameworkJob.ChildJobs, 2)
+	})
+
 	t.Run("resolve with rejected disable exception", func(t *testing.T) {
 		b := parseBundle(t, bundleString)
 		b.Frameworks[0].Groups[1].Type = policy.GroupType_DISABLE

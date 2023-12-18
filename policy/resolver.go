@@ -1497,7 +1497,7 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework *ResolvedFramework, job *CollectorJob) error {
 	nuJobs := map[string]*ReportingJob{}
 
-	// try to find all framework groups of type IGNORE or DISABLE for this and depending frameworks
+	// try to find all framework groups of type IGNORE, DISABLE or OUT_OF_SCOPE for this and depending frameworks
 	// these groups are needed to determine if a control is ignored/snoozed or disabled
 	frameworkGroupByControlMrn := map[string]*FrameworkGroup{}
 	assetFramework := cache.bundleMap.Frameworks[framework.Mrn]
@@ -1507,7 +1507,7 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			if depFramework != nil {
 				for j := range depFramework.Groups {
 					group := depFramework.Groups[j]
-					if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE {
+					if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE && group.Type != GroupType_OUT_OF_SCOPE {
 						continue
 					}
 					if group.ReviewStatus == ReviewStatus_REJECTED {
@@ -1605,7 +1605,7 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 		case ResolvedFrameworkNodeTypeControl:
 			// skip controls which are part of a FrameworkGroup with type DISABLE
 			if group, ok := frameworkGroupByControlMrn[mrn]; ok {
-				if group.Type == GroupType_DISABLE {
+				if group.Type == GroupType_DISABLE || group.Type == GroupType_OUT_OF_SCOPE {
 					continue
 				}
 			}
