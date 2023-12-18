@@ -35,6 +35,7 @@ func init() {
 
 	// policy show
 	policyCmd.AddCommand(policyShowCmd)
+	policyShowCmd.Flags().StringP("file", "f", "", "show policies in a bundle file")
 
 	// policy delete
 	policyCmd.AddCommand(policyDeleteCmd)
@@ -139,6 +140,9 @@ var policyShowCmd = &cobra.Command{
 	Use:   "show [UID/MRN]",
 	Short: "show more info about policies, including: summary, docs, etc.",
 	Args:  cobra.MinimumNArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, optsErr := config.Read()
 		if optsErr != nil {
@@ -166,45 +170,60 @@ var policyShowCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
 		}
 
-		policyMrn := &policy.Mrn{
-			Mrn: args[0],
-		}
-		fmt.Println(policyMrn)
-		policy, err := client.GetPolicy(context.Background(), policyMrn)
-		if err != nil {
-			log.Fatal().Err(err)
-		}
-		if policy == nil {
-			log.Fatal().Msg("Failed to get policy")
-		}
-		if policy.Mrn == "" {
-			log.Fatal().Msg("Something went wrong")
-		}
-		fmt.Println("→ Name:      ", policy.Name)
-		fmt.Println("→ Version:   ", policy.Version)
-		fmt.Println("→ UID:       ", policy.Uid)
-		fmt.Println("→ MRN:       ", policy.Mrn)
-		fmt.Println("→ License:   ", policy.License)
-		fmt.Println("→ Authors:   ", policy.Authors[0].Name)
-		if len(policy.Authors) > 1 {
-			for i := range policy.Authors {
-				if i == 0 {
-					continue
-				}
-				fmt.Println("             ", policy.Authors[i].Name)
+		bundleFile := viper.GetString("file")
+		var policies []*policy.Policy
+
+		if bundleFile != "" {
+			bundleLoader := policy.DefaultBundleLoader()
+			policyBundle, err := bundleLoader.BundleFromPaths(bundleFile)
+			if err != nil {
+				log.Fatal().Err(err)
 			}
+			policies = policyBundle.Policies
+		} else {
+			policyMrn := &policy.Mrn{
+				Mrn: args[0],
+			}
+			policy, err := client.GetPolicy(context.Background(), policyMrn)
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			if policy == nil {
+				log.Fatal().Msg("Failed to get policy")
+			}
+			if policy.Mrn == "" {
+				log.Fatal().Msg("Something went wrong")
+			}
+			policies = append(policies, policy)
 		}
-		if policy.QueryCounts.TotalCount > 0 {
-			fmt.Println("→ Checks:    ", policy.QueryCounts.TotalCount)
-		}
-		if policy.QueryCounts.DataCount > 0 {
-			fmt.Println("→ Querys:    ", policy.QueryCounts.DataCount)
-		}
-		if len(policy.DependentPolicyMrns()) > 0 {
-			fmt.Println("→ Policies:  ", len(policy.DependentPolicyMrns()))
-		}
-		if policy.Summary != "" {
-			fmt.Println("→ Summary:   ", policy.Summary)
+
+		for _, policy := range policies {
+			fmt.Println("→ Name:      ", policy.Name)
+			fmt.Println("→ Version:   ", policy.Version)
+			fmt.Println("→ UID:       ", policy.Uid)
+			fmt.Println("→ MRN:       ", policy.Mrn)
+			fmt.Println("→ License:   ", policy.License)
+			fmt.Println("→ Authors:   ", policy.Authors[0].Name)
+			if len(policy.Authors) > 1 {
+				for i := range policy.Authors {
+					if i == 0 {
+						continue
+					}
+					fmt.Println("             ", policy.Authors[i].Name)
+				}
+			}
+			if policy.QueryCounts.TotalCount > 0 {
+				fmt.Println("→ Checks:    ", policy.QueryCounts.TotalCount)
+			}
+			if policy.QueryCounts.DataCount > 0 {
+				fmt.Println("→ Querys:    ", policy.QueryCounts.DataCount)
+			}
+			if len(policy.DependentPolicyMrns()) > 0 {
+				fmt.Println("→ Policies:  ", len(policy.DependentPolicyMrns()))
+			}
+			if policy.Summary != "" {
+				fmt.Println("→ Summary:   ", policy.Summary)
+			}
 		}
 	},
 }
@@ -298,7 +317,7 @@ var policyUploadCmd = &cobra.Command{
 	},
 }
 
-var newPolicyInitCmd = &cobra.Command{
+var policyInitCmd = &cobra.Command{
 	Use:   "init [path]",
 	Short: "Create an example policy that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
 	Args:  cobra.MaximumNArgs(1),
@@ -321,7 +340,7 @@ var newPolicyInitCmd = &cobra.Command{
 	},
 }
 
-var newPolicyLintCmd = &cobra.Command{
+var policyLintCmd = &cobra.Command{
 	Use:     "lint [path]",
 	Aliases: []string{"validate"},
 	Short:   "Lint a policy.",
@@ -375,7 +394,7 @@ var newPolicyLintCmd = &cobra.Command{
 	},
 }
 
-var newPolicyFmtCmd = &cobra.Command{
+var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
 	Short:   "Apply style formatting to one or more policy bundles.",
@@ -394,7 +413,7 @@ var newPolicyFmtCmd = &cobra.Command{
 	},
 }
 
-var newPolicyPublishCmd = &cobra.Command{
+var policyPublishCmd = &cobra.Command{
 	Use:     "publish [path]",
 	Aliases: []string{"upload"},
 	Short:   "Add a user-owned policy to the Mondoo Security Registry.",
@@ -495,7 +514,7 @@ var newPolicyPublishCmd = &cobra.Command{
 	},
 }
 
-var newPolicyDocsCmd = &cobra.Command{
+var policyDocsCmd = &cobra.Command{
 	Use:     "docs [path]",
 	Aliases: []string{},
 	Short:   "Retrieve only the docs for a bundle.",
