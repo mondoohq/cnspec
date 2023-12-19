@@ -89,7 +89,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Error().Err(err).Msg("failed to initialize cnspec shell")
 	}
 
-	packagesQuery := "packages{ name version }"
+	packagesQuery := "packages{ name version origin }"
 	packagesDatapointChecksum := executor.MustGetOneDatapoint(executor.MustCompile(packagesQuery))
 	codeBundle, results, err := sh.RunOnce(packagesQuery)
 	if err != nil {
