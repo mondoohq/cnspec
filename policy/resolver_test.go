@@ -1158,7 +1158,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 11)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 10)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
@@ -1189,7 +1189,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 11)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 10)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
