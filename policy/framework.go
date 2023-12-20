@@ -548,11 +548,33 @@ func ResolveFramework(mrn string, frameworks map[string]*Framework) *ResolvedFra
 		Nodes:         map[string]ResolvedFrameworkNode{},
 	}
 
+	// note: this code will disable a control if it is disabled in any framework in the hirearchy
+	// (asset or space-level). This should be fine for now since we don't have a use-case of enabling
+	// an already disabled control on a lower level in the hierarchy.
+	disabledControls := map[string]struct{}{}
+	for _, framework := range frameworks {
+		for _, group := range framework.Groups {
+			// If the group is not an exception group or has been rejected, skip over it
+			if (group.Type != GroupType_DISABLE && group.Type != GroupType_OUT_OF_SCOPE) ||
+				group.ReviewStatus == ReviewStatus_REJECTED {
+				continue
+			}
+
+			for _, control := range group.Controls {
+				disabledControls[control.Mrn] = struct{}{}
+			}
+		}
+	}
+
 	for _, framework := range frameworks {
 		for i := range framework.FrameworkMaps {
 			fmap := framework.FrameworkMaps[i]
 
 			for _, ctl := range fmap.Controls {
+				if _, ok := disabledControls[ctl.Mrn]; ok {
+					log.Debug().Msgf("control %s is disabled in framework %s", ctl.Mrn, framework.Mrn)
+					continue
+				}
 				res.addReportLink(
 					ResolvedFrameworkNode{
 						Mrn:  framework.Mrn,
