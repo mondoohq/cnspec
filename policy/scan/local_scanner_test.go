@@ -138,10 +138,10 @@ func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
 							{
 								Type: "k8s",
 								Options: map[string]string{
-									"path": "./testdata/2pods.yaml",
+									"path": "./testdata/1pod.yaml",
 								},
 								Discover: &inventory.Discovery{
-									Targets: []string{"auto"},
+									Targets: []string{"pods"},
 								},
 							},
 						},
@@ -175,7 +175,7 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(3, len(full.Reports))
+	s.Equal(1, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -220,7 +220,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(3, len(full.Reports))
+	s.Equal(1, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -285,7 +285,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(3, len(full.Reports))
+	s.Equal(1, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 16
@@ -348,7 +348,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(3, len(full.Reports))
+	s.Equal(1, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -410,7 +410,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(3, len(full.Reports))
+	s.Equal(1, len(full.Reports))
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -445,6 +445,116 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 		parentJob := p.CollectorJob.ReportingJobs[parent]
 		s.Require().NotNil(parentJob)
 		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+	}
+}
+
+func (s *LocalScannerSuite) TestRunIncognito_Frameworks() {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/compliance-bundle.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+
+	ctx := context.Background()
+	scanner := NewLocalScanner(DisableProgressBar())
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for _, r := range full.Reports {
+		s.Contains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-01")
+		s.Contains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-02")
+	}
+}
+
+func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_Deactivate() {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/compliance-bundle.mql.yaml")
+	s.Require().NoError(err)
+
+	bundle.Frameworks[0].Groups = append(bundle.Frameworks[0].Groups, &policy.FrameworkGroup{
+		Type:     policy.GroupType_DISABLE,
+		Controls: []*policy.Control{{Mrn: "//local.cnspec.io/run/local-execution/controls/mondoo-test-01"}},
+	})
+	bundle.Frameworks[0].Groups = append(bundle.Frameworks[0].Groups, &policy.FrameworkGroup{
+		Type:         policy.GroupType_DISABLE,
+		ReviewStatus: policy.ReviewStatus_REJECTED,
+		Controls:     []*policy.Control{{Mrn: "//local.cnspec.io/run/local-execution/controls/mondoo-test-02"}},
+	})
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+
+	ctx := context.Background()
+	scanner := NewLocalScanner(DisableProgressBar())
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for _, r := range full.Reports {
+		s.NotContains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-01")
+		s.Contains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-02")
+	}
+}
+
+func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/compliance-bundle.mql.yaml")
+	s.Require().NoError(err)
+
+	bundle.Frameworks[0].Groups = append(bundle.Frameworks[0].Groups, &policy.FrameworkGroup{
+		Type:     policy.GroupType_OUT_OF_SCOPE,
+		Controls: []*policy.Control{{Mrn: "//local.cnspec.io/run/local-execution/controls/mondoo-test-01"}},
+	})
+	bundle.Frameworks[0].Groups = append(bundle.Frameworks[0].Groups, &policy.FrameworkGroup{
+		Type:         policy.GroupType_OUT_OF_SCOPE,
+		ReviewStatus: policy.ReviewStatus_REJECTED,
+		Controls:     []*policy.Control{{Mrn: "//local.cnspec.io/run/local-execution/controls/mondoo-test-02"}},
+	})
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		Schema:        s.schema,
+		RemoveFailing: true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+
+	ctx := context.Background()
+	scanner := NewLocalScanner(DisableProgressBar())
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+
+	full := res.GetFull()
+	s.Require().NotNil(full)
+
+	s.Equal(1, len(full.Reports))
+
+	for _, r := range full.Reports {
+		s.NotContains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-01")
+		s.Contains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-02")
 	}
 }
 
