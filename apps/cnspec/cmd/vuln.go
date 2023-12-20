@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"os"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -164,13 +163,10 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {
 	// print the output using the specified output format
-	r, err := reporter.New("full")
-	if err != nil {
-		log.Fatal().Msg(err.Error())
-	}
+	r := reporter.NewReporter(reporter.Full, false)
 
 	logger.DebugDumpJSON("vulnReport", report)
-	if err = r.PrintVulns(report, os.Stdout, target); err != nil {
+	if err := r.PrintVulns(report, target); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
 }

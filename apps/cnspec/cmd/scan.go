@@ -63,6 +63,7 @@ func init() {
 	scanCmd.Flags().MarkHidden("category")
 	scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
 	scanCmd.Flags().Bool("share", false, "create a web-based private reports when cnspec is unauthenticated. Defaults to false.")
+	scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
 }
 
 var scanCmd = &cobra.Command{
@@ -79,7 +80,7 @@ To manually configure a policy, use this:
 		$ cnspec scan local -f bundle.mql.yaml --incognito
 
 `,
-	PreRun: func(cmd *cobra.Command, args []string) {
+	PreRunE: func(cmd *cobra.Command, args []string) error {
 		// Special handling for users that want to see what output options are
 		// available. We have to do this before printing the help because we
 		// don't have a target connection or provider.
@@ -109,6 +110,11 @@ To manually configure a policy, use this:
 		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+		if err := viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target")); err != nil {
+			return err
+		}
+
+		return nil
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -119,12 +125,13 @@ To manually configure a policy, use this:
 }
 
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
+	ctx := context.Background()
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to prepare config")
 	}
 
-	err = conf.loadPolicies()
+	err = conf.loadPolicies(ctx)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to resolve policies")
 	}
@@ -135,7 +142,19 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	logger.DebugDumpJSON("report", report)
-	printReports(report, conf, cmd)
+
+	handlerConf := reporter.HandlerConfig{
+		Format:       conf.OutputFormat,
+		OutputTarget: conf.OutputTarget,
+		Incognito:    conf.IsIncognito,
+	}
+	outputHandler, err := reporter.NewOutputHandler(handlerConf)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create an output handler")
+	}
+	if err := outputHandler.WriteReport(ctx, report); err != nil {
+		log.Fatal().Err(err).Msg("failed to write report to output target")
+	}
 
 	var shareReport bool
 	if viper.IsSet("share") {
@@ -181,15 +200,16 @@ func getPoliciesForCompletion() []string {
 }
 
 type scanConfig struct {
-	Features    cnquery.Features
-	Inventory   *inventory.Inventory
-	ReportType  scan.ReportType
-	Output      string
-	PolicyPaths []string
-	PolicyNames []string
-	Props       map[string]string
-	Bundle      *policy.Bundle
-	runtime     *providers.Runtime
+	Features     cnquery.Features
+	Inventory    *inventory.Inventory
+	ReportType   scan.ReportType
+	OutputTarget string
+	OutputFormat string
+	PolicyPaths  []string
+	PolicyNames  []string
+	Props        map[string]string
+	Bundle       *policy.Bundle
+	runtime      *providers.Runtime
 
 	IsIncognito    bool
 	ScoreThreshold int
@@ -245,6 +265,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		Props:          props,
 		runtime:        runtime,
 		AgentMrn:       opts.AgentMrn,
+		OutputTarget:   viper.GetString("output-target"),
 	}
 
 	// if users want to get more information on available output options,
@@ -259,7 +280,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	if ok, _ := cmd.Flags().GetBool("json"); ok {
 		output = "json"
 	}
-	conf.Output = output
+	conf.OutputFormat = output
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
 	runtimeEnv := execruntime.Detect()
@@ -313,7 +334,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	return &conf, nil
 }
 
-func (c *scanConfig) loadPolicies() error {
+func (c *scanConfig) loadPolicies(ctx context.Context) error {
 	if c.IsIncognito {
 		if len(c.PolicyPaths) == 0 {
 			return nil
@@ -327,7 +348,7 @@ func (c *scanConfig) loadPolicies() error {
 
 		bundle.ConvertQuerypacks()
 
-		_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		_, err = bundle.CompileExt(ctx, policy.BundleCompileConf{
 			Schema: c.runtime.Schema(),
 			// We don't care about failing queries for local runs. We may only
 			// process a subset of all the queries in the bundle. When we receive
@@ -384,19 +405,6 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 		return nil, err
 	}
 	return res.GetFull(), nil
-}
-
-func printReports(report *policy.ReportCollection, conf *scanConfig, cmd *cobra.Command) {
-	// print the output using the specified output format
-	r, err := reporter.New(conf.Output)
-	if err != nil {
-		log.Fatal().Msg(err.Error())
-	}
-
-	r.IsIncognito = conf.IsIncognito
-	if err = r.Print(report, os.Stdout); err != nil {
-		log.Fatal().Err(err).Msg("failed to print")
-	}
 }
 
 func dedupe[T string | int](sliceList []T) []T {

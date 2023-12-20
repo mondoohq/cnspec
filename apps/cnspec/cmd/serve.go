@@ -140,12 +140,12 @@ func getServeConfig() (*scanConfig, error) {
 	runtime := providers.DefaultRuntime()
 
 	conf := scanConfig{
-		Features:   opts.GetFeatures(),
-		DoRecord:   viper.GetBool("record"),
-		ReportType: scan.ReportType_ERROR,
-		Output:     "",
-		runtime:    runtime,
-		AgentMrn:   opts.AgentMrn,
+		Features:     opts.GetFeatures(),
+		DoRecord:     viper.GetBool("record"),
+		ReportType:   scan.ReportType_ERROR,
+		OutputFormat: "",
+		runtime:      runtime,
+		AgentMrn:     opts.AgentMrn,
 	}
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory

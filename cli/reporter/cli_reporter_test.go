@@ -5,6 +5,7 @@ package reporter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"testing"
@@ -30,11 +31,10 @@ func TestCompactReporter(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  Formats["compact"],
+		Format:  Compact,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 	}
-
 	rr := &defaultReporter{
 		Reporter:  r,
 		isCompact: true,
@@ -61,35 +61,37 @@ func TestVulnReporter(t *testing.T) {
 	buf := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &buf}
 
-	r, err := New("summary")
+	r := NewReporter(Summary, false)
+	r.out = &writer
 	require.NoError(t, err)
 
 	target := "index.docker.io/library/ubuntu@669e010b58ba"
-	err = r.PrintVulns(report, &writer, target)
+	err = r.PrintVulns(report, target)
 	require.NoError(t, err)
 
-	r, err = New("compact")
-	require.NoError(t, err)
-
-	err = r.PrintVulns(report, &writer, target)
+	r = NewReporter(Compact, false)
+	r.out = &writer
+	err = r.PrintVulns(report, target)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
 	assert.NotContains(t, buf.String(), "USN-5279-1")
 
-	r, err = New("full")
+	r = NewReporter(Full, false)
+	r.out = &writer
 	require.NoError(t, err)
 
-	err = r.PrintVulns(report, &writer, target)
+	err = r.PrintVulns(report, target)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
 	assert.Contains(t, buf.String(), "USN-5279-1")
 
-	r, err = New("yaml")
+	r = NewReporter(YAML, false)
+	r.out = &writer
 	require.NoError(t, err)
 
-	err = r.PrintVulns(report, &writer, target)
+	err = r.PrintVulns(report, target)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "score: 5.5")
@@ -110,13 +112,14 @@ func TestJsonOutput(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  Formats["json"],
+		Format:  JSON,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
+		out:     &writer,
 	}
 
-	r.Print(yr, &writer)
-
+	err = r.WriteReport(context.Background(), yr)
+	require.NoError(t, err)
 	valid := json.Valid(buf.Bytes())
 	require.True(t, valid)
 
@@ -136,13 +139,14 @@ func TestJsonOutputOnlyErrors(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  Formats["json"],
+		Format:  JSON,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
+		out:     &writer,
 	}
 
-	r.Print(yr, &writer)
-
+	err = r.WriteReport(context.Background(), yr)
+	require.NoError(t, err)
 	valid := json.Valid(buf.Bytes())
 	require.True(t, valid)
 
