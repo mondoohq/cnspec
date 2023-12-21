@@ -1505,20 +1505,19 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 		for i := range assetFramework.Dependencies {
 			depFramework := cache.bundleMap.Frameworks[assetFramework.Dependencies[i].Mrn]
 			if depFramework != nil {
-				for j := range depFramework.Groups {
-					group := depFramework.Groups[j]
-					if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE && group.Type != GroupType_OUT_OF_SCOPE {
-						continue
-					}
-					if group.ReviewStatus == ReviewStatus_REJECTED {
-						// The exception was rejected, so we don't care about it
-						continue
-					}
-					for k := range group.Controls {
-						frameworkGroupByControlMrn[group.Controls[k].Mrn] = group
-					}
+				groups := exceptionGroupForControl(depFramework.Groups)
+				for k, v := range groups {
+					frameworkGroupByControlMrn[k] = v
 				}
 			}
+		}
+
+		// After we have checked all the dependent frameworks, we can check the asset framework. It has precedence
+		// over the dependent frameworks because it is the lowest level of the hierarchy. It means, it can override
+		// groups specified at a different level
+		groups := exceptionGroupForControl(assetFramework.Groups)
+		for k, v := range groups {
+			frameworkGroupByControlMrn[k] = v
 		}
 	}
 
@@ -1656,6 +1655,24 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 	}
 
 	return nil
+}
+
+func exceptionGroupForControl(groups []*FrameworkGroup) map[string]*FrameworkGroup {
+	exceptionGroupForControl := map[string]*FrameworkGroup{}
+	for j := range groups {
+		group := groups[j]
+		if group.Type != GroupType_IGNORED && group.Type != GroupType_DISABLE && group.Type != GroupType_OUT_OF_SCOPE {
+			continue
+		}
+		if group.ReviewStatus == ReviewStatus_REJECTED {
+			// The exception was rejected, so we don't care about it
+			continue
+		}
+		for k := range group.Controls {
+			exceptionGroupForControl[group.Controls[k].Mrn] = group
+		}
+	}
+	return exceptionGroupForControl
 }
 
 func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, resolvedPolicy *ResolvedPolicy) error {

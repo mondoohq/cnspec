@@ -1175,7 +1175,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 10)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 12)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
@@ -1190,7 +1190,6 @@ framework_maps:
 
 	t.Run("resolve with out of scope control", func(t *testing.T) {
 		b := parseBundle(t, bundleString)
-		// b.Frameworks[0].Groups[1].Type = policy.GroupType_OUT_OF_SCOPE
 		b.Frameworks = append(b.Frameworks, &policy.Framework{
 			Mrn: "//test.sth/framework/test",
 			Dependencies: []*policy.FrameworkRef{
@@ -1224,7 +1223,7 @@ framework_maps:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		// require.Len(t, rp.CollectorJob.ReportingJobs, 10)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 12)
 		var frameworkJob *policy.ReportingJob
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			if rj.QrId == "//test.sth/framework/mondoo-ucf" {
