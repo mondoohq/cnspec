@@ -7,7 +7,7 @@ go 1.21
 toolchain go1.21.3
 
 require (
-	go.mondoo.com/cnquery/v9 v9.12.0
+	go.mondoo.com/cnquery/v9 v9.12.1
 	go.mondoo.com/mondoo-go v0.0.0-20231221074701-234c3c844ed9
 )
 
