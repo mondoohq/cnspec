@@ -142,6 +142,19 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	platform := runtime.Provider.Connection.GetAsset().GetPlatform()
+	inputPlatform := mondoogql.PlatformInput{
+		Name:    mondoogql.NewStringPtr(mondoogql.String(platform.Name)),
+		Release: mondoogql.NewStringPtr(mondoogql.String(platform.Version)),
+		Build:   mondoogql.NewStringPtr(mondoogql.String(platform.Build)),
+	}
+	inputLabels := []*mondoogql.KeyValueInput{}
+	for k := range platform.Labels {
+		inputLabels = append(inputLabels, &mondoogql.KeyValueInput{
+			Key:   mondoogql.String(k),
+			Value: mondoogql.NewStringPtr(mondoogql.String(platform.Labels[k])),
+		})
+	}
+	inputPlatform.Labels = &inputLabels
 	gqlVulnReport, err := mondooClient.GetIncognitoVulnReport(mondoogql.PlatformInput{
 		Name:    mondoogql.NewStringPtr(mondoogql.String(platform.Name)),
 		Release: mondoogql.NewStringPtr(mondoogql.String(platform.Version)),
