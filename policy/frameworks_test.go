@@ -4,8 +4,34 @@
 package policy
 
 import (
+	"context"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestUpdateChecksums_Group_ReviewStatus(t *testing.T) {
+	loader := DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("scan/testdata/compliance-bundle.mql.yaml")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	framework := bundle.Frameworks[0]
+	err = framework.UpdateChecksums(ctx, nil, nil, bundle.ToMap())
+	require.NoError(t, err)
+
+	oldChecksum := framework.GraphExecutionChecksum
+
+	framework.Groups[0].ReviewStatus = ReviewStatus_REJECTED
+	framework.ClearExecutionChecksums()
+
+	err = framework.UpdateChecksums(ctx, nil, nil, bundle.ToMap())
+	require.NoError(t, err)
+
+	// Make sure the execution checksum changes when the review status changed.
+	assert.NotEqual(t, oldChecksum, framework.GraphExecutionChecksum)
+}
 
 func TestResolvedFrameworkTopologicalSort(t *testing.T) {
 	framework := &ResolvedFramework{
