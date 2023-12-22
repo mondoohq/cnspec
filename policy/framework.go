@@ -374,6 +374,7 @@ func (f *Framework) updateAllChecksums(ctx context.Context,
 		}
 
 		executionChecksum = executionChecksum.AddUint(uint64(group.Type))
+		executionChecksum = executionChecksum.AddUint(uint64(group.ReviewStatus))
 
 		if group.Docs != nil {
 			contentChecksum = contentChecksum.
