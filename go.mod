@@ -38,7 +38,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.mondoo.com/ranger-rpc v0.5.3
 	go.opentelemetry.io/otel v1.21.0
-	gocloud.dev v0.34.0
+	gocloud.dev v0.35.0
 	golang.org/x/sync v0.5.0 // indirect
 	google.golang.org/genproto v0.0.0-20231212172506-995d672761c0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231212172506-995d672761c0
@@ -68,8 +68,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.10.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.2.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.16.8 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sns v1.21.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.24.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sns v1.25.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.28.2 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20231213181459-b0fcec718dc6 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
