@@ -6,6 +6,7 @@ package scan
 import (
 	"context"
 	"encoding/base64"
+	joinerrors "errors"
 	"fmt"
 	"os"
 	"slices"
@@ -227,7 +228,7 @@ func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.
 	}
 
 	var assetCandidates []*assetWithRuntime
-
+	var connectErrors []error
 	// we connect and perform discovery for each asset in the job inventory
 	for i := range assetList {
 		resolvedAsset, err := im.ResolveAsset(assetList[i])
@@ -248,6 +249,7 @@ func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.
 			Upstream: upstream,
 		}); err != nil {
 			log.Error().Err(err).Msg("unable to connect to asset")
+			connectErrors = append(connectErrors, err)
 			continue
 		}
 		resolvedAsset = runtime.Provider.Connection.Asset // to ensure we get all the information the connect call gave us
@@ -278,7 +280,7 @@ func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.
 		// assets = append(assets, runtime.Provider.Connection.Asset)
 	}
 
-	return assetList, assetCandidates, nil
+	return assetList, assetCandidates, joinerrors.Join(connectErrors...)
 }
 
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
@@ -300,11 +302,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 
+	var err error
 	var assets []*assetWithRuntime
-	assetList, assetCandidates, err := createAssetCandidateList(ctx, job, upstream, s.recording)
-	if err != nil {
-		return nil, err
-	}
+	assetList, assetCandidates, connectErrors := createAssetCandidateList(ctx, job, upstream, s.recording)
 
 	// For each asset candidate, we initialize a new runtime and connect to it.
 	// Within this process, we set up a catch-all deferred function, that shuts
@@ -534,7 +534,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		wg.Wait()
 	}
 	scanGroups.Wait() // wait for all scans to complete
-	return reporter.Reports(), nil
+	return reporter.Reports(), joinerrors.Join(connectErrors)
 }
 
 func batch[T any](list []T, batchSize int) [][]T {
