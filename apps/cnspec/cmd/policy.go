@@ -70,7 +70,7 @@ var policyCmd = &cobra.Command{
 var policyListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "list currently active policies in the connected space",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  cobra.MaximumNArgs(0),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
 	},
@@ -113,13 +113,25 @@ var policyListCmd = &cobra.Command{
 			policies = policyBundle.Policies
 		} else {
 			listReq := policy.ListReq{
-				OwnerMrn: opts.SpaceMrn,
+				OwnerMrn: "//policy.api.mondoo.app",
 			}
 			policyList, err := client.List(context.Background(), &listReq)
 			if err != nil {
 				log.Fatal().Err(err)
 			}
-			policies = policyList.Items
+			for _, policy := range policyList.Items {
+				policies = append(policies, policy)
+			}
+			listReq = policy.ListReq{
+				OwnerMrn: opts.SpaceMrn,
+			}
+			policyList, err = client.List(context.Background(), &listReq)
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			for _, policy := range policyList.Items {
+				policies = append(policies, policy)
+			}
 		}
 
 		for _, policy := range policies {
