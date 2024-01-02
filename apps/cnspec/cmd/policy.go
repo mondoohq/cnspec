@@ -211,9 +211,20 @@ var policyShowCmd = &cobra.Command{
 		}
 
 		for _, p := range policies {
+			var policyName string
+			if p.Mrn != "" {
+				index := strings.LastIndex(p.Mrn, "/")
+				if index == -1 {
+					policyName = p.Mrn
+				} else {
+					policyName = p.Mrn[index+1:]
+				}
+			} else {
+				policyName = ""
+			}
 			fmt.Println("→ Name:      ", p.Name)
 			fmt.Println("→ Version:   ", p.Version)
-			fmt.Println("→ UID:       ", p.Uid)
+			fmt.Println("→ UID:       ", policyName)
 			fmt.Println("→ MRN:       ", p.Mrn)
 			fmt.Println("→ License:   ", p.License)
 			fmt.Println("→ Authors:   ", p.Authors[0].Name)
