@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -209,32 +210,51 @@ var policyShowCmd = &cobra.Command{
 			policies = append(policies, policy)
 		}
 
-		for _, policy := range policies {
-			fmt.Println("→ Name:      ", policy.Name)
-			fmt.Println("→ Version:   ", policy.Version)
-			fmt.Println("→ UID:       ", policy.Uid)
-			fmt.Println("→ MRN:       ", policy.Mrn)
-			fmt.Println("→ License:   ", policy.License)
-			fmt.Println("→ Authors:   ", policy.Authors[0].Name)
-			if len(policy.Authors) > 1 {
-				for i := range policy.Authors {
+		for _, p := range policies {
+			fmt.Println("→ Name:      ", p.Name)
+			fmt.Println("→ Version:   ", p.Version)
+			fmt.Println("→ UID:       ", p.Uid)
+			fmt.Println("→ MRN:       ", p.Mrn)
+			fmt.Println("→ License:   ", p.License)
+			fmt.Println("→ Authors:   ", p.Authors[0].Name)
+			if len(p.Authors) > 1 {
+				for i := range p.Authors {
 					if i == 0 {
 						continue
 					}
-					fmt.Println("             ", policy.Authors[i].Name)
+					fmt.Println("             ", p.Authors[i].Name)
 				}
 			}
-			if policy.QueryCounts.TotalCount > 0 {
-				fmt.Println("→ Checks:    ", policy.QueryCounts.TotalCount)
+			if p.QueryCounts.TotalCount > 0 {
+				fmt.Println("→ Checks:    ", p.QueryCounts.TotalCount)
 			}
-			if policy.QueryCounts.DataCount > 0 {
-				fmt.Println("→ Querys:    ", policy.QueryCounts.DataCount)
+			if p.QueryCounts.DataCount > 0 {
+				fmt.Println("→ Querys:    ", p.QueryCounts.DataCount)
 			}
-			if len(policy.DependentPolicyMrns()) > 0 {
-				fmt.Println("→ Policies:  ", len(policy.DependentPolicyMrns()))
+			if len(p.DependentPolicyMrns()) > 0 {
+				fmt.Println("→ Policies:  ", len(p.DependentPolicyMrns()))
 			}
-			if policy.Summary != "" {
-				fmt.Println("→ Summary:   ", policy.Summary)
+			if p.Summary != "" {
+				fmt.Println("→ Summary:   ", p.Summary)
+			}
+			if p.Docs.Desc != "" {
+				fmt.Println("→ Description:")
+				fmt.Println(p.Docs.Desc)
+			}
+
+			var sections []string
+			for _, group := range p.Groups {
+				if group.Type == policy.GroupType_CHAPTER {
+					sections = append(sections, group.Title)
+				}
+			}
+			if len(sections) > 0 {
+				fmt.Println()
+				fmt.Println("→ Sections:")
+				for i, section := range sections {
+					fmt.Printf("%d. %s", i, section)
+				}
+
 			}
 		}
 	},
@@ -278,15 +298,27 @@ var policyDeleteCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal().Err(err)
 		}
+		if policy.Mrn == "" {
+			log.Fatal().Msg("Policy not found")
+		}
 		_, err = client.DeletePolicy(context.Background(), policyMrn)
 		if err != nil {
 			log.Fatal().Err(err)
 		}
+
+		var spaceName string
+		index := strings.LastIndex(opts.SpaceMrn, "/")
+		if index == -1 {
+			spaceName = opts.SpaceMrn
+		} else {
+			spaceName = opts.SpaceMrn[index+1:]
+		}
+
 		// Success message in green
 		fmt.Printf("\033[32m→ successfully removed policy from space\033[0m\n")
 		fmt.Println("  policy: " + policy.Name + " " + policy.Version)
 		fmt.Printf("\033[90m          %s\033[0m\n", policy.Mrn)
-		fmt.Println("  space: " + opts.SpaceMrn)
+		fmt.Println("  space: " + spaceName)
 		fmt.Printf("\033[90m          %s\033[0m\n", opts.SpaceMrn)
 	},
 }
