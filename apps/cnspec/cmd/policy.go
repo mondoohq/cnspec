@@ -34,6 +34,10 @@ func init() {
 	policyCmd.AddCommand(policyListCmd)
 	policyListCmd.Flags().StringP("file", "f", "", "list policies in a bundle file")
 
+	// policy list
+	policyCmd.AddCommand(policyDownloadCmd)
+	policyDownloadCmd.Flags().StringP("file", "f", "", "save policies in a bundle file")
+
 	// policy show
 	policyCmd.AddCommand(policyShowCmd)
 	policyShowCmd.Flags().StringP("file", "f", "", "show policies in a bundle file")
@@ -349,8 +353,6 @@ var policyUploadCmd = &cobra.Command{
 			registryEndpoint = defaultRegistryUrl
 		}
 
-		// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
-		// it is used without upstream config
 		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
 		if err != nil {
 			log.Fatal().Err(err)
@@ -366,6 +368,92 @@ var policyUploadCmd = &cobra.Command{
 		// Success message in green
 		fmt.Printf("\033[32m→ successfully uploaded %d policies to the space\033[0m", len(policyBundle.Policies))
 		for _, policy := range policyBundle.Policies {
+			fmt.Println("  policy: " + policy.Name + " " + policy.Version)
+			fmt.Printf("\033[90m          %s\033[0m\n", policy.Mrn)
+		}
+	},
+}
+
+var policyDownloadCmd = &cobra.Command{
+	Use:   "download",
+	Short: "download a policy from the connected space",
+	Args:  cobra.MinimumNArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		bundleFile := viper.GetString("file")
+		if bundleFile == "" {
+			log.Fatal().Msg("Output file must be provided via flag --file/-f")
+		}
+
+		policyMrn := ""
+		if len(args) == 1 {
+			policyMrn = args[0]
+		}
+
+		//var spaceName string
+		//index := strings.LastIndex(opts.SpaceMrn, "/")
+		//if index == -1 {
+		//spaceName = opts.SpaceMrn
+		//} else {
+		//spaceName = opts.SpaceMrn[index+1:]
+		//}
+
+		err := policy.IsPolicyMrn(policyMrn)
+		if err != nil {
+			// if the user provided a UID we must construct the MRN
+			policyMrnPrefix := "//policy.api.mondoo.app/policies/"
+			policyMrn = policyMrnPrefix + "/" + policyMrn
+		}
+
+		registryEndpoint := os.Getenv("REGISTRY_URL")
+		if registryEndpoint == "" {
+			registryEndpoint = defaultRegistryUrl
+		}
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
+		}
+
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		client, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+
+		pb, err := client.GetBundle(context.Background(), &policy.Mrn{Mrn: policyMrn})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to download policy")
+		}
+		policyYaml, err := pb.ToYAML()
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to convert policy to yaml")
+		}
+		err = os.WriteFile(bundleFile, policyYaml, 0o640)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to write policy bundle to file")
+		}
+
+		// Success message in green
+		fmt.Printf("\033[32m→ successfully downloaded %d policies to the space\033[0m\n", len(pb.Policies))
+		for _, policy := range pb.Policies {
 			fmt.Println("  policy: " + policy.Name + " " + policy.Version)
 			fmt.Printf("\033[90m          %s\033[0m\n", policy.Mrn)
 		}
