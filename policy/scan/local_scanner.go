@@ -416,6 +416,23 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}()
 
+	// Retrieve the space bundle if we are not running in incognito mode
+	var spaceBundleMap *policy.PolicyBundleMap
+	if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
+		client, err := upstream.InitClient()
+		if err != nil {
+			return nil, err
+		}
+		services, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
+		if err != nil {
+			return nil, err
+		}
+		spaceBundle, err := services.GetBundle(ctx, &policy.Mrn{Mrn: client.SpaceMrn})
+		if err == nil {
+			spaceBundleMap = spaceBundle.ToMap()
+		}
+	}
+
 	assetBatches := batch(assets, 100)
 	for i := range assetBatches {
 		batch := assetBatches[i]
@@ -519,6 +536,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 					UpstreamConfig:   upstream,
 					Asset:            asset,
 					Bundle:           job.Bundle,
+					SpaceBundleMap:   spaceBundleMap,
 					Props:            job.Props,
 					PolicyFilters:    preprocessPolicyFilters(job.PolicyFilters),
 					Ctx:              ctx,
@@ -636,6 +654,12 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			upstream, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
 			if err != nil {
 				return err
+			}
+			// If we have a space bundle at this point, make sure it is in the local cache for the asset
+			if job.SpaceBundleMap != nil {
+				if err := services.SetBundleMap(job.Ctx, job.SpaceBundleMap); err != nil {
+					return err
+				}
 			}
 			services.Upstream = upstream
 		}
@@ -984,15 +1008,24 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	var resolver policy.PolicyResolver = s.services
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
-	assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+
+	// For non-incognito scans we use the space bundle since it contains all queries and controls.
+	// Only exceptions are defined on per-asset basis. Exceptions aren't relevant in this context,
+	// so there is no need to retrieve the asset bundle.
+	bundleMrn := s.job.Asset.Mrn
+	if !s.job.UpstreamConfig.Incognito {
+		bundleMrn = s.job.UpstreamConfig.SpaceMrn
+	}
+
+	assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: bundleMrn})
 	if err != nil {
 		return nil, nil, err
 	}
 	log.Debug().Msg("client> got policy bundle")
 	logger.TraceJSON(assetBundle)
-	logger.DebugDumpJSON("assetBundle", assetBundle)
+	logger.DebugDumpYAML("spaceBundle", assetBundle)
 
-	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: bundleMrn})
 	if err != nil {
 		return nil, nil, err
 	}

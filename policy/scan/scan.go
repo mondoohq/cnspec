@@ -32,6 +32,7 @@ type AssetJob struct {
 	UpstreamConfig   *upstream.UpstreamConfig
 	Asset            *inventory.Asset
 	Bundle           *policy.Bundle
+	SpaceBundleMap   *policy.PolicyBundleMap
 	PolicyFilters    []string
 	Props            map[string]string
 	Ctx              context.Context
