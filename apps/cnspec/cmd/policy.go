@@ -34,6 +34,7 @@ func init() {
 	policyCmd.AddCommand(policyListCmd)
 	policyListCmd.Flags().StringP("file", "f", "", "list policies in a bundle file")
 	policyListCmd.Flags().BoolP("all", "a", false, "list all policies including disabled ones")
+	policyListCmd.Flags().StringP("type", "t", "POLICY", "Either POLICY or QUERYPACK (defaults to POLICY)")
 
 	// policy upload
 	policyCmd.AddCommand(policyUploadCmd)
@@ -90,6 +91,7 @@ var policyListCmd = &cobra.Command{
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
 		viper.BindPFlag("all", cmd.Flags().Lookup("all"))
+		viper.BindPFlag("type", cmd.Flags().Lookup("type"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, optsErr := config.Read()
@@ -139,7 +141,8 @@ var policyListCmd = &cobra.Command{
 				return
 			}
 			all := viper.GetBool("all")
-			policiesList, err := mondooClient.SearchPolicy(opts.SpaceMrn, !all)
+			catalogType := viper.GetString("type")
+			policiesList, err := mondooClient.SearchPolicy(opts.SpaceMrn, !all, catalogType)
 			if err != nil {
 				log.Fatal().Err(err).Msg("Failed to get space report")
 			}
@@ -382,6 +385,9 @@ var policyUploadCmd = &cobra.Command{
 
 		bundleLoader := policy.DefaultBundleLoader()
 		policyBundle, err := bundleLoader.BundleFromPaths(policyFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to load bundle from file")
+		}
 
 		_, err = client.SetBundle(context.Background(), policyBundle)
 		if err != nil {
