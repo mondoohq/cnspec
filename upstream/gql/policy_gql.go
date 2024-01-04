@@ -69,7 +69,7 @@ type PageInfo struct {
 	HasPreviousPage bool   `json:"hasPreviousPage"`
 }
 
-func (c *MondooClient) SearchPolicy(mrn string, activeOnly bool) (*ContentSearchResponse, error) {
+func (c *MondooClient) SearchPolicy(mrn string, activeOnly bool, catalogType string) (*ContentSearchResponse, error) {
 	var m struct {
 		Content struct {
 			TotalCount int `json:"totalCount"`
@@ -87,7 +87,7 @@ func (c *MondooClient) SearchPolicy(mrn string, activeOnly bool) (*ContentSearch
 	err := c.Query(context.Background(), &m, map[string]interface{}{
 		"input": mondoogql.ContentSearchInput{
 			ScopeMrn:     mondoogql.String(mrn),
-			CatalogType:  "POLICY",
+			CatalogType:  mondoogql.CatalogType(catalogType),
 			AssignedOnly: mondoogql.NewBooleanPtr(mondoogql.Boolean(activeOnly)),
 			Categories:   &[]mondoogql.String{"security"},
 		},
