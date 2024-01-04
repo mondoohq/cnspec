@@ -567,11 +567,6 @@ var policyDownloadCmd = &cobra.Command{
 			policyMrn = policyMrnPrefix + "/" + policyMrn
 		}
 
-		registryEndpoint := os.Getenv("REGISTRY_URL")
-		if registryEndpoint == "" {
-			registryEndpoint = defaultRegistryUrl
-		}
-
 		serviceAccount := opts.GetServiceCredential()
 		if serviceAccount == nil {
 			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
@@ -672,7 +667,10 @@ var policyLintCmd = &cobra.Command{
 
 		switch viper.GetString("output") {
 		case "cli":
-			out.Write(result.ToCli())
+			_, err := out.Write(result.ToCli())
+			if err != nil {
+				log.Fatal().Err(err).Msg("failed to write out the result")
+			}
 		case "sarif":
 			data, err := result.ToSarif(filepath.Dir(args[0]))
 			if err != nil {
@@ -744,7 +742,10 @@ var policyPublishCmd = &cobra.Command{
 			}
 
 			// render cli output
-			os.Stdout.Write(result.ToCli())
+			_, err = os.Stdout.Write(result.ToCli())
+			if err != nil {
+				log.Fatal().Err(err).Msg("failed to write out result")
+			}
 
 			if result.HasError() {
 				log.Fatal().Msg("invalid policy bundle")
