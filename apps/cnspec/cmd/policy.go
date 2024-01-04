@@ -19,7 +19,7 @@ import (
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/v9/internal/bundle"
 	"go.mondoo.com/cnspec/v9/policy"
-	"go.mondoo.com/ranger-rpc"
+	"go.mondoo.com/cnspec/v9/upstream/gql"
 )
 
 const (
@@ -33,14 +33,25 @@ func init() {
 	// policy list
 	policyCmd.AddCommand(policyListCmd)
 	policyListCmd.Flags().StringP("file", "f", "", "list policies in a bundle file")
+	policyListCmd.Flags().BoolP("all", "a", false, "list all policies including disabled ones")
 
-	// policy list
+	// policy upload
+	policyCmd.AddCommand(policyUploadCmd)
+	policyUploadCmd.Flags().StringP("file", "f", "", "upload policies in a bundle file")
+
+	// policy download
 	policyCmd.AddCommand(policyDownloadCmd)
 	policyDownloadCmd.Flags().StringP("file", "f", "", "save policies in a bundle file")
 
 	// policy show
 	policyCmd.AddCommand(policyShowCmd)
 	policyShowCmd.Flags().StringP("file", "f", "", "show policies in a bundle file")
+
+	// policy enable
+	policyCmd.AddCommand(policyEnableCmd)
+
+	// policy disable
+	policyCmd.AddCommand(policyDisableCmd)
 
 	// policy delete
 	policyCmd.AddCommand(policyDeleteCmd)
@@ -78,6 +89,7 @@ var policyListCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(0),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
+		viper.BindPFlag("all", cmd.Flags().Lookup("all"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, optsErr := config.Read()
@@ -91,23 +103,15 @@ var policyListCmd = &cobra.Command{
 			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
 		}
 
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-		if err != nil {
-			log.Error().Err(err).Msg(errorMessageServiceAccount)
-			os.Exit(ConfigurationErrorCode)
-		}
-
 		httpClient, err := opts.GetHttpClient()
 		if err != nil {
 			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
 		}
-		client, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
 		}
 
 		bundleFile := viper.GetString("file")
-		var policies []*policy.Policy
 
 		if bundleFile != "" {
 			bundleLoader := policy.DefaultBundleLoader()
@@ -115,39 +119,38 @@ var policyListCmd = &cobra.Command{
 			if err != nil {
 				log.Fatal().Err(err)
 			}
-			policies = policyBundle.Policies
+			for _, policy := range policyBundle.Policies {
+				fmt.Println(policy.Name + " " + policy.Version)
+				// Printing policy MRN in gray
+				if policy.Mrn != "" {
+					fmt.Printf("\033[90m  %s\033[0m\n", policy.Mrn)
+				} else {
+					fmt.Printf("\033[90m  %s\033[0m\n", policy.Uid)
+				}
+			}
 		} else {
-			listReq := policy.ListReq{
-				OwnerMrn: "//policy.api.mondoo.app",
+			upstreamConfig := upstream.UpstreamConfig{
+				ApiEndpoint: opts.UpstreamApiEndpoint(),
+				Creds:       serviceAccount,
 			}
-			policyList, err := client.List(context.Background(), &listReq)
-			if err != nil {
-				log.Fatal().Err(err)
-			}
-			for _, policy := range policyList.Items {
-				policies = append(policies, policy)
-			}
-			listReq = policy.ListReq{
-				OwnerMrn: opts.SpaceMrn,
-			}
-			policyList, err = client.List(context.Background(), &listReq)
-			if err != nil {
-				log.Fatal().Err(err)
-			}
-			for _, policy := range policyList.Items {
-				policies = append(policies, policy)
-			}
-		}
 
-		for _, policy := range policies {
-			// Printing policy name and version
-			fmt.Println(policy.Name + " " + policy.Version)
-
-			// Printing policy MRN in gray
-			if policy.Mrn != "" {
-				fmt.Printf("\033[90m  %s\033[0m\n", policy.Mrn)
-			} else {
-				fmt.Printf("\033[90m  %s\033[0m\n", policy.Uid)
+			mondooClient, err := gql.NewClient(upstreamConfig, httpClient)
+			if err != nil {
+				return
+			}
+			all := viper.GetBool("all")
+			policiesList, err := mondooClient.SearchPolicy(opts.SpaceMrn, !all)
+			if err != nil {
+				log.Fatal().Err(err).Msg("Failed to get space report")
+			}
+			for _, policy := range policiesList.Edges {
+				fmt.Println(policy.Node.Name + " " + policy.Node.Version)
+				// Printing policy MRN in gray
+				if policy.Node.MRN != "" {
+					fmt.Printf("\033[90m  %s\033[0m\n", policy.Node.MRN)
+				} else {
+					fmt.Printf("\033[90m  %s\033[0m\n", *policy.Node.UID)
+				}
 			}
 		}
 	},
@@ -342,20 +345,39 @@ var policyUploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "upload a policy to the connected space",
 	Args:  cobra.MinimumNArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		policyFile := ""
 		if len(args) == 1 {
 			policyFile = args[0]
 		}
 
-		registryEndpoint := os.Getenv("REGISTRY_URL")
-		if registryEndpoint == "" {
-			registryEndpoint = defaultRegistryUrl
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
 		}
 
-		client, err := policy.NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		client, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
 		}
 
 		bundleLoader := policy.DefaultBundleLoader()
@@ -374,8 +396,142 @@ var policyUploadCmd = &cobra.Command{
 	},
 }
 
+var policyEnableCmd = &cobra.Command{
+	Use:   "enable [MRN/UID]",
+	Short: "enable a policy in the connected space",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		policyMrn := ""
+		if len(args) == 1 {
+			policyMrn = args[0]
+		}
+
+		err := policy.IsPolicyMrn(policyMrn)
+		if err != nil {
+			// if the user provided a UID we must construct the MRN
+			policyMrnPrefix := "//policy.api.mondoo.app/policies/"
+			policyMrn = policyMrnPrefix + "/" + policyMrn
+		}
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
+		}
+
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		clientResolver, err := policy.NewPolicyResolverClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+
+		policyMrns := []string{policyMrn}
+		_, err = clientResolver.Assign(context.Background(), &policy.PolicyAssignment{PolicyMrns: policyMrns, AssetMrn: opts.SpaceMrn})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to enable policy")
+			return
+		}
+
+		clientHub, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+		p, err := clientHub.GetPolicy(context.Background(), &policy.Mrn{Mrn: policyMrn})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to get policy")
+			return
+		}
+
+		// Success message in green
+		fmt.Printf("\033[32m→ successfully enabled policy\033[0m\n")
+		fmt.Println("  policy: " + p.Name + " " + p.Version)
+		fmt.Printf("\033[90m          %s\033[0m\n", p.Mrn)
+	},
+}
+
+var policyDisableCmd = &cobra.Command{
+	Use:   "disable [MRN/UID]",
+	Short: "disable a policy in the connected space",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, optsErr := config.Read()
+		if optsErr != nil {
+			log.Fatal().Err(optsErr).Msg("could not load configuration")
+		}
+		config.DisplayUsedConfig()
+
+		policyMrn := ""
+		if len(args) == 1 {
+			policyMrn = args[0]
+		}
+
+		err := policy.IsPolicyMrn(policyMrn)
+		if err != nil {
+			// if the user provided a UID we must construct the MRN
+			policyMrnPrefix := "//policy.api.mondoo.app/policies/"
+			policyMrn = policyMrnPrefix + "/" + policyMrn
+		}
+
+		serviceAccount := opts.GetServiceCredential()
+		if serviceAccount == nil {
+			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
+		}
+
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+		if err != nil {
+			log.Error().Err(err).Msg(errorMessageServiceAccount)
+			os.Exit(ConfigurationErrorCode)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Fatal().Err(err).Msg("error while creating Mondoo API client")
+		}
+		clientResolver, err := policy.NewPolicyResolverClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+
+		policyMrns := []string{policyMrn}
+		_, err = clientResolver.Unassign(context.Background(), &policy.PolicyAssignment{PolicyMrns: policyMrns, AssetMrn: opts.SpaceMrn})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to disable policy")
+			return
+		}
+
+		clientHub, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not connect to the Mondoo Security Registry")
+		}
+		p, err := clientHub.GetPolicy(context.Background(), &policy.Mrn{Mrn: policyMrn})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to get policy")
+			return
+		}
+
+		// Success message in green
+		fmt.Printf("\033[32m→ successfully disabled policy\033[0m\n")
+		fmt.Println("  policy: " + p.Name + " " + p.Version)
+		fmt.Printf("\033[90m          %s\033[0m\n", p.Mrn)
+	},
+}
+
 var policyDownloadCmd = &cobra.Command{
-	Use:   "download",
+	Use:   "download [MRN/UID]",
 	Short: "download a policy from the connected space",
 	Args:  cobra.MinimumNArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
@@ -397,14 +553,6 @@ var policyDownloadCmd = &cobra.Command{
 		if len(args) == 1 {
 			policyMrn = args[0]
 		}
-
-		//var spaceName string
-		//index := strings.LastIndex(opts.SpaceMrn, "/")
-		//if index == -1 {
-		//spaceName = opts.SpaceMrn
-		//} else {
-		//spaceName = opts.SpaceMrn[index+1:]
-		//}
 
 		err := policy.IsPolicyMrn(policyMrn)
 		if err != nil {
@@ -557,10 +705,10 @@ var policyFmtCmd = &cobra.Command{
 }
 
 var policyPublishCmd = &cobra.Command{
-	Use:     "publish [path]",
-	Aliases: []string{"upload"},
-	Short:   "Add a user-owned policy to the Mondoo Security Registry.",
-	Args:    cobra.ExactArgs(1),
+	Use: "publish [path]",
+	//Aliases: []string{"upload"},
+	Short: "Add a user-owned policy to the Mondoo Security Registry.",
+	Args:  cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
 		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
