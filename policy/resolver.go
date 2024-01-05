@@ -1044,6 +1044,8 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 			ChildJobs:  map[string]*explorer.Impact{},
 			Datapoints: map[string]bool{},
 			Type:       ReportingJob_DATA_QUERY,
+			// FIXME: DEPRECATED, remove in v10.0 vv
+			DeprecatedV8IsData: true,
 		}
 		cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
 		cache.global.reportingJobsByUUID[uuid] = queryJob
