@@ -348,9 +348,6 @@ var policyUploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "upload a policy to the connected space",
 	Args:  cobra.MinimumNArgs(1),
-	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("file", cmd.Flags().Lookup("file"))
-	},
 	Run: func(cmd *cobra.Command, args []string) {
 		policyFile := ""
 		if len(args) == 1 {
@@ -363,6 +360,7 @@ var policyUploadCmd = &cobra.Command{
 		}
 		config.DisplayUsedConfig()
 
+		log.Info().Str("space", opts.SpaceMrn).Msg("add policy to space")
 		serviceAccount := opts.GetServiceCredential()
 		if serviceAccount == nil {
 			log.Fatal().Msg("cnspec has no credentials. Log in with `cnspec login`")
@@ -389,12 +387,14 @@ var policyUploadCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("Failed to load bundle from file")
 		}
 
+		policyBundle.OwnerMrn = opts.SpaceMrn
+
 		_, err = client.SetBundle(context.Background(), policyBundle)
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to upload policies")
 		}
 		// Success message in green
-		fmt.Printf("\033[32m→ successfully uploaded %d policies to the space\033[0m", len(policyBundle.Policies))
+		fmt.Printf("\033[32m→ successfully uploaded %d policies to the space\033[0m\n", len(policyBundle.Policies))
 		for _, policy := range policyBundle.Policies {
 			fmt.Println("  policy: " + policy.Name + " " + policy.Version)
 			fmt.Printf("\033[90m          %s\033[0m\n", policy.Mrn)
