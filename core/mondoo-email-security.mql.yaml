@@ -1,0 +1,251 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - uid: mondoo-email-security
+    name: Email Security Policy
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: host
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        ## Overview
+
+        This policy bundle verifies of best practices for authenticating email messages using the security protocols Sender Policy Framework (SPF), Domain Keys Identified Mail (DKIM), and Domain-based Message Authentication, Reporting & Conformance) DMARC.
+
+        ### Running the Policy
+
+        ```
+        cnspec scan host mondoo.com -f mondoo-email-security.mql.yaml
+        ```
+
+         ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+        If you have any suggestions for how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
+    groups:
+      - title: Email Security
+        filters: asset.platform == "host"
+        checks:
+          - uid: mondoo-email-security-txt-record
+          - uid: mondoo-email-security-a-record
+          - uid: mondoo-email-security-dmarc-ruf
+          - uid: mondoo-email-security-dmarc-rua
+          - uid: mondoo-email-security-dmarc-policy
+          - uid: mondoo-email-security-dmarc-version
+          - uid: mondoo-email-security-dmarc
+          - uid: mondoo-email-security-spf
+          - uid: mondoo-email-security-single-spf
+          - uid: mondoo-email-security-spf-length
+          - uid: mondoo-email-security-spf-whitespaces
+          - uid: mondoo-email-security-spf-fail
+          - uid: mondoo-email-security-spf-dns-record
+          - uid: mondoo-email-security-dkim
+queries:
+  - uid: mondoo-email-security-txt-record
+    title: Domain Apex should have a TXT record
+    mql: dns.records.where(type == "TXT") != empty
+    docs:
+      desc: |
+        A TXT record is a type of resource record in the Domain Name System (DNS) used to provide the ability to associate arbitrary text with a host or other name, such as human readable information about a server, network, data center, or other accounting information.
+      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set.
+      remediation: |
+        Add a TXT record to your DNS zone file.
+    refs:
+      - url: https://en.wikipedia.org/wiki/TXT_record
+        title: TXT Record
+  - uid: mondoo-email-security-a-record
+    title: Domain Apex should have an anchor (A) record
+    mql: dns.records.where(type == "A") != empty
+    docs:
+      desc: |
+        A domains apex anchor record should be set to something, even if it's a redirect.
+      audit: Run the `dig -t A <domain>` command and verify that there is an A record
+      remediation: |
+        Add an A record to your DNS zone file, consider using a redirect to your corporate website.
+    refs:
+      - url: https://www.easyredir.com/blog/what-is-an-apex-domain/
+        title: A Record
+  - uid: mondoo-email-security-spf
+    title: Ensure SPF record is set
+    mql: |
+      dns.params['TXT']['rData'].one(/v=spf1/)
+    docs:
+      desc: |
+        SPF (Sender Policy Framework) is a method of preventing email spoofing by allowing the owner of a domain to publish a list of mail servers that are authorized to send email from that domain.
+      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set
+      remediation: |
+        Add a TXT record to your DNS zone file with the following format:
+
+        ```
+        <domain> IN TXT "v=spf1 include:_spf.google.com ~all"
+        ```
+    refs:
+      - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework
+        title: SPF Record
+  - uid: mondoo-email-security-single-spf
+    title: Ensure there are not multiple SPF record
+    mql: dns.params['TXT']['rData'].where(/v=spf1/).length <= 1
+    docs:
+      desc: A domain should have only one SPF record.
+      audit: Run the `dig -t TXT <domain>` command and verify that there is only one SPF record
+      remediation: |
+        Remove all but one SPF record from your DNS zone file.
+    refs:
+      - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework
+        title: SPF Record
+  - uid: mondoo-email-security-spf-length
+    title: Ensure SPF record is not too long
+    mql: dns.params['TXT']['rData'].where(/v=spf1/).all(_.length <= 255)
+    docs:
+      desc: The SPF record should not be longer than 255 characters.
+      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is not longer than 255 characters
+      remediation: |
+        Remove some of the entries from your SPF record.
+    refs:
+      - url: https://datatracker.ietf.org/doc/html/rfc7208#section-3.3
+        title: Sender Policy Framework (SPF)for Authorizing Use of Domains in Email, Version 1
+  - uid: mondoo-email-security-spf-whitespaces
+    title: Ensure SPF record does not contain any excess whitespace
+    mql: dns.params['TXT']['rData'].where(/v=spf1/).where(/\s{2,}/) == empty
+    docs:
+      desc: The SPF record should not contain any unnecessary whitespace.
+      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record does not contain any whitespace
+      remediation: |
+        Remove all excess whitespace from your SPF record.
+    refs:
+      - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework
+        title: SPF Record
+  - uid: mondoo-email-security-spf-fail
+    title: SPF should be set to fail or soft fail all
+    mql: |
+      dns.params['TXT']['rData'].where(/v=spf1/).all(/all/)
+    docs:
+      desc: The SPF record should be set to soft fail all.
+      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set to fail or soft fail all
+      remediation: |
+        The SPF record should end with all.
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-spf-dns-record
+    title: Do not use deprecated SPF DNS Record Type
+    mql: dns.records.where(type == "SPF") == empty
+    docs:
+      desc: The SPF record should not use the deprecated SPF DNS Record Type.
+      audit: Run the `dig SPF <domain>` command and verify that the SPF record does not use the deprecated SPF DNS Record Type
+      remediation: |
+        Remove the deprecated SPF DNS Record Type from your SPF record.
+    refs:
+      - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework#DNS_SPF_Records
+        title: DNS SPF Records
+  - uid: mondoo-email-security-dmarc
+    title: Ensure DMARC DNS entry exists
+    mql: dns("_dmarc."+asset.name).records != empty
+    docs:
+      desc: DMARC is a scalable mechanism by which a mail-originating organization can express domain-level policies and preferences for message validation, disposition, and reporting that a mail-receiving organization can use to improve mail handling. 
+      audit: Run the `dig _dmarc.<domain>` command and verify that the DMARC DNS entry exists
+      remediation: |
+        Add the _dmarc entry to you DNS zone file.
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-dmarc-version
+    title: Ensure DMARC version 1
+    mql: dns("_dmarc."+asset.name).params['TXT']['rData'].all(/v=DMARC1/)
+    docs:
+      desc: Set the DMARC version in the TXT record to 1. 
+      audit: Run the `dig _dmarc.<domain>` command and verify that the DMARC TXT record contains `v=DMARC1`.
+      remediation: |
+        Add a TXT record to your DNS zone file with the following format:
+        
+        ```
+        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-dmarc-policy
+    title: Ensure DMARC policy is set to quarantine or reject
+    mql: dns("_dmarc." + asset.name).params['TXT']['rData'].all(/reject|quarantine/)
+    docs:
+      desc: In the DMARC implementation, you can tell email receivers how to handle email messages that fail authentication and protect your domain from spoofing and other phishing attacks. There are three DMARC policies (Monitoring Policy, Quarantine Policy, Reject Policy) that you can implement.
+      audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC policy quarantine or reject is configured.
+      remediation: |
+        Add a TXT record to your DNS zone file with the following format:
+        
+        ```
+        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-dmarc-rua
+    title: Ensure DMARC RUA tag
+    mql: dns("_dmarc."+asset.name).params['TXT']['rData'].all(/rua=mailto/)
+    docs:
+      desc: |
+        Receiving email servers regularly send DMARC Aggregate Reports (RUA) to all domains that have an adequately implemented DMARC policy. These reports contain encrypted aggregate statistics in XML format and are sent to the email addresses specified in the RUA tag of the DMARC record. In simpler terms, the RUA tag is used to specify one or more email addresses where you want to receive DMARC Aggregate Reports.
+      audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC RUA tag is configured.
+      remediation: |
+        Add a TXT record to your DNS zone file with the following format:
+        
+        ```
+        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-dmarc-ruf
+    title: Ensure DMARC RUF tag
+    mql: dns("_dmarc." + asset.name).params['TXT']['rData'].all(/ruf=mailto/)
+    docs:
+      desc: |
+        The RUF (or DMARC Failure or Forensic Report) tag was designed to inform domain administrators when emails fail SPF, DKIM, and DMARC authentication checks. The report includes sensitive details about the email, such as the header, subject, URLs, and attachments. However, many organizations prefer not to request RUF reports due to privacy and compliance concerns. The main goal is to comply with privacy laws and prevent data breaches.
+      audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC RUF tag is configured.
+      remediation: |
+        Add a TXT record to your DNS zone file with the following format:
+        
+        ```
+        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-dkim
+    title: Ensure DKIM is configured
+    props:
+      - uid: dkimSelectors
+        title: Define a list of valid DKIM selectors
+        mql: |
+          [
+            "google",
+            "selector1",
+            "selector2",
+            "k1",
+            "dkim",
+            "mx",
+            "mailjet"
+          ]
+    mql: |
+      props.dkimSelectors.contains(dns(_+"._domainkey."+asset.name).params['TXT']['rData'].first == /p=/)
+      props.dkimSelectors.contains(dns(_+"._domainkey."+asset.name).params['TXT']['rData'].first == /k=rsa/)
+    docs:
+      desc: |
+        A DKIM record is a specialized DNS TXT record that stores the public key used to verify an email's authenticity.
+      audit: Run the `dig TXT <selector>._domainkey.<domain>` command and verify that the public key is available.
+      remediation: |
+        Add a TXT record to your DNS zone file with the following format:
+        
+        ```
+        <selector>._domainkey.<domain> IN TXT "v=DKIM1; p=76E629F05F9EF6658533333F5ADE69A240657AB2FC3"
+        ```
+    refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
