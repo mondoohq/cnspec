@@ -130,9 +130,14 @@ var policyUploadCmd = &cobra.Command{
 	Use:   "upload my.mql.yaml",
 	Short: "Upload a policy to the connected space.",
 	Args:  cobra.ExactArgs(1),
-	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
-		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version")); err != nil {
+			return err
+		}
+		if err := viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint")); err != nil {
+			return err
+		}
+		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		bundleFile, err := policy.DefaultBundleLoader().BundleFromPaths(args[0])
@@ -148,7 +153,9 @@ var policyUploadCmd = &cobra.Command{
 		}
 		config.DisplayUsedConfig()
 
-		ensureProviders()
+		if err := ensureProviders(); err != nil {
+			log.Fatal().Err(err).Msg("could not initialize providers")
+		}
 		noLint := viper.GetBool("no-lint")
 		if !noLint {
 			files, err := policy.WalkPolicyBundleFiles(args[0])
@@ -163,7 +170,9 @@ var policyUploadCmd = &cobra.Command{
 			}
 
 			// render cli output
-			os.Stdout.Write(result.ToCli())
+			if _, err := os.Stdout.Write(result.ToCli()); err != nil {
+				log.Fatal().Err(err).Msg("could not write output")
+			}
 
 			if result.HasError() {
 				log.Fatal().Msg("invalid policy bundle")
@@ -572,7 +581,9 @@ var policyFmtCmd = &cobra.Command{
 
 func runPolicyFmt(cmd *cobra.Command, args []string) {
 	sort, _ := cmd.Flags().GetBool("sort")
-	ensureProviders()
+	if err := ensureProviders(); err != nil {
+		log.Fatal().Err(err).Msg("could not initialize providers")
+	}
 	for _, path := range args {
 		err := bundle.FormatRecursive(path, sort)
 		if err != nil {
@@ -588,16 +599,23 @@ var policyLintCmd = &cobra.Command{
 	Aliases: []string{"validate"},
 	Short:   "Lint a policy bundle.",
 	Args:    cobra.ExactArgs(1),
-	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
-		viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
+			return err
+		}
+		if err := viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file")); err != nil {
+			return err
+		}
+		return nil
 	},
 	Run: runPolicyLint,
 }
 
 func runPolicyLint(cmd *cobra.Command, args []string) {
 	log.Info().Str("file", args[0]).Msg("lint policy bundle")
-	ensureProviders()
+	if err := ensureProviders(); err != nil {
+		log.Fatal().Err(err).Msg("could not initialize providers")
+	}
 
 	files, err := policy.WalkPolicyBundleFiles(args[0])
 	if err != nil {
@@ -621,13 +639,17 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 
 	switch viper.GetString("output") {
 	case "cli":
-		out.Write(result.ToCli())
+		if _, err := out.Write(result.ToCli()); err != nil {
+			log.Fatal().Err(err).Msg("could not write output")
+		}
 	case "sarif":
 		data, err := result.ToSarif(filepath.Dir(args[0]))
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not generate sarif report")
 		}
-		out.Write(data)
+		if _, err := out.Write(data); err != nil {
+			log.Fatal().Err(err).Msg("could not write output")
+		}
 	}
 
 	if viper.GetString("output-file") == "" {
@@ -645,9 +667,14 @@ var policyDocsCmd = &cobra.Command{
 	Short:   "Retrieve only the docs for a bundle.",
 	Args:    cobra.MinimumNArgs(1),
 	Hidden:  true,
-	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))
-		viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids")); err != nil {
+			return err
+		}
+		if err := viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code")); err != nil {
+			return err
+		}
+		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		bundleLoader := policy.DefaultBundleLoader()
