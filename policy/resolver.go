@@ -568,6 +568,34 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 			Msg("resolver> phase 4: internal error, trying to turn policy jobs into queries")
 		return nil, err
 	}
+
+	// prune policies without children
+	// Its possible to get here and have a policy reporting job with no queries attached.
+	// This happens because a reporting job is created for a policy if its ComputedFilters
+	// field has a match with the asset filters. This field seems to include all filters
+	// for any checks/queries that are attached to the policy. If all the policies groups
+	// could say this group does not match, a reporting job for the policy is still created
+	// in this case, so we prune them here
+	reportingJobUUIDs := topologicalSortReportingJobs(collectorJob.ReportingJobs)
+	for _, rjUUID := range reportingJobUUIDs {
+		rj := collectorJob.ReportingJobs[rjUUID]
+		if rj.Type == ReportingJob_POLICY && (len(rj.ChildJobs)+len(rj.Datapoints) == 0) {
+			logCtx.Debug().
+				Str("policy", bundleMrn).
+				Str("uuid", rjUUID).
+				Str("qrId", rj.QrId).
+				Msg("resolver> phase 4: pruning empty policy reporting job")
+			delete(collectorJob.ReportingJobs, rj.Uuid)
+			for _, parentUuid := range rj.Notify {
+				parentJob, ok := collectorJob.ReportingJobs[parentUuid]
+				if !ok {
+					continue
+				}
+				delete(parentJob.ChildJobs, rj.Uuid)
+			}
+		}
+	}
+
 	logCtx.Debug().
 		Str("policy", bundleMrn).
 		Msg("resolver> phase 4: aggregate queries and jobs [ok]")
@@ -1689,4 +1717,34 @@ func CheckValidUntil(validUntil int64, mrn string) bool {
 		}
 	}
 	return stillIgnore
+}
+
+func topologicalSortReportingJobs(jobs map[string]*ReportingJob) []string {
+	graph := map[string][]string{}
+	for _, job := range jobs {
+		graph[job.Uuid] = []string{}
+		for child := range job.ChildJobs {
+			graph[job.Uuid] = append(graph[job.Uuid], child)
+		}
+	}
+
+	sortedJobs := []string{}
+	visited := map[string]bool{}
+	var visit func(string)
+	visit = func(uuid string) {
+		if visited[uuid] {
+			return
+		}
+		visited[uuid] = true
+		for _, child := range graph[uuid] {
+			visit(child)
+		}
+		sortedJobs = append(sortedJobs, uuid)
+	}
+
+	for uuid := range graph {
+		visit(uuid)
+	}
+
+	return sortedJobs
 }
