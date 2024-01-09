@@ -33,6 +33,8 @@ func init() {
 
 	policyCmd.AddCommand(policyUploadCmd)
 	policyCmd.AddCommand(policyDeleteCmd)
+	policyCmd.AddCommand(policyEnableCmd)
+	policyCmd.AddCommand(policyDisableCmd)
 
 	policyCmd.AddCommand(policyInfoCmd)
 	policyInfoCmd.Flags().StringP("file", "f", "", "a local bundle file")
@@ -224,7 +226,7 @@ var policyDeleteCmd = &cobra.Command{
 
 var policyInfoCmd = &cobra.Command{
 	Use:     "info UID/MRN",
-	Short:   "Delete a policy from the connected space.",
+	Short:   "Show more info about a policy from the connected space.",
 	Aliases: []string{"show"},
 	Args:    cobra.MaximumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -394,6 +396,78 @@ var policyDownloadCmd = &cobra.Command{
 	},
 }
 
+var policyEnableCmd = &cobra.Command{
+	Use:   "enable UID/MRN",
+	Short: "Enables a policy in the connected space.",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, err := config.Read()
+		if err != nil {
+			log.Error().Msgf("failed to get config: %s", err)
+			os.Exit(1)
+		}
+		config.DisplayUsedConfig()
+
+		policyMrn := args[0]
+		if !strings.HasPrefix(policyMrn, PolicyMrnPrefix) {
+			policyMrn = getPolicyMrn(opts.GetParentMrn(), args[0])
+		}
+
+		policyResolver, err := getPolicyResolverClient(opts)
+		if err != nil {
+			log.Error().Msgf("failed to create upstream client: %s", err)
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		_, err = policyResolver.Assign(ctx, &policy.PolicyAssignment{
+			AssetMrn:   opts.GetParentMrn(),
+			PolicyMrns: []string{policyMrn},
+		})
+		if err != nil {
+			log.Error().Msgf("failed to enable policy in space: %s", err)
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully enabled policy in space"))
+	},
+}
+
+var policyDisableCmd = &cobra.Command{
+	Use:   "disable UID/MRN",
+	Short: "Disables a policy in the connected space.",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, err := config.Read()
+		if err != nil {
+			log.Error().Msgf("failed to get config: %s", err)
+			os.Exit(1)
+		}
+		config.DisplayUsedConfig()
+
+		policyMrn := args[0]
+		if !strings.HasPrefix(policyMrn, PolicyMrnPrefix) {
+			policyMrn = getPolicyMrn(opts.GetParentMrn(), args[0])
+		}
+
+		policyResolver, err := getPolicyResolverClient(opts)
+		if err != nil {
+			log.Error().Msgf("failed to create upstream client: %s", err)
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		_, err = policyResolver.Unassign(ctx, &policy.PolicyAssignment{
+			AssetMrn:   opts.GetParentMrn(),
+			PolicyMrns: []string{policyMrn},
+		})
+		if err != nil {
+			log.Error().Msgf("failed to disable policy to space: %s", err)
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully disabled policy in space"))
+	},
+}
+
 func getGqlClient(opts *config.Config) (*gql.MondooClient, error) {
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount == nil {
@@ -436,4 +510,17 @@ func getPolicyHubClient(opts *config.Config) (*policy.PolicyHubClient, error) {
 		return nil, err
 	}
 	return policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+}
+
+func getPolicyResolverClient(opts *config.Config) (*policy.PolicyResolverClient, error) {
+	certAuth, err := upstream.NewServiceAccountRangerPlugin(opts.GetServiceCredential())
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient, err := opts.GetHttpClient()
+	if err != nil {
+		return nil, err
+	}
+	return policy.NewPolicyResolverClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
 }
