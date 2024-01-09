@@ -28,11 +28,12 @@ func init() {
 	rootCmd.AddCommand(policyCmd)
 
 	policyCmd.AddCommand(policyListCmd)
-	policyListCmd.Flags().StringP("file", "f", "", "list policies in a local bundle file")
+	policyListCmd.Flags().StringP("file", "f", "", "a local bundle file")
 
 	policyCmd.AddCommand(policyUploadCmd)
-
 	policyCmd.AddCommand(policyDeleteCmd)
+	policyCmd.AddCommand(policyInfoCmd)
+	policyInfoCmd.Flags().StringP("file", "f", "", "a local bundle file")
 }
 
 var policyCmd = &cobra.Command{
@@ -48,7 +49,6 @@ var policyListCmd = &cobra.Command{
 		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
 			return err
 		}
-
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -104,25 +104,14 @@ var policyUploadCmd = &cobra.Command{
 
 		opts, err := config.Read()
 		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
+			log.Error().Msgf("failed to get config: %s", err)
 			os.Exit(1)
 		}
 		config.DisplayUsedConfig()
 
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(opts.GetServiceCredential())
+		policyHub, err := getPolicyHubClient(opts)
 		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
-			os.Exit(1)
-		}
-
-		httpClient, err := opts.GetHttpClient()
-		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
-			os.Exit(1)
-		}
-		policyHub, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
-		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
+			log.Error().Msgf("failed to create upstream client: %s", err)
 			os.Exit(1)
 		}
 
@@ -171,7 +160,7 @@ var policyDeleteCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, err := config.Read()
 		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
+			log.Error().Msgf("failed to get config: %s", err)
 			os.Exit(1)
 		}
 		config.DisplayUsedConfig()
@@ -187,18 +176,7 @@ var policyDeleteCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(opts.GetServiceCredential())
-		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
-			os.Exit(1)
-		}
-
-		httpClient, err := opts.GetHttpClient()
-		if err != nil {
-			log.Error().Msgf("failed to upload policies: %s", err)
-			os.Exit(1)
-		}
-		policyHub, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		policyHub, err := getPolicyHubClient(opts)
 		if err != nil {
 			log.Error().Msgf("failed to upload policies: %s", err)
 			os.Exit(1)
@@ -239,6 +217,123 @@ var policyDeleteCmd = &cobra.Command{
 	},
 }
 
+var policyInfoCmd = &cobra.Command{
+	Use:     "info UID/MRN",
+	Short:   "Delete a policy from the connected space.",
+	Aliases: []string{"show"},
+	Args:    cobra.MaximumNArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
+			return err
+		}
+		return nil
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		bundleFile := viper.GetString("file")
+		var policies []*policy.Policy
+		if bundleFile != "" {
+			policyBundle, err := policy.DefaultBundleLoader().BundleFromPaths(bundleFile)
+			if err != nil {
+				log.Error().Msgf("failed to read bundle: %s", err)
+				os.Exit(1)
+			}
+			policies = policyBundle.Policies
+		} else {
+			opts, err := config.Read()
+			if err != nil {
+				log.Error().Msgf("failed to get config: %s", err)
+				os.Exit(1)
+			}
+			config.DisplayUsedConfig()
+
+			policyMrn := args[0]
+			if !strings.HasPrefix(policyMrn, PolicyMrnPrefix) {
+				policyMrn = getPolicyMrn(opts.GetParentMrn(), args[0])
+			}
+
+			policyHub, err := getPolicyHubClient(opts)
+			if err != nil {
+				log.Error().Msgf("failed to create upstream client: %s", err)
+				os.Exit(1)
+			}
+
+			ctx := context.Background()
+			p, err := policyHub.GetPolicy(ctx, &policy.Mrn{Mrn: policyMrn})
+			if err != nil {
+				log.Error().Msgf("failed to get policy: %s", err)
+				os.Exit(1)
+			}
+			policies = append(policies, p)
+		}
+
+		for _, p := range policies {
+			checks := map[string]struct{}{}
+			queries := map[string]struct{}{}
+			referenced := map[string]struct{}{}
+			sections := []*policy.PolicyGroup{}
+			for _, g := range p.Groups {
+				if g.Type == policy.GroupType_CHAPTER || g.Type == policy.GroupType_UNCATEGORIZED {
+					sections = append(sections, g)
+				}
+				for _, c := range g.Checks {
+					checks[c.Mrn] = struct{}{}
+				}
+				for _, q := range g.Queries {
+					queries[q.Mrn] = struct{}{}
+				}
+				for _, p := range g.Policies {
+					referenced[p.Mrn] = struct{}{}
+				}
+			}
+
+			fmt.Println("Name:        " + p.Name)
+			fmt.Println("Version:     " + p.Version)
+			if p.Uid != "" {
+				fmt.Println("UID:         " + p.Uid)
+			}
+			if p.Mrn != "" {
+				fmt.Println("MRN:         " + p.Mrn)
+			}
+			if len(p.Authors) > 0 {
+				fmt.Printf("Authors:     %s <%s>\n", p.Authors[0].Name, p.Authors[0].Email)
+				p.Authors = p.Authors[1:]
+				for _, a := range p.Authors {
+					fmt.Printf("          %s <%s>\n", a.Name, a.Email)
+				}
+			}
+			if p.License != "" {
+				fmt.Println("License:     " + p.License)
+			} else {
+				fmt.Println("License:     none")
+			}
+			if len(checks) > 0 {
+				fmt.Printf("Checks:      %d\n", len(checks))
+			}
+			if len(queries) > 0 {
+				fmt.Printf("Queries:     %d\n", len(queries))
+			}
+			if len(referenced) > 0 {
+				fmt.Printf("Policies:    %d\n", len(referenced))
+			}
+			if p.Summary != "" {
+				fmt.Println("Summary:     " + p.Summary)
+			}
+			if p.Docs != nil && p.Docs.Desc != "" {
+				fmt.Println("Description:")
+				fmt.Println(p.Docs.Desc)
+			}
+			if len(sections) > 0 {
+				fmt.Println("Sections:")
+				for i, s := range sections {
+					fmt.Printf("  %d. %s\n", i+1, s.Title)
+				}
+			}
+			fmt.Println()
+			fmt.Println()
+		}
+	},
+}
+
 func getGqlClient(opts *config.Config) (*gql.MondooClient, error) {
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount == nil {
@@ -268,4 +363,17 @@ func getGqlClient(opts *config.Config) (*gql.MondooClient, error) {
 func getPolicyMrn(spaceMrn, policyUid string) string {
 	prefix := strings.Replace(spaceMrn, "captain", "policy", 1)
 	return prefix + "/policies/" + policyUid
+}
+
+func getPolicyHubClient(opts *config.Config) (*policy.PolicyHubClient, error) {
+	certAuth, err := upstream.NewServiceAccountRangerPlugin(opts.GetServiceCredential())
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient, err := opts.GetHttpClient()
+	if err != nil {
+		return nil, err
+	}
+	return policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
 }
