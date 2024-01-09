@@ -19,6 +19,11 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+const (
+	PolicyMrnPrefix          = "//policy.api.mondoo.app"
+	PrivatePoliciesMrnPrefix = "//policy.api.mondoo.app/spaces"
+)
+
 func init() {
 	rootCmd.AddCommand(policyCmd)
 
@@ -26,6 +31,8 @@ func init() {
 	policyListCmd.Flags().StringP("file", "f", "", "list policies in a local bundle file")
 
 	policyCmd.AddCommand(policyUploadCmd)
+
+	policyCmd.AddCommand(policyDeleteCmd)
 }
 
 var policyCmd = &cobra.Command{
@@ -88,9 +95,6 @@ var policyUploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "Upload a policy to the connected space.",
 	Args:  cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		return nil
-	},
 	Run: func(cmd *cobra.Command, args []string) {
 		bundle, err := policy.DefaultBundleLoader().BundleFromPaths(args[0])
 		if err != nil {
@@ -144,25 +148,9 @@ var policyUploadCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		upstreamPolicies, err := cnspec_upstream.SearchPolicy(ctx, mondooClient, opts.GetParentMrn(), nil, ptr.To(false), ptr.To(true))
-		if err != nil {
-			log.Error().Msgf("failed to get upstream policies: %s", err)
-			os.Exit(1)
-		}
-
-		filteredPolicies := make([]*policy.Policy, 0, len(bundle.Policies))
-		for _, policy := range upstreamPolicies {
-			for _, p := range bundle.Policies {
-				if strings.Contains(policy.Mrn, p.Uid) {
-					filteredPolicies = append(filteredPolicies, policy)
-					break
-				}
-			}
-		}
-
-		for _, p := range filteredPolicies {
+		for _, p := range bundle.Policies {
 			fmt.Println("  policy: " + p.Name + " " + p.Version)
-			fmt.Println(termenv.String("    " + p.Mrn).Foreground(theme.DefaultTheme.Colors.Disabled))
+			fmt.Println(termenv.String("    " + getPolicyMrn(opts.GetParentMrn(), p.Uid)).Foreground(theme.DefaultTheme.Colors.Disabled))
 		}
 
 		space, err := cnspec_upstream.GetSpace(ctx, mondooClient, opts.GetParentMrn())
@@ -170,6 +158,81 @@ var policyUploadCmd = &cobra.Command{
 			log.Error().Msgf("failed to get space: %s", err)
 			os.Exit(1)
 		}
+
+		fmt.Println("  space: " + space.Name)
+		fmt.Println(termenv.String("    " + space.Mrn).Foreground(theme.DefaultTheme.Colors.Disabled))
+	},
+}
+
+var policyDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete a policy from the connected space.",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		opts, err := config.Read()
+		if err != nil {
+			log.Error().Msgf("failed to upload policies: %s", err)
+			os.Exit(1)
+		}
+		config.DisplayUsedConfig()
+
+		policyMrn := args[0]
+		if !strings.HasPrefix(policyMrn, PolicyMrnPrefix) {
+			policyMrn = getPolicyMrn(opts.GetParentMrn(), args[0])
+		}
+
+		// Add a meaningful error when trying to delete a public policy
+		if !strings.HasPrefix(policyMrn, PrivatePoliciesMrnPrefix) {
+			log.Error().Msgf("failed to delete policy: it is only possible to delete private policies")
+			os.Exit(1)
+		}
+
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(opts.GetServiceCredential())
+		if err != nil {
+			log.Error().Msgf("failed to upload policies: %s", err)
+			os.Exit(1)
+		}
+
+		httpClient, err := opts.GetHttpClient()
+		if err != nil {
+			log.Error().Msgf("failed to upload policies: %s", err)
+			os.Exit(1)
+		}
+		policyHub, err := policy.NewPolicyHubClient(opts.UpstreamApiEndpoint(), httpClient, certAuth)
+		if err != nil {
+			log.Error().Msgf("failed to upload policies: %s", err)
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		p, err := policyHub.GetPolicy(ctx, &policy.Mrn{Mrn: policyMrn})
+		if err != nil {
+			log.Error().Msgf("failed to get policy: %s", err)
+			os.Exit(1)
+		}
+
+		_, err = policyHub.DeletePolicy(ctx, &policy.Mrn{Mrn: policyMrn})
+		if err != nil {
+			log.Error().Msgf("failed to delete policy: %s", err)
+			os.Exit(1)
+		}
+
+		log.Info().Msg(theme.DefaultTheme.Success("successfully removed policy from space"))
+
+		mondooClient, err := getGqlClient(opts)
+		if err != nil {
+			log.Error().Msgf("failed to create upstream client: %s", err)
+			os.Exit(1)
+		}
+
+		space, err := cnspec_upstream.GetSpace(ctx, mondooClient, opts.GetParentMrn())
+		if err != nil {
+			log.Error().Msgf("failed to get space: %s", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("  policy: " + p.Name + " " + p.Version)
+		fmt.Println(termenv.String("    " + p.Mrn).Foreground(theme.DefaultTheme.Colors.Disabled))
 
 		fmt.Println("  space: " + space.Name)
 		fmt.Println(termenv.String("    " + space.Mrn).Foreground(theme.DefaultTheme.Colors.Disabled))
@@ -200,4 +263,9 @@ func getGqlClient(opts *config.Config) (*gql.MondooClient, error) {
 	}
 
 	return mondooClient, nil
+}
+
+func getPolicyMrn(spaceMrn, policyUid string) string {
+	prefix := strings.Replace(spaceMrn, "captain", "policy", 1)
+	return prefix + "/policies/" + policyUid
 }
