@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/muesli/termenv"
@@ -12,11 +14,13 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v9/cli/config"
 	"go.mondoo.com/cnquery/v9/cli/theme"
+	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnspec/v9/internal/bundle"
 	"go.mondoo.com/cnspec/v9/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v9/upstream"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	"k8s.io/utils/ptr"
 )
 
@@ -27,20 +31,41 @@ const (
 
 func init() {
 	rootCmd.AddCommand(policyCmd)
-
-	policyCmd.AddCommand(policyListCmd)
-	policyListCmd.Flags().StringP("file", "f", "", "a local bundle file")
-
-	policyCmd.AddCommand(policyUploadCmd)
 	policyCmd.AddCommand(policyDeleteCmd)
 	policyCmd.AddCommand(policyEnableCmd)
 	policyCmd.AddCommand(policyDisableCmd)
+	policyCmd.AddCommand(policyInitCmd)
 
-	policyCmd.AddCommand(policyInfoCmd)
+	// list
+	policyCmd.AddCommand(policyListCmd)
+	policyListCmd.Flags().StringP("file", "f", "", "a local bundle file")
+
+	// upload
+	policyUploadCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
+	policyUploadCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
+	policyCmd.AddCommand(policyUploadCmd)
+
+	// lint
+	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
+	policyLintCmd.Flags().String("output-file", "", "Set output file")
+	policyCmd.AddCommand(policyLintCmd)
+
+	// fmt
+	policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
+	policyCmd.AddCommand(policyFmtCmd)
+
+	// info
 	policyInfoCmd.Flags().StringP("file", "f", "", "a local bundle file")
+	policyCmd.AddCommand(policyInfoCmd)
 
-	policyCmd.AddCommand(policyDownloadCmd)
+	// download
 	policyDownloadCmd.Flags().StringP("output", "o", "", "output file")
+	policyCmd.AddCommand(policyDownloadCmd)
+
+	// docs
+	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
+	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyCmd.AddCommand(policyDocsCmd)
 }
 
 var policyCmd = &cobra.Command{
@@ -102,8 +127,12 @@ var policyUploadCmd = &cobra.Command{
 	Use:   "upload my.mql.yaml",
 	Short: "Upload a policy to the connected space.",
 	Args:  cobra.ExactArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
+		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		bundle, err := policy.DefaultBundleLoader().BundleFromPaths(args[0])
+		bundleFile, err := policy.DefaultBundleLoader().BundleFromPaths(args[0])
 		if err != nil {
 			log.Error().Msgf("failed to upload policies: %s", err)
 			os.Exit(1)
@@ -116,22 +145,55 @@ var policyUploadCmd = &cobra.Command{
 		}
 		config.DisplayUsedConfig()
 
+		ensureProviders()
+		noLint := viper.GetBool("no-lint")
+		if !noLint {
+			files, err := policy.WalkPolicyBundleFiles(args[0])
+			if err != nil {
+				log.Fatal().Err(err).Msg("could not find bundle files")
+			}
+
+			runtime := providers.DefaultRuntime()
+			result, err := bundle.Lint(runtime.Schema(), files...)
+			if err != nil {
+				log.Fatal().Err(err).Msg("could not lint bundle files")
+			}
+
+			// render cli output
+			os.Stdout.Write(result.ToCli())
+
+			if result.HasError() {
+				log.Fatal().Msg("invalid policy bundle")
+			} else {
+				log.Info().Msg("valid policy bundle")
+			}
+		}
+
 		policyHub, err := getPolicyHubClient(opts)
 		if err != nil {
 			log.Error().Msgf("failed to create upstream client: %s", err)
 			os.Exit(1)
 		}
 
+		// override policy version
+		overrideVersion := viper.GetString("policy-version")
+		if len(overrideVersion) > 0 {
+			for i := range bundleFile.Policies {
+				p := bundleFile.Policies[i]
+				p.Version = overrideVersion
+			}
+		}
+
 		ctx := context.Background()
-		bundle.OwnerMrn = opts.GetParentMrn()
-		_, err = policyHub.SetBundle(ctx, bundle)
+		bundleFile.OwnerMrn = opts.GetParentMrn()
+		_, err = policyHub.SetBundle(ctx, bundleFile)
 		if err != nil {
 			log.Error().Msgf("failed to upload policies: %s", err)
 			os.Exit(1)
 		}
 
-		successMsg := fmt.Sprintf("successfully uploaded %d ", len(bundle.Policies))
-		if len(bundle.Policies) > 1 {
+		successMsg := fmt.Sprintf("successfully uploaded %d ", len(bundleFile.Policies))
+		if len(bundleFile.Policies) > 1 {
 			successMsg += "policies"
 		} else {
 			successMsg += "policy"
@@ -144,7 +206,7 @@ var policyUploadCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		for _, p := range bundle.Policies {
+		for _, p := range bundleFile.Policies {
 			fmt.Println("  policy: " + p.Name + " " + p.Version)
 			fmt.Println(termenv.String("    " + getPolicyMrn(opts.GetParentMrn(), p.Uid)).Foreground(theme.DefaultTheme.Colors.Disabled))
 		}
@@ -465,6 +527,135 @@ var policyDisableCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully disabled policy in space"))
+	},
+}
+
+//go:embed policy-example.mql.yaml
+var embedPolicyTemplate []byte
+
+var policyInitCmd = &cobra.Command{
+	Use:     "init [path]",
+	Short:   "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
+	Aliases: []string{"new"},
+	Args:    cobra.MaximumNArgs(1),
+	Run:     runPolicyInit,
+}
+
+func runPolicyInit(cmd *cobra.Command, args []string) {
+	name := "example-policy.mql.yaml"
+	if len(args) == 1 {
+		name = args[0]
+	}
+
+	_, err := os.Stat(name)
+	if err == nil {
+		log.Fatal().Msgf("Policy '%s' already exists", name)
+	}
+
+	err = os.WriteFile(name, embedPolicyTemplate, 0o640)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Could not write '%s'", name)
+	}
+	log.Info().Msgf("Example policy file written to %s", name)
+}
+
+var policyFmtCmd = &cobra.Command{
+	Use:     "format [path]",
+	Aliases: []string{"fmt"},
+	Short:   "Apply style formatting to one or more policy bundles.",
+	Args:    cobra.MinimumNArgs(1),
+	Run:     runPolicyFmt,
+}
+
+func runPolicyFmt(cmd *cobra.Command, args []string) {
+	sort, _ := cmd.Flags().GetBool("sort")
+	ensureProviders()
+	for _, path := range args {
+		err := bundle.FormatRecursive(path, sort)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
+	log.Info().Msg("completed formatting policy bundle(s)")
+}
+
+var policyLintCmd = &cobra.Command{
+	Use:     "lint [path]",
+	Aliases: []string{"validate"},
+	Short:   "Lint a policy bundle.",
+	Args:    cobra.ExactArgs(1),
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+		viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
+	},
+	Run: runPolicyLint,
+}
+
+func runPolicyLint(cmd *cobra.Command, args []string) {
+	log.Info().Str("file", args[0]).Msg("lint policy bundle")
+	ensureProviders()
+
+	files, err := policy.WalkPolicyBundleFiles(args[0])
+	if err != nil {
+		log.Fatal().Err(err).Msg("could not find bundle files")
+	}
+
+	runtime := providers.DefaultRuntime()
+	result, err := bundle.Lint(runtime.Schema(), files...)
+	if err != nil {
+		log.Fatal().Err(err).Msg("could not lint bundle files")
+	}
+
+	out := os.Stdout
+	if viper.GetString("output-file") != "" {
+		out, err = os.Create(viper.GetString("output-file"))
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not create output file")
+		}
+		defer out.Close()
+	}
+
+	switch viper.GetString("output") {
+	case "cli":
+		out.Write(result.ToCli())
+	case "sarif":
+		data, err := result.ToSarif(filepath.Dir(args[0]))
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not generate sarif report")
+		}
+		out.Write(data)
+	}
+
+	if viper.GetString("output-file") == "" {
+		if result.HasError() {
+			log.Fatal().Msg("invalid policy bundle")
+		} else {
+			log.Info().Msg("valid policy bundle")
+		}
+	}
+}
+
+var policyDocsCmd = &cobra.Command{
+	Use:     "docs [path]",
+	Aliases: []string{},
+	Short:   "Retrieve only the docs for a bundle.",
+	Args:    cobra.MinimumNArgs(1),
+	Hidden:  true,
+	PreRun: func(cmd *cobra.Command, args []string) {
+		viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))
+		viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		bundleLoader := policy.DefaultBundleLoader()
+		bundle, err := bundleLoader.BundleFromPaths(args...)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to load bundle")
+		}
+
+		noIDs := viper.GetBool("no-ids")
+		noCode := viper.GetBool("no-code")
+		bundle.ExtractDocs(os.Stdout, noIDs, noCode)
 	},
 }
 

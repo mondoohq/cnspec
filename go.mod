@@ -41,6 +41,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240108191215-35c7eff3a6b1
 	google.golang.org/protobuf v1.32.0
 	gopkg.in/yaml.v3 v3.0.1
+	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
 	sigs.k8s.io/yaml v1.4.0
 )
 

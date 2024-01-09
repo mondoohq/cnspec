@@ -5,10 +5,7 @@ package cmd
 
 import (
 	"context"
-	_ "embed"
-	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -22,21 +19,21 @@ import (
 
 func init() {
 	// policy init
-	policyBundlesCmd.AddCommand(policyInitCmd)
+	policyBundlesCmd.AddCommand(policyInitDeprecatedCmd)
 
 	// validate
-	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
-	policyLintCmd.Flags().String("output-file", "", "Set output file")
-	policyBundlesCmd.AddCommand(policyLintCmd)
+	policyLintDeprecatedCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
+	policyLintDeprecatedCmd.Flags().String("output-file", "", "Set output file")
+	policyBundlesCmd.AddCommand(policyLintDeprecatedCmd)
 
 	// fmt
-	policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
-	policyBundlesCmd.AddCommand(policyFmtCmd)
+	policyFmtDeprecatedCmd.Flags().Bool("sort", false, "sort the bundle.")
+	policyBundlesCmd.AddCommand(policyFmtDeprecatedCmd)
 
 	// docs
-	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
-	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
-	policyBundlesCmd.AddCommand(policyDocsCmd)
+	policyDocsDeprecatedCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
+	policyDocsDeprecatedCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyBundlesCmd.AddCommand(policyDocsDeprecatedCmd)
 
 	// publish
 	policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
@@ -44,6 +41,26 @@ func init() {
 	policyBundlesCmd.AddCommand(policyPublishCmd)
 
 	rootCmd.AddCommand(policyBundlesCmd)
+}
+
+var policyInitDeprecatedCmd = &cobra.Command{
+	Use:        "init [path]",
+	Short:      "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
+	Aliases:    []string{"new"},
+	Hidden:     true,
+	Deprecated: "use `cnspec policy init` instead",
+	Args:       cobra.MaximumNArgs(1),
+	Run:        runPolicyInit,
+}
+
+var policyFmtDeprecatedCmd = &cobra.Command{
+	Use:        "format [path]",
+	Aliases:    []string{"fmt"},
+	Hidden:     true,
+	Deprecated: "use `cnspec policy fmt` instead",
+	Short:      "Apply style formatting to one or more policy bundles.",
+	Args:       cobra.MinimumNArgs(1),
+	Run:        runPolicyFmt,
 }
 
 // ensureProviders ensures that all providers are locally installed
@@ -57,114 +74,33 @@ func ensureProviders() error {
 }
 
 var policyBundlesCmd = &cobra.Command{
-	Use:   "bundle",
-	Short: "Manage policy bundles.",
+	Use:        "bundle",
+	Hidden:     true,
+	Deprecated: "use `cnspec policy` instead",
+	Short:      "Manage policy bundles.",
 }
 
-//go:embed policy-example.mql.yaml
-var embedPolicyTemplate []byte
-
-var policyInitCmd = &cobra.Command{
-	Use:   "init [path]",
-	Short: "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
-	Args:  cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		name := "example-policy.mql.yaml"
-		if len(args) == 1 {
-			name = args[0]
-		}
-
-		_, err := os.Stat(name)
-		if err == nil {
-			log.Fatal().Msgf("Policy '%s' already exists", name)
-		}
-
-		err = os.WriteFile(name, embedPolicyTemplate, 0o640)
-		if err != nil {
-			log.Fatal().Err(err).Msgf("Could not write '%s'", name)
-		}
-		log.Info().Msgf("Example policy file written to %s", name)
-	},
-}
-
-var policyLintCmd = &cobra.Command{
-	Use:     "lint [path]",
-	Aliases: []string{"validate"},
-	Short:   "Lint a policy bundle.",
-	Args:    cobra.ExactArgs(1),
+var policyLintDeprecatedCmd = &cobra.Command{
+	Use:        "lint [path]",
+	Aliases:    []string{"validate"},
+	Hidden:     true,
+	Deprecated: "use `cnspec policy lint` instead",
+	Short:      "Lint a policy bundle.",
+	Args:       cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
 	},
-	Run: func(cmd *cobra.Command, args []string) {
-		log.Info().Str("file", args[0]).Msg("lint policy bundle")
-		ensureProviders()
-
-		files, err := policy.WalkPolicyBundleFiles(args[0])
-		if err != nil {
-			log.Fatal().Err(err).Msg("could not find bundle files")
-		}
-
-		runtime := providers.DefaultRuntime()
-		result, err := bundle.Lint(runtime.Schema(), files...)
-		if err != nil {
-			log.Fatal().Err(err).Msg("could not lint bundle files")
-		}
-
-		out := os.Stdout
-		if viper.GetString("output-file") != "" {
-			out, err = os.Create(viper.GetString("output-file"))
-			if err != nil {
-				log.Fatal().Err(err).Msg("could not create output file")
-			}
-			defer out.Close()
-		}
-
-		switch viper.GetString("output") {
-		case "cli":
-			out.Write(result.ToCli())
-		case "sarif":
-			data, err := result.ToSarif(filepath.Dir(args[0]))
-			if err != nil {
-				log.Fatal().Err(err).Msg("could not generate sarif report")
-			}
-			out.Write(data)
-		}
-
-		if viper.GetString("output-file") == "" {
-			if result.HasError() {
-				log.Fatal().Msg("invalid policy bundle")
-			} else {
-				log.Info().Msg("valid policy bundle")
-			}
-		}
-	},
-}
-
-var policyFmtCmd = &cobra.Command{
-	Use:     "format [path]",
-	Aliases: []string{"fmt"},
-	Short:   "Apply style formatting to one or more policy bundles.",
-	Args:    cobra.MinimumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		sort, _ := cmd.Flags().GetBool("sort")
-		ensureProviders()
-		for _, path := range args {
-			err := bundle.FormatRecursive(path, sort)
-			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
-		}
-		log.Info().Msg("completed formatting policy bundle(s)")
-	},
+	Run: runPolicyLint,
 }
 
 var policyPublishCmd = &cobra.Command{
-	Use:     "publish [path]",
-	Aliases: []string{"upload"},
-	Short:   "Add a user-owned policy to the Mondoo Security Registry.",
-	Args:    cobra.ExactArgs(1),
+	Use:        "publish [path]",
+	Aliases:    []string{"upload"},
+	Hidden:     true,
+	Deprecated: "use `cnspec policy upload` instead",
+	Short:      "Add a user-owned policy to the Mondoo Security Registry.",
+	Args:       cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
 		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
@@ -261,12 +197,13 @@ var policyPublishCmd = &cobra.Command{
 	},
 }
 
-var policyDocsCmd = &cobra.Command{
-	Use:     "docs [path]",
-	Aliases: []string{},
-	Short:   "Retrieve only the docs for a bundle.",
-	Args:    cobra.MinimumNArgs(1),
-	Hidden:  true,
+var policyDocsDeprecatedCmd = &cobra.Command{
+	Use:        "docs [path]",
+	Aliases:    []string{},
+	Hidden:     true,
+	Deprecated: "use `cnspec policy docs` instead",
+	Short:      "Retrieve only the docs for a bundle.",
+	Args:       cobra.MinimumNArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))
 		viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
