@@ -41,7 +41,7 @@ var policyCmd = &cobra.Command{
 }
 
 var policyListCmd = &cobra.Command{
-	Use:   "list",
+	Use:   "list [-f bundle]",
 	Short: "List enabled policies in the connected space.",
 	Args:  cobra.MaximumNArgs(0),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -92,7 +92,7 @@ var policyListCmd = &cobra.Command{
 }
 
 var policyUploadCmd = &cobra.Command{
-	Use:   "upload",
+	Use:   "upload my.mql.yaml",
 	Short: "Upload a policy to the connected space.",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -165,7 +165,7 @@ var policyUploadCmd = &cobra.Command{
 }
 
 var policyDeleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete UID/MRN",
 	Short: "Delete a policy from the connected space.",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
