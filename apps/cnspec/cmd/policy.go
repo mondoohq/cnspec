@@ -16,6 +16,7 @@ import (
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnspec/v9/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v9/upstream"
+	"gopkg.in/yaml.v2"
 	"k8s.io/utils/ptr"
 )
 
@@ -32,8 +33,12 @@ func init() {
 
 	policyCmd.AddCommand(policyUploadCmd)
 	policyCmd.AddCommand(policyDeleteCmd)
+
 	policyCmd.AddCommand(policyInfoCmd)
 	policyInfoCmd.Flags().StringP("file", "f", "", "a local bundle file")
+
+	policyCmd.AddCommand(policyDownloadCmd)
+	policyDownloadCmd.Flags().StringP("output", "o", "", "output file")
 }
 
 var policyCmd = &cobra.Command{
@@ -331,6 +336,61 @@ var policyInfoCmd = &cobra.Command{
 			fmt.Println()
 			fmt.Println()
 		}
+	},
+}
+
+var policyDownloadCmd = &cobra.Command{
+	Use:   "download UID/MRN",
+	Short: "download a policy to a local bundle file.",
+	Args:  cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
+			return err
+		}
+		return nil
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		outputFile := viper.GetString("output")
+		if outputFile == "" {
+			log.Error().Msgf("output file is required")
+			os.Exit(1)
+		}
+
+		opts, err := config.Read()
+		if err != nil {
+			log.Error().Msgf("failed to get config: %s", err)
+			os.Exit(1)
+		}
+		config.DisplayUsedConfig()
+
+		policyMrn := args[0]
+		if !strings.HasPrefix(policyMrn, PolicyMrnPrefix) {
+			policyMrn = getPolicyMrn(opts.GetParentMrn(), args[0])
+		}
+
+		policyHub, err := getPolicyHubClient(opts)
+		if err != nil {
+			log.Error().Msgf("failed to create upstream client: %s", err)
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		p, err := policyHub.GetBundle(ctx, &policy.Mrn{Mrn: policyMrn})
+		if err != nil {
+			log.Error().Msgf("failed to download policy: %s", err)
+			os.Exit(1)
+		}
+
+		data, err := yaml.Marshal(p)
+		if err != nil {
+			log.Error().Msgf("failed to marshal policy: %s", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(outputFile, data, 0o644); err != nil {
+			log.Error().Msgf("failed to store policy: %s", err)
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully downloaded to ", outputFile))
 	},
 }
 
