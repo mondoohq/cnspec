@@ -15,8 +15,15 @@ type PageInfo struct {
 	HasPreviousPage bool   `json:"hasPreviousPage"`
 }
 
-func SearchPolicy(ctx context.Context, c *gql.MondooClient, scopeMrn string, activeOnly bool) ([]*policy.Policy, error) {
-	var m struct {
+func SearchPolicy(
+	ctx context.Context,
+	c *gql.MondooClient,
+	scopeMrn string,
+	assingedOnly,
+	includePublic,
+	includePrivate *bool,
+) ([]*policy.Policy, error) {
+	var q struct {
 		Content struct {
 			TotalCount int `json:"totalCount"`
 			Edges      []struct {
@@ -32,23 +39,48 @@ func SearchPolicy(ctx context.Context, c *gql.MondooClient, scopeMrn string, act
 		} `graphql:"content(input: $input)"`
 	}
 
-	err := c.Query(ctx, &m, map[string]interface{}{
-		"input": mondoogql.ContentSearchInput{
-			ScopeMrn:     mondoogql.String(scopeMrn),
-			CatalogType:  mondoogql.CatalogType("POLICY"),
-			AssignedOnly: mondoogql.NewBooleanPtr(mondoogql.Boolean(activeOnly)),
-		},
+	input := mondoogql.ContentSearchInput{
+		ScopeMrn:    mondoogql.String(scopeMrn),
+		CatalogType: mondoogql.CatalogType("POLICY"),
+	}
+	if assingedOnly != nil {
+		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assingedOnly))
+	}
+	if includePublic != nil {
+		input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))
+	}
+	if includePrivate != nil {
+		input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
+	}
+	err := c.Query(ctx, &q, map[string]interface{}{
+		"input": input,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	policies := make([]*policy.Policy, 0, len(m.Content.Edges))
-	for _, edge := range m.Content.Edges {
+	policies := make([]*policy.Policy, 0, len(q.Content.Edges))
+	for _, edge := range q.Content.Edges {
 		policies = append(policies, &policy.Policy{
 			Mrn:  edge.Node.Policy.Mrn,
 			Name: edge.Node.Policy.Name,
 		})
 	}
 	return policies, nil
+}
+
+type Space struct {
+	Mrn  string
+	Name string
+}
+
+func GetSpace(ctx context.Context, c *gql.MondooClient, mrn string) (*Space, error) {
+	var q struct {
+		Space Space `graphql:"space(mrn: $mrn)"`
+	}
+	err := c.Query(ctx, &q, map[string]interface{}{"mrn": mondoogql.String(mrn)})
+	if err != nil {
+		return nil, err
+	}
+	return &q.Space, nil
 }
