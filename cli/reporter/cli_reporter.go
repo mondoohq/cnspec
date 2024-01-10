@@ -101,8 +101,7 @@ func NewReporter(format Format, incognito bool) *Reporter {
 	}
 }
 
-// This allows the packer-plugin-cnspec to set the output writer directly
-// The plugin needs this to work the the packer output
+// This allows to set the output writer directly
 func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 	r.out = out
 	return r
