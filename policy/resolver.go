@@ -1169,7 +1169,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 				prop := query.Props[j]
 
 				// we only get this if there is an override higher up in the policy
-				override, name, _ := cache.propsCache.Get(ctx, prop.Mrn)
+				override, name, _ := cache.propsCache.Get(prop.Mrn)
 				if override != nil {
 					prop = override
 				}
