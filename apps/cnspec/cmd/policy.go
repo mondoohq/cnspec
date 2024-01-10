@@ -62,7 +62,7 @@ func init() {
 	policyCmd.AddCommand(policyInfoCmd)
 
 	// download
-	policyDownloadCmd.Flags().StringP("output", "o", "", "output file")
+	policyDownloadCmd.Flags().StringP("file", "f", "", "output file")
 	policyCmd.AddCommand(policyDownloadCmd)
 
 	// docs
@@ -420,13 +420,13 @@ var policyDownloadCmd = &cobra.Command{
 	Short: "download a policy to a local bundle file.",
 	Args:  cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
+		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
 			return err
 		}
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		outputFile := viper.GetString("output")
+		outputFile := viper.GetString("file")
 		if outputFile == "" {
 			log.Error().Msgf("output file is required")
 			os.Exit(1)
