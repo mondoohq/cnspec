@@ -587,7 +587,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	upstream := s.upstreamServices(job.UpstreamConfig)
 	if upstream != nil {
 		// get new gql client
-		mondooClient, err := gql.NewClient(*job.UpstreamConfig, s._upstreamClient.HttpClient)
+		mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
 		if err != nil {
 			return
 		}
