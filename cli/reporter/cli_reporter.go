@@ -101,6 +101,12 @@ func NewReporter(format Format, incognito bool) *Reporter {
 	}
 }
 
+// This allows to set the output writer directly
+func (r *Reporter) WithOutput(out io.Writer) *Reporter {
+	r.out = out
+	return r
+}
+
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
 	switch r.Format {
 	case Compact:
