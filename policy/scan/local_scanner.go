@@ -289,7 +289,27 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	var reporter Reporter
 	switch job.ReportType {
 	case ReportType_FULL:
-		reporter = NewAggregateReporter()
+		bundle := job.Bundle
+
+		// If we are not running an incognito scan we need the bundle from upstream
+		if !upstream.Incognito {
+			client, err := upstream.InitClient()
+			if err != nil {
+				return nil, err
+			}
+
+			services, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
+			if err != nil {
+				return nil, err
+			}
+
+			// We retrieve the bundle for the parent (which is the space). That bundle contains all policies, queries and checks
+			bundle, err = services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn})
+			if err != nil {
+				return nil, err
+			}
+		}
+		reporter = NewAggregateReporter(bundle)
 	case ReportType_ERROR:
 		reporter = NewErrorReporter()
 	case ReportType_NONE:
@@ -798,7 +818,7 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
-	bundle, resolvedPolicy, err := s.runPolicy()
+	resolvedPolicy, err := s.runPolicy()
 	if err != nil {
 		return nil, err
 	}
@@ -806,7 +826,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	ar := &AssetReport{
 		Mrn:            s.job.Asset.Mrn,
 		ResolvedPolicy: resolvedPolicy,
-		Bundle:         bundle,
 	}
 
 	report, err := s.getReport()
@@ -979,29 +998,22 @@ func (s *localAssetScanner) ensureBundle() error {
 	return err
 }
 
-func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy, error) {
+func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	var hub policy.PolicyHub = s.services
 	var resolver policy.PolicyResolver = s.services
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
-	assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
-	if err != nil {
-		return nil, nil, err
-	}
-	log.Debug().Msg("client> got policy bundle")
-	logger.TraceJSON(assetBundle)
-	logger.DebugDumpJSON("assetBundle", assetBundle)
 
 	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got policy filters")
 	logger.TraceJSON(rawFilters)
 
 	filters, err := s.UpdateFilters(&explorer.Mqueries{Items: rawFilters.Items}, 5*time.Second)
 	if err != nil {
-		return s.job.Bundle, nil, err
+		return nil, err
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> shell update filters")
 	logger.DebugJSON(filters)
@@ -1011,7 +1023,7 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 		AssetFilters: filters,
 	})
 	if err != nil {
-		return s.job.Bundle, resolvedPolicy, err
+		return resolvedPolicy, err
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got resolved policy bundle for asset")
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
@@ -1019,10 +1031,10 @@ func (s *localAssetScanner) runPolicy() (*policy.Bundle, *policy.ResolvedPolicy,
 	features := cnquery.GetFeatures(s.job.Ctx)
 	err = executor.ExecuteResolvedPolicy(s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return assetBundle, resolvedPolicy, nil
+	return resolvedPolicy, nil
 }
 
 func (s *localAssetScanner) getReport() (*policy.Report, error) {
