@@ -1002,7 +1002,17 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	var hub policy.PolicyHub = s.services
 	var resolver policy.PolicyResolver = s.services
 
-	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
+	// If we run in debug mode, download the asset bundle and dump it to disk
+	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
+		log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
+		assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+		if err != nil {
+			return nil, err
+		}
+		log.Debug().Msg("client> got policy bundle")
+		logger.TraceJSON(assetBundle)
+		logger.DebugDumpYAML("assetBundle", assetBundle)
+	}
 
 	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
 	if err != nil {
