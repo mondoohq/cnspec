@@ -44,9 +44,9 @@ var serveCmd = &cobra.Command{
 	Short: "Start cnspec in background mode.",
 
 	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("scan_interval.timer", cmd.Flags().Lookup("timer"))
-		viper.BindPFlag("scan_interval.splay", cmd.Flags().Lookup("splay"))
-		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		_ = viper.BindPFlag("scan_interval.timer", cmd.Flags().Lookup("timer"))
+		_ = viper.BindPFlag("scan_interval.splay", cmd.Flags().Lookup("splay"))
+		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
