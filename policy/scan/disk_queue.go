@@ -24,7 +24,7 @@ type diskQueueConfig struct {
 var defaultDqueConfig = diskQueueConfig{
 	dir:      "/tmp/cnspec-queue", // TODO: consider configurable path
 	filename: "disk-queue",
-	maxSize:  500,
+	maxSize:  50000,
 	sync:     false,
 }
 
