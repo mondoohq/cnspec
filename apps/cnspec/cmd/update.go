@@ -34,6 +34,11 @@ var updateCmd = &cobra.Command{
 	Long: `This command detects the platform and runs either https://install.mondoo.com/sh
 	or https://install.mondoo.com/ps1 to update to the latest package`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// we need silence usage here, otherwise we get the usage printed in case of error
+		// see https://github.com/spf13/cobra/issues/340
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+
 		opts, optsErr := config.Read()
 		if optsErr != nil {
 			return errors.New("could not load configuration")
@@ -53,6 +58,12 @@ func runUnixUpdate(hc *http.Client) error {
 	scriptData, err := download(hc, unixUpdateScript)
 	if err != nil {
 		return err
+	}
+
+	// check if bash is available
+	_, err = exec.LookPath("bash")
+	if err != nil {
+		return errors.New("bash is not available, cannot run update script")
 	}
 
 	file, err := os.CreateTemp("", "mondoo")
