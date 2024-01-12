@@ -405,7 +405,8 @@ policies:
 
 		// Recompute the checksums so that the resolved policy is invalidated
 		assetPolicy.InvalidateAllChecksums()
-		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, conf)
+		err = assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, conf)
+		require.NoError(t, err)
 
 		// Set the asset policy
 		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
@@ -425,7 +426,8 @@ policies:
 
 		// Recompute the checksums so that the resolved policy is invalidated
 		assetPolicy.InvalidateAllChecksums()
-		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, conf)
+		err = assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, conf)
+		require.NoError(t, err)
 
 		// Set the asset policy
 		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)

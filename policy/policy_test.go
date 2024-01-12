@@ -160,8 +160,10 @@ func TestPolicyChecksums(t *testing.T) {
 				Name: assetMrn.String(),
 			}
 			assetBundle := &policy.Bundle{Policies: []*policy.Policy{assetPolicy}}
-			assetBundle.Compile(ctx, conf.Schema, nil)
-			assetPolicy.UpdateChecksums(ctx, nil, nil, assetBundle.ToMap(), conf)
+			_, err = assetBundle.Compile(ctx, conf.Schema, nil)
+			require.NoError(t, err)
+			err = assetPolicy.UpdateChecksums(ctx, nil, nil, assetBundle.ToMap(), conf)
+			require.NoError(t, err)
 
 			runContentTest(assetPolicy, "changing asset policy mrn", func(p *policy.Policy) {
 				p.Mrn += "bling"
