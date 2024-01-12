@@ -265,12 +265,7 @@ policies:
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rp)
-	require.Len(t, rp.CollectorJob.ReportingJobs, 2)
-	for _, rj := range rp.CollectorJob.ReportingJobs {
-		if rj.Type == policy.ReportingJob_CHECK {
-			require.Fail(t, "expected no check reporting job")
-		}
-	}
+	require.Len(t, rp.CollectorJob.ReportingJobs, 0)
 }
 
 func TestResolve_IgnoredQuery(t *testing.T) {
@@ -1284,4 +1279,86 @@ func requireUnique(t *testing.T, items []string) {
 		}
 		seen[item] = true
 	}
+}
+
+// TestResolve_PoliciesMatchingAgainstIncorrectPlatform tests that policies are not matched against
+// assets that do not match the asset filter. It was possible that the reporting structure had
+// a node for the policy, but no actual reporting job for it. To the user, this could look
+// like the policy was executed. The issue was that a policy was considered matching if either
+// the groups or any of its queries filters matched. This tests to ensure that if the policies
+// group filtered it out, it doesn't show up in the reporting structure
+func TestResolve_PoliciesMatchingAgainstIncorrectPlatform(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+- uid: policy2
+  groups:
+  - type: chapter
+    filters: "false"
+    checks:
+    - uid: check2
+- uid: pack1
+  groups:
+  - type: chapter
+    filters: "true"
+    queries:
+    - uid: dataquery1
+- uid: pack2
+  groups:
+  - type: chapter
+    filters: "false"
+    queries:
+    - uid: dataquery2
+
+queries:
+- uid: check1
+  title: check1
+  mql: true
+- uid: check2
+  title: check2
+  filters: |
+    true
+  mql: |
+    1 == 1
+- uid: dataquery1
+  title: dataquery1
+  mql: |
+    asset.name
+- uid: dataquery2
+  title: dataquery2
+  filters: |
+    true
+  mql: |
+    asset.version
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1"), policyMrn("policy2"), policyMrn("pack1"), policyMrn("pack2")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+		require.NotNil(t, qrIdToRj[policyMrn("policy1")])
+		require.NotNil(t, qrIdToRj[policyMrn("pack1")])
+		require.Nil(t, qrIdToRj[policyMrn("policy2")])
+		require.Nil(t, qrIdToRj[policyMrn("pack2")])
+	})
 }
