@@ -297,6 +297,15 @@ func (s *LocalServices) GetPolicyFilters(ctx context.Context, mrn *Mrn) (*Mqueri
 		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
 
+	// If there is an upstream set, we should prefer using that always.
+	if s.Upstream != nil {
+		mqueries, err := s.Upstream.GetPolicyFilters(ctx, mrn)
+		if err != nil {
+			return nil, err
+		}
+		return mqueries, nil
+	}
+
 	filters, err := s.DataLake.GetPolicyFilters(ctx, mrn.Mrn)
 	if err != nil {
 		return nil, errors.New("failed to get policy filters: " + err.Error())

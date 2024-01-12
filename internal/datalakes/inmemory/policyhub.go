@@ -107,15 +107,6 @@ func (db *Db) GetRawPolicy(ctx context.Context, mrn string) (*policy.Policy, err
 
 // GetPolicyFilters retrieves the list of asset filters for a policy (fast)
 func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mquery, error) {
-	// If there is an upstream set, we should prefer using that always.
-	if db.services.Upstream != nil {
-		mqueries, err := db.services.Upstream.GetPolicyFilters(ctx, &policy.Mrn{Mrn: mrn})
-		if err != nil {
-			return nil, err
-		}
-		return mqueries.Items, nil
-	}
-
 	r, err := db.GetRawPolicy(ctx, mrn)
 	if err != nil {
 		return nil, err
