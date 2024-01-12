@@ -12,7 +12,6 @@ import (
 type AssetReport struct {
 	Mrn            string
 	ResolvedPolicy *policy.ResolvedPolicy
-	Bundle         *policy.Bundle
 	Report         *policy.Report
 }
 

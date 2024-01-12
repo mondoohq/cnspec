@@ -22,13 +22,14 @@ type AggregateReporter struct {
 	worstScore       *policy.Score
 }
 
-func NewAggregateReporter() *AggregateReporter {
+func NewAggregateReporter(bundle *policy.Bundle) *AggregateReporter {
 	return &AggregateReporter{
 		assets:           make(map[string]*inventory.Asset),
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 		assetVulnReports: map[string]*mvd.VulnReport{},
+		bundle:           bundle,
 	}
 }
 
@@ -39,7 +40,6 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
 
-	r.bundle = results.Bundle
 	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
 		r.worstScore = results.Report.Score
 	}
