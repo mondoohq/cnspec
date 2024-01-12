@@ -23,6 +23,7 @@ import (
 	"go.mondoo.com/cnspec/v9/internal/bundle"
 	"go.mondoo.com/cnspec/v9/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v9/upstream"
+	mondoogql "go.mondoo.com/mondoo-go"
 	"gopkg.in/yaml.v3"
 	"k8s.io/utils/ptr"
 )
@@ -42,6 +43,7 @@ func init() {
 	// list
 	policyCmd.AddCommand(policyListCmd)
 	policyListCmd.Flags().StringP("file", "f", "", "a local bundle file")
+	policyListCmd.Flags().BoolP("all", "a", false, "list all policies, not only the enabled ones (applicable only for upstream)")
 
 	// upload
 	policyUploadCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
@@ -84,17 +86,22 @@ var policyListCmd = &cobra.Command{
 		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
 			return err
 		}
+		if err := viper.BindPFlag("all", cmd.Flags().Lookup("all")); err != nil {
+			return err
+		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		bundleFile := viper.GetString("file")
-		var policies []*policy.Policy
+		var policies []*cnspec_upstream.UpstreamPolicy
 		if bundleFile != "" {
 			policyBundle, err := policy.DefaultBundleLoader().BundleFromPaths(bundleFile)
 			if err != nil {
 				return err
 			}
-			policies = policyBundle.Policies
+			for _, p := range policyBundle.Policies {
+				policies = append(policies, &cnspec_upstream.UpstreamPolicy{Policy: *p})
+			}
 		} else {
 			opts, err := config.Read()
 			if err != nil {
@@ -107,14 +114,31 @@ var policyListCmd = &cobra.Command{
 				return err
 			}
 
+			assignedOnly := !viper.GetBool("all")
 			policies, err = cnspec_upstream.SearchPolicy(
-				context.Background(), mondooClient, opts.GetParentMrn(), ptr.To(true), ptr.To(true), ptr.To(true))
+				context.Background(), mondooClient, opts.GetParentMrn(), ptr.To(assignedOnly), ptr.To(true), ptr.To(true))
 			if err != nil {
 				return err
 			}
 		}
 		for _, policy := range policies {
-			fmt.Println(policy.Name + " " + policy.Version)
+			extraInfo := []string{}
+			if policy.Assigned {
+				if policy.Action == mondoogql.PolicyActionIgnore {
+					extraInfo = append(extraInfo, "preview")
+				} else {
+					extraInfo = append(extraInfo, "enabled")
+				}
+			}
+			if policy.TrustLevel != "" {
+				extraInfo = append(extraInfo, strings.ToLower(string(policy.TrustLevel)))
+			}
+
+			extraInfoStr := ""
+			if len(extraInfo) > 0 {
+				extraInfoStr = " (" + strings.Join(extraInfo, ", ") + ")"
+			}
+			fmt.Println(policy.Name + " " + policy.Version + extraInfoStr)
 			id := policy.Uid
 			if policy.Mrn != "" {
 				id = policy.Mrn

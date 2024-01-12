@@ -18,6 +18,13 @@ type PageInfo struct {
 	HasPreviousPage bool   `json:"hasPreviousPage"`
 }
 
+type UpstreamPolicy struct {
+	policy.Policy
+	TrustLevel mondoogql.TrustLevel
+	Action     mondoogql.PolicyAction
+	Assigned   bool
+}
+
 func SearchPolicy(
 	ctx context.Context,
 	c *gql.MondooClient,
@@ -25,7 +32,7 @@ func SearchPolicy(
 	assingedOnly,
 	includePublic,
 	includePrivate *bool,
-) ([]*policy.Policy, error) {
+) ([]*UpstreamPolicy, error) {
 	var q struct {
 		Content struct {
 			TotalCount int `json:"totalCount"`
@@ -33,8 +40,11 @@ func SearchPolicy(
 				Cursor string `json:"cursor"`
 				Node   struct {
 					Policy struct {
-						Mrn  string
-						Name string
+						Mrn        string
+						Name       string
+						TrustLevel mondoogql.TrustLevel
+						Action     mondoogql.PolicyAction
+						Assigned   bool
 					} `graphql:"... on Policy"`
 				} `json:"node"`
 			} `json:"edges"`
@@ -62,11 +72,16 @@ func SearchPolicy(
 		return nil, err
 	}
 
-	policies := make([]*policy.Policy, 0, len(q.Content.Edges))
+	policies := make([]*UpstreamPolicy, 0, len(q.Content.Edges))
 	for _, edge := range q.Content.Edges {
-		policies = append(policies, &policy.Policy{
-			Mrn:  edge.Node.Policy.Mrn,
-			Name: edge.Node.Policy.Name,
+		policies = append(policies, &UpstreamPolicy{
+			Policy: policy.Policy{
+				Mrn:  edge.Node.Policy.Mrn,
+				Name: edge.Node.Policy.Name,
+			},
+			TrustLevel: edge.Node.Policy.TrustLevel,
+			Action:     edge.Node.Policy.Action,
+			Assigned:   edge.Node.Policy.Assigned,
 		})
 	}
 	return policies, nil
