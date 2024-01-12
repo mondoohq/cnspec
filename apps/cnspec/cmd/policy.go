@@ -125,9 +125,9 @@ var policyListCmd = &cobra.Command{
 			extraInfo := []string{}
 			if policy.Assigned {
 				if policy.Action == mondoogql.PolicyActionIgnore {
-					extraInfo = append(extraInfo, "preview")
+					extraInfo = append(extraInfo, termenv.String("preview").Foreground(theme.DefaultTheme.Colors.Medium).String())
 				} else {
-					extraInfo = append(extraInfo, "enabled")
+					extraInfo = append(extraInfo, theme.DefaultTheme.Success("enabled"))
 				}
 			}
 			if policy.TrustLevel != "" {
