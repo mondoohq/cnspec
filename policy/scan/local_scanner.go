@@ -1020,6 +1020,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got policy filters")
 	logger.TraceJSON(rawFilters)
+	logger.DebugDumpYAML("policyFilters", rawFilters)
 
 	filters, err := s.UpdateFilters(&explorer.Mqueries{Items: rawFilters.Items}, 5*time.Second)
 	if err != nil {
