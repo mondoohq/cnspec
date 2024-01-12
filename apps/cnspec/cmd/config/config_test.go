@@ -29,6 +29,10 @@ private_key: |
   MIG2AgE....C0Dvs=
   -----END PRIVATE KEY-----
 space_mrn: //captain.api.mondoo.app/spaces/musing-saha-952142
+
+scan_interval:
+  timer: 10
+  splay: 20
 `
 
 	viper.SetConfigType("yaml")
@@ -40,4 +44,8 @@ space_mrn: //captain.api.mondoo.app/spaces/musing-saha-952142
 	assert.Equal(t, "//agents.api.mondoo.app/spaces/musing-saha-952142/serviceaccounts/1zDY7cJ7bA84JxxNBWDxBdui2xE", cfg.ServiceAccountMrn)
 	assert.Equal(t, "-----BEGIN PRIVATE KEY-----\nMIG2AgE....C0Dvs=\n-----END PRIVATE KEY-----\n", cfg.PrivateKey)
 	assert.Equal(t, "-----BEGIN CERTIFICATE-----\nMIICV .. fis=\n-----END CERTIFICATE-----\n", cfg.Certificate)
+
+	assert.Equal(t, 10, cfg.ScanInterval.Timer)
+	assert.Equal(t, 20, cfg.ScanInterval.Splay)
+
 }

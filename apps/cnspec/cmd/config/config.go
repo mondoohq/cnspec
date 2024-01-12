@@ -9,6 +9,11 @@ import (
 	"go.mondoo.com/cnquery/v10/cli/config"
 )
 
+const (
+	DefaultScanIntervalTimer = 60
+	DefaultScanIntervalSplay = 60
+)
+
 func ReadConfig() (*CliConfig, error) {
 	// load viper config into a struct
 	var opts CliConfig
@@ -27,4 +32,12 @@ type CliConfig struct {
 	// Asset Category
 	Category               string `json:"category,omitempty" mapstructure:"category"`
 	AutoDetectCICDCategory bool   `json:"detect-cicd,omitempty" mapstructure:"detect-cicd"`
+
+	// Configure scan interval
+	ScanInterval *ScanInterval `json:"scan_interval,omitempty" mapstructure:"scan_interval"`
+}
+
+type ScanInterval struct {
+	Timer int `json:"timer,omitempty" mapstructure:"timer"`
+	Splay int `json:"splay,omitempty" mapstructure:"splay"`
 }
