@@ -1115,11 +1115,22 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 
 	if prop.Mrn == "" {
 		uid := prop.Uid
+		forUids := make([]string, len(prop.For))
+		for i := range prop.For {
+			forUids[i] = prop.For[i].Uid
+		}
+
 		if err := prop.RefreshMRN(c.ownerMrn); err != nil {
 			return err
 		}
+
 		if uid != "" {
 			c.uid2mrn[uid] = prop.Mrn
+		}
+		for i := range forUids {
+			if forUids[i] != "" {
+				c.uid2mrn[forUids[i]] = prop.For[i].Mrn
+			}
 		}
 
 		// TODO: uid's can be namespaced, extract the name
