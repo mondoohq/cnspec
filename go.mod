@@ -32,7 +32,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery/v9 v9.14.1-0.20240112170731-a2ab5b0c395c
+	go.mondoo.com/cnquery/v9 v9.14.1-0.20240112183847-ed5ecf03a6f9
 	go.mondoo.com/mondoo-go v0.0.0-20240103050411-fa7e920c6784
 	go.mondoo.com/ranger-rpc v0.5.3
 	go.opentelemetry.io/otel v1.21.0
@@ -286,7 +286,7 @@ require (
 	github.com/polyfloyd/go-errorlint v1.4.7 // indirect
 	github.com/prometheus/client_golang v1.18.0 // indirect
 	github.com/prometheus/client_model v0.5.0 // indirect
-	github.com/prometheus/common v0.45.0 // indirect
+	github.com/prometheus/common v0.46.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/quasilyte/go-ruleguard v0.4.0 // indirect
 	github.com/quasilyte/gogrep v0.5.0 // indirect
