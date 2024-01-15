@@ -184,3 +184,76 @@ queries:
 `
 	assert.Equal(t, expected, string(formatted))
 }
+
+func TestBundleSanitize(t *testing.T) {
+	data := `
+# This is a comment
+policies:
+  - uid: sshd-server-policy
+    authors:
+      - name: Jane Doe
+        email: jane@example.com
+    tags:
+      key: value
+      another-key: another-value
+    name:      SSH Server Policy    
+    groups:
+      - filters: asset.family.contains('unix')
+        checks:
+          - uid: query1
+    version: "1.0.0"
+    scoring_system: 2
+queries:
+  - uid: query1
+    mql: |
+      command('mokutil --sb-state').stdout.downcase.contains('secureboot enabled')
+    impact: 100
+    title: Ensure Secure Boot is enabled
+  - uid: home-info
+    mql: file(props.home) { path basename user group }
+    title: Gather info about the user's home
+    props:
+    - uid: home
+      title:     Home Directory
+      mql: |
+        "/home"
+`
+
+	b, err := ParseYaml([]byte(data))
+	require.NoError(t, err)
+	formatted, err := FormatBundle(b, false)
+	require.NoError(t, err)
+
+	expected := `# This is a comment
+policies:
+  - uid: sshd-server-policy
+    name: SSH Server Policy
+    version: 1.0.0
+    tags:
+      another-key: another-value
+      key: value
+    authors:
+      - name: Jane Doe
+        email: jane@example.com
+    groups:
+      - filters: asset.family.contains('unix')
+        checks:
+          - uid: query1
+    scoring_system: 2
+queries:
+  - uid: query1
+    title: Ensure Secure Boot is enabled
+    impact: 100
+    mql: |
+      command('mokutil --sb-state').stdout.downcase.contains('secureboot enabled')
+  - uid: home-info
+    title: Gather info about the user's home
+    props:
+      - uid: home
+        title: Home Directory
+        mql: |
+          "/home"
+    mql: file(props.home) { path basename user group }
+`
+	assert.Equal(t, expected, string(formatted))
+}
