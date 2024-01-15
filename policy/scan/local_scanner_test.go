@@ -455,8 +455,8 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks() {
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -495,8 +495,8 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_Deactivate() 
 	})
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -535,8 +535,8 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	})
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
