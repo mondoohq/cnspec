@@ -33,10 +33,8 @@ const ConfigurationErrorCode = 78
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	// background scan flags
-	serveCmd.Flags().Int("timer", 60, "scan interval in minutes")
-	serveCmd.Flags().Int("splay", 60, "randomize the timer by up to this many minutes")
-	serveCmd.Flags().MarkHidden("timer")
-	serveCmd.Flags().MarkHidden("splay")
+	serveCmd.Flags().Int("timer", cnspec_config.DefaultScanIntervalTimer, "scan interval in minutes")
+	serveCmd.Flags().Int("splay", cnspec_config.DefaultScanIntervalSplay, "randomize the timer by up to this many minutes")
 	// set inventory
 	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 }
@@ -46,9 +44,9 @@ var serveCmd = &cobra.Command{
 	Short: "Start cnspec in background mode.",
 
 	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("timer", cmd.Flags().Lookup("timer"))
-		viper.BindPFlag("splay", cmd.Flags().Lookup("splay"))
-		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		_ = viper.BindPFlag("scan_interval.timer", cmd.Flags().Lookup("timer"))
+		_ = viper.BindPFlag("scan_interval.splay", cmd.Flags().Lookup("splay"))
+		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
@@ -66,7 +64,7 @@ var serveCmd = &cobra.Command{
 		}
 
 		// determine the scan config from pipe or args
-		conf, err := getServeConfig()
+		scanConf, cliConfig, err := getServeConfig()
 		if err != nil {
 			// we return the specific error code to prevent systemd from restarting
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
@@ -74,13 +72,13 @@ var serveCmd = &cobra.Command{
 
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
 
-		if conf != nil && conf.runtime.UpstreamConfig != nil {
-			client, err := conf.runtime.UpstreamConfig.InitClient()
+		if scanConf != nil && scanConf.runtime.UpstreamConfig != nil {
+			client, err := scanConf.runtime.UpstreamConfig.InitClient()
 			if err != nil {
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 			}
 
-			checkin, err := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, conf.AgentMrn, conf.runtime.UpstreamConfig, 2*time.Hour)
+			checkin, err := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, scanConf.AgentMrn, scanConf.runtime.UpstreamConfig, 2*time.Hour)
 			if err != nil {
 				log.Error().Err(err).Msg("could not initialize upstream check-in")
 			} else {
@@ -89,7 +87,10 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		bj, err := backgroundjob.New()
+		bj, err := backgroundjob.New(
+			time.Duration(cliConfig.ScanInterval.Timer)*time.Minute,
+			time.Duration(cliConfig.ScanInterval.Splay)*time.Minute,
+		)
 		if err != nil {
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not start background listener"), 1)
 		}
@@ -101,7 +102,7 @@ var serveCmd = &cobra.Command{
 				log.Error().Err(err).Msg("could not update providers")
 			}
 			// TODO: check in every 5 min via timer, init time in Background job
-			result, err := RunScan(conf, scan.DisableProgressBar())
+			result, err := RunScan(scanConf, scan.DisableProgressBar())
 			if err != nil {
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
 			}
@@ -119,10 +120,10 @@ var serveCmd = &cobra.Command{
 	},
 }
 
-func getServeConfig() (*scanConfig, error) {
+func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 	opts, optsErr := cnspec_config.ReadConfig()
 	if optsErr != nil {
-		return nil, errors.Wrap(optsErr, "could not load configuration")
+		return nil, nil, errors.Wrap(optsErr, "could not load configuration")
 	}
 	config.DisplayUsedConfig()
 
@@ -180,7 +181,7 @@ func getServeConfig() (*scanConfig, error) {
 	var err error
 	conf.Inventory, err = inventoryloader.ParseOrUse(nil, viper.GetBool("insecure"), optAnnotations)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not load configuration")
+		return nil, nil, errors.Wrap(err, "could not load configuration")
 	}
 
 	// fall back to local machine if no inventory was localed
@@ -193,7 +194,15 @@ func getServeConfig() (*scanConfig, error) {
 		}))
 	}
 
-	return &conf, nil
+	// set the default scan interval if not set
+	if opts.ScanInterval == nil {
+		opts.ScanInterval = &cnspec_config.ScanInterval{
+			Timer: cnspec_config.DefaultScanIntervalSplay,
+			Splay: cnspec_config.DefaultScanIntervalSplay,
+		}
+	}
+
+	return &conf, opts, nil
 }
 
 func logClientInfo(spaceMrn string, clientMrn string, serviceAccountMrn string) {

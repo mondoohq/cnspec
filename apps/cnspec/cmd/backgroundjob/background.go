@@ -5,8 +5,6 @@ package backgroundjob
 
 import (
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 const (
@@ -16,16 +14,22 @@ const (
 
 type JobRunner func() error
 
-func New() (*BackgroundScanner, error) {
-	return &BackgroundScanner{}, nil
+func New(timer, splay time.Duration) (*BackgroundScanner, error) {
+	return &BackgroundScanner{
+		timer: timer,
+		splay: splay,
+	}, nil
 }
 
-type BackgroundScanner struct{}
+type BackgroundScanner struct {
+	timer time.Duration
+	splay time.Duration
+}
 
 func (bs *BackgroundScanner) Run(runScanFn JobRunner) error {
 	Serve(
-		time.Duration(viper.GetInt64("timer"))*time.Minute,
-		time.Duration(viper.GetInt64("splay"))*time.Minute,
+		bs.timer,
+		bs.splay,
 		runScanFn)
 	return nil
 }
