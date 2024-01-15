@@ -6,9 +6,9 @@ package policy
 import (
 	"context"
 
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/types"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/types"
 )
 
 // DataLake provides additional database calls, that are not accessible to

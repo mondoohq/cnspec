@@ -9,9 +9,9 @@ import (
 	"net/http"
 
 	"github.com/pkg/errors"
-	"go.mondoo.com/cnquery/v9/mqlc"
-	"go.mondoo.com/cnspec/v9"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnspec/v10"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 type fetcher struct {

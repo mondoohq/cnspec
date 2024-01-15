@@ -9,9 +9,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v9/checksums"
-	"go.mondoo.com/cnquery/v9/mrn"
-	"go.mondoo.com/cnquery/v9/utils/sortx"
+	"go.mondoo.com/cnquery/v10/checksums"
+	"go.mondoo.com/cnquery/v10/mrn"
+	"go.mondoo.com/cnquery/v10/utils/sortx"
 )
 
 type ResolvedFrameworkNodeType int

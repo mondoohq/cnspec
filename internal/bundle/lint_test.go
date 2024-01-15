@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v9/internal/bundle"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnspec/v10/internal/bundle"
 )
 
 var schema llx.Schema

@@ -9,8 +9,8 @@ import (
 	"errors"
 	"strings"
 
-	"go.mondoo.com/cnquery/v9/shared"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/shared"
+	"go.mondoo.com/cnspec/v10/policy"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	"sigs.k8s.io/yaml"
 )

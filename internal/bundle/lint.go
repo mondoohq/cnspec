@@ -12,8 +12,8 @@ import (
 	"strconv"
 
 	"github.com/Masterminds/semver"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 const (

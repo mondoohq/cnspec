@@ -12,9 +12,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v9"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnquery/v10"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )

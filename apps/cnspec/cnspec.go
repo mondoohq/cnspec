@@ -3,7 +3,7 @@
 
 package main
 
-import "go.mondoo.com/cnspec/v9/apps/cnspec/cmd"
+import "go.mondoo.com/cnspec/v10/apps/cnspec/cmd"
 
 func main() {
 	cmd.Execute()

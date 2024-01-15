@@ -11,7 +11,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnspec/v10/policy"
 	"gopkg.in/yaml.v3"
 )
 
