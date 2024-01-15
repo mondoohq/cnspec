@@ -36,7 +36,7 @@ func init() {
 var serveApiCmd = &cobra.Command{
 	Use:    "serve-api",
 	Hidden: true,
-	Short:  "EXPERIMENTAL: Serve a REST API for running scans.",
+	Short:  "EXPERIMENTAL: Serve a REST API for running scans",
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("port", cmd.Flags().Lookup("port"))
 		viper.BindPFlag("address", cmd.Flags().Lookup("address"))

@@ -75,12 +75,12 @@ func init() {
 
 var policyCmd = &cobra.Command{
 	Use:   "policy",
-	Short: "Manage local and upstream policies.",
+	Short: "Manage local and upstream policies",
 }
 
 var policyListCmd = &cobra.Command{
 	Use:   "list [-f bundle]",
-	Short: "List enabled policies in the connected space.",
+	Short: "List enabled policies in the connected space",
 	Args:  cobra.MaximumNArgs(0),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
@@ -152,7 +152,7 @@ var policyListCmd = &cobra.Command{
 
 var policyUploadCmd = &cobra.Command{
 	Use:   "upload my.mql.yaml",
-	Short: "Upload a policy to the connected space.",
+	Short: "Upload a policy to the connected space",
 	Args:  cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version")); err != nil {
@@ -260,7 +260,7 @@ var policyUploadCmd = &cobra.Command{
 
 var policyDeleteCmd = &cobra.Command{
 	Use:   "delete UID/MRN",
-	Short: "Delete a policy from the connected space.",
+	Short: "Delete a policy from the connected space",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, err := config.Read()
@@ -324,7 +324,7 @@ var policyDeleteCmd = &cobra.Command{
 
 var policyInfoCmd = &cobra.Command{
 	Use:     "info UID/MRN",
-	Short:   "Show more info about a policy from the connected space.",
+	Short:   "Show more info about a policy from the connected space",
 	Aliases: []string{"show"},
 	Args:    cobra.MaximumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -441,7 +441,7 @@ var policyInfoCmd = &cobra.Command{
 
 var policyDownloadCmd = &cobra.Command{
 	Use:   "download UID/MRN",
-	Short: "download a policy to a local bundle file.",
+	Short: "download a policy to a local bundle file",
 	Args:  cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
@@ -496,7 +496,7 @@ var policyDownloadCmd = &cobra.Command{
 
 var policyEnableCmd = &cobra.Command{
 	Use:   "enable UID/MRN",
-	Short: "Enables a policy in the connected space.",
+	Short: "Enables a policy in the connected space",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, err := config.Read()
@@ -532,7 +532,7 @@ var policyEnableCmd = &cobra.Command{
 
 var policyDisableCmd = &cobra.Command{
 	Use:   "disable UID/MRN",
-	Short: "Disables a policy in the connected space.",
+	Short: "Disables a policy in the connected space",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, err := config.Read()
@@ -571,7 +571,8 @@ var embedPolicyTemplate []byte
 
 var policyInitCmd = &cobra.Command{
 	Use:     "init [path]",
-	Short:   "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
+	Short:   "Create an example policy bundle",
+	Long:    "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
 	Aliases: []string{"new"},
 	Args:    cobra.MaximumNArgs(1),
 	Run:     runPolicyInit,
@@ -598,7 +599,7 @@ func runPolicyInit(cmd *cobra.Command, args []string) {
 var policyFmtCmd = &cobra.Command{
 	Use:     "format [path]",
 	Aliases: []string{"fmt"},
-	Short:   "Apply style formatting to one or more policy bundles.",
+	Short:   "Apply style formatting to one or more policy bundles",
 	Args:    cobra.MinimumNArgs(1),
 	Run:     runPolicyFmt,
 }
@@ -621,7 +622,7 @@ func runPolicyFmt(cmd *cobra.Command, args []string) {
 var policyLintCmd = &cobra.Command{
 	Use:     "lint [path]",
 	Aliases: []string{"validate"},
-	Short:   "Lint a policy bundle.",
+	Short:   "Lint a policy bundle",
 	Args:    cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
@@ -688,7 +689,7 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 var policyDocsCmd = &cobra.Command{
 	Use:     "docs [path]",
 	Aliases: []string{},
-	Short:   "Retrieve only the docs for a bundle.",
+	Short:   "Retrieve only the docs for a bundle",
 	Args:    cobra.MinimumNArgs(1),
 	Hidden:  true,
 	PreRunE: func(cmd *cobra.Command, args []string) error {

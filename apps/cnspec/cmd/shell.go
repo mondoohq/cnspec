@@ -23,7 +23,7 @@ func init() {
 
 var shellCmd = &cobra.Command{
 	Use:   "shell",
-	Short: "Interactive query shell for MQL.",
+	Short: "Interactive query shell for MQL",
 	Long:  `Allows the interactive exploration of MQL queries.`,
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))

@@ -11,7 +11,7 @@ import (
 // migrateCmd helps to migrate user config to the latest version
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
-	Short: "Migrate cnspec CLI configuration to the latest version.",
+	Short: "Migrate cnspec CLI configuration to the latest version",
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Info().Msg("No migration needed.")
 	},
