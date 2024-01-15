@@ -11,8 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/llx"
+	"go.mondoo.com/cnquery/v9/mqlc"
 	"go.mondoo.com/cnquery/v9/providers"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
@@ -117,15 +118,15 @@ func TestDefaultConfig(t *testing.T) {
 
 type LocalScannerSuite struct {
 	suite.Suite
-	ctx    context.Context
-	schema llx.Schema
-	job    *Job
+	ctx  context.Context
+	conf mqlc.CompilerConfig
+	job  *Job
 }
 
 func (s *LocalScannerSuite) SetupSuite() {
 	s.ctx = context.Background()
 	runtime := testutils.Local()
-	s.schema = runtime.Schema()
+	s.conf = mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)
 }
 
 func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
@@ -158,8 +159,8 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -202,8 +203,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -267,8 +268,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	bundle.Policies[1].Groups[1].ReviewStatus = policy.ReviewStatus_REJECTED
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -330,8 +331,8 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -392,8 +393,8 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -454,8 +455,8 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks() {
 	s.Require().NoError(err)
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -494,8 +495,8 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_Deactivate() 
 	})
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 
@@ -534,8 +535,8 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	})
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
-		Schema:        s.schema,
-		RemoveFailing: true,
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
 	})
 	s.Require().NoError(err)
 

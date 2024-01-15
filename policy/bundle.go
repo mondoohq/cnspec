@@ -13,10 +13,12 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/checksums"
 	"go.mondoo.com/cnquery/v9/explorer"
 	"go.mondoo.com/cnquery/v9/llx"
 	"go.mondoo.com/cnquery/v9/logger"
+	"go.mondoo.com/cnquery/v9/mqlc"
 	"go.mondoo.com/cnquery/v9/mrn"
 	"go.mondoo.com/cnquery/v9/utils/multierr"
 	"sigs.k8s.io/yaml"
@@ -712,13 +714,13 @@ func topologicalSortQueriesDFS(queryMrn string, queriesMap map[string]*explorer.
 // Compile a bundle. See CompileExt for a full description.
 func (p *Bundle) Compile(ctx context.Context, schema llx.Schema, library Library) (*PolicyBundleMap, error) {
 	return p.CompileExt(ctx, BundleCompileConf{
-		Schema:  schema,
-		Library: library,
+		CompilerConfig: mqlc.NewConfig(schema, cnquery.DefaultFeatures),
+		Library:        library,
 	})
 }
 
 type BundleCompileConf struct {
-	Schema        llx.Schema
+	mqlc.CompilerConfig
 	Library       Library
 	RemoveFailing bool
 }
@@ -811,7 +813,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		if policy.ComputedFilters == nil || policy.ComputedFilters.Items == nil {
 			policy.ComputedFilters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
 		}
-		if err = policy.ComputedFilters.Compile(ownerMrn, cache.conf.Schema); err != nil {
+		if err = policy.ComputedFilters.Compile(ownerMrn, conf.CompilerConfig); err != nil {
 			return nil, multierr.Wrap(err, "failed to compile policy filters")
 		}
 
@@ -820,7 +822,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 			group := policy.Groups[i]
 
 			// When filters are initially added they haven't been compiled
-			if err = group.Filters.Compile(ownerMrn, cache.conf.Schema); err != nil {
+			if err = group.Filters.Compile(ownerMrn, conf.CompilerConfig); err != nil {
 				return nil, multierr.Wrap(err, "failed to compile policy group filters")
 			}
 
@@ -891,7 +893,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
 
-		err = bundleMap.ValidatePolicy(ctx, policy, cache.conf.Schema)
+		err = bundleMap.ValidatePolicy(ctx, policy, cache.conf.CompilerConfig)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
 		}
@@ -1066,7 +1068,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 	}
 
 	// filters have no dependencies, so we can compile them early
-	if err := query.Filters.Compile(c.ownerMrn, c.conf.Schema); err != nil {
+	if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
 		c.errors = append(c.errors, errors.New("failed to compile filters for query "+query.Mrn))
 		return nil
 	}
@@ -1100,7 +1102,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 // dependencies have been processed. Properties must be compiled. Connected
 // queries may not be ready yet, but we have to have precompiled them.
 func (c *bundleCache) compileQuery(query *explorer.Mquery) {
-	_, err := query.RefreshChecksumAndType(c.lookupQuery, c.lookupProp, c.conf.Schema)
+	_, err := query.RefreshChecksumAndType(c.lookupQuery, c.lookupProp, c.conf.CompilerConfig)
 	if err != nil {
 		if c.conf.RemoveFailing {
 			c.removeQueries[query.Mrn] = struct{}{}
@@ -1144,7 +1146,7 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 		name = m.Basename()
 	}
 
-	if _, err := prop.RefreshChecksumAndType(c.conf.Schema); err != nil {
+	if _, err := prop.RefreshChecksumAndType(c.conf.CompilerConfig); err != nil {
 		return err
 	}
 

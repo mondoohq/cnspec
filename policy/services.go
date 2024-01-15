@@ -7,8 +7,10 @@ import (
 	"context"
 	"net/http"
 
+	"go.mondoo.com/cnquery/v9"
 	"go.mondoo.com/cnquery/v9/explorer"
 	"go.mondoo.com/cnquery/v9/llx"
+	"go.mondoo.com/cnquery/v9/mqlc"
 	"go.mondoo.com/ranger-rpc"
 )
 
@@ -81,4 +83,8 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 
 func (l *LocalServices) Schema() llx.Schema {
 	return l.Runtime.Schema()
+}
+
+func (l *LocalServices) NewCompilerConfig() mqlc.CompilerConfig {
+	return mqlc.NewConfig(l.Schema(), cnquery.DefaultFeatures)
 }

@@ -297,7 +297,7 @@ policies:
 	_, err = srv.SetBundle(ctx, b)
 	require.NoError(t, err)
 
-	bundleMap, err := b.Compile(context.Background(), schema, nil)
+	bundleMap, err := b.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
 
 	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
@@ -405,7 +405,8 @@ policies:
 
 		// Recompute the checksums so that the resolved policy is invalidated
 		assetPolicy.InvalidateAllChecksums()
-		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, schema)
+		err = assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, conf)
+		require.NoError(t, err)
 
 		// Set the asset policy
 		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
@@ -425,7 +426,8 @@ policies:
 
 		// Recompute the checksums so that the resolved policy is invalidated
 		assetPolicy.InvalidateAllChecksums()
-		assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, schema)
+		err = assetPolicy.UpdateChecksums(context.Background(), srv.DataLake.GetRawPolicy, srv.DataLake.GetQuery, nil, conf)
+		require.NoError(t, err)
 
 		// Set the asset policy
 		err = srv.DataLake.SetPolicy(context.Background(), assetPolicy, filters.Items)
@@ -549,7 +551,7 @@ framework_maps:
 		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), schema, nil)
+		bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}
@@ -688,7 +690,7 @@ framework_maps:
 		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), schema, nil)
+		bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}
@@ -801,7 +803,7 @@ framework_maps:
 		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), schema, nil)
+		bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}

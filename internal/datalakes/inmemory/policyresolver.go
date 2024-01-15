@@ -188,7 +188,7 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]e
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
-		db.services.Schema(),
+		db.services.NewCompilerConfig(),
 	)
 	if err != nil {
 		return policyw, true, err
@@ -350,6 +350,8 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 	}
 
 	for len(needsUpdate) > 0 {
+		conf := db.services.NewCompilerConfig()
+
 		for k, policyw := range needsUpdate {
 			err := db.refreshAssetFilters(ctx, &policyw)
 			if err != nil {
@@ -361,7 +363,7 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 				func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 				func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 				nil,
-				db.services.Schema(),
+				conf,
 			)
 			if err != nil {
 				return err
@@ -861,7 +863,7 @@ func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
-		db.services.Schema(),
+		db.services.NewCompilerConfig(),
 	)
 	if err != nil {
 		return err
