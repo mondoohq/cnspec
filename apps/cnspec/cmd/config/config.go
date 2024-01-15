@@ -27,7 +27,4 @@ type CliConfig struct {
 	// Asset Category
 	Category               string `json:"category,omitempty" mapstructure:"category"`
 	AutoDetectCICDCategory bool   `json:"detect-cicd,omitempty" mapstructure:"detect-cicd"`
-
-	// Configure report sharing
-	ShareReport *bool `json:"share_report,omitempty" mapstructure:"share_report"`
 }
