@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v9"
-	"go.mondoo.com/cnquery/v9/cli/progress"
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/mqlc"
-	"go.mondoo.com/cnspec/v9/policy"
-	"go.mondoo.com/cnspec/v9/policy/executor/internal"
+	"go.mondoo.com/cnquery/v10"
+	"go.mondoo.com/cnquery/v10/cli/progress"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnspec/v10/policy/executor/internal"
 )
 
 type GraphExecutor interface {

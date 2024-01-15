@@ -11,9 +11,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/olekukonko/tablewriter"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd/cvss"
-	"go.mondoo.com/cnspec/v9/cli/components/advisories"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd/cvss"
+	"go.mondoo.com/cnspec/v10/cli/components/advisories"
 )
 
 func NewAdvisoryResultTable() AdvisoryResultTable {

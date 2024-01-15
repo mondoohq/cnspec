@@ -11,7 +11,7 @@ import (
 	cmdtest "github.com/google/go-cmdtest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v9/apps/cnspec/cmd"
+	"go.mondoo.com/cnspec/v10/apps/cnspec/cmd"
 )
 
 var (

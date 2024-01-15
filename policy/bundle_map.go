@@ -9,11 +9,11 @@ import (
 
 	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/mqlc"
-	"go.mondoo.com/cnquery/v9/mrn"
-	"go.mondoo.com/cnquery/v9/utils/sortx"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/mrn"
+	"go.mondoo.com/cnquery/v10/utils/sortx"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries

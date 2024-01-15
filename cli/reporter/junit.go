@@ -10,11 +10,11 @@ import (
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"github.com/mitchellh/mapstructure"
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v9/shared"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v10/shared"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 // ReportCollectionToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite

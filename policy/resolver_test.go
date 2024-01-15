@@ -11,12 +11,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/mrn"
-	"go.mondoo.com/cnquery/v9/providers"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v9/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/mrn"
+	"go.mondoo.com/cnquery/v10/providers"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnspec/v10/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 type testAsset struct {

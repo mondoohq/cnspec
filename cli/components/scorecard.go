@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v9/cli/theme/colors"
-	"go.mondoo.com/cnquery/v9/utils/stringx"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/cli/theme/colors"
+	"go.mondoo.com/cnquery/v10/utils/stringx"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 const (

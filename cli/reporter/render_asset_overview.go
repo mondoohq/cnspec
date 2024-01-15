@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"go.mondoo.com/cnquery/v9/cli/printer"
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/cli/printer"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 var mqlQueryNames = map[string]string{

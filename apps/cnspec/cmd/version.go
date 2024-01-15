@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnspec/v9"
+	"go.mondoo.com/cnspec/v10"
 )
 
 // versionCmd represents the version command

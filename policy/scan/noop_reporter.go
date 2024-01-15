@@ -4,8 +4,8 @@
 package scan
 
 import (
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 )
 
 type NoOpReporter struct{}

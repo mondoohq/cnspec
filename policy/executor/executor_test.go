@@ -10,12 +10,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v9"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/mqlc"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnquery/v9/types"
-	"go.mondoo.com/cnspec/v9"
+	"go.mondoo.com/cnquery/v10"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnquery/v10/types"
+	"go.mondoo.com/cnspec/v10"
 )
 
 func initExecutor() *Executor {

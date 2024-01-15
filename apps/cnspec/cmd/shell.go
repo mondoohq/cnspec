@@ -7,11 +7,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v9"
-	cnquery_app "go.mondoo.com/cnquery/v9/apps/cnquery/cmd"
-	"go.mondoo.com/cnquery/v9/providers"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnspec/v9"
+	"go.mondoo.com/cnquery/v10"
+	cnquery_app "go.mondoo.com/cnquery/v10/apps/cnquery/cmd"
+	"go.mondoo.com/cnquery/v10/providers"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
+	"go.mondoo.com/cnspec/v10"
 )
 
 func init() {

@@ -14,14 +14,14 @@ import (
 	"github.com/muesli/ansi"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v9/cli/components"
-	"go.mondoo.com/cnquery/v9/explorer"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v9/utils/stringx"
-	cnspecComponents "go.mondoo.com/cnspec/v9/cli/components"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/cli/components"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v10/utils/stringx"
+	cnspecComponents "go.mondoo.com/cnspec/v10/cli/components"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 type assetMrnName struct {

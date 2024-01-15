@@ -6,10 +6,10 @@ package scan
 import (
 	"strings"
 
-	"go.mondoo.com/cnquery/v9/cli/theme"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/upstream/gql"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/cli/theme"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnspec/v10/policy"
 	pbStatus "go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 )

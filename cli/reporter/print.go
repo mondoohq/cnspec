@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 //go:generate protoc --proto_path=../../:. --go_out=. --go_opt=paths=source_relative  reporter.proto

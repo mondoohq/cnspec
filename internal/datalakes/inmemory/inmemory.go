@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.mondoo.com/cnquery/v9/llx"
-	"go.mondoo.com/cnspec/v9/policy"
+	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 // Db is the ent-based Database backend for Mondoo services
