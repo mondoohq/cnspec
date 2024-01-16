@@ -45,7 +45,8 @@ func init() {
 
 var policyInitDeprecatedCmd = &cobra.Command{
 	Use:        "init [path]",
-	Short:      "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
+	Short:      "Create an example policy bundle",
+	Long:       "Create an example policy bundle that you can use as a starting point. If you don't provide a filename, cnspec uses `example-policy.mql.yml`.",
 	Aliases:    []string{"new"},
 	Hidden:     true,
 	Deprecated: "use `cnspec policy init` instead",
@@ -58,7 +59,7 @@ var policyFmtDeprecatedCmd = &cobra.Command{
 	Aliases:    []string{"fmt"},
 	Hidden:     true,
 	Deprecated: "use `cnspec policy fmt` instead",
-	Short:      "Apply style formatting to one or more policy bundles.",
+	Short:      "Apply style formatting to one or more policy bundles",
 	Args:       cobra.MinimumNArgs(1),
 	Run:        runPolicyFmt,
 }
@@ -77,7 +78,7 @@ var policyBundlesCmd = &cobra.Command{
 	Use:        "bundle",
 	Hidden:     true,
 	Deprecated: "use `cnspec policy` instead",
-	Short:      "Manage policy bundles.",
+	Short:      "Manage policy bundles",
 }
 
 var policyLintDeprecatedCmd = &cobra.Command{
@@ -85,7 +86,7 @@ var policyLintDeprecatedCmd = &cobra.Command{
 	Aliases:    []string{"validate"},
 	Hidden:     true,
 	Deprecated: "use `cnspec policy lint` instead",
-	Short:      "Lint a policy bundle.",
+	Short:      "Lint a policy bundle",
 	Args:       cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
@@ -99,7 +100,7 @@ var policyPublishCmd = &cobra.Command{
 	Aliases:    []string{"upload"},
 	Hidden:     true,
 	Deprecated: "use `cnspec policy upload` instead",
-	Short:      "Add a user-owned policy to the Mondoo Security Registry.",
+	Short:      "Add a user-owned policy to the Mondoo Security Registry",
 	Args:       cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
@@ -202,7 +203,7 @@ var policyDocsDeprecatedCmd = &cobra.Command{
 	Aliases:    []string{},
 	Hidden:     true,
 	Deprecated: "use `cnspec policy docs` instead",
-	Short:      "Retrieve only the docs for a bundle.",
+	Short:      "Retrieve only the docs for a bundle",
 	Args:       cobra.MinimumNArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))

@@ -67,7 +67,7 @@ func init() {
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
-	Short: "Scan assets with one or more policies.",
+	Short: "Scan assets with one or more policies",
 	Long: `
 This command scans an asset using a policy. For example, you can scan
 the local system with its pre-configured policies:
