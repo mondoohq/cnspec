@@ -37,7 +37,7 @@ func init() {
 
 var vulnCmd = &cobra.Command{
 	Use:   "vuln",
-	Short: "Scans a target for Vulnerabilities",
+	Short: "Scans a target for vulnerabilities",
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets
 		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
