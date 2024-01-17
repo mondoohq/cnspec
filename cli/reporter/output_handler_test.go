@@ -26,6 +26,20 @@ func TestOutputHandlerAwsSqs(t *testing.T) {
 	}
 }
 
+func TestOutputHandlerAzureServiceBusSqs(t *testing.T) {
+	sbusUrls := []string{
+		"https://my-sbus.servicebus.windows.net/my-queue",
+		"http://my-sbus.servicebus.windows.net/my-queue",
+		"my-sbus.servicebus.windows.net/my-queue",
+	}
+
+	for i, sqsUrl := range sbusUrls {
+		rep, err := NewOutputHandler(HandlerConfig{Format: "JSON", OutputTarget: sqsUrl})
+		require.NoError(t, err, i)
+		require.IsType(t, &azureSbusHandler{}, rep, i)
+	}
+}
+
 func TestOutputHandlerFileLocal(t *testing.T) {
 	fileTargets := []string{
 		"file:///root/test",
