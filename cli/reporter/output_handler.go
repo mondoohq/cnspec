@@ -12,6 +12,7 @@ import (
 	"go.mondoo.com/cnquery/v10/shared"
 	"go.mondoo.com/cnspec/v10/policy"
 	_ "gocloud.dev/pubsub/awssnssqs"
+	_ "gocloud.dev/pubsub/azuresb"
 	"sigs.k8s.io/yaml"
 )
 
@@ -27,6 +28,7 @@ const (
 	CLI OutputTarget = iota + 1
 	LOCAL_FILE
 	AWS_SQS
+	AZURE_SBUS
 )
 
 type OutputHandler interface {
@@ -44,6 +46,8 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 		return &localFileHandler{file: config.OutputTarget, format: format}, nil
 	case AWS_SQS:
 		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: format}, nil
+	case AZURE_SBUS:
+		return &azureSbusHandler{url: config.OutputTarget, format: format}, nil
 	case CLI:
 		fallthrough
 	default:
@@ -60,6 +64,9 @@ func determineOutputType(target string) OutputTarget {
 	}
 	if sqsRegex.MatchString(target) {
 		return AWS_SQS
+	}
+	if sbusRegex.MatchString(target) {
+		return AZURE_SBUS
 	}
 
 	return LOCAL_FILE
