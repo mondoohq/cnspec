@@ -9,7 +9,7 @@ toolchain go1.21.3
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.5.0
 	github.com/Masterminds/semver v1.5.0
-	github.com/aws/aws-sdk-go-v2/config v1.26.3
+	github.com/aws/aws-sdk-go-v2/config v1.26.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.48.0
 	github.com/cockroachdb/errors v1.11.1
 	github.com/google/go-cmdtest v0.4.0
@@ -91,7 +91,7 @@ require (
 	github.com/aws/aws-sdk-go v1.49.21 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.24.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.5.4 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.16.14 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.16.16 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.14.11 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.2.10 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.5.10 // indirect
@@ -109,8 +109,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sns v1.26.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.44.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.18.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.18.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.26.7 // indirect
 	github.com/aws/smithy-go v1.19.0 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20240108175922-ee6f7ad882c7 // indirect
