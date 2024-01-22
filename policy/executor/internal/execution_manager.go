@@ -153,9 +153,13 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	var err error
 
 	codeID := codeBundle.CodeV2.GetId()
+	startTime := time.Now()
 	log.Debug().Str("qrid", codeID).Msg("starting query execution")
 	defer func() {
-		log.Debug().Str("qrid", codeID).Msg("finished query execution")
+		log.Debug().
+			Str("qrid", codeID).
+			Dur("duration", time.Since(startTime)).
+			Msg("finished query execution")
 	}()
 	// TODO(jaym): sendResult may not be correct. We may need to fill in the
 	// checksum
