@@ -333,12 +333,12 @@ var policyInfoCmd = &cobra.Command{
 		}
 		return nil
 	},
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		bundleFile := viper.GetString("file")
 
 		if len(args) == 0 && bundleFile == "" {
 			log.Error().Msgf("either a policy mrn or a bundle file is required")
-			os.Exit(1)
+			return cmd.Help()
 		}
 
 		var policies []*policy.Policy
@@ -442,6 +442,7 @@ var policyInfoCmd = &cobra.Command{
 			fmt.Println()
 			fmt.Println()
 		}
+		return nil
 	},
 }
 
