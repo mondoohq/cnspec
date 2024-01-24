@@ -335,6 +335,12 @@ var policyInfoCmd = &cobra.Command{
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		bundleFile := viper.GetString("file")
+
+		if len(args) == 0 && bundleFile == "" {
+			log.Error().Msgf("either a policy mrn or a bundle file is required")
+			os.Exit(1)
+		}
+
 		var policies []*policy.Policy
 		if bundleFile != "" {
 			policyBundle, err := policy.DefaultBundleLoader().BundleFromPaths(bundleFile)
