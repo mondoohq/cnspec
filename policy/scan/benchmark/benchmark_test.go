@@ -37,7 +37,7 @@ func BenchmarkScan_SingleAsset(b *testing.B) {
 							{
 								Type: "k8s",
 								Options: map[string]string{
-									"path": "../testdata/2pods.yaml",
+									"path": "../testdata/1pod.yaml",
 								},
 								Discover: &inventory.Discovery{
 									Targets: []string{"pods"},
