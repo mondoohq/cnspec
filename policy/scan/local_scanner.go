@@ -54,7 +54,7 @@ type LocalScanner struct {
 	fetcher             *fetcher
 	upstream            *upstream.UpstreamConfig
 	_upstreamClient     *upstream.UpstreamClient
-	recording           providers.Recording
+	recording           llx.Recording
 	runtime             llx.Runtime
 
 	// allows setting the upstream credentials from a job
@@ -71,7 +71,7 @@ func WithUpstream(conf *upstream.UpstreamConfig) ScannerOption {
 	}
 }
 
-func WithRecording(r providers.Recording) func(s *LocalScanner) {
+func WithRecording(r llx.Recording) func(s *LocalScanner) {
 	return func(s *LocalScanner) {
 		s.recording = r
 	}
@@ -216,7 +216,7 @@ func preprocessPolicyFilters(filters []string) []string {
 	return res
 }
 
-func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig, recording providers.Recording) ([]*inventory.Asset, []*assetWithRuntime, error) {
+func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig, recording llx.Recording) ([]*inventory.Asset, []*assetWithRuntime, error) {
 	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.DefaultRuntime()))
 	if err != nil {
 		return nil, nil, errors.New("failed to resolve inventory for connection")

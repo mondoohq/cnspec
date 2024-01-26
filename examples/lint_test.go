@@ -4,12 +4,14 @@
 package examples
 
 import (
+	"os"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v10/providers"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/v10/internal/bundle"
-	"os"
-	"testing"
 )
 
 func ensureProviders(ids []string) error {
@@ -52,8 +54,8 @@ func TestExampleLint(t *testing.T) {
 		"./props.mql.yaml",
 	}
 
-	runtime := providers.DefaultRuntime()
-	result, err := bundle.Lint(runtime.Schema(), files...)
+	mock := testutils.LinuxMock()
+	result, err := bundle.Lint(mock.Schema(), files...)
 	require.NoError(t, err)
 	assert.False(t, result.HasError())
 }
