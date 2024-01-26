@@ -352,7 +352,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}
 	if config.runtime.Recording != nil {
-		opts = append(opts, scan.WithRecording(config.runtime.Recording))
+		opts = append(opts, scan.WithRecording(config.runtime.Recording()))
 	}
 
 	scanner := scan.NewLocalScanner(opts...)
