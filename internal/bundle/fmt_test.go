@@ -171,6 +171,9 @@ queries:
     impact: 100
     mql: |
       command('mokutil --sb-state').stdout.downcase.contains('secureboot enabled')
+    variants:
+      - uid: variant1
+      - uid: variant2
     docs:
       desc: |
         Secure Boot is required in order to ensure that the booting kernel hasn't been modified. It needs to be enabled in your computer's firmware and be supported by your Linux distribution.
@@ -178,9 +181,6 @@ queries:
         Run the "mokutil --sb-state" command and check whether it prints "SecureBoot enabled"
       remediation: |
         Enable Secure Boot in your computer's firmware and use a Linux distribution supporting Secure Boot
-    variants:
-      - uid: variant1
-      - uid: variant2
 `
 	assert.Equal(t, expected, string(formatted))
 }

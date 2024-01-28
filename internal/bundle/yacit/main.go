@@ -40,11 +40,12 @@ func main() {
 			"Title": 98,
 
 			// policy & queries
-			"Version": 97,
-			"Impact":  97,
-			"License": 96,
-			"Tags":    70,
-			"Mql":     60,
+			"Version":  97,
+			"Impact":   97,
+			"License":  96,
+			"Tags":     70,
+			"Mql":      60,
+			"Variants": 59,
 
 			"Authors": 51,
 

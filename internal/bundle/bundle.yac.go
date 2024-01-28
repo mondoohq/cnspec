@@ -681,6 +681,7 @@ type Mquery struct {
 	Tags        map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
 	Props       []*Property       `protobuf:"bytes,38,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
 	Mql         string            `protobuf:"bytes,1,opt,name=mql,proto3" json:"mql,omitempty" yaml:"mql,omitempty"`
+	Variants    []*ObjectRef      `protobuf:"bytes,39,rep,name=variants,proto3" json:"variants,omitempty" yaml:"variants,omitempty"`
 	Docs        *MqueryDocs       `protobuf:"bytes,21,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	Refs        []*MqueryRef      `protobuf:"bytes,22,rep,name=refs,proto3" json:"refs,omitempty" yaml:"refs,omitempty"`
 	Query       string            `protobuf:"bytes,40,opt,name=query,proto3" json:"query,omitempty" yaml:"query,omitempty"`
@@ -689,7 +690,6 @@ type Mquery struct {
 	Type        string            `protobuf:"bytes,6,opt,name=type,proto3" json:"type,omitempty" yaml:"type,omitempty"`
 	Context     string            `protobuf:"bytes,7,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
 	Desc        string            `protobuf:"bytes,35,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
-	Variants    []*ObjectRef      `protobuf:"bytes,39,rep,name=variants,proto3" json:"variants,omitempty" yaml:"variants,omitempty"`
 	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
 	Comments    Comments          `json:"-" yaml:"-"`
