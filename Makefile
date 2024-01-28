@@ -113,6 +113,9 @@ test/lint: test/lint/golangci-lint/run
 
 test: test/go test/lint
 
+benchmark/go:
+	go test -bench=. -benchmem go.mondoo.com/cnspec/v10/policy/scan/benchmark
+
 test/go: cnspec/generate test/go/plain
 
 test/go/plain:
