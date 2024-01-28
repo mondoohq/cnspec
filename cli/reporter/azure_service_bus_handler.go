@@ -9,11 +9,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v10/policy"
-	"gocloud.dev/pubsub"
-	"gocloud.dev/pubsub/azuresb"
 )
 
 var sbusRegex = regexp.MustCompile(`(https:\/\/|http:\/\/)?[a-zA-Z0-9-_]*[.](servicebus.windows.net)[\/][a-zA-Z0-9-_]*`)
@@ -32,29 +31,28 @@ func (h *azureSbusHandler) WriteReport(ctx context.Context, report *policy.Repor
 	senderName := parts[len(parts)-1]
 	sbusUrl := strings.TrimSuffix(trimmedUrl, "/"+senderName)
 
-	client, err := azuresb.NewClientFromServiceBusHostname(sbusUrl, &azservicebus.ClientOptions{})
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return err
+	}
+	client, err := azservicebus.NewClient(sbusUrl, cred, &azservicebus.ClientOptions{})
 	if err != nil {
 		return err
 	}
 	defer client.Close(ctx) //nolint: errcheck
-	sender, err := azuresb.NewSender(client, senderName, &azservicebus.NewSenderOptions{})
+	sender, err := client.NewSender(senderName, &azservicebus.NewSenderOptions{})
 	if err != nil {
 		return err
 	}
 	defer sender.Close(ctx) //nolint: errcheck
-	topic, err := azuresb.OpenTopic(ctx, sender, &azuresb.TopicOptions{})
-	if err != nil {
-		return err
-	}
-	defer topic.Shutdown(ctx) //nolint: errcheck
 	data, err := h.convertReport(report)
 	if err != nil {
 		return err
 	}
-	msg := &pubsub.Message{
+	msg := &azservicebus.Message{
 		Body: data,
 	}
-	err = topic.Send(ctx, msg)
+	err = sender.SendMessage(ctx, msg, &azservicebus.SendMessageOptions{})
 	if err != nil {
 		return err
 	}
