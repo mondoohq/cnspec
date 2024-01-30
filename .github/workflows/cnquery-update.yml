@@ -1,0 +1,64 @@
+name: Bump cnquery
+
+on:
+  repository_dispatch:
+    types: [update-cnquery]
+
+jobs:
+  bump-cnquery:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+# https://github.com/peter-evans/create-pull-request/issues/48
+# https://github.com/peter-evans/create-pull-request/blob/main/docs/concepts-guidelines.md#push-using-ssh-deploy-keys
+# tl;dr:
+# The GITHUB_TOKEN is limited when creating PRs from a workflow
+# becasue of that we use a ssh key for which the limitations do not apply
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ssh-key: ${{ secrets.CNSPEC_DEPLOY_KEY_PRIV }}
+
+      - name: Import environment variables from file
+        run: cat ".github/env" >> $GITHUB_ENV
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ">=${{ env.golang-version }}"
+          cache: false
+      - name: Bump cnquery
+        run: |
+          MAJOR=$(echo "${{ github.event.client_payload.version }}" | cut -d. -f1)
+          go get go.mondoo.com/cnquery/${MAJOR}@${{ github.event.client_payload.version }}
+          go mod tidy
+
+      - name: Prepare title and branch name
+        id: branch
+        run: |
+          BRANCH_NAME="version/cnquery_update_${{ github.event.client_payload.version }}"
+          COMMIT_MSG="🧹 Bump cnquery to ${{ github.event.client_payload.version }}"
+          echo "COMMIT_TITLE=${COMMIT_MSG}" >> $GITHUB_OUTPUT
+          echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create PR
+        id: cpr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          base: main
+          labels: dependencies,go
+          committer: "Mondoo Tools <tools@mondoo.com>"
+          commit-message: ${{ steps.branch.outputs.COMMIT_TITLE }}
+          author: "Mondoo Tools <tools@mondoo.com>"
+          title: ${{ steps.branch.outputs.COMMIT_TITLE }}
+          branch: ${{ steps.branch.outputs.BRANCH_NAME }}
+          body-path: .github/pr-body.md
+
+      - name: PR infos
+        if: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          echo "Pull Request Number - ${{ steps.cpr.outputs.pull-request-number }}"
+          echo "Pull Request URL - ${{ steps.cpr.outputs.pull-request-url }}"
+
+
