@@ -506,6 +506,8 @@ func (nodeData *ReportingJobNodeData) recalculate() *envelope {
 	}
 	if s.Completion() == 100 {
 		nodeData.completed = true
+	} else {
+		return nil
 	}
 	return &envelope{
 		score: s,
