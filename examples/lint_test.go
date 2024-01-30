@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	providers.DefaultPath = dir
 
 	err := ensureProviders([]string{
-		"go.mondoo.com/cnquery/providers/os",
+		"go.mondoo.com/cnquery/v9/providers/os",
 	})
 	if err != nil {
 		panic(err)
