@@ -232,9 +232,9 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
-		ignoreJob := rp.CollectorJob.ReportingJobs["lTbmPQz/DwA="]
+		ignoreJob := rp.CollectorJob.ReportingJobs["8Sis0SvMbtI="]
 		require.NotNil(t, ignoreJob)
-		childJob := ignoreJob.ChildJobs["DmPNGpL6IXo="]
+		childJob := ignoreJob.ChildJobs["YCeU4NjbMe0="]
 		require.NotNil(t, childJob)
 		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 	})

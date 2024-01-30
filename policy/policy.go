@@ -398,6 +398,8 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			return group.Policies[i].Mrn < group.Policies[j].Mrn
 		})
 
+		executionChecksum = executionChecksum.AddUint(uint64(group.Type))
+		executionChecksum = executionChecksum.AddUint(uint64(group.ReviewStatus))
 		for i := range group.Policies {
 			ref := group.Policies[i]
 
