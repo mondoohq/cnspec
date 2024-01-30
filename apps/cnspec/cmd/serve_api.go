@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"time"
 
+	_ "net/http/pprof"
+
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -96,6 +98,7 @@ var serveApiCmd = &cobra.Command{
 		log.Info().Str("url", "/Scan/").Msg("enable Scanner API")
 		mux.Handle("/Scan/", server)
 
+		go http.ListenAndServe("localhost:8081", nil)
 		if err := bindHTTP(mux, uri); err != nil {
 			log.Fatal().Err(err).Msg("failed to bind http server")
 		}
