@@ -82,6 +82,31 @@ func TestPolicyGroupCategory(t *testing.T) {
 	}
 }
 
+func TestUpdateChecksums_Group_ReviewStatus(t *testing.T) {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("../examples/example.mql.yaml")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = bundle.Compile(ctx, conf.Schema, nil)
+	require.NoError(t, err)
+
+	p := bundle.Policies[0]
+	err = p.UpdateChecksums(ctx, nil, nil, bundle.ToMap(), conf)
+	require.NoError(t, err)
+
+	oldChecksum := p.GraphExecutionChecksum
+
+	p.Groups[0].ReviewStatus = policy.ReviewStatus_REJECTED
+	p.InvalidateExecutionChecksums()
+
+	err = p.UpdateChecksums(ctx, nil, nil, bundle.ToMap(), conf)
+	require.NoError(t, err)
+
+	// Make sure the execution checksum changes when the review status changed.
+	assert.NotEqual(t, oldChecksum, p.GraphExecutionChecksum)
+}
+
 func TestPolicyChecksums(t *testing.T) {
 	files := []string{
 		"../examples/example.mql.yaml",
