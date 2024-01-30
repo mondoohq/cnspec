@@ -982,7 +982,7 @@ func TestReportingJobNode(t *testing.T) {
 			assert.Equal(t, 0, int(data.score.DataTotal))
 		})
 
-		t.Run("recalculates if datapoints are provided", func(t *testing.T) {
+		t.Run("incomplete score not passed on", func(t *testing.T) {
 			nodeData := newNodeData()
 
 			nodeData.childScores = map[NodeID]*reportingJobResult{
@@ -1005,15 +1005,7 @@ func TestReportingJobNode(t *testing.T) {
 			nodeData.initialize()
 			data := nodeData.recalculate()
 
-			require.NotNil(t, data)
-			assert.Nil(t, data.res)
-			require.NotNil(t, data.score)
-			assert.Equal(t, "testqueryid", data.score.QrId)
-			assert.Equal(t, policy.ScoreType_Result, data.score.Type)
-			assert.Equal(t, 0, int(data.score.Value))
-			assert.Equal(t, 0, int(data.score.ScoreCompletion))
-			assert.Equal(t, 50, int(data.score.DataCompletion))
-			assert.Equal(t, 2, int(data.score.DataTotal))
+			require.Nil(t, data)
 		})
 
 		t.Run("does not recalculate if any scores missing", func(t *testing.T) {
@@ -1053,7 +1045,7 @@ func TestReportingJobNode(t *testing.T) {
 						nodeData.initialize()
 						data := nodeData.recalculate()
 
-						require.NotNil(t, data)
+						require.Nil(t, data)
 						nodeData.consume(NodeID(nodeData.queryID), &envelope{
 							score: &policy.Score{
 								QrId:            nodeData.queryID,
@@ -1063,13 +1055,7 @@ func TestReportingJobNode(t *testing.T) {
 							},
 						})
 						data = nodeData.recalculate()
-
-						assert.Equal(t, "testqueryid", data.score.QrId)
-						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
-						assert.Equal(t, 100, int(data.score.Value))
-						assert.Equal(t, 50, int(data.score.ScoreCompletion))
-						assert.Equal(t, 0, int(data.score.DataCompletion))
-						assert.Equal(t, 1, int(data.score.DataTotal))
+						require.Nil(t, data)
 					})
 					t.Run("when result", func(t *testing.T) {
 						nodeData := newNodeData()
@@ -1089,18 +1075,12 @@ func TestReportingJobNode(t *testing.T) {
 						nodeData.initialize()
 						data := nodeData.recalculate()
 
-						require.NotNil(t, data)
+						require.Nil(t, data)
 						nodeData.consume(NodeID("checksum1"), &envelope{
 							res: llx.BoolTrue.Result().RawResultV2(),
 						})
 						data = nodeData.recalculate()
-
-						assert.Equal(t, "testqueryid", data.score.QrId)
-						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
-						assert.Equal(t, 0, int(data.score.Value))
-						assert.Equal(t, 0, int(data.score.ScoreCompletion))
-						assert.Equal(t, 100, int(data.score.DataCompletion))
-						assert.Equal(t, 1, int(data.score.DataTotal))
+						require.Nil(t, data)
 					})
 				})
 
@@ -1189,7 +1169,7 @@ func TestReportingJobNode(t *testing.T) {
 				})
 
 				t.Run("when not isQuery", func(t *testing.T) {
-					t.Run("when score", func(t *testing.T) {
+					t.Run("when score is incomplete", func(t *testing.T) {
 						nodeData := newNodeData()
 
 						nodeData.childScores = map[NodeID]*reportingJobResult{
@@ -1221,7 +1201,7 @@ func TestReportingJobNode(t *testing.T) {
 						nodeData.initialize()
 						data := nodeData.recalculate()
 
-						require.NotNil(t, data)
+						require.Nil(t, data)
 						nodeData.consume(NodeID("rjID2"), &envelope{
 							score: &policy.Score{
 								QrId:            "qrid2",
@@ -1234,12 +1214,7 @@ func TestReportingJobNode(t *testing.T) {
 						})
 						data = nodeData.recalculate()
 
-						assert.Equal(t, "testqueryid", data.score.QrId)
-						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
-						assert.Equal(t, 100, int(data.score.Value))
-						assert.Equal(t, 75, int(data.score.ScoreCompletion))
-						assert.Equal(t, 95, int(data.score.DataCompletion))
-						assert.Equal(t, 20, int(data.score.DataTotal))
+						require.Nil(t, data)
 					})
 
 					t.Run("when score with error", func(t *testing.T) {
@@ -1273,54 +1248,6 @@ func TestReportingJobNode(t *testing.T) {
 						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
 						assert.Equal(t, 75, int(data.score.Value))
 						assert.Equal(t, 100, int(data.score.ScoreCompletion))
-					})
-
-					t.Run("when result", func(t *testing.T) {
-						nodeData := newNodeData()
-
-						nodeData.childScores = map[NodeID]*reportingJobResult{
-							"rjID1": {
-								score: &policy.Score{
-									QrId:            "qrid1",
-									Type:            policy.ScoreType_Result,
-									Value:           100,
-									ScoreCompletion: 100,
-									DataTotal:       9,
-									DataCompletion:  100,
-								},
-							},
-							"rjID2": {
-								score: &policy.Score{
-									QrId:            "qrid2",
-									Type:            policy.ScoreType_Result,
-									Value:           100,
-									ScoreCompletion: 50,
-									DataTotal:       10,
-									DataCompletion:  100,
-								},
-							},
-						}
-						nodeData.datapoints = map[NodeID]*reportingJobDatapoint{
-							"checksum1": {},
-						}
-
-						nodeData.initialize()
-						data := nodeData.recalculate()
-
-						require.NotNil(t, data)
-						nodeData.consume(NodeID("checksum1"), &envelope{
-							res: llx.BoolTrue.Result().RawResultV2(),
-						})
-						data = nodeData.recalculate()
-
-						require.NotNil(t, data)
-						require.NotNil(t, data.score)
-						assert.Equal(t, "testqueryid", data.score.QrId)
-						assert.Equal(t, policy.ScoreType_Result, data.score.Type)
-						assert.Equal(t, 100, int(data.score.Value))
-						assert.Equal(t, 75, int(data.score.ScoreCompletion))
-						assert.Equal(t, 100, int(data.score.DataCompletion))
-						assert.Equal(t, 20, int(data.score.DataTotal))
 					})
 				})
 			})
@@ -1356,7 +1283,7 @@ func TestReportingJobNode(t *testing.T) {
 				nodeData.initialize()
 				data := nodeData.recalculate()
 
-				require.NotNil(t, data)
+				require.Nil(t, data)
 				nodeData.consume(NodeID("checksum1"), &envelope{
 					res: llx.BoolTrue.Result().RawResultV2(),
 				})
