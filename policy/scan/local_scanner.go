@@ -47,6 +47,11 @@ type assetWithRuntime struct {
 	runtime *providers.Runtime
 }
 
+type assetWithError struct {
+	asset *inventory.Asset
+	err   error
+}
+
 type LocalScanner struct {
 	resolvedPolicyCache *inmemory.ResolvedPolicyCache
 	queue               *diskQueueClient
@@ -216,28 +221,33 @@ func preprocessPolicyFilters(filters []string) []string {
 	return res
 }
 
-func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig, recording llx.Recording) ([]*inventory.Asset, []*assetWithRuntime, error) {
+func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig, recording llx.Recording) ([]*inventory.Asset, []*assetWithRuntime, []*assetWithError, error) {
 	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.DefaultRuntime()))
 	if err != nil {
-		return nil, nil, errors.New("failed to resolve inventory for connection")
+		return nil, nil, nil, errors.New("failed to resolve inventory for connection")
 	}
 	assetList := im.GetAssets()
 	if len(assetList) == 0 {
-		return nil, nil, errors.New("could not find an asset that we can connect to")
+		return nil, nil, nil, errors.New("could not find an asset that we can connect to")
 	}
 
 	var assetCandidates []*assetWithRuntime
+	var assetErrors []*assetWithError
 
 	// we connect and perform discovery for each asset in the job inventory
 	for i := range assetList {
 		resolvedAsset, err := im.ResolveAsset(assetList[i])
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		runtime, err := providers.Coordinator.RuntimeFor(resolvedAsset, providers.DefaultRuntime())
 		if err != nil {
 			log.Error().Err(err).Str("asset", resolvedAsset.Name).Msg("unable to create runtime for asset")
+			assetErrors = append(assetErrors, &assetWithError{
+				asset: resolvedAsset,
+				err:   err,
+			})
 			continue
 		}
 		runtime.SetRecording(recording)
@@ -248,6 +258,10 @@ func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.
 			Upstream: upstream,
 		}); err != nil {
 			log.Error().Err(err).Msg("unable to connect to asset")
+			assetErrors = append(assetErrors, &assetWithError{
+				asset: resolvedAsset,
+				err:   err,
+			})
 			continue
 		}
 		resolvedAsset = runtime.Provider.Connection.Asset // to ensure we get all the information the connect call gave us
@@ -260,7 +274,7 @@ func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.
 		}
 		processedAssets, err := providers.ProcessAssetCandidates(runtime, runtime.Provider.Connection, upstream, "")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for i := range processedAssets {
 			assetCandidates = append(assetCandidates, &assetWithRuntime{
@@ -278,7 +292,7 @@ func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.
 		// assets = append(assets, runtime.Provider.Connection.Asset)
 	}
 
-	return assetList, assetCandidates, nil
+	return assetList, assetCandidates, assetErrors, nil
 }
 
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
@@ -321,9 +335,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 
 	var assets []*assetWithRuntime
-	assetList, assetCandidates, err := createAssetCandidateList(ctx, job, upstream, s.recording)
+	assetList, assetCandidates, assetErrors, err := createAssetCandidateList(ctx, job, upstream, s.recording)
 	if err != nil {
 		return nil, err
+	}
+
+	// if we had asset errors we want to place them into the reporter
+	for i := range assetErrors {
+		reporter.AddScanError(assetErrors[i].asset, assetErrors[i].err)
 	}
 
 	// For each asset candidate, we initialize a new runtime and connect to it.
@@ -381,7 +400,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	}
 
 	if len(assets) == 0 {
-		return nil, nil
+		return reporter.Reports(), nil
 	}
 
 	// if there is exactly one asset, assure that the --asset-name is used
