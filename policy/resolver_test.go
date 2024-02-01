@@ -265,7 +265,7 @@ policies:
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rp)
-	require.Len(t, rp.CollectorJob.ReportingJobs, 0)
+	require.Len(t, rp.CollectorJob.ReportingJobs, 1)
 }
 
 func TestResolve_IgnoredQuery(t *testing.T) {
@@ -1363,4 +1363,45 @@ queries:
 		require.Nil(t, qrIdToRj[policyMrn("policy2")])
 		require.Nil(t, qrIdToRj[policyMrn("pack2")])
 	})
+}
+
+func TestResolve_NeverPruneRoot(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "false"
+    checks:
+    - uid: check1
+
+queries:
+- uid: check1
+  title: check1
+  filters: |
+    true
+  mql: |
+    1 == 1
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		PolicyMrn:    "asset1",
+		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	require.Len(t, rp.CollectorJob.ReportingJobs, 1)
+
+	qrIdToRj := map[string]*policy.ReportingJob{}
+	for _, rj := range rp.CollectorJob.ReportingJobs {
+		qrIdToRj[rj.QrId] = rj
+	}
+	require.NotNil(t, qrIdToRj["root"])
+
 }

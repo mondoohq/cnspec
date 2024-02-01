@@ -585,6 +585,11 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	reportingJobUUIDs := topologicalSortReportingJobs(collectorJob.ReportingJobs)
 	for _, rjUUID := range reportingJobUUIDs {
 		rj := collectorJob.ReportingJobs[rjUUID]
+		if rj.QrId == "root" {
+			// If we prune the root, we're going to get a broken resolved policy.
+			// For example, the framework code that follows wants to report to it.
+			continue
+		}
 		if rj.Type == ReportingJob_POLICY && (len(rj.ChildJobs)+len(rj.Datapoints) == 0) {
 			logCtx.Debug().
 				Str("policy", bundleMrn).
