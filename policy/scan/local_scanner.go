@@ -343,7 +343,6 @@ func discoverAssets(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 
 		// for all discovered assets, we apply mondoo-specific labels and annotations that come from the root asset
 		for _, a := range rootRuntime.Provider.Connection.Inventory.Spec.Assets {
-			// TODO: there is some shady code that does a connect here to detect k8s containers
 			runtime, err := providers.Coordinator.RuntimeFor(resolvedRootAsset, providers.DefaultRuntime())
 			if err != nil {
 				discoveredAssets.AddError(a, err)
@@ -433,10 +432,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// TODO: call the function below with the --platform-id CLI argument (if it is set)
 	// discoveredAssets.FilterAssetsByPlatformId(job.)
 
-	// For each asset candidate, we initialize a new runtime and connect to it.
+	// For each discovered asset, we initialize a new runtime and connect to it.
 	// Within this process, we set up a catch-all deferred function, that shuts
-	// down all runtimes, in case we exit early. The list of assets only gets
-	// set in the block below this deferred function.
+	// down all runtimes, in case we exit early.
 	defer func() {
 		for _, asset := range discoveredAssets.assets {
 			// we can call close multiple times and it will only execute once
