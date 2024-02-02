@@ -39,7 +39,6 @@ func init() {
 
 	scanCmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
 	scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
-	scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
 
 	scanCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
 	scanCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
@@ -88,8 +87,6 @@ To manually configure a policy, use this:
 			fmt.Println("Available output formats: " + reporter.AllFormats())
 			os.Exit(0)
 		}
-
-		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))

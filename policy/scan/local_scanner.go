@@ -67,28 +67,6 @@ func (d *discoveredAssets) Add(asset *inventory.Asset, runtime *providers.Runtim
 	return true
 }
 
-func (d *discoveredAssets) FilterAssetsByPlatformId(platformId string) error {
-	var foundAsset *assetWithRuntime
-	for i := range d.assets {
-		asset := d.assets[i].asset
-		for j := range asset.PlatformIds {
-			if asset.PlatformIds[j] == platformId {
-				foundAsset = d.assets[i]
-				break
-			}
-		}
-		if foundAsset != nil {
-			break
-		}
-	}
-
-	if foundAsset != nil {
-		d.assets = []*assetWithRuntime{foundAsset}
-		return nil
-	}
-	return errors.New("could not find an asset with the provided identifier: " + platformId)
-}
-
 func (d *discoveredAssets) AddError(asset *inventory.Asset, err error) {
 	d.errors = append(d.errors, &assetWithError{asset: asset, err: err})
 }
@@ -428,9 +406,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	for i := range discoveredAssets.errors {
 		reporter.AddScanError(discoveredAssets.errors[i].asset, discoveredAssets.errors[i].err)
 	}
-
-	// TODO: call the function below with the --platform-id CLI argument (if it is set)
-	// discoveredAssets.FilterAssetsByPlatformId(job.)
 
 	// For each discovered asset, we initialize a new runtime and connect to it.
 	// Within this process, we set up a catch-all deferred function, that shuts
