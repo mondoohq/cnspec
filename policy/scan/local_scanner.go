@@ -306,7 +306,10 @@ func discoverAssets(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 			discoveredAssets.AddError(resolvedRootAsset, err)
 			continue
 		}
-		rootRuntime.SetRecording(recording)
+		if err := rootRuntime.SetRecording(recording); err != nil {
+			discoveredAssets.AddError(resolvedRootAsset, err)
+			continue
+		}
 
 		if err := rootRuntime.Connect(&plugin.ConnectReq{
 			Features: cnquery.GetFeatures(ctx),
@@ -326,6 +329,11 @@ func discoverAssets(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 				discoveredAssets.AddError(a, err)
 				continue
 			}
+			if err := runtime.SetRecording(recording); err != nil {
+				discoveredAssets.AddError(resolvedRootAsset, err)
+				runtime.Close()
+				continue
+			}
 
 			err = runtime.Connect(&plugin.ConnectReq{
 				Features: config.Features,
@@ -334,6 +342,7 @@ func discoverAssets(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 			})
 			if err != nil {
 				discoveredAssets.AddError(a, err)
+				runtime.Close()
 				continue
 			}
 
