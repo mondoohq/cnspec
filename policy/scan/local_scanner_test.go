@@ -97,14 +97,13 @@ func TestCreateAssetList(t *testing.T) {
 				},
 			},
 		}
-		assetList, candidates, assetErrors, err := createAssetCandidateList(context.TODO(), job, nil, providers.NullRecording{})
+		discoveredAssets, err := discoverAssets(context.TODO(), job, nil, providers.NullRecording{})
 		require.NoError(t, err)
-		require.Len(t, assetList, 1)
-		require.Len(t, candidates, 3)
-		require.Len(t, assetErrors, 0)
-		require.Equal(t, "mondoo-operator-123", candidates[0].asset.ManagedBy)
-		require.Equal(t, "mondoo-operator-123", candidates[1].asset.ManagedBy)
-		require.Equal(t, "mondoo-operator-123", candidates[2].asset.ManagedBy)
+		require.Len(t, discoveredAssets.assets, 3)
+		require.Len(t, discoveredAssets.errors, 0)
+		require.Equal(t, "mondoo-operator-123", discoveredAssets.assets[0].asset.ManagedBy)
+		require.Equal(t, "mondoo-operator-123", discoveredAssets.assets[1].asset.ManagedBy)
+		require.Equal(t, "mondoo-operator-123", discoveredAssets.assets[2].asset.ManagedBy)
 	})
 }
 
