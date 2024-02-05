@@ -26,7 +26,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/owenrumney/go-sarif/v2 v2.3.0
 	github.com/pkg/errors v0.9.1
-	github.com/rs/zerolog v1.31.0
+	github.com/rs/zerolog v1.32.0
 	github.com/segmentio/fasthash v1.0.3
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/afero v1.11.0
@@ -34,8 +34,8 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery/v10 v10.1.4
-	go.mondoo.com/mondoo-go v0.0.0-20240124101327-8c3a4faf5a4b
+	go.mondoo.com/cnquery/v10 v10.1.5
+	go.mondoo.com/mondoo-go v0.0.0-20240203120016-30f2eae8932a
 	go.mondoo.com/ranger-rpc v0.5.3
 	go.opentelemetry.io/otel v1.22.0
 	gocloud.dev v0.36.0
@@ -90,7 +90,7 @@ require (
 	github.com/ashanbrown/forbidigo v1.6.0 // indirect
 	github.com/ashanbrown/makezero v1.1.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go v1.50.7 // indirect
+	github.com/aws/aws-sdk-go v1.50.10 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.24.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.5.4 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.16.16 // indirect
@@ -110,7 +110,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.26.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.26.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.5 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.44.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.45.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.18.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.26.7 // indirect
@@ -134,7 +134,7 @@ require (
 	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/charithe/durationcheck v0.0.10 // indirect
-	github.com/charmbracelet/bubbles v0.17.1 // indirect
+	github.com/charmbracelet/bubbles v0.18.0 // indirect
 	github.com/charmbracelet/bubbletea v0.25.0 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/charmbracelet/lipgloss v0.9.1 // indirect
@@ -152,9 +152,9 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/denis-tingaikin/go-header v0.4.3 // indirect
 	github.com/distribution/reference v0.5.0 // indirect
-	github.com/docker/cli v25.0.1+incompatible // indirect
+	github.com/docker/cli v25.0.2+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
-	github.com/docker/docker v25.0.1+incompatible // indirect
+	github.com/docker/docker v25.0.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.8.1 // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -291,6 +291,7 @@ require (
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
+	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/nishanths/exhaustive v0.12.0 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/nunnatsa/ginkgolinter v0.15.2 // indirect
@@ -400,7 +401,7 @@ require (
 	k8s.io/component-base v0.28.4 // indirect
 	k8s.io/klog/v2 v2.110.1 // indirect
 	k8s.io/kubelet v0.28.4 // indirect
-	modernc.org/libc v1.40.8 // indirect
+	modernc.org/libc v1.41.0 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.7.2 // indirect
 	modernc.org/sqlite v1.28.0 // indirect
