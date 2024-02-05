@@ -6,33 +6,30 @@ package scan
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/cli/config"
 	"go.mondoo.com/cnquery/v10/cli/execruntime"
 	"go.mondoo.com/cnquery/v10/cli/progress"
 	"go.mondoo.com/cnquery/v10/explorer"
 	ee "go.mondoo.com/cnquery/v10/explorer/executor"
+	"go.mondoo.com/cnquery/v10/explorer/scan"
 	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/logger"
 	"go.mondoo.com/cnquery/v10/mrn"
 	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory/manager"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v10/utils/multierr"
+	"go.mondoo.com/cnquery/v10/utils/slicesx"
 	"go.mondoo.com/cnspec/v10"
 	"go.mondoo.com/cnspec/v10/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v10/policy"
@@ -41,16 +38,6 @@ import (
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
 )
-
-type assetWithRuntime struct {
-	asset   *inventory.Asset
-	runtime *providers.Runtime
-}
-
-type assetWithError struct {
-	asset *inventory.Asset
-	err   error
-}
 
 type LocalScanner struct {
 	resolvedPolicyCache *inmemory.ResolvedPolicyCache
@@ -221,85 +208,7 @@ func preprocessPolicyFilters(filters []string) []string {
 	return res
 }
 
-func createAssetCandidateList(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig, recording llx.Recording) ([]*inventory.Asset, []*assetWithRuntime, []*assetWithError, error) {
-	im, err := manager.NewManager(manager.WithInventory(job.Inventory, providers.DefaultRuntime()))
-	if err != nil {
-		return nil, nil, nil, errors.New("failed to resolve inventory for connection")
-	}
-	assetList := im.GetAssets()
-	if len(assetList) == 0 {
-		return nil, nil, nil, errors.New("could not find an asset that we can connect to")
-	}
-
-	var assetCandidates []*assetWithRuntime
-	var assetErrors []*assetWithError
-
-	// we connect and perform discovery for each asset in the job inventory
-	for i := range assetList {
-		resolvedAsset, err := im.ResolveAsset(assetList[i])
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		runtime, err := providers.Coordinator.RuntimeFor(resolvedAsset, providers.DefaultRuntime())
-		if err != nil {
-			log.Error().Err(err).Str("asset", resolvedAsset.Name).Msg("unable to create runtime for asset")
-			assetErrors = append(assetErrors, &assetWithError{
-				asset: resolvedAsset,
-				err:   err,
-			})
-			continue
-		}
-		runtime.SetRecording(recording)
-
-		if err := runtime.Connect(&plugin.ConnectReq{
-			Features: cnquery.GetFeatures(ctx),
-			Asset:    resolvedAsset,
-			Upstream: upstream,
-		}); err != nil {
-			log.Error().Err(err).Msg("unable to connect to asset")
-			assetErrors = append(assetErrors, &assetWithError{
-				asset: resolvedAsset,
-				err:   err,
-			})
-			continue
-		}
-		resolvedAsset = runtime.Provider.Connection.Asset // to ensure we get all the information the connect call gave us
-
-		// for all discovered assets, we apply mondoo-specific labels and annotations that come from the root asset
-		for _, a := range runtime.Provider.Connection.GetInventory().GetSpec().GetAssets() {
-			a.AddMondooLabels(resolvedAsset)
-			a.AddAnnotations(resolvedAsset.GetAnnotations())
-			a.ManagedBy = resolvedAsset.ManagedBy
-		}
-		processedAssets, err := providers.ProcessAssetCandidates(runtime, runtime.Provider.Connection, upstream, "")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		for i := range processedAssets {
-			assetCandidates = append(assetCandidates, &assetWithRuntime{
-				asset:   processedAssets[i],
-				runtime: runtime,
-			})
-		}
-
-		// TODO: we want to keep better track of errors, since there may be
-		// multiple assets coming in. It's annoying to abort the scan if we get one
-		// error at this stage.
-
-		// we grab the asset from the connection, because it contains all the
-		// detected metadata (and IDs)
-		// assets = append(assets, runtime.Provider.Connection.Asset)
-	}
-
-	return assetList, assetCandidates, assetErrors, nil
-}
-
-func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
-	// Always shut down the coordinator, to make sure providers are killed
-	defer providers.Coordinator.Shutdown()
-
-	// plan scan jobs
+func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamConfig) (Reporter, error) {
 	var reporter Reporter
 	switch job.ReportType {
 	case ReportType_FULL:
@@ -331,122 +240,52 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	default:
 		return nil, errors.Errorf("unknown report type: %s", job.ReportType)
 	}
+	return reporter, nil
+}
+
+func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
+	// Always shut down the coordinator, to make sure providers are killed
+	defer providers.Coordinator.Shutdown()
+
+	reporter, err := createReporter(ctx, job, upstream)
+	if err != nil {
+		return nil, err
+	}
 
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
-
-	var assets []*assetWithRuntime
-	assetList, assetCandidates, assetErrors, err := createAssetCandidateList(ctx, job, upstream, s.recording)
+	discoveredAssets, err := scan.DiscoverAssets(ctx, job.Inventory, upstream, s.recording)
 	if err != nil {
 		return nil, err
 	}
 
 	// if we had asset errors we want to place them into the reporter
-	for i := range assetErrors {
-		reporter.AddScanError(assetErrors[i].asset, assetErrors[i].err)
+	for i := range discoveredAssets.Errors {
+		reporter.AddScanError(discoveredAssets.Errors[i].Asset, discoveredAssets.Errors[i].Err)
 	}
 
-	// For each asset candidate, we initialize a new runtime and connect to it.
+	// For each discovered asset, we initialize a new runtime and connect to it.
 	// Within this process, we set up a catch-all deferred function, that shuts
-	// down all runtimes, in case we exit early. The list of assets only gets
-	// set in the block below this deferred function.
+	// down all runtimes, in case we exit early.
 	defer func() {
-		for i := range assets {
-			asset := assets[i]
+		for _, asset := range discoveredAssets.Assets {
 			// we can call close multiple times and it will only execute once
-			if asset.runtime != nil {
-				asset.runtime.Close()
+			if asset.Runtime != nil {
+				asset.Runtime.Close()
 			}
 		}
 	}()
 
-	// for each asset candidate, we initialize a new runtime and connect to it.
-	for i := range assetCandidates {
-		candidate := assetCandidates[i]
-
-		var runtime *providers.Runtime
-		if candidate.asset.Connections[0].Type == "k8s" {
-			runtime, err = providers.Coordinator.RuntimeFor(candidate.asset, providers.DefaultRuntime())
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			runtime, err = providers.Coordinator.EphemeralRuntimeFor(candidate.asset)
-			if err != nil {
-				return nil, err
-			}
-		}
-		runtime.UpstreamConfig = upstream
-
-		err = runtime.Connect(&plugin.ConnectReq{
-			Features: config.Features,
-			Asset:    candidate.asset,
-			Upstream: upstream,
-		})
-		if err != nil {
-			log.Error().Err(err).Msg("unable to connect to asset")
-			continue
-		}
-		candidate.asset = runtime.Provider.Connection.Asset // to ensure we get all the information the connect call gave us
-
-		if candidate.asset.GetPlatform() == nil {
-			log.Error().Msgf("unable to detect platform for asset " + candidate.asset.Name)
-			continue
-		}
-
-		assets = append(assets, &assetWithRuntime{
-			asset:   candidate.asset,
-			runtime: runtime,
-		})
-	}
-
-	if len(assets) == 0 {
+	if len(discoveredAssets.Assets) == 0 {
 		return reporter.Reports(), nil
 	}
 
-	// if there is exactly one asset, assure that the --asset-name is used
-	// TODO: make it so that the --asset-name is set for the root asset only even if multiple assets are there
-	// This is a temporary fix that only works if there is only one asset
-	if len(assets) == 1 && assetList[0].Name != "" && assetList[0].Name != assets[0].asset.Name {
-		log.Debug().Str("asset", assets[0].asset.Name).Msg("Overriding asset name with --asset-name flag")
-		assets[0].asset.Name = assetList[0].Name
+	multiprogress, err := scan.CreateProgressBar(discoveredAssets, s.disableProgressBar)
+	if err != nil {
+		return nil, err
 	}
-
-	runtimeEnv := execruntime.Detect()
-	var runtimeLabels map[string]string
-	// If the runtime is an automated environment and the root asset is CI/CD, then we are doing a
-	// CI/CD scan and we need to apply the runtime labels to the assets
-	if runtimeEnv != nil &&
-		runtimeEnv.IsAutomatedEnv() &&
-		job.Inventory.Spec.Assets[0].Category == inventory.AssetCategory_CATEGORY_CICD {
-		runtimeLabels = runtimeEnv.Labels()
-	}
-
-	progressBarElements := map[string]string{}
-	var multiprogress progress.MultiProgress
-	orderedKeys := []string{}
-	for i := range assets {
-		// this shouldn't happen, but might
-		// it normally indicates a bug in the provider
-		if presentAsset, present := progressBarElements[assets[i].asset.PlatformIds[0]]; present {
-			return nil, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, assets[i].asset.Name, assets[i].asset.PlatformIds[0])
-		}
-		progressBarElements[assets[i].asset.PlatformIds[0]] = assets[i].asset.Name
-		orderedKeys = append(orderedKeys, assets[i].asset.PlatformIds[0])
-	}
-
-	if isatty.IsTerminal(os.Stdout.Fd()) && !s.disableProgressBar && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
-		var err error
-		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys, progress.WithScore())
-		if err != nil {
-			return nil, multierr.Wrap(err, "failed to create progress bars")
-		}
-	} else {
-		// TODO: adjust naming
-		multiprogress = progress.NoopMultiProgressBars{}
-	}
-	scanGroups := sync.WaitGroup{}
 
 	// start the progress bar
+	scanGroups := sync.WaitGroup{}
 	scanGroups.Add(1)
 	go func() {
 		defer scanGroups.Done()
@@ -455,22 +294,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}()
 
-	assetBatches := batch(assets, 100)
+	assetBatches := slicesx.Batch(discoveredAssets.Assets, 100)
 	for i := range assetBatches {
 		batch := assetBatches[i]
-		justAssets := []*inventory.Asset{}
-		for _, asset := range batch {
-			asset.asset.KindString = asset.asset.GetPlatform().Kind
-			for k, v := range runtimeLabels {
-				if asset.asset.Labels == nil {
-					asset.asset.Labels = map[string]string{}
-				}
-				asset.asset.Labels[k] = v
-			}
-			justAssets = append(justAssets, asset.asset)
-		}
-
-		inventory.DeprecatedV8CompatAssets(justAssets)
 
 		// sync assets
 		if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
@@ -485,9 +311,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				return nil, err
 			}
 
+			assetsToSync := make([]*inventory.Asset, 0, len(batch))
+			for i := range batch {
+				assetsToSync = append(assetsToSync, batch[i].Asset)
+			}
+
 			resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 				SpaceMrn: client.SpaceMrn,
-				List:     justAssets,
+				List:     assetsToSync,
 			})
 			if err != nil {
 				return nil, err
@@ -501,26 +332,24 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 			// attach the asset details to the assets list
 			for i := range batch {
-				log.Debug().Str("asset", batch[i].asset.Name).Strs("platform-ids", batch[i].asset.PlatformIds).Msg("update asset")
-				platformMrn := batch[i].asset.PlatformIds[0]
-				batch[i].asset.Mrn = platformAssetMapping[platformMrn].AssetMrn
-				batch[i].asset.Url = platformAssetMapping[platformMrn].Url
-				if batch[i].asset.Labels == nil {
-					batch[i].asset.Labels = map[string]string{}
-				}
-				batch[i].asset.Labels["mondoo.com/project-id"] = platformAssetMapping[platformMrn].ProjectId
+				asset := batch[i].Asset
+				log.Debug().Str("asset", asset.Name).Strs("platform-ids", asset.PlatformIds).Msg("update asset")
+				platformMrn := asset.PlatformIds[0]
+				asset.Mrn = platformAssetMapping[platformMrn].AssetMrn
+				asset.Url = platformAssetMapping[platformMrn].Url
+				asset.Labels["mondoo.com/project-id"] = platformAssetMapping[platformMrn].ProjectId
 			}
 		} else {
 			// ensure we have non-empty asset MRNs
 			for i := range batch {
-				cur := batch[i]
-				if cur.asset.Mrn == "" {
+				asset := batch[i].Asset
+				if asset.Mrn == "" {
 					randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
 					x, err := mrn.NewMRN(randID)
 					if err != nil {
 						return nil, multierr.Wrap(err, "failed to generate a random asset MRN")
 					}
-					cur.asset.Mrn = x.String()
+					asset.Mrn = x.String()
 				}
 			}
 		}
@@ -536,8 +365,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		go func() {
 			defer wg.Done()
 			for i := range batch {
-				asset := batch[i].asset
-				runtime := batch[i].runtime
+				asset := batch[i].Asset
+				runtime := batch[i].Runtime
 
 				log.Debug().Interface("asset", asset).Msg("start scan")
 

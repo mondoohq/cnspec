@@ -73,41 +73,6 @@ func TestGetUpstreamConfig(t *testing.T) {
 	})
 }
 
-func TestCreateAssetList(t *testing.T) {
-	t.Run("with inventory", func(t *testing.T) {
-		job := &Job{
-			Inventory: &inventory.Inventory{
-				Spec: &inventory.InventorySpec{
-					Assets: []*inventory.Asset{
-						{
-							Connections: []*inventory.Config{
-								{
-									Type: "k8s",
-									Options: map[string]string{
-										"path": "./testdata/2pods.yaml",
-									},
-									Discover: &inventory.Discovery{
-										Targets: []string{"auto"},
-									},
-								},
-							},
-							ManagedBy: "mondoo-operator-123",
-						},
-					},
-				},
-			},
-		}
-		assetList, candidates, assetErrors, err := createAssetCandidateList(context.TODO(), job, nil, providers.NullRecording{})
-		require.NoError(t, err)
-		require.Len(t, assetList, 1)
-		require.Len(t, candidates, 3)
-		require.Len(t, assetErrors, 0)
-		require.Equal(t, "mondoo-operator-123", candidates[0].asset.ManagedBy)
-		require.Equal(t, "mondoo-operator-123", candidates[1].asset.ManagedBy)
-		require.Equal(t, "mondoo-operator-123", candidates[2].asset.ManagedBy)
-	})
-}
-
 func TestDefaultConfig(t *testing.T) {
 	t.Run("without opts", func(t *testing.T) {
 		scanner := NewLocalScanner()
