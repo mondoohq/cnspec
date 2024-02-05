@@ -29,6 +29,7 @@ import (
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v10/utils/multierr"
+	"go.mondoo.com/cnquery/v10/utils/slicesx"
 	"go.mondoo.com/cnspec/v10"
 	"go.mondoo.com/cnspec/v10/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v10/policy"
@@ -293,7 +294,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}()
 
-	assetBatches := scan.Batch(discoveredAssets.Assets, 100)
+	assetBatches := slicesx.Batch(discoveredAssets.Assets, 100)
 	for i := range assetBatches {
 		batch := assetBatches[i]
 
@@ -310,9 +311,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				return nil, err
 			}
 
+			assetsToSync := make([]*inventory.Asset, 0, len(batch))
+			for i := range batch {
+				assetsToSync = append(assetsToSync, batch[i].Asset)
+			}
+
 			resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 				SpaceMrn: client.SpaceMrn,
-				List:     discoveredAssets.GetAssets(),
+				List:     assetsToSync,
 			})
 			if err != nil {
 				return nil, err
