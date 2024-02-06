@@ -52,7 +52,7 @@ type LocalScanner struct {
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
 	disableProgressBar  bool
-	scanMutex           sync.Mutex
+	// scanMutex           sync.Mutex
 }
 
 type ScannerOption func(*LocalScanner)
@@ -82,7 +82,7 @@ func DisableProgressBar() ScannerOption {
 }
 
 func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
-	runtime := providers.Coordinator.NewRuntime()
+	runtime := providers.GlobalCoordinator.NewRuntime()
 
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
@@ -134,8 +134,8 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 	// scan that is in progress, which will result in errors. We can address this later
 	// by attaching a provider to a scan and killing only the providers that are not
 	// not actively used.
-	s.scanMutex.Lock()
-	defer s.scanMutex.Unlock()
+	// s.scanMutex.Lock()
+	// defer s.scanMutex.Unlock()
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -245,7 +245,7 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
 	// Always shut down the coordinator, to make sure providers are killed
-	defer providers.Coordinator.Shutdown()
+	// defer providers.Coordinator.Shutdown()
 
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
@@ -267,15 +267,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Within this process, we set up a catch-all deferred function, that shuts
 	// down all runtimes, in case we exit early.
 	defer func() {
-		for _, asset := range discoveredAssets.Assets {
+		for _, asset := range discoveredAssets.RootAssets {
 			// we can call close multiple times and it will only execute once
-			if asset.Runtime != nil {
-				asset.Runtime.Close()
+			if asset.Coordinator != nil {
+				asset.Coordinator.Shutdown()
 			}
 		}
 	}()
 
-	if len(discoveredAssets.Assets) == 0 {
+	assets := discoveredAssets.GetFlattenedChildren()
+	if len(assets) == 0 {
 		return reporter.Reports(), nil
 	}
 
@@ -294,7 +295,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}()
 
-	assetBatches := slicesx.Batch(discoveredAssets.Assets, 100)
+	assetBatches := slicesx.Batch(assets, 100)
 	for i := range assetBatches {
 		batch := assetBatches[i]
 
@@ -353,20 +354,23 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				}
 			}
 		}
+	}
 
-		// // if a bundle was provided check that it matches the filter, bundles can also be downloaded
-		// // later therefore we do not want to stop execution here
-		// if job.Bundle != nil && job.Bundle.FilterPolicies(job.PolicyFilters) {
-		// 	return nil, false, errors.New("all available packs filtered out. nothing to do.")
-		// }
+	// // if a bundle was provided check that it matches the filter, bundles can also be downloaded
+	// // later therefore we do not want to stop execution here
+	// if job.Bundle != nil && job.Bundle.FilterPolicies(job.PolicyFilters) {
+	// 	return nil, false, errors.New("all available packs filtered out. nothing to do.")
+	// }
 
+	for k := range discoveredAssets.RootAssets {
+		root := discoveredAssets.RootAssets[k]
 		wg := sync.WaitGroup{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := range batch {
-				asset := batch[i].Asset
-				runtime := batch[i].Runtime
+			for i := range root.Children {
+				asset := root.Children[i].Asset
+				runtime := root.Children[i].Runtime
 
 				log.Debug().Interface("asset", asset).Msg("start scan")
 
