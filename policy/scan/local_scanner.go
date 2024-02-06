@@ -280,20 +280,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return reporter.Reports(), nil
 	}
 
-	multiprogress, err := scan.CreateProgressBar(discoveredAssets, s.disableProgressBar)
-	if err != nil {
-		return nil, err
-	}
-
-	// start the progress bar
-	scanGroups := sync.WaitGroup{}
-	scanGroups.Add(1)
-	go func() {
-		defer scanGroups.Done()
-		if err := multiprogress.Open(); err != nil {
-			log.Error().Err(err).Msg("failed to open progress bar")
-		}
-	}()
+	log.Info().Msgf("discovered %d assets", len(assets))
 
 	assetBatches := slicesx.Batch(assets, 100)
 	for i := range assetBatches {
@@ -301,7 +288,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 		// sync assets
 		if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
-			log.Info().Msg("synchronize assets")
+			log.Info().Msgf("synchronize %d assets", len(batch))
 			client, err := upstream.InitClient()
 			if err != nil {
 				return nil, err
@@ -356,6 +343,21 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}
 
+	multiprogress, err := scan.CreateProgressBar(discoveredAssets, s.disableProgressBar)
+	if err != nil {
+		return nil, err
+	}
+
+	// start the progress bar
+	scanGroups := sync.WaitGroup{}
+	scanGroups.Add(1)
+	go func() {
+		defer scanGroups.Done()
+		if err := multiprogress.Open(); err != nil {
+			log.Error().Err(err).Msg("failed to open progress bar")
+		}
+	}()
+
 	// // if a bundle was provided check that it matches the filter, bundles can also be downloaded
 	// // later therefore we do not want to stop execution here
 	// if job.Bundle != nil && job.Bundle.FilterPolicies(job.PolicyFilters) {
@@ -402,6 +404,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				// shut down all ephemeral runtimes
 				runtime.Close()
 			}
+			root.Coordinator.Shutdown()
 		}()
 		wg.Wait()
 	}
