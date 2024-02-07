@@ -614,10 +614,17 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 
 		gqlVulnReport, err := mondooClient.GetVulnCompactReport(job.Asset.Mrn)
 		if err != nil {
-			log.Error().Err(err).Msg("could not get vulnerability report")
-			return
+			// We do not get the actual rpc code here, so we need to check the error message
+			// We get here a graphgql.errors which ignores grqphql extensions
+			rpcstatus := rpcStatus(err)
+			if rpcstatus.Code() == codes.Unimplemented {
+				log.Info().Msg(rpcstatus.Message())
+			} else {
+				log.Error().Err(rpcstatus.Err()).Msg("could not get vulnerability report")
+			}
+		} else {
+			job.Reporter.AddVulnReport(job.Asset, gqlVulnReport)
 		}
-		job.Reporter.AddVulnReport(job.Asset, gqlVulnReport)
 	}
 
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
