@@ -212,10 +212,21 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 	var reporter Reporter
 	switch job.ReportType {
 	case ReportType_FULL:
-		bundle := job.Bundle
+		reporter = NewAggregateReporter()
 
-		// If we are not running an incognito scan we need the bundle from upstream
-		if !upstream.Incognito {
+		// case where users pass in a bundle directly via a file
+		if job.Bundle != nil {
+			reporter.AddBundle(job.Bundle)
+			return reporter, nil
+		}
+
+		// - pass in bundle via file
+		// - use Mondoo platform upstream with/without incognito
+		// - bundles fetched from public registry (not covered here, but in ensureBundle)
+		//
+		// if we use upstream with/without incognito, we want to fetch the bundle here to ensure we only fetch it once
+		// for all assets in the same space
+		if upstream != nil && upstream.Creds != nil {
 			client, err := upstream.InitClient()
 			if err != nil {
 				return nil, err
@@ -226,13 +237,14 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 				return nil, err
 			}
 
-			// We retrieve the bundle for the parent (which is the space). That bundle contains all policies, queries and checks
-			bundle, err = services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn})
+			// retrieve the bundle for the parent (which is the space). That bundle contains all policies, queries and checks
+			bundle, err := services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn})
 			if err != nil {
 				return nil, err
 			}
+			job.Bundle = bundle // also update the job with the fetched bundle
+			reporter.AddBundle(bundle)
 		}
-		reporter = NewAggregateReporter(bundle)
 	case ReportType_ERROR:
 		reporter = NewErrorReporter()
 	case ReportType_NONE:
@@ -743,19 +755,30 @@ func filterPolicyMrns(b *policy.Bundle, filters []string) []string {
 func (s *localAssetScanner) prepareAsset() error {
 	var hub policy.PolicyHub = s.services
 
-	// if we are using upstream we get the bundle from there
+	// if we are using upstream we get the bundle from there, no need to check for a bundle here
 	if !s.job.UpstreamConfig.Incognito {
 		return nil
 	}
 
-	if err := s.ensureBundle(); err != nil {
-		return err
+	// if we have a bundle we don't need to check for policies
+	// e.g. we passed in a bundle directly via a file
+	if s.job.Bundle == nil {
+		// fetch bundles for public registry
+		if err := s.fetchPublicRegistryBundle(); err != nil {
+			return err
+		}
+
+		// add asset bundle to the reporter
+		if s.job.Reporter != nil && s.job.Bundle != nil {
+			s.job.Reporter.AddBundle(s.job.Bundle)
+		}
 	}
 
 	if s.job.Bundle == nil {
 		return errors.New("no bundle provided to run")
 	}
 
+	// set the bundle in local store
 	_, err := hub.SetBundle(s.job.Ctx, s.job.Bundle)
 	if err != nil {
 		return err
@@ -797,17 +820,12 @@ func (s *localAssetScanner) prepareAsset() error {
 			return err
 		}
 	}
-
 	return nil
 }
 
 var assetDetectBundle = ee.MustCompile("asset { kind platform runtime version family }")
 
-func (s *localAssetScanner) ensureBundle() error {
-	if s.job.Bundle != nil {
-		return nil
-	}
-
+func (s *localAssetScanner) fetchPublicRegistryBundle() error {
 	features := cnquery.GetFeatures(s.job.Ctx)
 	_, res, err := executor.ExecuteQuery(s.Runtime, assetDetectBundle, nil, features)
 	if err != nil {

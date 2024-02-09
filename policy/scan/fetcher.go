@@ -38,11 +38,11 @@ func (f *fetcher) fetchBundles(ctx context.Context, conf mqlc.CompilerConfig, ur
 		if err != nil {
 			return nil, err
 		}
+		cur.ConvertQuerypacks()
 
 		// need to generate MRNs for everything
 		if _, err := cur.CompileExt(ctx, policy.BundleCompileConf{
 			CompilerConfig: conf,
-			Library:        nil,
 			RemoveFailing:  true,
 		}); err != nil {
 			return nil, errors.Wrap(err, "failed to compile fetched bundle")

@@ -6,6 +6,7 @@ package scan
 import (
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnspec/v10/policy"
 )
 
 type NoOpReporter struct{}
@@ -13,6 +14,8 @@ type NoOpReporter struct{}
 func NewNoOpReporter() Reporter {
 	return &NoOpReporter{}
 }
+
+func (r *NoOpReporter) AddBundle(bundle *policy.Bundle) {}
 
 func (r *NoOpReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 }
