@@ -16,8 +16,14 @@ type AssetReport struct {
 }
 
 type Reporter interface {
+	// AddBundle adds the policy bundle to the reporter which includes more information about the policies
+	AddBundle(bundle *policy.Bundle)
+	// AddReport adds the scan results to the reporter
 	AddReport(asset *inventory.Asset, results *AssetReport)
+	// AddVulnReport adds the vulnerability scan results to the reporter
 	AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport)
+	// AddScanError adds the scan error to the reporter
 	AddScanError(asset *inventory.Asset, err error)
+	// Reports returns the scan results
 	Reports() *ScanResult
 }

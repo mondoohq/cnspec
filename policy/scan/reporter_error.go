@@ -30,6 +30,8 @@ func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) 
 	}
 }
 
+func (r *ErrorReporter) AddBundle(bundle *policy.Bundle) {}
+
 func (r *ErrorReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
 }
 
