@@ -33,7 +33,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery/v10 v10.2.1-0.20240211093950-c32aa49d3d07
+	go.mondoo.com/cnquery/v10 v10.2.1-0.20240212172406-9cfc12254605
 	go.mondoo.com/mondoo-go v0.0.0-20240203120016-30f2eae8932a
 	go.mondoo.com/ranger-rpc v0.5.3
 	go.opentelemetry.io/otel v1.23.1
@@ -89,7 +89,7 @@ require (
 	github.com/ashanbrown/forbidigo v1.6.0 // indirect
 	github.com/ashanbrown/makezero v1.1.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go v1.50.14 // indirect
+	github.com/aws/aws-sdk-go v1.50.15 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.24.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.5.4 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.16.16 // indirect
