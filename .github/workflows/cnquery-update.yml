@@ -3,6 +3,12 @@ name: Bump cnquery
 on:
   repository_dispatch:
     types: [update-cnquery]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "cnquery version"
+        required: true
+        type: string
 
 jobs:
   bump-cnquery:
@@ -11,15 +17,31 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-# https://github.com/peter-evans/create-pull-request/issues/48
-# https://github.com/peter-evans/create-pull-request/blob/main/docs/concepts-guidelines.md#push-using-ssh-deploy-keys
-# tl;dr:
-# The GITHUB_TOKEN is limited when creating PRs from a workflow
-# becasue of that we use a ssh key for which the limitations do not apply
+      # Use SSH keys for checking out the code
+      # https://github.com/peter-evans/create-pull-request/issues/48
+      # https://github.com/peter-evans/create-pull-request/blob/main/docs/concepts-guidelines.md#push-using-ssh-deploy-keys
+      # tl;dr:
+      # The GITHUB_TOKEN is limited when creating PRs from a workflow because of that we use SSH keys for which the
+      # limitations do not apply
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ssh-key: ${{ secrets.CNSPEC_DEPLOY_KEY_PRIV }}
+
+      # Determine which version should be released based on event type
+      - name: Set Version (Workflow Dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo VERSION=${{ inputs.version }} >> $GITHUB_ENV
+      - name: Set Version (Repository Dispatch)
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          echo VERSION=${{ github.event.client_payload.version }} >> $GITHUB_ENV
+      - name: Unified Version
+        id: version
+        run: |
+          echo "Version: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
@@ -30,15 +52,15 @@ jobs:
           cache: false
       - name: Bump cnquery
         run: |
-          MAJOR=$(echo "${{ github.event.client_payload.version }}" | cut -d. -f1)
-          go get go.mondoo.com/cnquery/${MAJOR}@${{ github.event.client_payload.version }}
+          MAJOR=$(echo "${{ steps.version.outputs.version }}" | cut -d. -f1)
+          go get go.mondoo.com/cnquery/${MAJOR}@${{ steps.version.outputs.version }}
           go mod tidy
 
       - name: Prepare title and branch name
         id: branch
         run: |
-          BRANCH_NAME="version/cnquery_update_${{ github.event.client_payload.version }}"
-          COMMIT_MSG="🧹 Bump cnquery to ${{ github.event.client_payload.version }}"
+          BRANCH_NAME="version/cnquery_update_${{ steps.version.outputs.version }}"
+          COMMIT_MSG="🧹 Bump cnquery to ${{ steps.version.outputs.version }}"
           echo "COMMIT_TITLE=${COMMIT_MSG}" >> $GITHUB_OUTPUT
           echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
