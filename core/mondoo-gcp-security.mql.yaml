@@ -64,8 +64,8 @@ policies:
     groups:
       - title: GCP Project
         filters: |
-          asset.platform == "gcp" || asset.platform == "gcp-project"
-          asset.kind == "api" || asset.kind == "gcp-object"
+          asset.family.contains("google")
+          asset.runtime == "gcp"
         checks:
           - uid: mondoo-gcp-security-block-project-wide-ssh-keys-enabled-vm-instances
           - uid: mondoo-gcp-security-cloud-storage-bucket-not-anonymously-publicly-accessible
@@ -77,17 +77,16 @@ policies:
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
     title: Ensure that instances are not configured to use the default service account
-    impact: 80
-    mql: |
-      gcloud.compute.instances
-        .where( name != /^gke/ )
-        .all( serviceAccounts { email != /^.*compute@developer\.gserviceaccount\.com$/ } )
+    impact: 95
+    variants:
+      - uid: gcp-compute-instances-configured-use-default-service-account-all
+      - uid: gcp-compute-instances-configured-use-default-service-account-single
     docs:
       desc: |
-        New projects that have enabled the Compute Engine API have a Compute Engine default service account, which has the following email:
+        New projects that have enabled the Compute Engine API have a Compute Engine default service account, which contains the following email pattern:
 
         ```bash
-        PROJECT_NUMBER-compute@developer.gserviceaccount.com
+        -compute@developer.gserviceaccount.com
         ```
 
         The Compute Engine default service account is created with the IAM basic Editor role, but you can modify your service account's roles to control the service account's access to Google APIs.
@@ -102,14 +101,14 @@ queries:
 
         1. Ensure the `gcloud` cli is configured to the GCP project:
 
-          ```bash
-          gcloud project set <project_id>
-          ```
+           ```bash
+           gcloud config set project <project_id>
+           ```
 
         2. Run this query:
 
           ```mql
-          cnquery run gcp -c "gcloud.compute.instances.where( name != /^gke/ ) serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ )"
+          cnquery run gcp project <project-id> -c "gcp.compute.instances.where( name != /^gke/ ) {id name serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ )}"
           ```
 
         __cnquery shell__
@@ -118,20 +117,20 @@ queries:
 
         1. Ensure the `gcloud` cli is configured to the GCP project:
 
-          ```bash
-          gcloud project set <project_id>
-          ```
+           ```bash
+           gcloud config set project <project_id>
+           ```
 
         2. Launch `cnquery shell`:
 
           ```bash
-          cnquery shell gcp
+          cnquery run gcp project <project-id>
           ```
 
         3. Run this query:
 
           ```mql
-          gcloud.compute.instances.where( name != /^gke/ ) serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ )
+          gcp.compute.instances.where( name != /^gke/ ) {id name serviceAccounts.where(email == /^.*compute@developer\.gserviceaccount\.com$/ )}
           ```
       remediation: |
         ### Terraform
@@ -188,13 +187,28 @@ queries:
           ```bash
           gcloud compute instances start INSTANCE_NAME
           ```
+  - uid: gcp-compute-instances-configured-use-default-service-account-all
+    filters: asset.platform == "gcp" || asset.platform == "gcp-project"
+    mql: |
+      gcp.compute.instances.where(name != /^gke-/).all(
+        serviceAccounts.none(
+          email == /^.*compute@developer\.gserviceaccount\.com$/
+        )
+      )
+  - uid: gcp-compute-instances-configured-use-default-service-account-single
+    filters: |
+      asset.platform == "gcp-compute-instance"
+      gcp.compute.instance.name != /^gke-/
+    mql: |
+        gcp.compute.instance.serviceAccounts.none(
+          email == /^.*compute@developer\.gserviceaccount\.com$/
+        )
   - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api
     title: Ensure instances are not configured to use the default service account with full access to all Cloud APIs
     impact: 90
-    mql: |
-      gcloud.compute.instances
-        .where( name != /^gke/ )
-        .all( serviceAccounts { scopes { _ != "https://www.googleapis.com/auth/cloud-platform" } } )
+    variants:
+      - uid: gcp-compute-instances-configured-use-default-service-account-full-access-all-cloud-all
+      - uid: gcp-compute-instances-configured-use-default-service-account-full-access-all-cloud-single
     docs:
       desc: |
         Google compute instances provisioned with full access to all cloud APIs pose a security risk to a GCP environment. Instances should instead be provisioned using a non-default service account, and limited permissions to cloud APIs using the principle of least privilege.
@@ -206,13 +220,13 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Run this query:
 
            ```mql
-           cnquery run gcp -c "gcloud.compute.instances.where( name != /^gke/ ) { serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ ) { email scopes } } "
+           cnquery run gcp project <project-id> -c "gcp.compute.instances.where( name != /^gke/ ) {id name serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ ) {email scopes}}"
            ```
 
          __cnquery shell__
@@ -222,7 +236,7 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Launch `cnquery shell`:
@@ -234,7 +248,7 @@ queries:
          3. Run this query:
 
            ```mql
-           gcloud.compute.instances.where( name != /^gke/ ) { serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ ) { email scopes } }
+           gcp.compute.instances.where(name != /^gke/) {id name serviceAccounts.where(email == /^.*compute@developer\.gserviceaccount\.com$/) {email scopes}}
            ```
       remediation: |
         ### Terraform
@@ -291,12 +305,28 @@ queries:
           ```bash
           gcloud compute instances start INSTANCE_NAME
           ```
+  - uid: gcp-compute-instances-configured-use-default-service-account-full-access-all-cloud-all
+    filters: asset.platform == "gcp" || asset.platform == "gcp-project"
+    mql: |
+      gcp.compute.instances.where(name != /^gke-/).all(
+        serviceAccounts.none(
+          scopes == "https://www.googleapis.com/auth/cloud-platform"
+        )
+      )
+  - uid: gcp-compute-instances-configured-use-default-service-account-full-access-all-cloud-single
+    filters: |
+      asset.platform == "gcp-compute-instance"
+      gcp.compute.instance.name != /^gke-/
+    mql: |
+      gcp.compute.instance.serviceAccounts.none(
+        scopes == "https://www.googleapis.com/auth/cloud-platform"
+      )
   - uid: mondoo-gcp-security-block-project-wide-ssh-keys-enabled-vm-instances
     title: Ensure "Block Project-wide SSH keys" is enabled for VM instances
     impact: 70
-    mql: |
-      gcloud.compute.instances
-        .all( metadata['block-project-ssh-keys'] == true )
+    variants:
+      - uid: gcp-compute-block-project-wide-ssh-keys-enabled-vm-instances-all
+      - uid: gcp-compute-block-project-wide-ssh-keys-enabled-vm-instances-single
     docs:
       desc: |
         Project-wide SSH keys can be used to login into all instances within a project. While using project-wide SSH keys eases SSH key management, if SSH keys are compromised, the potential security risk can impact all instances within a project.
@@ -310,13 +340,13 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Run this query:
 
            ```mql
-           cnquery run gcp -c "gcloud.compute.instances { metadata['block-project-ssh-keys'] }"
+           cnquery run gcp -c "gcp.compute.instances {id name metadata['block-project-ssh-keys'] }"
            ```
 
          __cnquery shell__
@@ -326,7 +356,7 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Launch `cnquery shell`:
@@ -338,7 +368,7 @@ queries:
          3. Run this query:
 
            ```mql
-           gcloud.compute.instances { metadata['block-project-ssh-keys'] }
+           gcp.compute.instances {id name metadata['block-project-ssh-keys'] }
            ```
       remediation: |
         ### Terraform
@@ -381,12 +411,22 @@ queries:
           ```bash
           gcloud compute instances add-metadata INSTANCE_NAME --metadata block-projectssh-keys=TRUE
           ```
+  - uid: gcp-compute-block-project-wide-ssh-keys-enabled-vm-instances-all
+    filters: asset.platform == "gcp" || asset.platform == "gcp-project"
+    mql: |
+      gcp.compute.instances.all(
+        metadata['block-project-ssh-keys'] == true
+      )
+  - uid: gcp-compute-block-project-wide-ssh-keys-enabled-vm-instances-single
+    filters: asset.platform == "gcp-compute-instance"
+    mql: |
+      gcp.compute.instance.metadata['block-project-ssh-keys'] == true
   - uid: mondoo-gcp-security-oslogin-enabled-project
     title: Ensure oslogin is enabled for compute instances
     impact: 70
-    mql: |
-      gcloud.compute.instances
-        .all( metadata['enable-oslogin'] == true )
+    variants:
+      - uid: gcp-compute-oslogin-enabled-project-all
+      - uid: gcp-compute-oslogin-enabled-project-single
     docs:
       desc: |
         OS Login lets you use Compute Engine Identity and Access Management (IAM) roles to grant or revoke SSH access to your Linux instances. OS Login is an alternative to managing instance access by adding and removing SSH keys in metadata.
@@ -398,13 +438,13 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Run this query:
 
            ```mql
-           cnquery run gcp -c "gcloud.compute.instances { metadata['enable-oslogin'] }"
+           cnquery run gcp project <project-id> -c "gcp.compute.instances {id name metadata['enable-oslogin'] == true}"
            ```
 
          __cnquery shell__
@@ -414,19 +454,19 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Launch `cnquery shell`:
 
            ```bash
-           cnquery shell gcp
+           cnquery shell gcp project <project-id>
            ```
 
          3. Run this query:
 
            ```mql
-           gcloud.compute.instances { metadata['enable-oslogin'] }
+           gcp.compute.instances {id name metadata['enable-oslogin'] }
            ```
       remediation: |
         ### Terraform
@@ -486,19 +526,22 @@ queries:
           ```bash
           gcloud compute instances add-metadata INSTANCE_NAME --metadata enable-oslogin=TRUE
           ```
+  - uid: gcp-compute-oslogin-enabled-project-all
+    filters: asset.platform == "gcp" || asset.platform == "gcp-project"
+    mql: |
+      gcp.compute.instances.all(
+        metadata['enable-oslogin'] == true
+      )
+  - uid: gcp-compute-oslogin-enabled-project-single
+    filters: asset.platform == "gcp-compute-instance"
+    mql:
+      gcp.compute.instance.metadata['enable-oslogin'] == true
   - uid: mondoo-gcp-security-cloud-storage-bucket-not-anonymously-publicly-accessible
     title: Ensure that Cloud Storage buckets are not anonymously or publicly accessible
     impact: 90
-    mql: |
-      gcloud.storage.buckets
-        .all(
-          iamPolicy {
-            members {
-              _ != "allUsers"
-              _ != "allAuthenticatedUsers"
-            }
-          }
-        )
+    variants:
+      - uid: gcp-storage-cloud-storage-bucket-anonymously-publicly-accessible-all
+      - uid: gcp-storage-cloud-storage-bucket-anonymously-publicly-accessible-single
     docs:
       desc: |
         Public access prevention protects Cloud Storage buckets and objects from being accidentally exposed to the public. When you enforce public access prevention, no one can make data in applicable buckets public through IAM policies or ACLs.
@@ -510,7 +553,7 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Run this query:
@@ -526,7 +569,7 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Launch `cnquery shell`:
@@ -577,12 +620,22 @@ queries:
         ```bash
         gcloud storage buckets update gs://BUCKET_NAME --no-pap
         ```
+  - uid: gcp-storage-cloud-storage-bucket-anonymously-publicly-accessible-all
+    filters: asset.platform == "gcp" || asset.platform == "gcp-project"
+    mql: |
+      gcp.storage.buckets.all(iamPolicy.all(members.none(_ == "allUsers")))
+      gcp.storage.buckets.all(iamPolicy.all(members.none(_ == "allAuthenticatedUsers")))
+  - uid: gcp-storage-cloud-storage-bucket-anonymously-publicly-accessible-single
+    filters: asset.platform == "gcp-storage-bucket"
+    mql: |
+      gcp.storage.bucket.iamPolicy.all(members.none(_ == "allUsers"))
+      gcp.storage.bucket.iamPolicy.all(members.none(_ == "allAuthenticatedUsers"))
   - uid: mondoo-gcp-security-cloud-storage-buckets-have-uniform-bucket-level-access-enabled
     title: Ensure that Cloud Storage buckets have uniform bucket-level access enabled
     impact: 60
-    mql: |
-      gcloud.storage.buckets
-        .all( iamConfiguration['UniformBucketLevelAccess']['enabled'] == true )
+    variants:
+      - uid: gcp-storage-cloud-storage-buckets-uniform-bucket-level-access-enabled-all
+      - uid: gcp-storage-cloud-storage-buckets-uniform-bucket-level-access-enabled-single
     docs:
       desc: |
         Cloud Storage offers two systems for granting users permission to access your buckets and objects: IAM and Access Control Lists (ACLs). These systems act in parallel - in order for a user to access a Cloud Storage resource, only one of the systems needs to grant the user permission. IAM is used throughout Google Cloud and allows you to grant a variety of permissions at the bucket and project levels. ACLs are used only by Cloud Storage and have limited permission options, but they allow you to grant permissions on a per-object basis.
@@ -596,7 +649,7 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Run this query:
@@ -612,7 +665,7 @@ queries:
          1. Ensure the `gcloud` cli is configured to the GCP project:
 
            ```bash
-           gcloud project set <project_id>
+           gcloud config set project <project_id>
            ```
 
          2. Launch `cnquery shell`:
@@ -651,3 +704,12 @@ queries:
         ```bash
         gsutil uniformbucketlevelaccess set STATE gs://BUCKET_NAME
         ```
+  - uid: gcp-storage-cloud-storage-buckets-uniform-bucket-level-access-enabled-all
+    filters: asset.platform == "gcp" || asset.platform == "gcp-project"
+    mql: |
+      gcp.storage.buckets.all(
+        iamConfiguration.UniformBucketLevelAccess.enabled == true
+      )
+  - uid: gcp-storage-cloud-storage-buckets-uniform-bucket-level-access-enabled-single
+    filters: asset.platform == "gcp-storage-bucket"
+    mql: gcp.storage.bucket.iamConfiguration.UniformBucketLevelAccess.enabled == true
