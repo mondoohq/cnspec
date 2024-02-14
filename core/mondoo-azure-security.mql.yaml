@@ -54,7 +54,7 @@ policies:
     groups:
       - title: Azure Core
         filters: |
-          asset.platform == "azure"
+          asset.runtime == "azure"
         checks:
           - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
           - uid: mondoo-azure-security-diagnostic-settings-essential-categories
@@ -86,8 +86,9 @@ queries:
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
     title: Ensure that OS disks are encrypted
     impact: 80
-    mql: |
-      azure.subscription.compute.vms.all(osDisk.properties.encryption != empty)
+    variants:
+      - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-single
+      - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-api
     docs:
       desc: |
         This check ensures that both OS disks (boot volumes) are encrypted. Customer managed keys can be either Azure Disk Encryption (ADE) or server-side encryption (SSE).
@@ -196,20 +197,31 @@ queries:
     refs:
       - url: https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview
         title: Overview of managed disk encryption options
+  - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-single
+    filters: |
+      asset.platform == "azure-compute-vm-api"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.compute.vm.osDisk.properties.encryption != empty
+  - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.compute.vms.all(osDisk.properties.encryption != empty)
   - uid: mondoo-azure-security-ssh-access-restricted-from-internet
     title: Ensure that SSH access is restricted from the internet
     impact: 80
-    mql: |
-      allNsgTCP= azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /TCP|\*/
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-      )
-      allNsgTCP.all(properties.destinationPortRange != "*")
-      allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= 22 && toPort >= 22)))
+    props:
+      - uid: disallowedPortsSSH
+        title: a list of disallowed TCP ports, by default SSH listens only on TCP port 22, add more ports as needed
+        mql: |
+          return [
+            22,
+          ]
+    variants:
+      - uid: mondoo-azure-security-ssh-access-restricted-from-internet-single
+      - uid: mondoo-azure-security-ssh-access-restricted-from-internet-api
     docs:
       desc: |
         This check ensures that SSH on port 22 is not configured to allow access from anywhere with the CIDR block "0.0.0.0".
@@ -222,7 +234,7 @@ queries:
         2. Run this query:
 
           ```bash
-          cnspec run azure -c "allNsgTCP= azure.subscription.network.securityGroups.where(securityRules
+          cnspec run azure -c "allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -248,7 +260,7 @@ queries:
         3. Run this query:
 
           ```mql
-          allNsgTCP= azure.subscription.network.securityGroups.where(securityRules
+          allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -283,11 +295,30 @@ queries:
           }
         }
         ```
-  - uid: mondoo-azure-security-rdp-access-restricted-from-internet
-    title: Ensure that RDP access is restricted from the internet
-    impact: 80
+  - uid: mondoo-azure-security-ssh-access-restricted-from-internet-single
+    filters: |
+      asset.platform == "azure-network-security-group"
+      asset.kind == "azure-object"
     mql: |
-      allNsgTCP= azure.subscription.network.securityGroups.where(securityRules
+      allNsgTCP = azure.subscription.network.securityGroup.securityRules
+        .where(
+          properties.access == 'Allow'
+            && direction == 'Inbound'
+            && properties.protocol == /TCP|\*/
+            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
+        )
+      allNsgTCP.all(properties.destinationPortRange != "*")
+      props.disallowedPortsSSH {
+        disallowedPortSSH = _
+        disallowedPortSSH
+        allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortSSH && toPort >= disallowedPortSSH))
+      }
+  - uid: mondoo-azure-security-ssh-access-restricted-from-internet-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -296,7 +327,24 @@ queries:
         )
       )
       allNsgTCP.all(properties.destinationPortRange != "*")
-      allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= 3389 && toPort >= 3389)))
+      props.disallowedPortsSSH {
+        disallowedPortSSH = _
+        disallowedPortSSH
+        allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= disallowedPortSSH && toPort >= disallowedPortSSH)))
+      }
+  - uid: mondoo-azure-security-rdp-access-restricted-from-internet
+    title: Ensure that RDP access is restricted from the internet
+    impact: 80
+    props:
+      - uid: disallowedPortsRDP
+        title: a list of disallowed TCP ports, by default RDP listens only on TCP port 3389, add more ports as needed
+        mql: |
+          return [
+            3389,
+          ]
+    variants:
+      - uid: mondoo-azure-security-rdp-access-restricted-from-internet-single
+      - uid: mondoo-azure-security-rdp-access-restricted-from-internet-api
     docs:
       desc: |
         This check ensures that RDP on port 3389 is not configured to allow access from anywhere with the CIDR block "0.0.0.0".
@@ -309,7 +357,7 @@ queries:
         2. Run this query:
 
           ```bash
-          cnspec run azure -c "allNsgTCP= azure.subscription.network.securityGroups.where(securityRules
+          cnspec run azure -c "allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -335,7 +383,7 @@ queries:
         3. Run this query:
 
           ```mql
-          allNsgTCP= azure.subscription.network.securityGroups.where(securityRules
+          allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -370,11 +418,49 @@ queries:
           }
         }
         ```
+  - uid: mondoo-azure-security-rdp-access-restricted-from-internet-single
+    filters: |
+      asset.platform == "azure-network-security-group"
+      asset.kind == "azure-object"
+    mql: |
+      allNsgTCP = azure.subscription.network.securityGroup.securityRules
+        .where(
+          properties.access == 'Allow'
+            && direction == 'Inbound'
+            && properties.protocol == /TCP|\*/
+            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
+        )
+      allNsgTCP.all(properties.destinationPortRange != "*")
+      props.disallowedPortsRDP {
+        disallowedPortRDP = _
+        disallowedPortRDP
+        allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortRDP && toPort >= disallowedPortRDP))
+      }
+  - uid: mondoo-azure-security-rdp-access-restricted-from-internet-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
+        .where(
+          properties.access == 'Allow'
+            && direction == 'Inbound'
+            && properties.protocol == /TCP|\*/
+            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
+        )
+      )
+      allNsgTCP.all(properties.destinationPortRange != "*")
+      props.disallowedPortsRDP {
+        disallowedPortRDP = _
+        disallowedPortRDP
+        allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= disallowedPortRDP && toPort >= disallowedPortRDP)))
+      }
   - uid: mondoo-azure-security-secure-transfer-required-enabled
     title: Ensure that all data must be encrypted in transit
     impact: 80
-    mql: |
-      azure.subscription.storage.accounts.all(properties.EnableHttpsTrafficOnly == true)
+    variants:
+      - uid: mondoo-azure-security-secure-transfer-required-enabled-api
+      - uid: mondoo-azure-security-secure-transfer-required-enabled-single
     docs:
       desc: |
         This check ensures that "Secure transfer required" is enabled.  This setting enforces the use of HTTPS for data operations, ensuring that data transmitted to and from Azure storage accounts is secured. It's an important security measure to protect data from interception or tampering during transmission, aligning with best practices for data security in the cloud.
@@ -416,12 +502,24 @@ queries:
           enable_https_traffic_only = true
         }
         ```
+  - uid: mondoo-azure-security-secure-transfer-required-enabled-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.storage.accounts.all(properties.EnableHTTPSTrafficOnly == true)
+  - uid: mondoo-azure-security-secure-transfer-required-enabled-single
+    filters: |
+      asset.platform == "azure-storage-account"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.storage.account.properties.EnableHTTPSTrafficOnly == true
   - uid: mondoo-azure-security-public-access-level-private-blob-containers
     title: Ensure that anonymous access to blob containers and public access on storage accounts are disabled
     impact: 80
-    mql: |
-      azure.subscription.storage.accounts.all(properties.AllowBlobPublicAccess == "false" ) ||
-       azure.subscription.storage.accounts.all(containers.all(properties.publicAccess == "None" ))
+    variants:
+      - uid: mondoo-azure-security-public-access-level-private-blob-containers-single
+      - uid: mondoo-azure-security-public-access-level-private-blob-containers-api
     docs:
       desc: |
         This check ensures that anonymous access to blob containers is disabled. It also checks that public access on storage accounts is disabled.
@@ -487,11 +585,26 @@ queries:
         --account-name <account_name>
         --account-key <account_key>
         ```
+  - uid: mondoo-azure-security-public-access-level-private-blob-containers-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.storage.accounts.all(properties.AllowBlobPublicAccess == "false" ) ||
+       azure.subscription.storage.accounts.all(containers.all(properties.publicAccess == "None" ))
+  - uid: mondoo-azure-security-public-access-level-private-blob-containers-single
+    filters: |
+      asset.platform == "azure-storage-account"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.storage.account.properties.AllowBlobPublicAccess == "false" ||
+       azure.subscription.storage.account.containers.all(properties.publicAccess == "None")
   - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
     title: Ensure the default network access rule for Storage Accounts is set to deny
     impact: 80
-    mql: |
-      azure.subscription.storage.accounts.all(properties.NetworkRuleSet.defaultAction == "Deny")
+    variants:
+      - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny-single
+      - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny-api
     docs:
       desc: |
         This check ensures that access to the default network for storage accounts is set to deny.
@@ -550,11 +663,24 @@ queries:
           ...
         }
         ```
+  - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.storage.accounts.all(properties.NetworkRuleSet.defaultAction == "Deny")
+  - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny-single
+    filters: |
+      asset.platform == "azure-storage-account"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.storage.account.properties.NetworkRuleSet.defaultAction == "Deny"
   - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
     title: Ensure "Trusted Microsoft Services" is enabled for storage account access
     impact: 80
-    mql: |
-      azure.subscription.storage.accounts.all(properties.NetworkRuleSet.bypass.contains("AzureServices"))
+    variants:
+      - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access-single
+      - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access-api
     docs:
       desc: |
         This check ensures that "Trusted Microsoft Services" is enabled for storage account access. When using Azure storage accounts, certain Azure services might need to bypass network rules due to their operational networks. The "Allow trusted Azure services" exception allows these services to access the storage account securely, using strong authentication. This exception is crucial for services that interact directly with storage accounts but are not able to conform to network rules. Services such as Azure Backup, Azure Site Recovery, Azure DevTest Labs, Azure Event Grid, Azure Event Hubs, Azure Networking, Azure Monitor, and Azure SQL Data Warehouse are examples of services that can be granted access through this exception when they are registered in the subscription. This setup is important for maintaining both functionality and security in Azure environments.
@@ -599,12 +725,24 @@ queries:
           }
         }
         ```
+  - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.storage.accounts.all(properties.NetworkRuleSet.bypass.contains("AzureServices"))
+  - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access-single
+    filters: |
+      asset.platform == "azure-storage-account"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.storage.account.properties.NetworkRuleSet.bypass.contains("AzureServices")
   - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days
     title: Ensure that audit logs are retained for at least 30 days
     impact: 80
-    mql: |
-      azure.subscription.sql.servers.all(auditingPolicy.retentionDays >= 30) ||
-       azure.subscription.sql.servers.all(auditingPolicy.retentionDays == 0)
+    variants:
+      - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days-single
+      - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days-api
     docs:
       desc: |
         This check ensures that auditing retention is set to greater than or equal to 30 days.
@@ -650,14 +788,31 @@ queries:
           }
         }
         ```
+  - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days-single
+    filters: |
+      asset.platform == "azure-sql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.sql.server.auditingPolicy.state == "Enabled"
+      azure.subscription.sql.server.auditingPolicy.retentionDays >= 30 ||
+       azure.subscription.sql.server.auditingPolicy.retentionDays == 0
+  - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.sql.servers.all(auditingPolicy.state == "Enabled")
+      azure.subscription.sql.servers.all(auditingPolicy.retentionDays >= 30) ||
+       azure.subscription.sql.servers.all(auditingPolicy.retentionDays == 0)
   - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0
     title: Ensure no SQL Databases allow ingress 0.0.0.0/0 (ANY IP)
     impact: 80
-    mql: |
-      azure.subscription.sql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-      azure.subscription.postgreSql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-      azure.subscription.mySql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-      azure.subscription.mariaDb.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
+    variants:
+      - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-azuresql
+      - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-postgresql
+      - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-mysql
+      - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-mariadb
+      - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-api
     docs:
       desc: |
         This check ensures that no SQL databases allow ingress connections from "0.0.0.0".
@@ -745,6 +900,39 @@ queries:
           end_ip_address      = "255.255.255.255"
         }
         ```
+  - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-azuresql
+    filters: |
+      asset.platform == "azure-sql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.sql.server.firewallRules.all(startIpAddress != "0.0.0.0")
+  - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-postgresql
+    filters: |
+      asset.platform == "azure-postgresql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.postgreSql.server.firewallRules.all(startIpAddress != "0.0.0.0")
+  - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-mysql
+    filters: |
+      asset.platform == "azure-mysql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.mySql.server.firewallRules.all(startIpAddress != "0.0.0.0")
+  - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-mariadb
+    filters: |
+      asset.platform == "azure-mariadb-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.mariaDb.server.firewallRules.all(startIpAddress != "0.0.0.0")
+  - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.sql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
+      azure.subscription.postgreSql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
+      azure.subscription.mySql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
+      azure.subscription.mariaDb.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
   - uid: mondoo-azure-security-ensure-register-with-ad-is-enabled-on-app-service
     title: Ensure that app services can authenticate with Microsoft Entra ID
     impact: 80
@@ -790,109 +978,12 @@ queries:
            a. Select the app.
            b. Under **Settings**, select **Identity**.
            c. On the **System assigned** tab, set **Status** to **On**.
-  - uid: mondoo-azure-security-ensure-web-app-is-using-the-latest-tls
-    title: Ensure that Web Apps use the latest available version of TLS encryption
-    impact: 80
-    mql: |
-      azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")
-    docs:
-      desc: |
-        It is highly recommended to use the latest TLS version available with Azure App Services for all secure Web App connections. Currently Azure App Services supports TLS 1.2.
-      audit: |
-        __cnspec run__
-
-        To audit Microsoft Azure with `cnspec run`, run this query:
-
-          ```bash
-          cnspec run azure -c "azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
-
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")
-          ```
-      remediation: |
-        ### Microsoft Azure Portal
-
-        To update using Microsoft Azure Portal:
-        1. Log into Microsoft Azure Portal at https://portal.azure.com
-        2. Go to **App Services**.
-        3. For each app:
-           a. Select the app.
-           b. Select **Configuration** and select the **General settings** tab.
-           c. Under **Minimum Inbound TLS Version**, select **1.2**.
-           d. Select **Save**.
-  - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
-    title: Ensure that the expiration date is set for all keys and secrets in key vaults
-    impact: 80
-    mql: |
-      azure.subscription.keyVault.vaults.all(keys.all(enabled == true))
-      azure.subscription.keyVault.vaults.all(keys.all(expires != empty))
-      azure.subscription.keyVault.vaults.all(secrets.all(enabled == true))
-      azure.subscription.keyVault.vaults.all(secrets.all(expires != empty))
-    docs:
-      desc: |
-        The expiration date attribute identifies when you can no longer use the key/secret for a cryptographic operation. By default, keys/secrets never expire. Therefore, it is highly recommended that you rotate keys/secrets in the key vault and set an explicit expiration date.
-      audit: |
-        __cnspec run__
-
-        To audit Microsoft Azure with `cnspec run`, run this query:
-
-          ```bash
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(keys.all(enabled && expires != empty))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(secrets.all(enabled && expires != empty))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
-
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.keyVault.vaults.all(keys.all(enabled == true))
-          azure.subscription.keyVault.vaults.all(keys.all(expires != empty))
-          azure.subscription.keyVault.vaults.all(secrets.all(enabled == true))
-          azure.subscription.keyVault.vaults.all(secrets.all(expires != empty))
-          ```
-      remediation: |
-        ### Microsoft Azure Portal
-
-        To update using Microsoft Azure Portal:
-
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Key vaults**.
-        3. For each key vault:
-           a. Select the key vault.
-           b. Select **Keys** or **Secrets**.
-           c. Make sure that the key/secret in the key vault has an expiration date.
   - uid: mondoo-azure-security-ensure-the-kv-is-recoverable
     title: Ensure it is possible to recover key vaults
     impact: 80
-    mql: |
-      azure.subscription.keyVault.vaults.all(properties.enablePurgeProtection == "true")
-      azure.subscription.keyVault.vaults.all(properties.enableSoftDelete == "true")
+    variants:
+      - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-single
+      - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-api
     docs:
       desc: |
         Azure Key Vault can store keys, secrets, and certificates. Accidental unavailability of a key vault can cause serious problems in any organization.
@@ -943,11 +1034,139 @@ queries:
            a. Select **Properties** and ensure **Soft-delete** is enabled.
            b. Select **Enable Purge Protection**.
            c. Select **Save**.
+  - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-single
+    filters: |
+      asset.platform == "azure-keyvault-vault"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.keyVault.vault.properties.enablePurgeProtection == true
+      azure.subscription.keyVault.vault.properties.enableSoftDelete == true
+  - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.keyVault.vaults.all(properties.enablePurgeProtection == "true")
+      azure.subscription.keyVault.vaults.all(properties.enableSoftDelete == "true")
+  - uid: mondoo-azure-security-ensure-web-app-is-using-the-latest-tls
+    title: Ensure that Web Apps use the latest available version of TLS encryption
+    impact: 80
+    mql: |
+      azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")
+    docs:
+      desc: |
+        It is highly recommended to use the latest TLS version available with Azure App Services for all secure Web App connections. Currently Azure App Services supports TLS 1.2.
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`, run this query:
+
+          ```bash
+          cnspec run azure -c "azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        2. Run this query:
+
+          ```mql
+          azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using Microsoft Azure Portal:
+        1. Log into Microsoft Azure Portal at https://portal.azure.com
+        2. Go to **App Services**.
+        3. For each app:
+           a. Select the app.
+           b. Select **Configuration** and select the **General settings** tab.
+           c. Under **Minimum Inbound TLS Version**, select **1.2**.
+           d. Select **Save**.
+  - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
+    title: Ensure that the expiration date is set for all keys and secrets in key vaults
+    impact: 80
+    variants:
+      - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv-single
+      - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv-api
+    docs:
+      desc: |
+        The expiration date attribute identifies when you can no longer use the key/secret for a cryptographic operation. By default, keys/secrets never expire. Therefore, it is highly recommended that you rotate keys/secrets in the key vault and set an explicit expiration date.
+      audit: |
+        __cnspec run__
+
+        To audit Microsoft Azure with `cnspec run`, run this query:
+
+          ```bash
+          cnspec run azure -c "azure.subscription.keyVault.vaults.all(keys.all(enabled && expires != empty))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          cnspec run azure -c "azure.subscription.keyVault.vaults.all(secrets.all(enabled && expires != empty))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        Note: It is also possible to use a client secret for app connection instead of a certificate.
+
+        __cnspec shell__
+
+        To audit Microsoft Azure with `cnspec shell`:
+
+        1. Launch `cnspec shell`:
+
+          ```bash
+          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          ```
+
+        2. Run this query:
+
+          ```mql
+          azure.subscription.keyVault.vaults.all(keys.all(enabled == true))
+          azure.subscription.keyVault.vaults.all(keys.all(expires != empty))
+          azure.subscription.keyVault.vaults.all(secrets.all(enabled == true))
+          azure.subscription.keyVault.vaults.all(secrets.all(expires != empty))
+          ```
+      remediation: |
+        ### Microsoft Azure Portal
+
+        To update using Microsoft Azure Portal:
+
+        1. Log into Microsoft Azure Portal at https://portal.azure.com.
+        2. Go to **Key vaults**.
+        3. For each key vault:
+           a. Select the key vault.
+           b. Select **Keys** or **Secrets**.
+           c. Make sure that the key/secret in the key vault has an expiration date.
+  - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv-single
+    filters: |
+      asset.platform == "azure-keyvault-vault"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.keyVault.vault.keys.all(enabled == true)
+      azure.subscription.keyVault.vault.keys.all(expires != empty)
+      azure.subscription.keyVault.vault.secrets.all(enabled == true)
+      azure.subscription.keyVault.vault.secrets.all(expires != empty)
+  - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.keyVault.vaults.all(keys.all(enabled == true))
+      azure.subscription.keyVault.vaults.all(keys.all(expires != empty))
+      azure.subscription.keyVault.vaults.all(secrets.all(enabled == true))
+      azure.subscription.keyVault.vaults.all(secrets.all(expires != empty))
   - uid: mondoo-azure-security-ensure-logging-enabled-kv
     title: Ensure all operations in Azure Key Vault are logged
     impact: 80
-    mql: |
-      azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(category == "AuditEvent").all(retentionPolicy.days >= 180)))
+    variants:
+      - uid: mondoo-azure-security-ensure-logging-enabled-kv-single
+      - uid: mondoo-azure-security-ensure-logging-enabled-kv-api
     docs:
       desc: |
         Monitoring how, by whom, and when key vaults are accessed creates an audit trail of interactions with confidential information, keys, secrets, and certificates.
@@ -990,6 +1209,18 @@ queries:
            c. Select **Audit** and **All logs**.
            d. Select **Archive to a storage account** and choose a storage account.
            e. Select **Save**.
+  - uid: mondoo-azure-security-ensure-logging-enabled-kv-single
+    filters: |
+      asset.platform == "azure-keyvault-vault"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.keyVault.vault.diagnosticSettings.all(properties.logs.where(category == "AuditEvent").all(retentionPolicy {days >= 180}))
+  - uid: mondoo-azure-security-ensure-logging-enabled-kv-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(category == "AuditEvent").all(retentionPolicy.days >= 180)))
   - uid: mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group
     title: Ensure that activity log alerts exist for the commands Create, Update, and Delete Network Security Group
     impact: 80
@@ -1099,8 +1330,9 @@ queries:
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql
     title: Ensure SSL connection enabled for PostgreSQL database servers
     impact: 80
-    mql: |
-      azure.subscription.postgreSql.servers.all(properties.sslEnforcement == "Enabled")
+    variants:
+      - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-api
+      - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-single
     docs:
       desc: |
         All communication between clients and PostgreSQL database servers should be through SSL/TLS. This added layer of encryption prevents man-in-the-middle attacks.
@@ -1138,12 +1370,25 @@ queries:
         1. Log into Microsoft Azure Portal at https://portal.azure.com.
         2. Go to **Azure Database for PostgreSQL**.
         3. For each database, select **Connection security** and enable SSL.
+
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-single
+    filters: |
+      asset.platform == "azure-postgresql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.postgreSql.server.properties.sslEnforcement == "Enabled"
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.postgreSql.servers.all(properties.sslEnforcement == "Enabled")
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql
     title: Ensure SSL connection enabled for MySQL Database Server with the latest version
     impact: 80
-    mql: |
-      azure.subscription.mySql.servers.all(properties.sslEnforcement == "Enabled")
-      azure.subscription.mySql.servers.all(properties.minimalTlsVersion == "TLS1_2")
+    variants:
+      - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-single
+      - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-api
     docs:
       desc: |
         All communication between clients and MySQL servers should be through SSL/TLS. This adds a layer of encryption to prevent man-in-the-middle attacks.
@@ -1185,12 +1430,26 @@ queries:
            a. Select **Connection security**.
            b. Enable **SSL**.
            c. Ensure that the latest version of TLS is selected as the minimum.
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-single
+    filters: |
+      asset.platform == "azure-mysql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.mySql.server.properties.sslEnforcement == "Enabled"
+      azure.subscription.mySql.server.properties.minimalTlsVersion == "TLS1_2"
+  - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.mySql.servers.all(properties.sslEnforcement == "Enabled")
+      azure.subscription.mySql.servers.all(properties.minimalTlsVersion == "TLS1_2")
   - uid: mondoo-azure-security-ensure-disabled-public-access-sql
     title: Ensure public network access for SQL server is blocked or Limited to Use Selected Networks Instead of All Networks
     impact: 80
-    mql: |
-      azure.subscription.sql.servers.all(properties.publicNetworkAccess == "Disabled") ||
-       azure.subscription.sql.servers.where(properties.publicNetworkAccess == "Enabled").all(virtualNetworkRules != empty || firewallRules != empty)
+    variants:
+      - uid: mondoo-azure-security-ensure-disabled-public-access-sql-single
+      - uid: mondoo-azure-security-ensure-disabled-public-access-sql-api
     docs:
       desc: |
         Customers can choose to connect to a database by either:
@@ -1234,12 +1493,26 @@ queries:
         3. For each server:
            a. Under **Security**, select **Networking**.
            b. For **Public network access**, select **Disable** or **Selected networks**.
+  - uid: mondoo-azure-security-ensure-disabled-public-access-sql-single
+    filters: |
+      asset.platform == "azure-sql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.sql.server.properties.publicNetworkAccess == "Disabled"
+        || azure.subscription.sql.server.virtualNetworkRules != empty || azure.subscription.sql.server.firewallRules != empty
+  - uid: mondoo-azure-security-ensure-disabled-public-access-sql-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.sql.servers.all(properties.publicNetworkAccess == "Disabled") ||
+       azure.subscription.sql.servers.where(properties.publicNetworkAccess == "Enabled").all(virtualNetworkRules != empty || firewallRules != empty)
   - uid: mondoo-azure-security-keyvault-public-access-disabled
     title: Ensure default public network access for Azure Key Vault is disabled or Limited to Use Selected Networks Instead of All Networks
     impact: 80
-    mql: |
-      azure.subscription.keyVault.vaults.all(properties.publicNetworkAccess == "Disabled") ||
-        azure.subscription.keyVault.vaults.where(properties.publicNetworkAccess == "Enabled").all(properties.networkAcls.virtualNetworkRules != empty || properties.networkAcls.ipRules != empty)
+    variants:
+      - uid: mondoo-azure-security-keyvault-public-access-disabled-single
+      - uid: mondoo-azure-security-keyvault-public-access-disabled-api
     docs:
       desc: |
         To enhance the security of Azure Key Vault, a critical component in the Azure environment, it's advisable to restrict public network access. By default, a new key vault has its firewall disabled, permitting unrestricted access from applications and Azure services, though operations are still restricted by Microsoft Entra authentication and access policies.
@@ -1287,11 +1560,27 @@ queries:
         3. For each key vault:
            a. Under **Settings**, select **Networking**.
            b. For **Firewalls and virtual networks**, select **Disable public access**.
+  - uid: mondoo-azure-security-keyvault-public-access-disabled-single
+    filters: |
+      asset.platform == "azure-keyvault-vault"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.keyVault.vault.properties.all(publicNetworkAccess == "Disabled")
+        || azure.subscription.keyVault.vault.properties.networkAcls.ipRules != empty
+        || azure.subscription.keyVault.vault.properties.networkAcls.virtualNetworkRules != empty
+  - uid: mondoo-azure-security-keyvault-public-access-disabled-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.keyVault.vaults.all(properties.publicNetworkAccess == "Disabled") ||
+        azure.subscription.keyVault.vaults.where(properties.publicNetworkAccess == "Enabled").all(properties.networkAcls.virtualNetworkRules != empty || properties.networkAcls.ipRules != empty)
   - uid: mondoo-azure-security-sql-server-audit-on
     title: Ensure that all activities on SQL server are audited
     impact: 60
-    mql: |
-      azure.subscription.sql.servers.all(auditingPolicy.state == "Enabled")
+    variants:
+      - uid: mondoo-azure-security-sql-server-audit-on-single
+      - uid: mondoo-azure-security-sql-server-audit-on-api
     docs:
       desc: |
         Auditing is a very important feature and should be configured for every database or server in your Azure deployment. When you enable server-level auditing, you enable it for all existing databases and for new databases you create in the future.
@@ -1333,11 +1622,24 @@ queries:
         1. Log into Microsoft Azure Portal at https://portal.azure.com.
         2. Go to **SQL servers**.
         3. For each SQL server select **Auditing** and make sure the **Enable Azure SQL Auditing** toggle is on.
+  - uid: mondoo-azure-security-sql-server-audit-on-single
+    filters: |
+      asset.platform == "azure-sql-server"
+      asset.kind == "azure-object"
+    mql: |
+      azure.subscription.sql.server.auditingPolicy.state == "Enabled"
+  - uid: mondoo-azure-security-sql-server-audit-on-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.sql.servers.all(auditingPolicy.state == "Enabled")
   - uid: mondoo-azure-security-sql-server-tde-on
     title: Ensure that transparent data encryption is enabled for SQL Server databases
     impact: 60
-    mql: |
-      azure.subscription.sql.servers.all(databases.where(name != "master").all(transparentDataEncryption.state == "Enabled"))
+    variants:
+      - uid: mondoo-azure-security-sql-server-tde-on-single
+      - uid: mondoo-azure-security-sql-server-tde-on-api
     docs:
       desc: |
         Transparent data encryption (TDE) encrypts SQL Server, Azure SQL Database, and Azure Synapse Analytics data files. This encryption is known as encrypting data at rest.
@@ -1384,6 +1686,19 @@ queries:
            a. Select the database.
            b. Under **Security**, select **Data encryption**.
            c. On the **Transparent data encryption** tab, make sure **Data encryption** is set to **On**.
+  - uid: mondoo-azure-security-sql-server-tde-on-single
+    filters: |
+      asset.platform == "azure-sql-server"
+      asset.kind == "azure-object"
+      azure.subscription.sql.server.databases.any(name != "master")
+    mql: |
+      azure.subscription.sql.server.databases.where(name != "master").all(transparentDataEncryption.state == "Enabled")
+  - uid: mondoo-azure-security-sql-server-tde-on-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      azure.subscription.sql.servers.all(databases.where(name != "master").all(transparentDataEncryption.state == "Enabled"))
   - uid: mondoo-azure-security-diagnostic-settings-exist
     title: Ensure that diagnostic settings exist for the subscription
     impact: 80
@@ -1391,7 +1706,7 @@ queries:
       azure.subscription.monitor.diagnosticSettings != empty
     docs:
       desc: |
-        Diagnostic settings are an important piece in the security puzzle, Microsoft highly recommendeds using them in Azure Security Center. To understand what the diagnostic settings are, you must understand the data source of the Monitor component in Azure.
+        Diagnostic settings are an important piece in the security puzzle, Microsoft highly recommends using them in Azure Security Center. To understand what the diagnostic settings are, you must understand the data source of the Monitor component in Azure.
 
         Azure Monitor is based on different logs and metrics collected from multiple resources. This can be analyzed using a set of tools provided in Azure Monitor.
         Azure Resources generate a significant amount of monitoring data which categorized into two types:
@@ -1510,21 +1825,20 @@ queries:
   - uid: mondoo-azure-security-disable-udp-virtualmachines
     title: Ensure direct UDP access to Azure virtual machines from the internet is restricted
     impact: 80
-    mql: |
-      allNsgUDP= azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /UDP/
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-      )
-      allNsgUDP.all(properties.destinationPortRange != "*")
-      allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 53 && toPort >= 53)))
-      allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 123 && toPort >= 123)))
-      allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 161 && toPort >= 161)))
-      allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 389 && toPort >= 389)))
-      allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 1900 && toPort >= 1900)))
+    props:
+      - uid: disallowedPortsUDP
+        title: a list of disallowed UDP ports, by default covering common UDP services, add more as needed
+        mql: |
+          return [
+            53,
+            123,
+            161,
+            389,
+            1900
+          ]
+    variants:
+      - uid: mondoo-azure-security-disable-udp-virtualmachines-single
+      - uid: mondoo-azure-security-disable-udp-virtualmachines-api
     docs:
       desc: |
         The main security issue with exposing UDP services over the internet is the broad attack surface that allows attackers to use reflection amplification attack against virtual machines.
@@ -1555,7 +1869,7 @@ queries:
         To audit Microsoft Azure with `cnspec run`, run this query:
 
           ```bash
-          cnspec run azure -c "allNsgUDP= azure.subscription.network.securityGroups.where(securityRules
+          cnspec run azure -c "allNsgUDP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -1585,7 +1899,7 @@ queries:
         2. Run this query:
 
           ```mql
-        allNsgUDP= azure.subscription.network.securityGroups.where(securityRules
+        allNsgUDP = azure.subscription.network.securityGroups.where(securityRules
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
@@ -1605,3 +1919,39 @@ queries:
         * Point-to-site VPN
         * Site-to-site VPN
         * ExpressRoute
+  - uid: mondoo-azure-security-disable-udp-virtualmachines-single
+    filters: |
+      asset.platform == "azure-network-security-group"
+      asset.kind == "azure-object"
+    mql: |
+      allNsgUDP = azure.subscription.network.securityGroup.securityRules
+        .where(
+          properties.access == 'Allow'
+            && direction == 'Inbound'
+            && properties.protocol == /UDP|\*/
+            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
+        )
+      allNsgUDP.all(properties.destinationPortRange != "*")
+      props.disallowedPortsUDP {
+        disallowedPortUDP = _
+        disallowedPortUDP
+        allNsgUDP.none(destinationPortRange.any(fromPort <= disallowedPortUDP && toPort >= disallowedPortUDP))
+      }
+  - uid: mondoo-azure-security-disable-udp-virtualmachines-api
+    filters: |
+      asset.platform == "azure"
+      asset.kind == "api"
+    mql: |
+      allNsgUDP = azure.subscription.network.securityGroups.where(securityRules
+        .where(
+          properties.access == 'Allow'
+            && direction == 'Inbound'
+            && properties.protocol == /UDP|\*/
+            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
+        )
+      )
+      allNsgUDP.all(properties.destinationPortRange != "*")
+      props.disallowedPortsUDP {
+        disallowedPortUDP = _
+        disallowedPortUDP
+      }
