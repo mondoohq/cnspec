@@ -13,5 +13,6 @@ project {
     "**/testdata/**",
     "**/*.pb.go",
     "**/*_string.go",
+    "apps/cnspec/cmd/policy-example.mql.yaml",
   ]
 }
