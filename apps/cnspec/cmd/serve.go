@@ -102,7 +102,7 @@ var serveCmd = &cobra.Command{
 				log.Error().Err(err).Msg("could not update providers")
 			}
 			// TODO: check in every 5 min via timer, init time in Background job
-			result, err := RunScan(scanConf, scan.DisableProgressBar())
+			result, err := RunScan(scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR))
 			if err != nil {
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
 			}

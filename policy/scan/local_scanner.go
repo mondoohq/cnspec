@@ -52,6 +52,7 @@ type LocalScanner struct {
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
 	disableProgressBar  bool
+	reportType          ReportType
 	scanMutex           sync.Mutex
 }
 
@@ -78,6 +79,12 @@ func AllowJobCredentials() ScannerOption {
 func DisableProgressBar() ScannerOption {
 	return func(s *LocalScanner) {
 		s.disableProgressBar = true
+	}
+}
+
+func WithReportType(reportType ReportType) ScannerOption {
+	return func(s *LocalScanner) {
+		s.reportType = reportType
 	}
 }
 
@@ -153,6 +160,11 @@ func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
 		return nil, err
 	}
 
+	// The job report type has precedence over the global report type. The default is FULL
+	if job.ReportType == ReportType_FULL {
+		job.ReportType = s.reportType
+	}
+
 	reports, err := s.distributeJob(job, ctx, upstream)
 	if err != nil {
 		return nil, err
@@ -177,6 +189,11 @@ func (s *LocalScanner) RunIncognito(ctx context.Context, job *Job) (*ScanResult,
 	upstream, err := s.getUpstreamConfig(true, job)
 	if err != nil {
 		return nil, err
+	}
+
+	// The job report type has precedence over the global report type. The default is FULL
+	if job.ReportType == ReportType_FULL {
+		job.ReportType = s.reportType
 	}
 
 	reports, err := s.distributeJob(job, ctx, upstream)
