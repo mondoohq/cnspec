@@ -273,9 +273,8 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		conf.Inventory.ApplyCategory(inventory.AssetCategory_CATEGORY_CICD)
 	}
 
-	var serviceAccount *upstream.ServiceAccountCredentials
+	serviceAccount := opts.GetServiceCredential()
 
-	serviceAccount = opts.GetServiceCredential()
 	// NOTE: even if we have incognito, we want to set the upstream config. Otherwise we would not be able to
 	// use the policies that are defined in Mondoo Platform
 	if serviceAccount != nil {
@@ -287,6 +286,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 			Incognito:   conf.IsIncognito,
 			Creds:       serviceAccount,
 		}
+		providers.DefaultRuntime().UpstreamConfig = conf.runtime.UpstreamConfig
 	} else {
 		log.Warn().Msg("No credentials provided. Switching to --incognito mode.")
 		conf.IsIncognito = true
