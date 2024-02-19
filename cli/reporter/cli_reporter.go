@@ -14,9 +14,9 @@ import (
 	"go.mondoo.com/cnquery/v10"
 	"go.mondoo.com/cnquery/v10/cli/printer"
 	"go.mondoo.com/cnquery/v10/cli/theme/colors"
-	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/mqlc"
 	"go.mondoo.com/cnquery/v10/providers"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v10/shared"
 	"go.mondoo.com/cnspec/v10/policy"
@@ -58,7 +58,7 @@ func getVulnReport[T any](results map[string]*T) (*T, error) {
 	// ^^
 }
 
-func defaultChecksum(code mqlCode, schema llx.Schema) (string, error) {
+func defaultChecksum(code mqlCode, schema resources.ResourcesSchema) (string, error) {
 	res, ok := _defaultChecksums[code]
 	if ok {
 		return res.sum, res.err
