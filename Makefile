@@ -19,7 +19,7 @@ VERSION=${LATEST_VERSION_TAG}+$(shell git rev-list --count HEAD)
 endif
 
 LDFLAGS=-ldflags "-s -w -X go.mondoo.com/cnspec/v10.Version=${VERSION} -X go.mondoo.com/cnspec/v10.Build=${TAG}" # -linkmode external -extldflags=-static
-LDFLAGSDIST=-tags production -ldflags "-s -w -X go.mondoo.com/cnspec/v10.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v10.Build=${TAG} -s -w"
+LDFLAGSDIST=-tags production -ldflags "-s -w -X go.mondoo.com/cnquery/v10.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnquery/v10.Build=${TAG} -X go.mondoo.com/cnspec/v10.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v10.Build=${TAG} -s -w"
 
 .PHONY: info/ldflags
 info/ldflags:
