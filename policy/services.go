@@ -11,6 +11,7 @@ import (
 	"go.mondoo.com/cnquery/v10/explorer"
 	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
 	"go.mondoo.com/ranger-rpc"
 )
 
@@ -81,7 +82,7 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 	}, nil
 }
 
-func (l *LocalServices) Schema() llx.Schema {
+func (l *LocalServices) Schema() resources.ResourcesSchema {
 	return l.Runtime.Schema()
 }
 

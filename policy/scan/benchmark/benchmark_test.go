@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v10"
 	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnspec/v10/policy"
@@ -25,6 +26,7 @@ func init() {
 }
 
 func BenchmarkScan_SingleAsset(b *testing.B) {
+	defer providers.Coordinator.Shutdown()
 	ctx := context.Background()
 	runtime := testutils.Local()
 	conf := mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)
@@ -73,6 +75,7 @@ func BenchmarkScan_SingleAsset(b *testing.B) {
 }
 
 func BenchmarkScan_MultipleAssets(b *testing.B) {
+	defer providers.Coordinator.Shutdown()
 	ctx := context.Background()
 	runtime := testutils.Local()
 	conf := mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)

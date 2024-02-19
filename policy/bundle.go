@@ -20,6 +20,7 @@ import (
 	"go.mondoo.com/cnquery/v10/logger"
 	"go.mondoo.com/cnquery/v10/mqlc"
 	"go.mondoo.com/cnquery/v10/mrn"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
 	"go.mondoo.com/cnquery/v10/utils/multierr"
 	"sigs.k8s.io/yaml"
 )
@@ -712,7 +713,7 @@ func topologicalSortQueriesDFS(queryMrn string, queriesMap map[string]*explorer.
 }
 
 // Compile a bundle. See CompileExt for a full description.
-func (p *Bundle) Compile(ctx context.Context, schema llx.Schema, library Library) (*PolicyBundleMap, error) {
+func (p *Bundle) Compile(ctx context.Context, schema resources.ResourcesSchema, library Library) (*PolicyBundleMap, error) {
 	return p.CompileExt(ctx, BundleCompileConf{
 		CompilerConfig: mqlc.NewConfig(schema, cnquery.DefaultFeatures),
 		Library:        library,

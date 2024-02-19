@@ -12,7 +12,7 @@ import (
 	"strconv"
 
 	"github.com/Masterminds/semver"
-	"go.mondoo.com/cnquery/v10/llx"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
 	"go.mondoo.com/cnspec/v10/policy"
 )
 
@@ -148,7 +148,7 @@ type Location struct {
 }
 
 // Lint validates a policy bundle for consistency
-func Lint(schema llx.Schema, files ...string) (*Results, error) {
+func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
 	aggregatedResults := &Results{
 		BundleLocations: []string{},
 	}

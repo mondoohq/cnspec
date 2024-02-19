@@ -53,7 +53,6 @@ type LocalScanner struct {
 	allowJobCredentials bool
 	disableProgressBar  bool
 	reportType          ReportType
-	scanMutex           sync.Mutex
 }
 
 type ScannerOption func(*LocalScanner)
@@ -136,13 +135,6 @@ func (s *LocalScanner) Schedule(ctx context.Context, job *Job) (*Empty, error) {
 }
 
 func (s *LocalScanner) Run(ctx context.Context, job *Job) (*ScanResult, error) {
-	// We want to run 1 scan at a time because we kill all providers after a scan.
-	// If we do >1 scan in parallel it is possible that we kill the provider of the
-	// scan that is in progress, which will result in errors. We can address this later
-	// by attaching a provider to a scan and killing only the providers that are not
-	// not actively used.
-	s.scanMutex.Lock()
-	defer s.scanMutex.Unlock()
 	if job == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "missing scan job")
 	}
@@ -273,9 +265,6 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 }
 
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
-	// Always shut down the coordinator, to make sure providers are killed
-	defer providers.Coordinator.Shutdown()
-
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
 		return nil, err
@@ -432,18 +421,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	}
 	scanGroups.Wait() // wait for all scans to complete
 	return reporter.Reports(), nil
-}
-
-func batch[T any](list []T, batchSize int) [][]T {
-	var res [][]T
-	for i := 0; i < len(list); i += batchSize {
-		end := i + batchSize
-		if end > len(list) {
-			end = len(list)
-		}
-		res = append(res, list[i:end])
-	}
-	return res
 }
 
 func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.Services {

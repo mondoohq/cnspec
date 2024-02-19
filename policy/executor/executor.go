@@ -15,6 +15,7 @@ import (
 	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/logger"
 	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
 	"go.mondoo.com/cnquery/v10/types"
 	"go.mondoo.com/cnspec/v10"
 	"go.mondoo.com/cnspec/v10/policy/executor/internal"
@@ -648,6 +649,6 @@ func (e *Executor) MissingQueries() []*MissingQuery {
 }
 
 // Schema is used for testing. Check carefully if you have other intentions
-func (e *Executor) Schema() llx.Schema {
+func (e *Executor) Schema() resources.ResourcesSchema {
 	return e.runtime.Schema()
 }

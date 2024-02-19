@@ -33,7 +33,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
-	go.mondoo.com/cnquery/v10 v10.3.4
+	go.mondoo.com/cnquery/v10 v10.3.5-0.20240219105228-7d1f8a509be4
 	go.mondoo.com/mondoo-go v0.0.0-20240213081402-ca514f6fe731
 	go.mondoo.com/ranger-rpc v0.5.3
 	go.opentelemetry.io/otel v1.23.1
@@ -89,7 +89,7 @@ require (
 	github.com/ashanbrown/forbidigo v1.6.0 // indirect
 	github.com/ashanbrown/makezero v1.1.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go v1.50.19 // indirect
+	github.com/aws/aws-sdk-go v1.50.20 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.25.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.5.4 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.0 // indirect
@@ -98,9 +98,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.0 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.0 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.2.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.147.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.148.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.21.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.25.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.26.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.22.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.11.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.2.10 // indirect
@@ -109,7 +109,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.27.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.26.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.5 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.46.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.47.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.19.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.22.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.27.0 // indirect
@@ -192,7 +192,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/golang/mock v1.6.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golangci/check v0.0.0-20180506172741-cfe4005ccda2 // indirect
 	github.com/golangci/dupl v0.0.0-20180902072040-3e9179ac440a // indirect
@@ -373,6 +372,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.48.0 // indirect
 	go.opentelemetry.io/otel/metric v1.23.1 // indirect
 	go.opentelemetry.io/otel/trace v1.23.1 // indirect
+	go.uber.org/mock v0.4.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/crypto v0.19.0 // indirect
