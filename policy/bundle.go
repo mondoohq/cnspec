@@ -752,6 +752,10 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		codeBundles:   map[string]*llx.CodeBundle{},
 	}
 
+	if err := p.unflattenFrameworks(); err != nil {
+		return nil, err
+	}
+
 	// Process variants and inherit attributes filled from their parents
 	for _, query := range p.Queries {
 		if len(query.Variants) == 0 {
@@ -901,6 +905,115 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	}
 
 	return bundleMap, cache.error()
+}
+
+func policyIdFromFramework(id string) string {
+	return id + "-policy"
+}
+
+func frameworkmapIdFromFramework(id string) string {
+	return id + "-map"
+}
+
+func (p *Bundle) unflattenFrameworks() error {
+	for fi := range p.Frameworks {
+		framework := p.Frameworks[fi]
+		policy := Policy{}
+		frameworkmap := FrameworkMap{}
+
+		for gi := range framework.Groups {
+			group := framework.Groups[gi]
+			policygroup := PolicyGroup{}
+
+			for ci := range group.Controls {
+				control := group.Controls[ci]
+				controlmap := ControlMap{}
+
+				for ei := range control.Evidence {
+					evidence := control.Evidence[ei]
+
+					if len(evidence.Checks) != 0 {
+						policygroup.Checks = append(policygroup.Checks, evidence.Checks...)
+						for i := range evidence.Checks {
+							check := evidence.Checks[i]
+							controlmap.Checks = append(controlmap.Checks, &ControlRef{
+								Uid: check.Uid,
+								Mrn: check.Mrn,
+							})
+						}
+						evidence.Checks = nil
+					}
+
+					if len(evidence.Queries) != 0 {
+						policygroup.Queries = append(policygroup.Queries, evidence.Queries...)
+						for i := range evidence.Queries {
+							query := evidence.Queries[i]
+							controlmap.Queries = append(controlmap.Queries, &ControlRef{
+								Uid: query.Uid,
+								Mrn: query.Mrn,
+							})
+						}
+						evidence.Queries = nil
+					}
+				}
+
+				// exit early in case we have no mappings for this control
+				if len(controlmap.Checks) == 0 && len(controlmap.Queries) == 0 {
+					continue
+				}
+
+				controlmap.Uid = control.Uid
+				controlmap.Mrn = control.Mrn
+				frameworkmap.Controls = append(frameworkmap.Controls, &controlmap)
+			}
+
+			// exit early in case we have no contents in this policy group
+			if len(policygroup.Checks) == 0 && len(policygroup.Queries) == 0 {
+				continue
+			}
+
+			if group.Uid != "" {
+				policygroup.Uid = policyIdFromFramework(group.Uid)
+			}
+			policygroup.Title = group.Title
+			policygroup.Docs = group.Docs
+			policy.Groups = append(policy.Groups, &policygroup)
+		}
+
+		// exit early in case wew didn't get any policy contents
+		if len(policy.Groups) == 0 {
+			continue
+		}
+
+		frameworkmap.FrameworkOwner = &explorer.ObjectRef{}
+		policydep := &explorer.ObjectRef{}
+		frameworkmap.PolicyDependencies = []*explorer.ObjectRef{policydep}
+		if framework.Uid != "" {
+			policy.Uid = policyIdFromFramework(framework.Uid)
+			policydep.Uid = policy.Uid
+			frameworkmap.Uid = frameworkmapIdFromFramework(framework.Uid)
+			frameworkmap.FrameworkOwner.Uid = framework.Uid
+		}
+		if framework.Mrn != "" {
+			policy.Mrn = policyIdFromFramework(framework.Mrn)
+			policydep.Mrn = policy.Mrn
+			frameworkmap.Mrn = frameworkmapIdFromFramework(framework.Mrn)
+			frameworkmap.FrameworkOwner.Mrn = framework.Mrn
+		}
+		if policy.Uid == "" && policy.Mrn == "" {
+			return errors.New("failed to generate policy from fraamework, UID and MRN are empty")
+		}
+		policy.Name = framework.Name
+		policy.Docs = framework.Docs
+
+		// TODO: we currently don't check if the bundle has an identically named policy
+		// To be clear: It should never have it.
+		p.Policies = append(p.Policies, &policy)
+
+		p.FrameworkMaps = append(p.FrameworkMaps, &frameworkmap)
+	}
+
+	return nil
 }
 
 // this uses a subset of the calls of Mquery.AddBase(), because we don't want

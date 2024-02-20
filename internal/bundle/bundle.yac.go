@@ -162,6 +162,7 @@ type Control struct {
 	Tags        map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
 	Docs        *ControlDocs      `protobuf:"bytes,21,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	Checksum    string            `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
+	Evidence    []*Evidence       `protobuf:"bytes,6,rep,name=evidence,proto3" json:"evidence,omitempty" yaml:"evidence,omitempty"`
 	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Manual      bool              `protobuf:"varint,50,opt,name=manual,proto3" json:"manual,omitempty" yaml:"manual,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
@@ -355,6 +356,59 @@ func (x *ControlRef) UnmarshalYAML(node *yaml.Node) error {
 
 func (d ControlRef) MarshalYAML() (interface{}, error) {
 	type alias ControlRef
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type Evidence struct {
+	Uid         string      `protobuf:"bytes,5,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string      `protobuf:"bytes,4,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Title       string      `protobuf:"bytes,20,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Checks      []*Mquery   `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
+	Queries     []*Mquery   `protobuf:"bytes,3,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *Evidence) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Evidence
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d Evidence) MarshalYAML() (interface{}, error) {
+	type alias Evidence
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
 	if err != nil {
