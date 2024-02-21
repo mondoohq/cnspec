@@ -71,7 +71,7 @@ export GITHUB_TOKEN=<personal_access_token>
 cnspec scan github repo <org/repo>
 ```
 
-[:books: To learn more, read the cnspec docs.](https://mondoo.com/docs/cnspec/home)
+[:books: To learn more, read the cnspec docs.](https://mondoo.com/docs/cnspec/home/)
 
 ### Policies
 
@@ -172,7 +172,7 @@ Mondoo Platform's web-based console allows you to navigate, search, and arrange 
 
 Go to [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup) to sign up.
 
-To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home) or visit [mondoo.com](https://www.mondoo.com).
+To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home/) or visit [mondoo.com](https://mondoo.com).
 
 ### Register cnspec with Mondoo Platform
 
@@ -255,7 +255,7 @@ Explore our:
 
 - [cnspec docs](https://mondoo.com/docs/cnspec/home)
 - [Policy bundles](https://github.com/mondoohq/cnspec-policies)
-- [Policy as code](https://mondoo.com/docs/platform/console/policy_hub/)
+- [Policy as code](https://mondoo.com/docs/cnspec/cnspec-policies/write/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources/)
 - [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
