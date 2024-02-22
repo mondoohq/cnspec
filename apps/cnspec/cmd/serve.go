@@ -180,17 +180,14 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 	}
 	var err error
 
-	assetFn := func() *inventory.Asset {
-		log.Info().Msg("configure inventory to scan local operating system")
-		return &inventory.Asset{
-			Connections: []*inventory.Config{{
-				Type: "local",
-			}},
-			Annotations: optAnnotations,
-		}
+	asset := &inventory.Asset{
+		Connections: []*inventory.Config{{
+			Type: "local",
+		}},
+		Annotations: optAnnotations,
 	}
 
-	conf.Inventory, err = inventoryloader.ParseOrUse(assetFn, viper.GetBool("insecure"), optAnnotations)
+	conf.Inventory, err = inventoryloader.ParseOrUse(asset, viper.GetBool("insecure"), optAnnotations)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "could not load configuration")
 	}
