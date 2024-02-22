@@ -139,20 +139,25 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.ExecutionJob.Queries, 3)
+		require.Len(t, rp.ExecutionJob.Queries, 6)
 		require.Len(t, rp.Filters, 1)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 3)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
 
 		qrIdToRj := map[string]*policy.ReportingJob{}
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			qrIdToRj[rj.QrId] = rj
 		}
-		// scoring queries report by code id
+		// FIXME SOON: scoring queries report by BOTH code id and MRN temporarily
+		// FIXME SOON: we want to remove the code id reporting soon
 		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
+		require.NotNil(t, qrIdToRj[b.Queries[1].Mrn])
+
 		// data queries report by mrn
 		require.NotNil(t, qrIdToRj[queryMrn("query1")])
 
 		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Datapoints, 3)
+		require.Len(t, qrIdToRj[b.Queries[1].Mrn].Datapoints, 3)
+
 		require.Len(t, qrIdToRj[queryMrn("query1")].Datapoints, 1)
 	})
 
@@ -231,7 +236,18 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 6)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+
+		// FIXME SOON: scoring queries report by BOTH code id and MRN temporarily
+		// FIXME SOON: we want to remove the code id reporting soon
+		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
+		require.NotNil(t, qrIdToRj[b.Queries[1].Mrn])
+
 		ignoreJob := rp.CollectorJob.ReportingJobs["8Sis0SvMbtI="]
 		require.NotNil(t, ignoreJob)
 		childJob := ignoreJob.ChildJobs["YCeU4NjbMe0="]
@@ -307,12 +323,7 @@ policies:
 
 	require.NoError(t, err)
 	require.NotNil(t, rp)
-	require.Len(t, rp.CollectorJob.ReportingJobs, 3)
-
-	mrnToQueryId := map[string]string{}
-	for _, q := range bundleMap.Queries {
-		mrnToQueryId[q.Mrn] = q.CodeId
-	}
+	require.Len(t, rp.CollectorJob.ReportingJobs, 4)
 
 	rjTester := frameworkReportingJobTester{
 		t:                     t,
@@ -328,13 +339,21 @@ policies:
 		rjTester.queryIdToReportingJob[rj.QrId] = rj
 	}
 
-	queryRj := rjTester.queryIdToReportingJob[mrnToQueryId[queryMrn("check1")]]
-	// we ensure that even though ignored, theres an RJ for the query
-	require.NotNil(t, queryRj)
-	parent := queryRj.Notify[0]
-	parentRj := rjTester.rjIdToReportingJob[parent]
-	require.NotNil(t, parentRj)
-	require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, parentRj.ChildJobs[queryRj.Uuid].Scoring)
+	query := bundleMap.Queries[queryMrn("check1")]
+
+	// FIXME SOON: scoring queries report by BOTH code id and MRN temporarily
+	// FIXME SOON: we want to remove the code id reporting soon
+	queryRj1 := rjTester.queryIdToReportingJob[query.CodeId]
+	queryRj2 := rjTester.queryIdToReportingJob[query.Mrn]
+	queries := []*policy.ReportingJob{queryRj1, queryRj2}
+	for _, queryRj := range queries {
+		// we ensure that even though ignored, theres an RJ for the query
+		require.NotNil(t, queryRj)
+		parent := queryRj.Notify[0]
+		parentRj := rjTester.rjIdToReportingJob[parent]
+		require.NotNil(t, parentRj)
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, parentRj.ChildJobs[queryRj.Uuid].Scoring)
+	}
 }
 
 func TestResolve_ExpiredGroups(t *testing.T) {
@@ -379,7 +398,7 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.ExecutionJob.Queries, 2)
+		require.Len(t, rp.ExecutionJob.Queries, 4)
 	})
 
 	t.Run("resolve with end dates", func(t *testing.T) {
@@ -418,7 +437,7 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.ExecutionJob.Queries, 1)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
 
 		// Set the end date of the group to the past. This group deactivates a check,
 		// but it should not be taken into account because it is expired
@@ -439,7 +458,7 @@ policies:
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
-		require.Len(t, rp.ExecutionJob.Queries, 2)
+		require.Len(t, rp.ExecutionJob.Queries, 4)
 	})
 }
 
@@ -571,7 +590,7 @@ framework_maps:
 			requireUnique(t, rj.Notify)
 		}
 
-		require.Len(t, rp.ExecutionJob.Queries, 5)
+		require.Len(t, rp.ExecutionJob.Queries, 10)
 
 		rjTester := frameworkReportingJobTester{
 			t:                     t,
@@ -710,7 +729,7 @@ framework_maps:
 			requireUnique(t, rj.Notify)
 		}
 
-		require.Len(t, rp.ExecutionJob.Queries, 1)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
 
 		rjTester := frameworkReportingJobTester{
 			t:                     t,
@@ -823,7 +842,7 @@ framework_maps:
 			requireUnique(t, rj.Notify)
 		}
 
-		require.Len(t, rp.ExecutionJob.Queries, 1)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
 
 		rjTester := frameworkReportingJobTester{
 			t:                     t,
@@ -1352,12 +1371,18 @@ queries:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 
-		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 6)
 
 		qrIdToRj := map[string]*policy.ReportingJob{}
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			qrIdToRj[rj.QrId] = rj
 		}
+
+		// FIXME SOON: scoring queries report by BOTH code id and MRN temporarily
+		// FIXME SOON: we want to remove the code id reporting soon
+		require.NotNil(t, qrIdToRj[b.Queries[0].Mrn])
+		require.NotNil(t, qrIdToRj[b.Queries[0].CodeId])
+
 		require.NotNil(t, qrIdToRj[policyMrn("policy1")])
 		require.NotNil(t, qrIdToRj[policyMrn("pack1")])
 		require.Nil(t, qrIdToRj[policyMrn("policy2")])
@@ -1403,5 +1428,4 @@ queries:
 		qrIdToRj[rj.QrId] = rj
 	}
 	require.NotNil(t, qrIdToRj["root"])
-
 }

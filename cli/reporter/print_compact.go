@@ -479,7 +479,9 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		for id, score := range foundChecks {
 			query, ok := queries[id]
 			if !ok {
-				r.out.Write([]byte("Couldn't find any queries for incoming value for " + id))
+				// FIXME SOON: temporarily disable this as we're reporting by both mrn and code id.
+				// FIXME SOON: enable once we report only by mrn
+				// r.out.Write([]byte("Couldn't find any queries for incoming value for " + id))
 				continue
 			}
 

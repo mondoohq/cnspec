@@ -1003,39 +1003,56 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 }
 
 func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explorer.Mquery, impact *explorer.Impact, ownerJob *ReportingJob) {
-	uuid := cache.global.relativeChecksum(check.Checksum)
-	queryJob := cache.global.reportingJobsByUUID[uuid]
+	// FIXME SOON: we want to add a RJ that goes by the check's mrn and check's codeid
+	// we use the relative checksums as uuids and the RJ's ids are either the check's mrn or codeid
+	uuidCodeId := cache.global.relativeChecksum(check.Checksum)
+	uuidMrn := cache.global.relativeChecksum(check.Mrn)
 
-	if queryJob == nil {
-		queryJob = &ReportingJob{
-			Uuid:       uuid,
-			QrId:       check.Mrn,
-			ChildJobs:  map[string]*explorer.Impact{},
-			Datapoints: map[string]bool{},
-			Type:       ReportingJob_CHECK,
-		}
-		cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
-		cache.global.reportingJobsByUUID[uuid] = queryJob
-		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], queryJob)
-		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], queryJob)
+	uuidToRjMap := map[string]struct {
+		QrId string
+		Rj   *ReportingJob
+	}{
+		uuidCodeId: {check.CodeId, cache.global.reportingJobsByUUID[uuidCodeId]},
+		uuidMrn:    {check.Mrn, cache.global.reportingJobsByUUID[uuidMrn]},
 	}
 
-	if ownerJob.ChildJobs[queryJob.Uuid] == nil {
-		ownerJob.ChildJobs[queryJob.Uuid] = impact
-	}
+	cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
 
-	// local aspects for the resolved policy
-	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
+	for uuid, rjAndId := range uuidToRjMap {
+		rj := rjAndId.Rj
+		qrId := rjAndId.QrId
 
-	if len(check.Variants) != 0 {
-		err := cache.addCheckJobVariants(ctx, check, queryJob)
-		if err != nil {
-			log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")
+		if rj == nil {
+			rj = &ReportingJob{
+				Uuid:       uuid,
+				QrId:       qrId,
+				ChildJobs:  map[string]*explorer.Impact{},
+				Datapoints: map[string]bool{},
+				Type:       ReportingJob_CHECK,
+			}
+
+			cache.global.reportingJobsByUUID[uuid] = rj
+			cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], rj)
+			cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], rj)
 		}
-	} else {
-		// we set a placeholder for the execution query, just to indicate it will be added
-		cache.global.executionQueries[check.Checksum] = nil
-		cache.global.queriesByMsum[check.Checksum] = check
+
+		if ownerJob.ChildJobs[rj.Uuid] == nil {
+			ownerJob.ChildJobs[rj.Uuid] = impact
+		}
+
+		// local aspects for the resolved policy
+		rj.Notify = append(rj.Notify, ownerJob.Uuid)
+
+		if len(check.Variants) != 0 {
+			err := cache.addCheckJobVariants(ctx, check, rj)
+			if err != nil {
+				log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")
+			}
+		} else {
+			// we set a placeholder for the execution query, just to indicate it will be added
+			cache.global.executionQueries[check.Checksum] = nil
+			cache.global.queriesByMsum[check.Checksum] = check
+		}
 	}
 }
 
@@ -1075,6 +1092,7 @@ func (cache *policyResolverCache) addCheckJobVariants(ctx context.Context, query
 func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *explorer.Mquery, ownerJob *ReportingJob) {
 	uuid := cache.global.relativeChecksum(query.Mrn)
 	queryJob := cache.global.reportingJobsByUUID[uuid]
+	cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
 
 	if queryJob == nil {
 		queryJob = &ReportingJob{
@@ -1086,7 +1104,6 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 			// FIXME: DEPRECATED, remove in v10.0 vv
 			DeprecatedV8IsData: true,
 		}
-		cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
 		cache.global.reportingJobsByUUID[uuid] = queryJob
 		cache.global.reportingJobsByMsum[query.Checksum] = append(cache.global.reportingJobsByMsum[query.Checksum], queryJob)
 		cache.childJobsByMrn[query.Mrn] = append(cache.childJobsByMrn[query.Mrn], queryJob)
@@ -1229,6 +1246,9 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 				}
 				cache.executionQueries[checksum] = executionQuery
 				executionJob.Queries[prop.CodeId] = executionQuery
+				// TODO: unsure if this needs to go in here.. some code uses the executionJob.Queries for different assertions
+				// so maybe we want it in here as well?
+				executionJob.Queries[prop.Mrn] = executionQuery
 
 				propTypes[name] = &llx.Primitive{Type: prop.Type}
 				propToChecksums[name] = dataChecksum
@@ -1264,7 +1284,9 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 
 		cache.executionQueries[checksum] = executionQuery
 		executionJob.Queries[codeID] = executionQuery
-
+		// TODO: unsure if this needs to go in here.. some code uses the executionJob.Queries for different assertions
+		// so maybe we want it in here as well?
+		executionJob.Queries[query.Mrn] = executionQuery
 		// Scoring+Data Queries handling
 		reportingjobs, ok := cache.reportingJobsByMsum[query.Checksum]
 		if !ok {
@@ -1281,8 +1303,6 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 			rj := reportingjobs[i]
 			// (2) Scoring Queries handling
 			if !isDataQuery {
-				rj.QrId = codeID
-
 				if query.Impact != nil {
 					for _, parentID := range rj.Notify {
 						parentJob, ok := collectorJob.ReportingJobs[parentID]
@@ -1294,10 +1314,10 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 					}
 				}
 
-				arr, ok := collectorJob.ReportingQueries[codeID]
+				arr, ok := collectorJob.ReportingQueries[rj.QrId]
 				if !ok {
 					arr = &StringArray{}
-					collectorJob.ReportingQueries[codeID] = arr
+					collectorJob.ReportingQueries[rj.QrId] = arr
 				}
 				arr.Items = append(arr.Items, rj.Uuid)
 
@@ -1562,16 +1582,22 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 
 			for _, queryMrn := range queryMrns {
 				uuid := cache.relativeChecksum(queryMrn)
-				queryJob := &ReportingJob{
-					Uuid:      uuid,
-					QrId:      queryMrn,
-					ChildJobs: map[string]*explorer.Impact{},
-					Type:      ReportingJob_CHECK,
+				queryJob := job.ReportingJobs[uuid]
+				// now that we also have RJs for mrns, we should always have a queryJob
+				// fallback to creating a new one if we don't find it just in case
+				if queryJob == nil {
+					log.Debug().Str("queryMrn", queryMrn).Msg("jobsToControl> did not find a query job")
+					queryJob = &ReportingJob{
+						Uuid:      uuid,
+						QrId:      queryMrn,
+						ChildJobs: map[string]*explorer.Impact{},
+						Type:      ReportingJob_CHECK,
+					}
 				}
-				nuJobs[uuid] = queryJob
-
 				queryJob.ChildJobs[rj.Uuid] = nil
 				rj.Notify = append(rj.Notify, queryJob.Uuid)
+				nuJobs[queryJob.Uuid] = queryJob
+
 				continue
 			}
 
