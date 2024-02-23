@@ -1021,6 +1021,11 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 	for uuid, rjAndId := range uuidToRjMap {
 		rj := rjAndId.Rj
 		qrId := rjAndId.QrId
+		// NOTE: for variants, the code id is empty. if we have an empty qrId, the executor panics
+		// this can go away once we transition to reporting by MRN only.
+		if qrId == "" {
+			continue
+		}
 
 		if rj == nil {
 			rj = &ReportingJob{
