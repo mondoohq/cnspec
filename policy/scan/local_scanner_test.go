@@ -158,6 +158,7 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 
 		expectedQueries := []string{
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-01"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-01"].Mrn,
 		}
 		s.ElementsMatch(expectedQueries, executedQueries)
 	}
@@ -204,6 +205,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 		expectedQueries := []string{
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].Mrn,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].Mrn,
 		}
 		s.ElementsMatch(expectedQueries, executedQueries)
 
@@ -270,6 +273,9 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/deactivate-query"].CodeId,
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].Mrn,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/deactivate-query"].Mrn,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].Mrn,
 		}
 		s.ElementsMatch(expectedQueries, executedQueries)
 
@@ -332,6 +338,8 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 		expectedQueries := []string{
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].Mrn,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].Mrn,
 		}
 		s.ElementsMatch(expectedQueries, executedQueries)
 
@@ -394,6 +402,8 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 		expectedQueries := []string{
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
 			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].Mrn,
+			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].Mrn,
 		}
 		s.ElementsMatch(expectedQueries, executedQueries)
 
