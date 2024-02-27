@@ -35,7 +35,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.mondoo.com/cnquery/v10 v10.4.2
 	go.mondoo.com/mondoo-go v0.0.0-20240213081402-ca514f6fe731
-	go.mondoo.com/ranger-rpc v0.5.3
+	go.mondoo.com/ranger-rpc v0.6.0
 	go.opentelemetry.io/otel v1.23.1
 	gocloud.dev v0.36.0
 	golang.org/x/sys v0.17.0
