@@ -143,6 +143,65 @@ func (QueryAction) EnumDescriptor() ([]byte, []int) {
 	return file_cnspec_policy_proto_rawDescGZIP(), []int{1}
 }
 
+type ScopeType int32
+
+const (
+	ScopeType_UNSCOPED ScopeType = 0
+	// Scope applies to the entire asset
+	ScopeType_ASSET ScopeType = 1
+	// Scope applies to certain resources on an asset, but not software
+	ScopeType_RESOURCE ScopeType = 2
+	// Scope applies to certain software (packages/libs), but not resources
+	ScopeType_SOFTWARE ScopeType = 3
+	// Scope applies to both software and resources on an asset
+	ScopeType_SOFTWARE_RESOURCE ScopeType = 4
+)
+
+// Enum value maps for ScopeType.
+var (
+	ScopeType_name = map[int32]string{
+		0: "UNSCOPED",
+		1: "ASSET",
+		2: "RESOURCE",
+		3: "SOFTWARE",
+		4: "SOFTWARE_RESOURCE",
+	}
+	ScopeType_value = map[string]int32{
+		"UNSCOPED":          0,
+		"ASSET":             1,
+		"RESOURCE":          2,
+		"SOFTWARE":          3,
+		"SOFTWARE_RESOURCE": 4,
+	}
+)
+
+func (x ScopeType) Enum() *ScopeType {
+	p := new(ScopeType)
+	*p = x
+	return p
+}
+
+func (x ScopeType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ScopeType) Descriptor() protoreflect.EnumDescriptor {
+	return file_cnspec_policy_proto_enumTypes[2].Descriptor()
+}
+
+func (ScopeType) Type() protoreflect.EnumType {
+	return &file_cnspec_policy_proto_enumTypes[2]
+}
+
+func (x ScopeType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ScopeType.Descriptor instead.
+func (ScopeType) EnumDescriptor() ([]byte, []int) {
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{2}
+}
+
 type ReviewStatus int32
 
 const (
@@ -176,11 +235,11 @@ func (x ReviewStatus) String() string {
 }
 
 func (ReviewStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_cnspec_policy_proto_enumTypes[2].Descriptor()
+	return file_cnspec_policy_proto_enumTypes[3].Descriptor()
 }
 
 func (ReviewStatus) Type() protoreflect.EnumType {
-	return &file_cnspec_policy_proto_enumTypes[2]
+	return &file_cnspec_policy_proto_enumTypes[3]
 }
 
 func (x ReviewStatus) Number() protoreflect.EnumNumber {
@@ -189,7 +248,7 @@ func (x ReviewStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ReviewStatus.Descriptor instead.
 func (ReviewStatus) EnumDescriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{2}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{3}
 }
 
 type ScoreRating int32
@@ -264,11 +323,11 @@ func (x ScoreRating) String() string {
 }
 
 func (ScoreRating) Descriptor() protoreflect.EnumDescriptor {
-	return file_cnspec_policy_proto_enumTypes[3].Descriptor()
+	return file_cnspec_policy_proto_enumTypes[4].Descriptor()
 }
 
 func (ScoreRating) Type() protoreflect.EnumType {
-	return &file_cnspec_policy_proto_enumTypes[3]
+	return &file_cnspec_policy_proto_enumTypes[4]
 }
 
 func (x ScoreRating) Number() protoreflect.EnumNumber {
@@ -277,7 +336,7 @@ func (x ScoreRating) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ScoreRating.Descriptor instead.
 func (ScoreRating) EnumDescriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{3}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{4}
 }
 
 type Comparison int32
@@ -310,11 +369,11 @@ func (x Comparison) String() string {
 }
 
 func (Comparison) Descriptor() protoreflect.EnumDescriptor {
-	return file_cnspec_policy_proto_enumTypes[4].Descriptor()
+	return file_cnspec_policy_proto_enumTypes[5].Descriptor()
 }
 
 func (Comparison) Type() protoreflect.EnumType {
-	return &file_cnspec_policy_proto_enumTypes[4]
+	return &file_cnspec_policy_proto_enumTypes[5]
 }
 
 func (x Comparison) Number() protoreflect.EnumNumber {
@@ -323,7 +382,7 @@ func (x Comparison) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Comparison.Descriptor instead.
 func (Comparison) EnumDescriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{4}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{5}
 }
 
 type DateFilterField int32
@@ -356,11 +415,11 @@ func (x DateFilterField) String() string {
 }
 
 func (DateFilterField) Descriptor() protoreflect.EnumDescriptor {
-	return file_cnspec_policy_proto_enumTypes[5].Descriptor()
+	return file_cnspec_policy_proto_enumTypes[6].Descriptor()
 }
 
 func (DateFilterField) Type() protoreflect.EnumType {
-	return &file_cnspec_policy_proto_enumTypes[5]
+	return &file_cnspec_policy_proto_enumTypes[6]
 }
 
 func (x DateFilterField) Number() protoreflect.EnumNumber {
@@ -369,7 +428,7 @@ func (x DateFilterField) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DateFilterField.Descriptor instead.
 func (DateFilterField) EnumDescriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{5}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{6}
 }
 
 type ReportingJob_Type int32
@@ -414,11 +473,11 @@ func (x ReportingJob_Type) String() string {
 }
 
 func (ReportingJob_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_cnspec_policy_proto_enumTypes[6].Descriptor()
+	return file_cnspec_policy_proto_enumTypes[7].Descriptor()
 }
 
 func (ReportingJob_Type) Type() protoreflect.EnumType {
-	return &file_cnspec_policy_proto_enumTypes[6]
+	return &file_cnspec_policy_proto_enumTypes[7]
 }
 
 func (x ReportingJob_Type) Number() protoreflect.EnumNumber {
@@ -427,7 +486,7 @@ func (x ReportingJob_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ReportingJob_Type.Descriptor instead.
 func (ReportingJob_Type) EnumDescriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{24, 0}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{28, 0}
 }
 
 type PolicyDelta_PolicyAssignmentActionType int32
@@ -460,11 +519,11 @@ func (x PolicyDelta_PolicyAssignmentActionType) String() string {
 }
 
 func (PolicyDelta_PolicyAssignmentActionType) Descriptor() protoreflect.EnumDescriptor {
-	return file_cnspec_policy_proto_enumTypes[7].Descriptor()
+	return file_cnspec_policy_proto_enumTypes[8].Descriptor()
 }
 
 func (PolicyDelta_PolicyAssignmentActionType) Type() protoreflect.EnumType {
-	return &file_cnspec_policy_proto_enumTypes[7]
+	return &file_cnspec_policy_proto_enumTypes[8]
 }
 
 func (x PolicyDelta_PolicyAssignmentActionType) Number() protoreflect.EnumNumber {
@@ -473,7 +532,7 @@ func (x PolicyDelta_PolicyAssignmentActionType) Number() protoreflect.EnumNumber
 
 // Deprecated: Use PolicyDelta_PolicyAssignmentActionType.Descriptor instead.
 func (PolicyDelta_PolicyAssignmentActionType) EnumDescriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{43, 0}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{47, 0}
 }
 
 // PolicyGroup specifies and overrides a policy and all its queries and referenced policies.
@@ -1074,6 +1133,7 @@ type Bundle struct {
 	Queries       []*explorer.Mquery    `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty"`
 	Frameworks    []*Framework          `protobuf:"bytes,8,rep,name=frameworks,proto3" json:"frameworks,omitempty"`
 	FrameworkMaps []*FrameworkMap       `protobuf:"bytes,9,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty"`
+	RiskFactors   []*RiskFactor         `protobuf:"bytes,11,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty"`
 	Docs          *PolicyDocs           `protobuf:"bytes,5,opt,name=docs,proto3" json:"docs,omitempty"`
 }
 
@@ -1158,11 +1218,330 @@ func (x *Bundle) GetFrameworkMaps() []*FrameworkMap {
 	return nil
 }
 
+func (x *Bundle) GetRiskFactors() []*RiskFactor {
+	if x != nil {
+		return x.RiskFactors
+	}
+	return nil
+}
+
 func (x *Bundle) GetDocs() *PolicyDocs {
 	if x != nil {
 		return x.Docs
 	}
 	return nil
+}
+
+type SoftwareSelector struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// Methods to select software. Either:
+	// 1. By PURL, omitted fields are treated as glibglob (*)
+	Type      string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	Namespace string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name      string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Version   string `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`
+	// 2. By MQL package data returned from a query
+	MqlMrn string `protobuf:"bytes,5,opt,name=mql_mrn,json=mqlMrn,proto3" json:"mql_mrn,omitempty"`
+}
+
+func (x *SoftwareSelector) Reset() {
+	*x = SoftwareSelector{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_cnspec_policy_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *SoftwareSelector) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SoftwareSelector) ProtoMessage() {}
+
+func (x *SoftwareSelector) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_policy_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SoftwareSelector.ProtoReflect.Descriptor instead.
+func (*SoftwareSelector) Descriptor() ([]byte, []int) {
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SoftwareSelector) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *SoftwareSelector) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *SoftwareSelector) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SoftwareSelector) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *SoftwareSelector) GetMqlMrn() string {
+	if x != nil {
+		return x.MqlMrn
+	}
+	return ""
+}
+
+type ResourceSelector struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Selector string `protobuf:"bytes,1,opt,name=selector,proto3" json:"selector,omitempty"`
+}
+
+func (x *ResourceSelector) Reset() {
+	*x = ResourceSelector{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_cnspec_policy_proto_msgTypes[7]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ResourceSelector) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceSelector) ProtoMessage() {}
+
+func (x *ResourceSelector) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_policy_proto_msgTypes[7]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceSelector.ProtoReflect.Descriptor instead.
+func (*ResourceSelector) Descriptor() ([]byte, []int) {
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ResourceSelector) GetSelector() string {
+	if x != nil {
+		return x.Selector
+	}
+	return ""
+}
+
+type RiskFactor struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Mrn   string          `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty"`
+	Uid   string          `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty"`
+	Title string          `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty"`
+	Docs  *RiskFactorDocs `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty"`
+	// filter for the assets this applies to
+	Filters            *explorer.Filters   `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty"`
+	Queries            []*explorer.Mquery  `protobuf:"bytes,2,rep,name=queries,proto3" json:"queries,omitempty"`
+	Scope              ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty"`
+	ActiveMultiplier   float32             `protobuf:"fixed32,71,opt,name=active_multiplier,json=activeMultiplier,proto3" json:"active_multiplier,omitempty"`
+	InactiveMultiplier float32             `protobuf:"fixed32,72,opt,name=inactive_multiplier,json=inactiveMultiplier,proto3" json:"inactive_multiplier,omitempty"`
+	Software           []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty"`
+	Resources          []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty"`
+}
+
+func (x *RiskFactor) Reset() {
+	*x = RiskFactor{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_cnspec_policy_proto_msgTypes[8]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *RiskFactor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RiskFactor) ProtoMessage() {}
+
+func (x *RiskFactor) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_policy_proto_msgTypes[8]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RiskFactor.ProtoReflect.Descriptor instead.
+func (*RiskFactor) Descriptor() ([]byte, []int) {
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RiskFactor) GetMrn() string {
+	if x != nil {
+		return x.Mrn
+	}
+	return ""
+}
+
+func (x *RiskFactor) GetUid() string {
+	if x != nil {
+		return x.Uid
+	}
+	return ""
+}
+
+func (x *RiskFactor) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *RiskFactor) GetDocs() *RiskFactorDocs {
+	if x != nil {
+		return x.Docs
+	}
+	return nil
+}
+
+func (x *RiskFactor) GetFilters() *explorer.Filters {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
+}
+
+func (x *RiskFactor) GetQueries() []*explorer.Mquery {
+	if x != nil {
+		return x.Queries
+	}
+	return nil
+}
+
+func (x *RiskFactor) GetScope() ScopeType {
+	if x != nil {
+		return x.Scope
+	}
+	return ScopeType_UNSCOPED
+}
+
+func (x *RiskFactor) GetActiveMultiplier() float32 {
+	if x != nil {
+		return x.ActiveMultiplier
+	}
+	return 0
+}
+
+func (x *RiskFactor) GetInactiveMultiplier() float32 {
+	if x != nil {
+		return x.InactiveMultiplier
+	}
+	return 0
+}
+
+func (x *RiskFactor) GetSoftware() []*SoftwareSelector {
+	if x != nil {
+		return x.Software
+	}
+	return nil
+}
+
+func (x *RiskFactor) GetResources() []*ResourceSelector {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+type RiskFactorDocs struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Active   string `protobuf:"bytes,1,opt,name=active,proto3" json:"active,omitempty"`
+	Inactive string `protobuf:"bytes,2,opt,name=inactive,proto3" json:"inactive,omitempty"`
+}
+
+func (x *RiskFactorDocs) Reset() {
+	*x = RiskFactorDocs{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_cnspec_policy_proto_msgTypes[9]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *RiskFactorDocs) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RiskFactorDocs) ProtoMessage() {}
+
+func (x *RiskFactorDocs) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_policy_proto_msgTypes[9]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RiskFactorDocs.ProtoReflect.Descriptor instead.
+func (*RiskFactorDocs) Descriptor() ([]byte, []int) {
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RiskFactorDocs) GetActive() string {
+	if x != nil {
+		return x.Active
+	}
+	return ""
+}
+
+func (x *RiskFactorDocs) GetInactive() string {
+	if x != nil {
+		return x.Inactive
+	}
+	return ""
 }
 
 type PolicyGroupDocs struct {
@@ -1177,7 +1556,7 @@ type PolicyGroupDocs struct {
 func (x *PolicyGroupDocs) Reset() {
 	*x = PolicyGroupDocs{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[6]
+		mi := &file_cnspec_policy_proto_msgTypes[10]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1190,7 +1569,7 @@ func (x *PolicyGroupDocs) String() string {
 func (*PolicyGroupDocs) ProtoMessage() {}
 
 func (x *PolicyGroupDocs) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[6]
+	mi := &file_cnspec_policy_proto_msgTypes[10]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1203,7 +1582,7 @@ func (x *PolicyGroupDocs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyGroupDocs.ProtoReflect.Descriptor instead.
 func (*PolicyGroupDocs) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{6}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PolicyGroupDocs) GetDesc() string {
@@ -1231,7 +1610,7 @@ type PolicyDocs struct {
 func (x *PolicyDocs) Reset() {
 	*x = PolicyDocs{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[7]
+		mi := &file_cnspec_policy_proto_msgTypes[11]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1244,7 +1623,7 @@ func (x *PolicyDocs) String() string {
 func (*PolicyDocs) ProtoMessage() {}
 
 func (x *PolicyDocs) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[7]
+	mi := &file_cnspec_policy_proto_msgTypes[11]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1257,7 +1636,7 @@ func (x *PolicyDocs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyDocs.ProtoReflect.Descriptor instead.
 func (*PolicyDocs) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{7}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PolicyDocs) GetDesc() string {
@@ -1306,7 +1685,7 @@ type Framework struct {
 func (x *Framework) Reset() {
 	*x = Framework{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[8]
+		mi := &file_cnspec_policy_proto_msgTypes[12]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1319,7 +1698,7 @@ func (x *Framework) String() string {
 func (*Framework) ProtoMessage() {}
 
 func (x *Framework) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[8]
+	mi := &file_cnspec_policy_proto_msgTypes[12]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1332,7 +1711,7 @@ func (x *Framework) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Framework.ProtoReflect.Descriptor instead.
 func (*Framework) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{8}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Framework) GetMrn() string {
@@ -1479,7 +1858,7 @@ type Frameworks struct {
 func (x *Frameworks) Reset() {
 	*x = Frameworks{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[9]
+		mi := &file_cnspec_policy_proto_msgTypes[13]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1492,7 +1871,7 @@ func (x *Frameworks) String() string {
 func (*Frameworks) ProtoMessage() {}
 
 func (x *Frameworks) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[9]
+	mi := &file_cnspec_policy_proto_msgTypes[13]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1505,7 +1884,7 @@ func (x *Frameworks) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Frameworks.ProtoReflect.Descriptor instead.
 func (*Frameworks) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{9}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Frameworks) GetItems() []*Framework {
@@ -1545,7 +1924,7 @@ type FrameworkGroup struct {
 func (x *FrameworkGroup) Reset() {
 	*x = FrameworkGroup{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[10]
+		mi := &file_cnspec_policy_proto_msgTypes[14]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1558,7 +1937,7 @@ func (x *FrameworkGroup) String() string {
 func (*FrameworkGroup) ProtoMessage() {}
 
 func (x *FrameworkGroup) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[10]
+	mi := &file_cnspec_policy_proto_msgTypes[14]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1571,7 +1950,7 @@ func (x *FrameworkGroup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrameworkGroup.ProtoReflect.Descriptor instead.
 func (*FrameworkGroup) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{10}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *FrameworkGroup) GetControls() []*Control {
@@ -1678,7 +2057,7 @@ type FrameworkRef struct {
 func (x *FrameworkRef) Reset() {
 	*x = FrameworkRef{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[11]
+		mi := &file_cnspec_policy_proto_msgTypes[15]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1691,7 +2070,7 @@ func (x *FrameworkRef) String() string {
 func (*FrameworkRef) ProtoMessage() {}
 
 func (x *FrameworkRef) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[11]
+	mi := &file_cnspec_policy_proto_msgTypes[15]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1704,7 +2083,7 @@ func (x *FrameworkRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrameworkRef.ProtoReflect.Descriptor instead.
 func (*FrameworkRef) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{11}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *FrameworkRef) GetMrn() string {
@@ -1749,7 +2128,7 @@ type Control struct {
 func (x *Control) Reset() {
 	*x = Control{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[12]
+		mi := &file_cnspec_policy_proto_msgTypes[16]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1762,7 +2141,7 @@ func (x *Control) String() string {
 func (*Control) ProtoMessage() {}
 
 func (x *Control) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[12]
+	mi := &file_cnspec_policy_proto_msgTypes[16]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1775,7 +2154,7 @@ func (x *Control) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Control.ProtoReflect.Descriptor instead.
 func (*Control) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{12}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Control) GetChecksum() string {
@@ -1853,7 +2232,7 @@ type FrameworkMap struct {
 func (x *FrameworkMap) Reset() {
 	*x = FrameworkMap{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[13]
+		mi := &file_cnspec_policy_proto_msgTypes[17]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1866,7 +2245,7 @@ func (x *FrameworkMap) String() string {
 func (*FrameworkMap) ProtoMessage() {}
 
 func (x *FrameworkMap) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[13]
+	mi := &file_cnspec_policy_proto_msgTypes[17]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1879,7 +2258,7 @@ func (x *FrameworkMap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrameworkMap.ProtoReflect.Descriptor instead.
 func (*FrameworkMap) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{13}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *FrameworkMap) GetMrn() string {
@@ -1961,7 +2340,7 @@ type ControlMap struct {
 func (x *ControlMap) Reset() {
 	*x = ControlMap{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[14]
+		mi := &file_cnspec_policy_proto_msgTypes[18]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1974,7 +2353,7 @@ func (x *ControlMap) String() string {
 func (*ControlMap) ProtoMessage() {}
 
 func (x *ControlMap) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[14]
+	mi := &file_cnspec_policy_proto_msgTypes[18]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1987,7 +2366,7 @@ func (x *ControlMap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlMap.ProtoReflect.Descriptor instead.
 func (*ControlMap) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{14}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ControlMap) GetUid() string {
@@ -2044,7 +2423,7 @@ type ControlDocs struct {
 func (x *ControlDocs) Reset() {
 	*x = ControlDocs{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[15]
+		mi := &file_cnspec_policy_proto_msgTypes[19]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2057,7 +2436,7 @@ func (x *ControlDocs) String() string {
 func (*ControlDocs) ProtoMessage() {}
 
 func (x *ControlDocs) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[15]
+	mi := &file_cnspec_policy_proto_msgTypes[19]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2070,7 +2449,7 @@ func (x *ControlDocs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlDocs.ProtoReflect.Descriptor instead.
 func (*ControlDocs) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{15}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ControlDocs) GetDesc() string {
@@ -2100,7 +2479,7 @@ type ControlRef struct {
 func (x *ControlRef) Reset() {
 	*x = ControlRef{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[16]
+		mi := &file_cnspec_policy_proto_msgTypes[20]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2113,7 +2492,7 @@ func (x *ControlRef) String() string {
 func (*ControlRef) ProtoMessage() {}
 
 func (x *ControlRef) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[16]
+	mi := &file_cnspec_policy_proto_msgTypes[20]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2126,7 +2505,7 @@ func (x *ControlRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlRef.ProtoReflect.Descriptor instead.
 func (*ControlRef) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{16}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ControlRef) GetMrn() string {
@@ -2165,7 +2544,7 @@ type Asset struct {
 func (x *Asset) Reset() {
 	*x = Asset{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[17]
+		mi := &file_cnspec_policy_proto_msgTypes[21]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2178,7 +2557,7 @@ func (x *Asset) String() string {
 func (*Asset) ProtoMessage() {}
 
 func (x *Asset) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[17]
+	mi := &file_cnspec_policy_proto_msgTypes[21]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2191,7 +2570,7 @@ func (x *Asset) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Asset.ProtoReflect.Descriptor instead.
 func (*Asset) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{17}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Asset) GetMrn() string {
@@ -2241,7 +2620,7 @@ type ResolvedPolicy struct {
 func (x *ResolvedPolicy) Reset() {
 	*x = ResolvedPolicy{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[18]
+		mi := &file_cnspec_policy_proto_msgTypes[22]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2254,7 +2633,7 @@ func (x *ResolvedPolicy) String() string {
 func (*ResolvedPolicy) ProtoMessage() {}
 
 func (x *ResolvedPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[18]
+	mi := &file_cnspec_policy_proto_msgTypes[22]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2267,7 +2646,7 @@ func (x *ResolvedPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolvedPolicy.ProtoReflect.Descriptor instead.
 func (*ResolvedPolicy) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{18}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ResolvedPolicy) GetExecutionJob() *ExecutionJob {
@@ -2329,7 +2708,7 @@ type ExecutionJob struct {
 func (x *ExecutionJob) Reset() {
 	*x = ExecutionJob{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[19]
+		mi := &file_cnspec_policy_proto_msgTypes[23]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2342,7 +2721,7 @@ func (x *ExecutionJob) String() string {
 func (*ExecutionJob) ProtoMessage() {}
 
 func (x *ExecutionJob) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[19]
+	mi := &file_cnspec_policy_proto_msgTypes[23]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2355,7 +2734,7 @@ func (x *ExecutionJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionJob.ProtoReflect.Descriptor instead.
 func (*ExecutionJob) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{19}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ExecutionJob) GetChecksum() string {
@@ -2391,7 +2770,7 @@ type ExecutionQuery struct {
 func (x *ExecutionQuery) Reset() {
 	*x = ExecutionQuery{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[20]
+		mi := &file_cnspec_policy_proto_msgTypes[24]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2404,7 +2783,7 @@ func (x *ExecutionQuery) String() string {
 func (*ExecutionQuery) ProtoMessage() {}
 
 func (x *ExecutionQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[20]
+	mi := &file_cnspec_policy_proto_msgTypes[24]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2417,7 +2796,7 @@ func (x *ExecutionQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionQuery.ProtoReflect.Descriptor instead.
 func (*ExecutionQuery) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{20}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ExecutionQuery) GetQuery() string {
@@ -2477,7 +2856,7 @@ type CollectorJob struct {
 func (x *CollectorJob) Reset() {
 	*x = CollectorJob{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[21]
+		mi := &file_cnspec_policy_proto_msgTypes[25]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2490,7 +2869,7 @@ func (x *CollectorJob) String() string {
 func (*CollectorJob) ProtoMessage() {}
 
 func (x *CollectorJob) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[21]
+	mi := &file_cnspec_policy_proto_msgTypes[25]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2503,7 +2882,7 @@ func (x *CollectorJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectorJob.ProtoReflect.Descriptor instead.
 func (*CollectorJob) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{21}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CollectorJob) GetChecksum() string {
@@ -2545,7 +2924,7 @@ type StringArray struct {
 func (x *StringArray) Reset() {
 	*x = StringArray{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[22]
+		mi := &file_cnspec_policy_proto_msgTypes[26]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2558,7 +2937,7 @@ func (x *StringArray) String() string {
 func (*StringArray) ProtoMessage() {}
 
 func (x *StringArray) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[22]
+	mi := &file_cnspec_policy_proto_msgTypes[26]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2571,7 +2950,7 @@ func (x *StringArray) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StringArray.ProtoReflect.Descriptor instead.
 func (*StringArray) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{22}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *StringArray) GetItems() []string {
@@ -2593,7 +2972,7 @@ type DataQueryInfo struct {
 func (x *DataQueryInfo) Reset() {
 	*x = DataQueryInfo{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[23]
+		mi := &file_cnspec_policy_proto_msgTypes[27]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2606,7 +2985,7 @@ func (x *DataQueryInfo) String() string {
 func (*DataQueryInfo) ProtoMessage() {}
 
 func (x *DataQueryInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[23]
+	mi := &file_cnspec_policy_proto_msgTypes[27]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2619,7 +2998,7 @@ func (x *DataQueryInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataQueryInfo.ProtoReflect.Descriptor instead.
 func (*DataQueryInfo) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{23}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *DataQueryInfo) GetType() string {
@@ -2665,7 +3044,7 @@ type ReportingJob struct {
 func (x *ReportingJob) Reset() {
 	*x = ReportingJob{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[24]
+		mi := &file_cnspec_policy_proto_msgTypes[28]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2678,7 +3057,7 @@ func (x *ReportingJob) String() string {
 func (*ReportingJob) ProtoMessage() {}
 
 func (x *ReportingJob) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[24]
+	mi := &file_cnspec_policy_proto_msgTypes[28]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2691,7 +3070,7 @@ func (x *ReportingJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportingJob.ProtoReflect.Descriptor instead.
 func (*ReportingJob) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{24}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ReportingJob) GetDeprecatedV8IsData() bool {
@@ -2781,7 +3160,7 @@ type Report struct {
 func (x *Report) Reset() {
 	*x = Report{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[25]
+		mi := &file_cnspec_policy_proto_msgTypes[29]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2794,7 +3173,7 @@ func (x *Report) String() string {
 func (*Report) ProtoMessage() {}
 
 func (x *Report) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[25]
+	mi := &file_cnspec_policy_proto_msgTypes[29]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2807,7 +3186,7 @@ func (x *Report) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Report.ProtoReflect.Descriptor instead.
 func (*Report) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{25}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Report) GetScoringMrn() string {
@@ -2919,7 +3298,7 @@ type Reports struct {
 func (x *Reports) Reset() {
 	*x = Reports{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[26]
+		mi := &file_cnspec_policy_proto_msgTypes[30]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2932,7 +3311,7 @@ func (x *Reports) String() string {
 func (*Reports) ProtoMessage() {}
 
 func (x *Reports) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[26]
+	mi := &file_cnspec_policy_proto_msgTypes[30]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2945,7 +3324,7 @@ func (x *Reports) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Reports.ProtoReflect.Descriptor instead.
 func (*Reports) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{26}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Reports) GetReports() []*Report {
@@ -2971,7 +3350,7 @@ type ReportCollection struct {
 func (x *ReportCollection) Reset() {
 	*x = ReportCollection{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[27]
+		mi := &file_cnspec_policy_proto_msgTypes[31]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2984,7 +3363,7 @@ func (x *ReportCollection) String() string {
 func (*ReportCollection) ProtoMessage() {}
 
 func (x *ReportCollection) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[27]
+	mi := &file_cnspec_policy_proto_msgTypes[31]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2997,7 +3376,7 @@ func (x *ReportCollection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportCollection.ProtoReflect.Descriptor instead.
 func (*ReportCollection) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{27}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ReportCollection) GetAssets() map[string]*inventory.Asset {
@@ -3056,7 +3435,7 @@ type FrameworkReport struct {
 func (x *FrameworkReport) Reset() {
 	*x = FrameworkReport{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[28]
+		mi := &file_cnspec_policy_proto_msgTypes[32]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3069,7 +3448,7 @@ func (x *FrameworkReport) String() string {
 func (*FrameworkReport) ProtoMessage() {}
 
 func (x *FrameworkReport) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[28]
+	mi := &file_cnspec_policy_proto_msgTypes[32]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3082,7 +3461,7 @@ func (x *FrameworkReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrameworkReport.ProtoReflect.Descriptor instead.
 func (*FrameworkReport) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{28}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *FrameworkReport) GetScoringMrn() string {
@@ -3135,7 +3514,7 @@ type ControlScore struct {
 func (x *ControlScore) Reset() {
 	*x = ControlScore{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[29]
+		mi := &file_cnspec_policy_proto_msgTypes[33]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3148,7 +3527,7 @@ func (x *ControlScore) String() string {
 func (*ControlScore) ProtoMessage() {}
 
 func (x *ControlScore) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[29]
+	mi := &file_cnspec_policy_proto_msgTypes[33]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3161,7 +3540,7 @@ func (x *ControlScore) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlScore.ProtoReflect.Descriptor instead.
 func (*ControlScore) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{29}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ControlScore) GetMrn() string {
@@ -3257,7 +3636,7 @@ type Cvss struct {
 func (x *Cvss) Reset() {
 	*x = Cvss{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[30]
+		mi := &file_cnspec_policy_proto_msgTypes[34]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3270,7 +3649,7 @@ func (x *Cvss) String() string {
 func (*Cvss) ProtoMessage() {}
 
 func (x *Cvss) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[30]
+	mi := &file_cnspec_policy_proto_msgTypes[34]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3283,7 +3662,7 @@ func (x *Cvss) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Cvss.ProtoReflect.Descriptor instead.
 func (*Cvss) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{30}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *Cvss) GetId() string {
@@ -3339,7 +3718,7 @@ type CvssStats struct {
 func (x *CvssStats) Reset() {
 	*x = CvssStats{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[31]
+		mi := &file_cnspec_policy_proto_msgTypes[35]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3352,7 +3731,7 @@ func (x *CvssStats) String() string {
 func (*CvssStats) ProtoMessage() {}
 
 func (x *CvssStats) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[31]
+	mi := &file_cnspec_policy_proto_msgTypes[35]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3365,7 +3744,7 @@ func (x *CvssStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CvssStats.ProtoReflect.Descriptor instead.
 func (*CvssStats) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{31}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *CvssStats) GetTotal() uint32 {
@@ -3448,7 +3827,7 @@ type Score struct {
 func (x *Score) Reset() {
 	*x = Score{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[32]
+		mi := &file_cnspec_policy_proto_msgTypes[36]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3461,7 +3840,7 @@ func (x *Score) String() string {
 func (*Score) ProtoMessage() {}
 
 func (x *Score) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[32]
+	mi := &file_cnspec_policy_proto_msgTypes[36]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3474,7 +3853,7 @@ func (x *Score) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Score.ProtoReflect.Descriptor instead.
 func (*Score) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{32}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *Score) GetQrId() string {
@@ -3565,7 +3944,7 @@ type Stats struct {
 func (x *Stats) Reset() {
 	*x = Stats{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[33]
+		mi := &file_cnspec_policy_proto_msgTypes[37]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3578,7 +3957,7 @@ func (x *Stats) String() string {
 func (*Stats) ProtoMessage() {}
 
 func (x *Stats) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[33]
+	mi := &file_cnspec_policy_proto_msgTypes[37]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3591,7 +3970,7 @@ func (x *Stats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Stats.ProtoReflect.Descriptor instead.
 func (*Stats) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{33}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *Stats) GetTotal() uint32 {
@@ -3668,7 +4047,7 @@ type ScoreDistribution struct {
 func (x *ScoreDistribution) Reset() {
 	*x = ScoreDistribution{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[34]
+		mi := &file_cnspec_policy_proto_msgTypes[38]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3681,7 +4060,7 @@ func (x *ScoreDistribution) String() string {
 func (*ScoreDistribution) ProtoMessage() {}
 
 func (x *ScoreDistribution) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[34]
+	mi := &file_cnspec_policy_proto_msgTypes[38]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3694,7 +4073,7 @@ func (x *ScoreDistribution) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScoreDistribution.ProtoReflect.Descriptor instead.
 func (*ScoreDistribution) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{34}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ScoreDistribution) GetTotal() uint32 {
@@ -3762,7 +4141,7 @@ type Empty struct {
 func (x *Empty) Reset() {
 	*x = Empty{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[35]
+		mi := &file_cnspec_policy_proto_msgTypes[39]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3775,7 +4154,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[35]
+	mi := &file_cnspec_policy_proto_msgTypes[39]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3788,7 +4167,7 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{35}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{39}
 }
 
 // MRNs are used to uniquely identify resources. They are globally unique.
@@ -3803,7 +4182,7 @@ type Mrn struct {
 func (x *Mrn) Reset() {
 	*x = Mrn{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[36]
+		mi := &file_cnspec_policy_proto_msgTypes[40]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3816,7 +4195,7 @@ func (x *Mrn) String() string {
 func (*Mrn) ProtoMessage() {}
 
 func (x *Mrn) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[36]
+	mi := &file_cnspec_policy_proto_msgTypes[40]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3829,7 +4208,7 @@ func (x *Mrn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Mrn.ProtoReflect.Descriptor instead.
 func (*Mrn) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{36}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *Mrn) GetMrn() string {
@@ -3850,7 +4229,7 @@ type Mqueries struct {
 func (x *Mqueries) Reset() {
 	*x = Mqueries{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[37]
+		mi := &file_cnspec_policy_proto_msgTypes[41]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3863,7 +4242,7 @@ func (x *Mqueries) String() string {
 func (*Mqueries) ProtoMessage() {}
 
 func (x *Mqueries) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[37]
+	mi := &file_cnspec_policy_proto_msgTypes[41]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3876,7 +4255,7 @@ func (x *Mqueries) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Mqueries.ProtoReflect.Descriptor instead.
 func (*Mqueries) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{37}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *Mqueries) GetItems() []*explorer.Mquery {
@@ -3898,7 +4277,7 @@ type ListReq struct {
 func (x *ListReq) Reset() {
 	*x = ListReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[38]
+		mi := &file_cnspec_policy_proto_msgTypes[42]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3911,7 +4290,7 @@ func (x *ListReq) String() string {
 func (*ListReq) ProtoMessage() {}
 
 func (x *ListReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[38]
+	mi := &file_cnspec_policy_proto_msgTypes[42]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3924,7 +4303,7 @@ func (x *ListReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReq.ProtoReflect.Descriptor instead.
 func (*ListReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{38}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListReq) GetOwnerMrn() string {
@@ -3956,7 +4335,7 @@ type DefaultPoliciesReq struct {
 func (x *DefaultPoliciesReq) Reset() {
 	*x = DefaultPoliciesReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[39]
+		mi := &file_cnspec_policy_proto_msgTypes[43]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3969,7 +4348,7 @@ func (x *DefaultPoliciesReq) String() string {
 func (*DefaultPoliciesReq) ProtoMessage() {}
 
 func (x *DefaultPoliciesReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[39]
+	mi := &file_cnspec_policy_proto_msgTypes[43]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3982,7 +4361,7 @@ func (x *DefaultPoliciesReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DefaultPoliciesReq.ProtoReflect.Descriptor instead.
 func (*DefaultPoliciesReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{39}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *DefaultPoliciesReq) GetKind() string {
@@ -4031,7 +4410,7 @@ type URLs struct {
 func (x *URLs) Reset() {
 	*x = URLs{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[40]
+		mi := &file_cnspec_policy_proto_msgTypes[44]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4044,7 +4423,7 @@ func (x *URLs) String() string {
 func (*URLs) ProtoMessage() {}
 
 func (x *URLs) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[40]
+	mi := &file_cnspec_policy_proto_msgTypes[44]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4057,7 +4436,7 @@ func (x *URLs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use URLs.ProtoReflect.Descriptor instead.
 func (*URLs) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{40}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *URLs) GetUrls() []string {
@@ -4081,7 +4460,7 @@ type PolicyAssignment struct {
 func (x *PolicyAssignment) Reset() {
 	*x = PolicyAssignment{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[41]
+		mi := &file_cnspec_policy_proto_msgTypes[45]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4094,7 +4473,7 @@ func (x *PolicyAssignment) String() string {
 func (*PolicyAssignment) ProtoMessage() {}
 
 func (x *PolicyAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[41]
+	mi := &file_cnspec_policy_proto_msgTypes[45]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4107,7 +4486,7 @@ func (x *PolicyAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyAssignment.ProtoReflect.Descriptor instead.
 func (*PolicyAssignment) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{41}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *PolicyAssignment) GetAssetMrn() string {
@@ -4151,7 +4530,7 @@ type PolicyMutationDelta struct {
 func (x *PolicyMutationDelta) Reset() {
 	*x = PolicyMutationDelta{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[42]
+		mi := &file_cnspec_policy_proto_msgTypes[46]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4164,7 +4543,7 @@ func (x *PolicyMutationDelta) String() string {
 func (*PolicyMutationDelta) ProtoMessage() {}
 
 func (x *PolicyMutationDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[42]
+	mi := &file_cnspec_policy_proto_msgTypes[46]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4177,7 +4556,7 @@ func (x *PolicyMutationDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyMutationDelta.ProtoReflect.Descriptor instead.
 func (*PolicyMutationDelta) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{42}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *PolicyMutationDelta) GetPolicyMrn() string {
@@ -4213,7 +4592,7 @@ type PolicyDelta struct {
 func (x *PolicyDelta) Reset() {
 	*x = PolicyDelta{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[43]
+		mi := &file_cnspec_policy_proto_msgTypes[47]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4226,7 +4605,7 @@ func (x *PolicyDelta) String() string {
 func (*PolicyDelta) ProtoMessage() {}
 
 func (x *PolicyDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[43]
+	mi := &file_cnspec_policy_proto_msgTypes[47]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4239,7 +4618,7 @@ func (x *PolicyDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyDelta.ProtoReflect.Descriptor instead.
 func (*PolicyDelta) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{43}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *PolicyDelta) GetPolicyMrn() string {
@@ -4268,7 +4647,7 @@ type ResolveReq struct {
 func (x *ResolveReq) Reset() {
 	*x = ResolveReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[44]
+		mi := &file_cnspec_policy_proto_msgTypes[48]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4281,7 +4660,7 @@ func (x *ResolveReq) String() string {
 func (*ResolveReq) ProtoMessage() {}
 
 func (x *ResolveReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[44]
+	mi := &file_cnspec_policy_proto_msgTypes[48]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4294,7 +4673,7 @@ func (x *ResolveReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveReq.ProtoReflect.Descriptor instead.
 func (*ResolveReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{44}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ResolveReq) GetPolicyMrn() string {
@@ -4323,7 +4702,7 @@ type UpdateAssetJobsReq struct {
 func (x *UpdateAssetJobsReq) Reset() {
 	*x = UpdateAssetJobsReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[45]
+		mi := &file_cnspec_policy_proto_msgTypes[49]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4336,7 +4715,7 @@ func (x *UpdateAssetJobsReq) String() string {
 func (*UpdateAssetJobsReq) ProtoMessage() {}
 
 func (x *UpdateAssetJobsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[45]
+	mi := &file_cnspec_policy_proto_msgTypes[49]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4349,7 +4728,7 @@ func (x *UpdateAssetJobsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateAssetJobsReq.ProtoReflect.Descriptor instead.
 func (*UpdateAssetJobsReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{45}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *UpdateAssetJobsReq) GetAssetMrn() string {
@@ -4386,7 +4765,7 @@ type StoreResultsReq struct {
 func (x *StoreResultsReq) Reset() {
 	*x = StoreResultsReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[46]
+		mi := &file_cnspec_policy_proto_msgTypes[50]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4399,7 +4778,7 @@ func (x *StoreResultsReq) String() string {
 func (*StoreResultsReq) ProtoMessage() {}
 
 func (x *StoreResultsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[46]
+	mi := &file_cnspec_policy_proto_msgTypes[50]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4412,7 +4791,7 @@ func (x *StoreResultsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreResultsReq.ProtoReflect.Descriptor instead.
 func (*StoreResultsReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{46}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *StoreResultsReq) GetAssetMrn() string {
@@ -4476,7 +4855,7 @@ type EntityScoreReq struct {
 func (x *EntityScoreReq) Reset() {
 	*x = EntityScoreReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[47]
+		mi := &file_cnspec_policy_proto_msgTypes[51]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4489,7 +4868,7 @@ func (x *EntityScoreReq) String() string {
 func (*EntityScoreReq) ProtoMessage() {}
 
 func (x *EntityScoreReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[47]
+	mi := &file_cnspec_policy_proto_msgTypes[51]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4502,7 +4881,7 @@ func (x *EntityScoreReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EntityScoreReq.ProtoReflect.Descriptor instead.
 func (*EntityScoreReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{47}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *EntityScoreReq) GetEntityMrn() string {
@@ -4531,7 +4910,7 @@ type SynchronizeAssetsReq struct {
 func (x *SynchronizeAssetsReq) Reset() {
 	*x = SynchronizeAssetsReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[48]
+		mi := &file_cnspec_policy_proto_msgTypes[52]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4544,7 +4923,7 @@ func (x *SynchronizeAssetsReq) String() string {
 func (*SynchronizeAssetsReq) ProtoMessage() {}
 
 func (x *SynchronizeAssetsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[48]
+	mi := &file_cnspec_policy_proto_msgTypes[52]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4557,7 +4936,7 @@ func (x *SynchronizeAssetsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SynchronizeAssetsReq.ProtoReflect.Descriptor instead.
 func (*SynchronizeAssetsReq) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{48}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *SynchronizeAssetsReq) GetSpaceMrn() string {
@@ -4588,7 +4967,7 @@ type SynchronizeAssetsRespAssetDetail struct {
 func (x *SynchronizeAssetsRespAssetDetail) Reset() {
 	*x = SynchronizeAssetsRespAssetDetail{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[49]
+		mi := &file_cnspec_policy_proto_msgTypes[53]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4601,7 +4980,7 @@ func (x *SynchronizeAssetsRespAssetDetail) String() string {
 func (*SynchronizeAssetsRespAssetDetail) ProtoMessage() {}
 
 func (x *SynchronizeAssetsRespAssetDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[49]
+	mi := &file_cnspec_policy_proto_msgTypes[53]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4614,7 +4993,7 @@ func (x *SynchronizeAssetsRespAssetDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SynchronizeAssetsRespAssetDetail.ProtoReflect.Descriptor instead.
 func (*SynchronizeAssetsRespAssetDetail) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{49}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *SynchronizeAssetsRespAssetDetail) GetPlatformMrn() string {
@@ -4656,7 +5035,7 @@ type SynchronizeAssetsResp struct {
 func (x *SynchronizeAssetsResp) Reset() {
 	*x = SynchronizeAssetsResp{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[50]
+		mi := &file_cnspec_policy_proto_msgTypes[54]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4669,7 +5048,7 @@ func (x *SynchronizeAssetsResp) String() string {
 func (*SynchronizeAssetsResp) ProtoMessage() {}
 
 func (x *SynchronizeAssetsResp) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[50]
+	mi := &file_cnspec_policy_proto_msgTypes[54]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4682,7 +5061,7 @@ func (x *SynchronizeAssetsResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SynchronizeAssetsResp.ProtoReflect.Descriptor instead.
 func (*SynchronizeAssetsResp) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{50}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *SynchronizeAssetsResp) GetDetails() map[string]*SynchronizeAssetsRespAssetDetail {
@@ -4710,7 +5089,7 @@ type PurgeAssetsRequest struct {
 func (x *PurgeAssetsRequest) Reset() {
 	*x = PurgeAssetsRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[51]
+		mi := &file_cnspec_policy_proto_msgTypes[55]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4723,7 +5102,7 @@ func (x *PurgeAssetsRequest) String() string {
 func (*PurgeAssetsRequest) ProtoMessage() {}
 
 func (x *PurgeAssetsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[51]
+	mi := &file_cnspec_policy_proto_msgTypes[55]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4736,7 +5115,7 @@ func (x *PurgeAssetsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurgeAssetsRequest.ProtoReflect.Descriptor instead.
 func (*PurgeAssetsRequest) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{51}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *PurgeAssetsRequest) GetSpaceMrn() string {
@@ -4801,7 +5180,7 @@ type DateFilter struct {
 func (x *DateFilter) Reset() {
 	*x = DateFilter{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[52]
+		mi := &file_cnspec_policy_proto_msgTypes[56]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4814,7 +5193,7 @@ func (x *DateFilter) String() string {
 func (*DateFilter) ProtoMessage() {}
 
 func (x *DateFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[52]
+	mi := &file_cnspec_policy_proto_msgTypes[56]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4827,7 +5206,7 @@ func (x *DateFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DateFilter.ProtoReflect.Descriptor instead.
 func (*DateFilter) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{52}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *DateFilter) GetTimestamp() string {
@@ -4863,7 +5242,7 @@ type PurgeAssetsConfirmation struct {
 func (x *PurgeAssetsConfirmation) Reset() {
 	*x = PurgeAssetsConfirmation{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_cnspec_policy_proto_msgTypes[53]
+		mi := &file_cnspec_policy_proto_msgTypes[57]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4876,7 +5255,7 @@ func (x *PurgeAssetsConfirmation) String() string {
 func (*PurgeAssetsConfirmation) ProtoMessage() {}
 
 func (x *PurgeAssetsConfirmation) ProtoReflect() protoreflect.Message {
-	mi := &file_cnspec_policy_proto_msgTypes[53]
+	mi := &file_cnspec_policy_proto_msgTypes[57]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4889,7 +5268,7 @@ func (x *PurgeAssetsConfirmation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurgeAssetsConfirmation.ProtoReflect.Descriptor instead.
 func (*PurgeAssetsConfirmation) Descriptor() ([]byte, []int) {
-	return file_cnspec_policy_proto_rawDescGZIP(), []int{53}
+	return file_cnspec_policy_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *PurgeAssetsConfirmation) GetAssetMrns() []string {
@@ -5046,7 +5425,7 @@ var file_cnspec_policy_proto_rawDesc = []byte{
 	0x64, 0x61, 0x74, 0x61, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03,
 	0x52, 0x09, 0x64, 0x61, 0x74, 0x61, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x1f, 0x0a, 0x0b, 0x74,
 	0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03,
-	0x52, 0x0a, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0xaa, 0x03, 0x0a,
+	0x52, 0x0a, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0xeb, 0x03, 0x0a,
 	0x06, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x1b, 0x0a, 0x09, 0x6f, 0x77, 0x6e, 0x65, 0x72,
 	0x5f, 0x6d, 0x72, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x6f, 0x77, 0x6e, 0x65,
 	0x72, 0x4d, 0x72, 0x6e, 0x12, 0x34, 0x0a, 0x08, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x69, 0x65, 0x73,
@@ -5070,10 +5449,62 @@ var file_cnspec_policy_proto_rawDesc = []byte{
 	0x70, 0x73, 0x18, 0x09, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
 	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x72, 0x61, 0x6d,
 	0x65, 0x77, 0x6f, 0x72, 0x6b, 0x4d, 0x61, 0x70, 0x52, 0x0d, 0x66, 0x72, 0x61, 0x6d, 0x65, 0x77,
-	0x6f, 0x72, 0x6b, 0x4d, 0x61, 0x70, 0x73, 0x12, 0x30, 0x0a, 0x04, 0x64, 0x6f, 0x63, 0x73, 0x18,
-	0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x44,
-	0x6f, 0x63, 0x73, 0x52, 0x04, 0x64, 0x6f, 0x63, 0x73, 0x22, 0x4b, 0x0a, 0x0f, 0x50, 0x6f, 0x6c,
+	0x6f, 0x72, 0x6b, 0x4d, 0x61, 0x70, 0x73, 0x12, 0x3f, 0x0a, 0x0c, 0x72, 0x69, 0x73, 0x6b, 0x5f,
+	0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x73, 0x18, 0x0b, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
+	0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31,
+	0x2e, 0x52, 0x69, 0x73, 0x6b, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x52, 0x0b, 0x72, 0x69, 0x73,
+	0x6b, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x73, 0x12, 0x30, 0x0a, 0x04, 0x64, 0x6f, 0x63, 0x73,
+	0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e,
+	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x44, 0x6f, 0x63, 0x73, 0x52, 0x04, 0x64, 0x6f, 0x63, 0x73, 0x22, 0x8b, 0x01, 0x0a, 0x10, 0x53,
+	0x6f, 0x66, 0x74, 0x77, 0x61, 0x72, 0x65, 0x53, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x12,
+	0x12, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x74,
+	0x79, 0x70, 0x65, 0x12, 0x1c, 0x0a, 0x09, 0x6e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x6e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63,
+	0x65, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12,
+	0x17, 0x0a, 0x07, 0x6d, 0x71, 0x6c, 0x5f, 0x6d, 0x72, 0x6e, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x06, 0x6d, 0x71, 0x6c, 0x4d, 0x72, 0x6e, 0x22, 0x2e, 0x0a, 0x10, 0x52, 0x65, 0x73, 0x6f,
+	0x75, 0x72, 0x63, 0x65, 0x53, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x1a, 0x0a, 0x08,
+	0x73, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08,
+	0x73, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x22, 0xf8, 0x03, 0x0a, 0x0a, 0x52, 0x69, 0x73,
+	0x6b, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x10, 0x0a, 0x03, 0x6d, 0x72, 0x6e, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x6d, 0x72, 0x6e, 0x12, 0x10, 0x0a, 0x03, 0x75, 0x69, 0x64,
+	0x18, 0x24, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75, 0x69, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x74,
+	0x69, 0x74, 0x6c, 0x65, 0x18, 0x18, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x74, 0x69, 0x74, 0x6c,
+	0x65, 0x12, 0x34, 0x0a, 0x04, 0x64, 0x6f, 0x63, 0x73, 0x18, 0x19, 0x20, 0x01, 0x28, 0x0b, 0x32,
+	0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
+	0x76, 0x31, 0x2e, 0x52, 0x69, 0x73, 0x6b, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x44, 0x6f, 0x63,
+	0x73, 0x52, 0x04, 0x64, 0x6f, 0x63, 0x73, 0x12, 0x33, 0x0a, 0x07, 0x66, 0x69, 0x6c, 0x74, 0x65,
+	0x72, 0x73, 0x18, 0x14, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x19, 0x2e, 0x63, 0x6e, 0x71, 0x75, 0x65,
+	0x72, 0x79, 0x2e, 0x65, 0x78, 0x70, 0x6c, 0x6f, 0x72, 0x65, 0x72, 0x2e, 0x46, 0x69, 0x6c, 0x74,
+	0x65, 0x72, 0x73, 0x52, 0x07, 0x66, 0x69, 0x6c, 0x74, 0x65, 0x72, 0x73, 0x12, 0x32, 0x0a, 0x07,
+	0x71, 0x75, 0x65, 0x72, 0x69, 0x65, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x18, 0x2e,
+	0x63, 0x6e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x65, 0x78, 0x70, 0x6c, 0x6f, 0x72, 0x65, 0x72,
+	0x2e, 0x4d, 0x71, 0x75, 0x65, 0x72, 0x79, 0x52, 0x07, 0x71, 0x75, 0x65, 0x72, 0x69, 0x65, 0x73,
+	0x12, 0x31, 0x0a, 0x05, 0x73, 0x63, 0x6f, 0x70, 0x65, 0x18, 0x46, 0x20, 0x01, 0x28, 0x0e, 0x32,
+	0x1b, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
+	0x76, 0x31, 0x2e, 0x53, 0x63, 0x6f, 0x70, 0x65, 0x54, 0x79, 0x70, 0x65, 0x52, 0x05, 0x73, 0x63,
+	0x6f, 0x70, 0x65, 0x12, 0x2b, 0x0a, 0x11, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x6d, 0x75,
+	0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x18, 0x47, 0x20, 0x01, 0x28, 0x02, 0x52, 0x10,
+	0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72,
+	0x12, 0x2f, 0x0a, 0x13, 0x69, 0x6e, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x6d, 0x75, 0x6c,
+	0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x18, 0x48, 0x20, 0x01, 0x28, 0x02, 0x52, 0x12, 0x69,
+	0x6e, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65,
+	0x72, 0x12, 0x3e, 0x0a, 0x08, 0x73, 0x6f, 0x66, 0x74, 0x77, 0x61, 0x72, 0x65, 0x18, 0x49, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x22, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x6f, 0x66, 0x74, 0x77, 0x61, 0x72, 0x65, 0x53,
+	0x65, 0x6c, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x52, 0x08, 0x73, 0x6f, 0x66, 0x74, 0x77, 0x61, 0x72,
+	0x65, 0x12, 0x40, 0x0a, 0x09, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x73, 0x18, 0x4a,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x22, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f,
+	0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65,
+	0x53, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x52, 0x09, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72,
+	0x63, 0x65, 0x73, 0x22, 0x44, 0x0a, 0x0e, 0x52, 0x69, 0x73, 0x6b, 0x46, 0x61, 0x63, 0x74, 0x6f,
+	0x72, 0x44, 0x6f, 0x63, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x12, 0x1a, 0x0a,
+	0x08, 0x69, 0x6e, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x08, 0x69, 0x6e, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x22, 0x4b, 0x0a, 0x0f, 0x50, 0x6f, 0x6c,
 	0x69, 0x63, 0x79, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x6f, 0x63, 0x73, 0x12, 0x12, 0x0a, 0x04,
 	0x64, 0x65, 0x73, 0x63, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x64, 0x65, 0x73, 0x63,
 	0x12, 0x24, 0x0a, 0x0d, 0x6a, 0x75, 0x73, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f,
@@ -5832,150 +6263,155 @@ var file_cnspec_policy_proto_rawDesc = []byte{
 	0x69, 0x6f, 0x6e, 0x12, 0x0f, 0x0a, 0x0b, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49,
 	0x45, 0x44, 0x10, 0x00, 0x12, 0x0a, 0x0a, 0x06, 0x4d, 0x4f, 0x44, 0x49, 0x46, 0x59, 0x10, 0x01,
 	0x12, 0x0e, 0x0a, 0x0a, 0x44, 0x45, 0x41, 0x43, 0x54, 0x49, 0x56, 0x41, 0x54, 0x45, 0x10, 0x02,
-	0x12, 0x0c, 0x0a, 0x08, 0x41, 0x43, 0x54, 0x49, 0x56, 0x41, 0x54, 0x45, 0x10, 0x03, 0x2a, 0x3c,
-	0x0a, 0x0c, 0x52, 0x65, 0x76, 0x69, 0x65, 0x77, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x10,
-	0x0a, 0x0c, 0x4e, 0x4f, 0x54, 0x5f, 0x52, 0x45, 0x56, 0x49, 0x45, 0x57, 0x45, 0x44, 0x10, 0x00,
-	0x12, 0x0c, 0x0a, 0x08, 0x41, 0x50, 0x50, 0x52, 0x4f, 0x56, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0c,
-	0x0a, 0x08, 0x52, 0x45, 0x4a, 0x45, 0x43, 0x54, 0x45, 0x44, 0x10, 0x02, 0x2a, 0xb3, 0x01, 0x0a,
-	0x0b, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x52, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x12, 0x0b, 0x0a, 0x07,
-	0x75, 0x6e, 0x72, 0x61, 0x74, 0x65, 0x64, 0x10, 0x00, 0x12, 0x09, 0x0a, 0x05, 0x61, 0x50, 0x6c,
-	0x75, 0x73, 0x10, 0x01, 0x12, 0x05, 0x0a, 0x01, 0x61, 0x10, 0x02, 0x12, 0x0a, 0x0a, 0x06, 0x61,
-	0x4d, 0x69, 0x6e, 0x75, 0x73, 0x10, 0x03, 0x12, 0x09, 0x0a, 0x05, 0x62, 0x50, 0x6c, 0x75, 0x73,
-	0x10, 0x04, 0x12, 0x05, 0x0a, 0x01, 0x62, 0x10, 0x05, 0x12, 0x0a, 0x0a, 0x06, 0x62, 0x4d, 0x69,
-	0x6e, 0x75, 0x73, 0x10, 0x06, 0x12, 0x09, 0x0a, 0x05, 0x63, 0x50, 0x6c, 0x75, 0x73, 0x10, 0x07,
-	0x12, 0x05, 0x0a, 0x01, 0x63, 0x10, 0x08, 0x12, 0x0a, 0x0a, 0x06, 0x63, 0x4d, 0x69, 0x6e, 0x75,
-	0x73, 0x10, 0x09, 0x12, 0x09, 0x0a, 0x05, 0x64, 0x50, 0x6c, 0x75, 0x73, 0x10, 0x0a, 0x12, 0x05,
-	0x0a, 0x01, 0x64, 0x10, 0x0b, 0x12, 0x0a, 0x0a, 0x06, 0x64, 0x4d, 0x69, 0x6e, 0x75, 0x73, 0x10,
-	0x0c, 0x12, 0x0a, 0x0a, 0x06, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x10, 0x0d, 0x12, 0x09, 0x0a,
-	0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x10, 0x0e, 0x12, 0x08, 0x0a, 0x04, 0x73, 0x6b, 0x69, 0x70,
-	0x10, 0x0f, 0x2a, 0x2d, 0x0a, 0x0a, 0x43, 0x6f, 0x6d, 0x70, 0x61, 0x72, 0x69, 0x73, 0x6f, 0x6e,
-	0x12, 0x10, 0x0a, 0x0c, 0x47, 0x52, 0x45, 0x41, 0x54, 0x45, 0x52, 0x5f, 0x54, 0x48, 0x41, 0x4e,
-	0x10, 0x00, 0x12, 0x0d, 0x0a, 0x09, 0x4c, 0x45, 0x53, 0x53, 0x5f, 0x54, 0x48, 0x41, 0x4e, 0x10,
-	0x01, 0x2a, 0x3e, 0x0a, 0x0f, 0x44, 0x61, 0x74, 0x65, 0x46, 0x69, 0x6c, 0x74, 0x65, 0x72, 0x46,
-	0x69, 0x65, 0x6c, 0x64, 0x12, 0x17, 0x0a, 0x13, 0x46, 0x49, 0x4c, 0x54, 0x45, 0x52, 0x5f, 0x4c,
-	0x41, 0x53, 0x54, 0x5f, 0x55, 0x50, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x12, 0x0a,
-	0x0e, 0x46, 0x49, 0x4c, 0x54, 0x45, 0x52, 0x5f, 0x43, 0x52, 0x45, 0x41, 0x54, 0x45, 0x44, 0x10,
-	0x01, 0x32, 0x8b, 0x06, 0x0a, 0x09, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x48, 0x75, 0x62, 0x12,
-	0x40, 0x0a, 0x09, 0x53, 0x65, 0x74, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x18, 0x2e, 0x63,
+	0x12, 0x0c, 0x0a, 0x08, 0x41, 0x43, 0x54, 0x49, 0x56, 0x41, 0x54, 0x45, 0x10, 0x03, 0x2a, 0x57,
+	0x0a, 0x09, 0x53, 0x63, 0x6f, 0x70, 0x65, 0x54, 0x79, 0x70, 0x65, 0x12, 0x0c, 0x0a, 0x08, 0x55,
+	0x4e, 0x53, 0x43, 0x4f, 0x50, 0x45, 0x44, 0x10, 0x00, 0x12, 0x09, 0x0a, 0x05, 0x41, 0x53, 0x53,
+	0x45, 0x54, 0x10, 0x01, 0x12, 0x0c, 0x0a, 0x08, 0x52, 0x45, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45,
+	0x10, 0x02, 0x12, 0x0c, 0x0a, 0x08, 0x53, 0x4f, 0x46, 0x54, 0x57, 0x41, 0x52, 0x45, 0x10, 0x03,
+	0x12, 0x15, 0x0a, 0x11, 0x53, 0x4f, 0x46, 0x54, 0x57, 0x41, 0x52, 0x45, 0x5f, 0x52, 0x45, 0x53,
+	0x4f, 0x55, 0x52, 0x43, 0x45, 0x10, 0x04, 0x2a, 0x3c, 0x0a, 0x0c, 0x52, 0x65, 0x76, 0x69, 0x65,
+	0x77, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x10, 0x0a, 0x0c, 0x4e, 0x4f, 0x54, 0x5f, 0x52,
+	0x45, 0x56, 0x49, 0x45, 0x57, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x41, 0x50, 0x50,
+	0x52, 0x4f, 0x56, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0c, 0x0a, 0x08, 0x52, 0x45, 0x4a, 0x45, 0x43,
+	0x54, 0x45, 0x44, 0x10, 0x02, 0x2a, 0xb3, 0x01, 0x0a, 0x0b, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x52,
+	0x61, 0x74, 0x69, 0x6e, 0x67, 0x12, 0x0b, 0x0a, 0x07, 0x75, 0x6e, 0x72, 0x61, 0x74, 0x65, 0x64,
+	0x10, 0x00, 0x12, 0x09, 0x0a, 0x05, 0x61, 0x50, 0x6c, 0x75, 0x73, 0x10, 0x01, 0x12, 0x05, 0x0a,
+	0x01, 0x61, 0x10, 0x02, 0x12, 0x0a, 0x0a, 0x06, 0x61, 0x4d, 0x69, 0x6e, 0x75, 0x73, 0x10, 0x03,
+	0x12, 0x09, 0x0a, 0x05, 0x62, 0x50, 0x6c, 0x75, 0x73, 0x10, 0x04, 0x12, 0x05, 0x0a, 0x01, 0x62,
+	0x10, 0x05, 0x12, 0x0a, 0x0a, 0x06, 0x62, 0x4d, 0x69, 0x6e, 0x75, 0x73, 0x10, 0x06, 0x12, 0x09,
+	0x0a, 0x05, 0x63, 0x50, 0x6c, 0x75, 0x73, 0x10, 0x07, 0x12, 0x05, 0x0a, 0x01, 0x63, 0x10, 0x08,
+	0x12, 0x0a, 0x0a, 0x06, 0x63, 0x4d, 0x69, 0x6e, 0x75, 0x73, 0x10, 0x09, 0x12, 0x09, 0x0a, 0x05,
+	0x64, 0x50, 0x6c, 0x75, 0x73, 0x10, 0x0a, 0x12, 0x05, 0x0a, 0x01, 0x64, 0x10, 0x0b, 0x12, 0x0a,
+	0x0a, 0x06, 0x64, 0x4d, 0x69, 0x6e, 0x75, 0x73, 0x10, 0x0c, 0x12, 0x0a, 0x0a, 0x06, 0x66, 0x61,
+	0x69, 0x6c, 0x65, 0x64, 0x10, 0x0d, 0x12, 0x09, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x10,
+	0x0e, 0x12, 0x08, 0x0a, 0x04, 0x73, 0x6b, 0x69, 0x70, 0x10, 0x0f, 0x2a, 0x2d, 0x0a, 0x0a, 0x43,
+	0x6f, 0x6d, 0x70, 0x61, 0x72, 0x69, 0x73, 0x6f, 0x6e, 0x12, 0x10, 0x0a, 0x0c, 0x47, 0x52, 0x45,
+	0x41, 0x54, 0x45, 0x52, 0x5f, 0x54, 0x48, 0x41, 0x4e, 0x10, 0x00, 0x12, 0x0d, 0x0a, 0x09, 0x4c,
+	0x45, 0x53, 0x53, 0x5f, 0x54, 0x48, 0x41, 0x4e, 0x10, 0x01, 0x2a, 0x3e, 0x0a, 0x0f, 0x44, 0x61,
+	0x74, 0x65, 0x46, 0x69, 0x6c, 0x74, 0x65, 0x72, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x12, 0x17, 0x0a,
+	0x13, 0x46, 0x49, 0x4c, 0x54, 0x45, 0x52, 0x5f, 0x4c, 0x41, 0x53, 0x54, 0x5f, 0x55, 0x50, 0x44,
+	0x41, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x12, 0x0a, 0x0e, 0x46, 0x49, 0x4c, 0x54, 0x45, 0x52,
+	0x5f, 0x43, 0x52, 0x45, 0x41, 0x54, 0x45, 0x44, 0x10, 0x01, 0x32, 0x8b, 0x06, 0x0a, 0x09, 0x50,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x48, 0x75, 0x62, 0x12, 0x40, 0x0a, 0x09, 0x53, 0x65, 0x74, 0x42,
+	0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x1a,
+	0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
+	0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x45, 0x0a, 0x0e, 0x56, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x18, 0x2e, 0x63,
 	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e,
 	0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e,
 	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22,
-	0x00, 0x12, 0x45, 0x0a, 0x0e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x42, 0x75, 0x6e,
-	0x64, 0x6c, 0x65, 0x12, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c,
-	0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x1a, 0x17, 0x2e,
-	0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31,
-	0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x3e, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x42,
-	0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x18, 0x2e, 0x63,
-	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e,
-	0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x22, 0x00, 0x12, 0x3e, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x50,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x18, 0x2e, 0x63,
-	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e,
-	0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x40, 0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65,
-	0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
-	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a,
-	0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
-	0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x47, 0x0a, 0x10, 0x47, 0x65,
-	0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x46, 0x69, 0x6c, 0x74, 0x65, 0x72, 0x73, 0x12, 0x15,
+	0x00, 0x12, 0x3e, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x15,
 	0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76,
-	0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x1a, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x71, 0x75, 0x65, 0x72, 0x69, 0x65,
-	0x73, 0x22, 0x00, 0x12, 0x3f, 0x0a, 0x04, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x19, 0x2e, 0x63, 0x6e,
-	0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4c,
-	0x69, 0x73, 0x74, 0x52, 0x65, 0x71, 0x1a, 0x1a, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e,
-	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x69,
-	0x65, 0x73, 0x22, 0x00, 0x12, 0x51, 0x0a, 0x0f, 0x44, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x50,
-	0x6f, 0x6c, 0x69, 0x63, 0x69, 0x65, 0x73, 0x12, 0x24, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
-	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x66, 0x61, 0x75,
-	0x6c, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x69, 0x65, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x16, 0x2e,
-	0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31,
-	0x2e, 0x55, 0x52, 0x4c, 0x73, 0x22, 0x00, 0x12, 0x44, 0x0a, 0x0c, 0x47, 0x65, 0x74, 0x46, 0x72,
-	0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
-	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x1b,
+	0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x42, 0x75, 0x6e, 0x64, 0x6c, 0x65, 0x22,
+	0x00, 0x12, 0x3e, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x15,
 	0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76,
-	0x31, 0x2e, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x22, 0x00, 0x12, 0x43, 0x0a,
-	0x0f, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b,
-	0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
-	0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
-	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79,
-	0x22, 0x00, 0x12, 0x4b, 0x0a, 0x0e, 0x4c, 0x69, 0x73, 0x74, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77,
-	0x6f, 0x72, 0x6b, 0x73, 0x12, 0x19, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f,
+	0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22,
+	0x00, 0x12, 0x40, 0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
+	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74,
+	0x79, 0x22, 0x00, 0x12, 0x47, 0x0a, 0x10, 0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x46, 0x69, 0x6c, 0x74, 0x65, 0x72, 0x73, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
+	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x1a,
+	0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76,
+	0x31, 0x2e, 0x4d, 0x71, 0x75, 0x65, 0x72, 0x69, 0x65, 0x73, 0x22, 0x00, 0x12, 0x3f, 0x0a, 0x04,
+	0x4c, 0x69, 0x73, 0x74, 0x12, 0x19, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f,
 	0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x71, 0x1a,
-	0x1c, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
-	0x76, 0x31, 0x2e, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x22, 0x00, 0x32,
-	0xc4, 0x08, 0x0a, 0x0e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76,
-	0x65, 0x72, 0x12, 0x47, 0x0a, 0x06, 0x41, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x12, 0x22, 0x2e, 0x63,
-	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e,
-	0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x6d, 0x65, 0x6e, 0x74,
+	0x1a, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
+	0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x69, 0x65, 0x73, 0x22, 0x00, 0x12, 0x51, 0x0a,
+	0x0f, 0x44, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x69, 0x65, 0x73,
+	0x12, 0x24, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63,
+	0x69, 0x65, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x16, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e,
+	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x55, 0x52, 0x4c, 0x73, 0x22, 0x00,
+	0x12, 0x44, 0x0a, 0x0c, 0x47, 0x65, 0x74, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b,
+	0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x1b, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
+	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x72, 0x61, 0x6d, 0x65,
+	0x77, 0x6f, 0x72, 0x6b, 0x22, 0x00, 0x12, 0x43, 0x0a, 0x0f, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65,
+	0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70,
+	0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e,
 	0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
-	0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x49, 0x0a, 0x08, 0x55,
-	0x6e, 0x61, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x12, 0x22, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
-	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63,
-	0x79, 0x41, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x6d, 0x65, 0x6e, 0x74, 0x1a, 0x17, 0x2e, 0x63, 0x6e,
-	0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45,
-	0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x41, 0x0a, 0x08, 0x53, 0x65, 0x74, 0x50, 0x72, 0x6f,
-	0x70, 0x73, 0x12, 0x1a, 0x2e, 0x63, 0x6e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x65, 0x78, 0x70,
-	0x6c, 0x6f, 0x72, 0x65, 0x72, 0x2e, 0x50, 0x72, 0x6f, 0x70, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x17,
-	0x2e, 0x63, 0x6e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x65, 0x78, 0x70, 0x6c, 0x6f, 0x72, 0x65,
-	0x72, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x4b, 0x0a, 0x07, 0x52, 0x65, 0x73,
-	0x6f, 0x6c, 0x76, 0x65, 0x12, 0x1c, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f,
-	0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x52,
-	0x65, 0x71, 0x1a, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69,
-	0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f,
-	0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x52, 0x0a, 0x0f, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
-	0x41, 0x73, 0x73, 0x65, 0x74, 0x4a, 0x6f, 0x62, 0x73, 0x12, 0x24, 0x2e, 0x63, 0x6e, 0x73, 0x70,
-	0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x55, 0x70, 0x64,
-	0x61, 0x74, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x4a, 0x6f, 0x62, 0x73, 0x52, 0x65, 0x71, 0x1a,
-	0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
-	0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x60, 0x0a, 0x14, 0x52, 0x65,
-	0x73, 0x6f, 0x6c, 0x76, 0x65, 0x41, 0x6e, 0x64, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x4a, 0x6f,
+	0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x4b, 0x0a, 0x0e, 0x4c,
+	0x69, 0x73, 0x74, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x12, 0x19, 0x2e,
+	0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31,
+	0x2e, 0x4c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x71, 0x1a, 0x1c, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
+	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x72, 0x61, 0x6d,
+	0x65, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x22, 0x00, 0x32, 0xc4, 0x08, 0x0a, 0x0e, 0x50, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x72, 0x12, 0x47, 0x0a, 0x06, 0x41,
+	0x73, 0x73, 0x69, 0x67, 0x6e, 0x12, 0x22, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41,
+	0x73, 0x73, 0x69, 0x67, 0x6e, 0x6d, 0x65, 0x6e, 0x74, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70,
+	0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70,
+	0x74, 0x79, 0x22, 0x00, 0x12, 0x49, 0x0a, 0x08, 0x55, 0x6e, 0x61, 0x73, 0x73, 0x69, 0x67, 0x6e,
+	0x12, 0x22, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41, 0x73, 0x73, 0x69, 0x67, 0x6e,
+	0x6d, 0x65, 0x6e, 0x74, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f,
+	0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12,
+	0x41, 0x0a, 0x08, 0x53, 0x65, 0x74, 0x50, 0x72, 0x6f, 0x70, 0x73, 0x12, 0x1a, 0x2e, 0x63, 0x6e,
+	0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x65, 0x78, 0x70, 0x6c, 0x6f, 0x72, 0x65, 0x72, 0x2e, 0x50,
+	0x72, 0x6f, 0x70, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x71, 0x75, 0x65, 0x72,
+	0x79, 0x2e, 0x65, 0x78, 0x70, 0x6c, 0x6f, 0x72, 0x65, 0x72, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79,
+	0x22, 0x00, 0x12, 0x4b, 0x0a, 0x07, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x12, 0x1c, 0x2e,
+	0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31,
+	0x2e, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x52, 0x65, 0x71, 0x1a, 0x20, 0x2e, 0x63, 0x6e,
+	0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52,
+	0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12,
+	0x52, 0x0a, 0x0f, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x4a, 0x6f,
 	0x62, 0x73, 0x12, 0x24, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69,
 	0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x73, 0x73, 0x65,
-	0x74, 0x4a, 0x6f, 0x62, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
-	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f,
-	0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x4e, 0x0a, 0x11,
-	0x47, 0x65, 0x74, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c, 0x69, 0x63,
-	0x79, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63,
-	0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72, 0x6e, 0x1a, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
-	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f,
-	0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x4c, 0x0a, 0x0c,
-	0x53, 0x74, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x73, 0x12, 0x21, 0x2e, 0x63,
-	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e,
-	0x53, 0x74, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x73, 0x52, 0x65, 0x71, 0x1a,
-	0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e,
-	0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x22, 0x00, 0x12, 0x49, 0x0a, 0x09, 0x47, 0x65,
-	0x74, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x12, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
+	0x74, 0x4a, 0x6f, 0x62, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
+	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74,
+	0x79, 0x22, 0x00, 0x12, 0x60, 0x0a, 0x14, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x41, 0x6e,
+	0x64, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x4a, 0x6f, 0x62, 0x73, 0x12, 0x24, 0x2e, 0x63, 0x6e,
+	0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x55,
+	0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x4a, 0x6f, 0x62, 0x73, 0x52, 0x65,
+	0x71, 0x1a, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x4e, 0x0a, 0x11, 0x47, 0x65, 0x74, 0x52, 0x65, 0x73, 0x6f,
+	0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x15, 0x2e, 0x63, 0x6e, 0x73,
+	0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4d, 0x72,
+	0x6e, 0x1a, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x50, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x4c, 0x0a, 0x0c, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x52, 0x65,
+	0x73, 0x75, 0x6c, 0x74, 0x73, 0x12, 0x21, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x52, 0x65,
+	0x73, 0x75, 0x6c, 0x74, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x17, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65,
+	0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6d, 0x70, 0x74,
+	0x79, 0x22, 0x00, 0x12, 0x49, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74,
+	0x12, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x52,
+	0x65, 0x71, 0x1a, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x22, 0x00, 0x12, 0x5b,
+	0x0a, 0x12, 0x47, 0x65, 0x74, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x52, 0x65,
+	0x70, 0x6f, 0x72, 0x74, 0x12, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f,
+	0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x53, 0x63,
+	0x6f, 0x72, 0x65, 0x52, 0x65, 0x71, 0x1a, 0x21, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e,
+	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77,
+	0x6f, 0x72, 0x6b, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x22, 0x00, 0x12, 0x48, 0x0a, 0x08, 0x47,
+	0x65, 0x74, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x12, 0x20, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63,
 	0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x6e, 0x74, 0x69, 0x74,
 	0x79, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x71, 0x1a, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70,
 	0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x70,
-	0x6f, 0x72, 0x74, 0x22, 0x00, 0x12, 0x5b, 0x0a, 0x12, 0x47, 0x65, 0x74, 0x46, 0x72, 0x61, 0x6d,
-	0x65, 0x77, 0x6f, 0x72, 0x6b, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x12, 0x20, 0x2e, 0x63, 0x6e,
-	0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x45,
-	0x6e, 0x74, 0x69, 0x74, 0x79, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x71, 0x1a, 0x21, 0x2e,
-	0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31,
-	0x2e, 0x46, 0x72, 0x61, 0x6d, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74,
-	0x22, 0x00, 0x12, 0x48, 0x0a, 0x08, 0x47, 0x65, 0x74, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x12, 0x20,
-	0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76,
-	0x31, 0x2e, 0x45, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x53, 0x63, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x71,
-	0x1a, 0x18, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
-	0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x11,
-	0x53, 0x79, 0x6e, 0x63, 0x68, 0x72, 0x6f, 0x6e, 0x69, 0x7a, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74,
-	0x73, 0x12, 0x26, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63,
-	0x79, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x79, 0x6e, 0x63, 0x68, 0x72, 0x6f, 0x6e, 0x69, 0x7a, 0x65,
-	0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x52, 0x65, 0x71, 0x1a, 0x27, 0x2e, 0x63, 0x6e, 0x73, 0x70,
-	0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x79, 0x6e,
-	0x63, 0x68, 0x72, 0x6f, 0x6e, 0x69, 0x7a, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x52, 0x65,
-	0x73, 0x70, 0x22, 0x00, 0x12, 0x60, 0x0a, 0x0b, 0x50, 0x75, 0x72, 0x67, 0x65, 0x41, 0x73, 0x73,
-	0x65, 0x74, 0x73, 0x12, 0x24, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c,
-	0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x75, 0x72, 0x67, 0x65, 0x41, 0x73, 0x73, 0x65,
-	0x74, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x29, 0x2e, 0x63, 0x6e, 0x73, 0x70,
-	0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x75, 0x72,
-	0x67, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x42, 0x21, 0x5a, 0x1f, 0x67, 0x6f, 0x2e, 0x6d, 0x6f, 0x6e,
-	0x64, 0x6f, 0x6f, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2f, 0x76,
-	0x31, 0x30, 0x2f, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x6f, 0x72, 0x74, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x11, 0x53, 0x79, 0x6e, 0x63, 0x68, 0x72, 0x6f,
+	0x6e, 0x69, 0x7a, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x12, 0x26, 0x2e, 0x63, 0x6e, 0x73,
+	0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x79,
+	0x6e, 0x63, 0x68, 0x72, 0x6f, 0x6e, 0x69, 0x7a, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x52,
+	0x65, 0x71, 0x1a, 0x27, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x79, 0x6e, 0x63, 0x68, 0x72, 0x6f, 0x6e, 0x69, 0x7a,
+	0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x52, 0x65, 0x73, 0x70, 0x22, 0x00, 0x12, 0x60, 0x0a,
+	0x0b, 0x50, 0x75, 0x72, 0x67, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x12, 0x24, 0x2e, 0x63,
+	0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e,
+	0x50, 0x75, 0x72, 0x67, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x29, 0x2e, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2e, 0x70, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x75, 0x72, 0x67, 0x65, 0x41, 0x73, 0x73, 0x65, 0x74,
+	0x73, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x42,
+	0x21, 0x5a, 0x1f, 0x67, 0x6f, 0x2e, 0x6d, 0x6f, 0x6e, 0x64, 0x6f, 0x6f, 0x2e, 0x63, 0x6f, 0x6d,
+	0x2f, 0x63, 0x6e, 0x73, 0x70, 0x65, 0x63, 0x2f, 0x76, 0x31, 0x30, 0x2f, 0x70, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -5990,289 +6426,301 @@ func file_cnspec_policy_proto_rawDescGZIP() []byte {
 	return file_cnspec_policy_proto_rawDescData
 }
 
-var file_cnspec_policy_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_cnspec_policy_proto_msgTypes = make([]protoimpl.MessageInfo, 77)
+var file_cnspec_policy_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
+var file_cnspec_policy_proto_msgTypes = make([]protoimpl.MessageInfo, 81)
 var file_cnspec_policy_proto_goTypes = []interface{}{
 	(GroupType)(0),         // 0: cnspec.policy.v1.GroupType
 	(QueryAction)(0),       // 1: cnspec.policy.v1.QueryAction
-	(ReviewStatus)(0),      // 2: cnspec.policy.v1.ReviewStatus
-	(ScoreRating)(0),       // 3: cnspec.policy.v1.ScoreRating
-	(Comparison)(0),        // 4: cnspec.policy.v1.Comparison
-	(DateFilterField)(0),   // 5: cnspec.policy.v1.DateFilterField
-	(ReportingJob_Type)(0), // 6: cnspec.policy.v1.ReportingJob.Type
-	(PolicyDelta_PolicyAssignmentActionType)(0), // 7: cnspec.policy.v1.PolicyDelta.PolicyAssignmentActionType
-	(*PolicyGroup)(nil),                         // 8: cnspec.policy.v1.PolicyGroup
-	(*PolicyRef)(nil),                           // 9: cnspec.policy.v1.PolicyRef
-	(*Policy)(nil),                              // 10: cnspec.policy.v1.Policy
-	(*Policies)(nil),                            // 11: cnspec.policy.v1.Policies
-	(*QueryCounts)(nil),                         // 12: cnspec.policy.v1.QueryCounts
-	(*Bundle)(nil),                              // 13: cnspec.policy.v1.Bundle
-	(*PolicyGroupDocs)(nil),                     // 14: cnspec.policy.v1.PolicyGroupDocs
-	(*PolicyDocs)(nil),                          // 15: cnspec.policy.v1.PolicyDocs
-	(*Framework)(nil),                           // 16: cnspec.policy.v1.Framework
-	(*Frameworks)(nil),                          // 17: cnspec.policy.v1.Frameworks
-	(*FrameworkGroup)(nil),                      // 18: cnspec.policy.v1.FrameworkGroup
-	(*FrameworkRef)(nil),                        // 19: cnspec.policy.v1.FrameworkRef
-	(*Control)(nil),                             // 20: cnspec.policy.v1.Control
-	(*FrameworkMap)(nil),                        // 21: cnspec.policy.v1.FrameworkMap
-	(*ControlMap)(nil),                          // 22: cnspec.policy.v1.ControlMap
-	(*ControlDocs)(nil),                         // 23: cnspec.policy.v1.ControlDocs
-	(*ControlRef)(nil),                          // 24: cnspec.policy.v1.ControlRef
-	(*Asset)(nil),                               // 25: cnspec.policy.v1.Asset
-	(*ResolvedPolicy)(nil),                      // 26: cnspec.policy.v1.ResolvedPolicy
-	(*ExecutionJob)(nil),                        // 27: cnspec.policy.v1.ExecutionJob
-	(*ExecutionQuery)(nil),                      // 28: cnspec.policy.v1.ExecutionQuery
-	(*CollectorJob)(nil),                        // 29: cnspec.policy.v1.CollectorJob
-	(*StringArray)(nil),                         // 30: cnspec.policy.v1.StringArray
-	(*DataQueryInfo)(nil),                       // 31: cnspec.policy.v1.DataQueryInfo
-	(*ReportingJob)(nil),                        // 32: cnspec.policy.v1.ReportingJob
-	(*Report)(nil),                              // 33: cnspec.policy.v1.Report
-	(*Reports)(nil),                             // 34: cnspec.policy.v1.Reports
-	(*ReportCollection)(nil),                    // 35: cnspec.policy.v1.ReportCollection
-	(*FrameworkReport)(nil),                     // 36: cnspec.policy.v1.FrameworkReport
-	(*ControlScore)(nil),                        // 37: cnspec.policy.v1.ControlScore
-	(*Cvss)(nil),                                // 38: cnspec.policy.v1.Cvss
-	(*CvssStats)(nil),                           // 39: cnspec.policy.v1.CvssStats
-	(*Score)(nil),                               // 40: cnspec.policy.v1.Score
-	(*Stats)(nil),                               // 41: cnspec.policy.v1.Stats
-	(*ScoreDistribution)(nil),                   // 42: cnspec.policy.v1.ScoreDistribution
-	(*Empty)(nil),                               // 43: cnspec.policy.v1.Empty
-	(*Mrn)(nil),                                 // 44: cnspec.policy.v1.Mrn
-	(*Mqueries)(nil),                            // 45: cnspec.policy.v1.Mqueries
-	(*ListReq)(nil),                             // 46: cnspec.policy.v1.ListReq
-	(*DefaultPoliciesReq)(nil),                  // 47: cnspec.policy.v1.DefaultPoliciesReq
-	(*URLs)(nil),                                // 48: cnspec.policy.v1.URLs
-	(*PolicyAssignment)(nil),                    // 49: cnspec.policy.v1.PolicyAssignment
-	(*PolicyMutationDelta)(nil),                 // 50: cnspec.policy.v1.PolicyMutationDelta
-	(*PolicyDelta)(nil),                         // 51: cnspec.policy.v1.PolicyDelta
-	(*ResolveReq)(nil),                          // 52: cnspec.policy.v1.ResolveReq
-	(*UpdateAssetJobsReq)(nil),                  // 53: cnspec.policy.v1.UpdateAssetJobsReq
-	(*StoreResultsReq)(nil),                     // 54: cnspec.policy.v1.StoreResultsReq
-	(*EntityScoreReq)(nil),                      // 55: cnspec.policy.v1.EntityScoreReq
-	(*SynchronizeAssetsReq)(nil),                // 56: cnspec.policy.v1.SynchronizeAssetsReq
-	(*SynchronizeAssetsRespAssetDetail)(nil),    // 57: cnspec.policy.v1.SynchronizeAssetsRespAssetDetail
-	(*SynchronizeAssetsResp)(nil),               // 58: cnspec.policy.v1.SynchronizeAssetsResp
-	(*PurgeAssetsRequest)(nil),                  // 59: cnspec.policy.v1.PurgeAssetsRequest
-	(*DateFilter)(nil),                          // 60: cnspec.policy.v1.DateFilter
-	(*PurgeAssetsConfirmation)(nil),             // 61: cnspec.policy.v1.PurgeAssetsConfirmation
-	nil,                                         // 62: cnspec.policy.v1.Policy.TagsEntry
-	nil,                                         // 63: cnspec.policy.v1.Framework.TagsEntry
-	nil,                                         // 64: cnspec.policy.v1.Control.TagsEntry
-	nil,                                         // 65: cnspec.policy.v1.ExecutionJob.QueriesEntry
-	nil,                                         // 66: cnspec.policy.v1.ExecutionQuery.PropertiesEntry
-	nil,                                         // 67: cnspec.policy.v1.CollectorJob.ReportingJobsEntry
-	nil,                                         // 68: cnspec.policy.v1.CollectorJob.ReportingQueriesEntry
-	nil,                                         // 69: cnspec.policy.v1.CollectorJob.DatapointsEntry
-	nil,                                         // 70: cnspec.policy.v1.ReportingJob.DatapointsEntry
-	nil,                                         // 71: cnspec.policy.v1.ReportingJob.ChildJobsEntry
-	nil,                                         // 72: cnspec.policy.v1.Report.ScoresEntry
-	nil,                                         // 73: cnspec.policy.v1.Report.DataEntry
-	nil,                                         // 74: cnspec.policy.v1.Report.CvssScoresEntry
-	nil,                                         // 75: cnspec.policy.v1.ReportCollection.AssetsEntry
-	nil,                                         // 76: cnspec.policy.v1.ReportCollection.ReportsEntry
-	nil,                                         // 77: cnspec.policy.v1.ReportCollection.ErrorsEntry
-	nil,                                         // 78: cnspec.policy.v1.ReportCollection.ResolvedPoliciesEntry
-	nil,                                         // 79: cnspec.policy.v1.ReportCollection.VulnReportsEntry
-	nil,                                         // 80: cnspec.policy.v1.PolicyMutationDelta.PolicyDeltasEntry
-	nil,                                         // 81: cnspec.policy.v1.StoreResultsReq.DataEntry
-	nil,                                         // 82: cnspec.policy.v1.SynchronizeAssetsResp.DetailsEntry
-	nil,                                         // 83: cnspec.policy.v1.PurgeAssetsRequest.LabelsEntry
-	nil,                                         // 84: cnspec.policy.v1.PurgeAssetsConfirmation.ErrorsEntry
-	(*explorer.Mquery)(nil),                     // 85: cnquery.explorer.Mquery
-	(*explorer.Filters)(nil),                    // 86: cnquery.explorer.Filters
-	(*explorer.Author)(nil),                     // 87: cnquery.explorer.Author
-	(explorer.Action)(0),                        // 88: cnquery.explorer.Action
-	(*explorer.Impact)(nil),                     // 89: cnquery.explorer.Impact
-	(explorer.ScoringSystem)(0),                 // 90: cnquery.explorer.ScoringSystem
-	(*explorer.Property)(nil),                   // 91: cnquery.explorer.Property
-	(*explorer.QueryPack)(nil),                  // 92: cnquery.explorer.QueryPack
-	(*explorer.ObjectRef)(nil),                  // 93: cnquery.explorer.ObjectRef
-	(*explorer.MqueryRef)(nil),                  // 94: cnquery.explorer.MqueryRef
-	(*inventory.Platform)(nil),                  // 95: cnquery.providers.v1.Platform
-	(*llx.CodeBundle)(nil),                      // 96: cnquery.llx.CodeBundle
-	(*inventory.Asset)(nil),                     // 97: cnquery.providers.v1.Asset
-	(*llx.Result)(nil),                          // 98: cnquery.llx.Result
-	(*mvd.VulnReport)(nil),                      // 99: mondoo.mvd.v1.VulnReport
-	(*explorer.PropsReq)(nil),                   // 100: cnquery.explorer.PropsReq
-	(*explorer.Empty)(nil),                      // 101: cnquery.explorer.Empty
+	(ScopeType)(0),         // 2: cnspec.policy.v1.ScopeType
+	(ReviewStatus)(0),      // 3: cnspec.policy.v1.ReviewStatus
+	(ScoreRating)(0),       // 4: cnspec.policy.v1.ScoreRating
+	(Comparison)(0),        // 5: cnspec.policy.v1.Comparison
+	(DateFilterField)(0),   // 6: cnspec.policy.v1.DateFilterField
+	(ReportingJob_Type)(0), // 7: cnspec.policy.v1.ReportingJob.Type
+	(PolicyDelta_PolicyAssignmentActionType)(0), // 8: cnspec.policy.v1.PolicyDelta.PolicyAssignmentActionType
+	(*PolicyGroup)(nil),                         // 9: cnspec.policy.v1.PolicyGroup
+	(*PolicyRef)(nil),                           // 10: cnspec.policy.v1.PolicyRef
+	(*Policy)(nil),                              // 11: cnspec.policy.v1.Policy
+	(*Policies)(nil),                            // 12: cnspec.policy.v1.Policies
+	(*QueryCounts)(nil),                         // 13: cnspec.policy.v1.QueryCounts
+	(*Bundle)(nil),                              // 14: cnspec.policy.v1.Bundle
+	(*SoftwareSelector)(nil),                    // 15: cnspec.policy.v1.SoftwareSelector
+	(*ResourceSelector)(nil),                    // 16: cnspec.policy.v1.ResourceSelector
+	(*RiskFactor)(nil),                          // 17: cnspec.policy.v1.RiskFactor
+	(*RiskFactorDocs)(nil),                      // 18: cnspec.policy.v1.RiskFactorDocs
+	(*PolicyGroupDocs)(nil),                     // 19: cnspec.policy.v1.PolicyGroupDocs
+	(*PolicyDocs)(nil),                          // 20: cnspec.policy.v1.PolicyDocs
+	(*Framework)(nil),                           // 21: cnspec.policy.v1.Framework
+	(*Frameworks)(nil),                          // 22: cnspec.policy.v1.Frameworks
+	(*FrameworkGroup)(nil),                      // 23: cnspec.policy.v1.FrameworkGroup
+	(*FrameworkRef)(nil),                        // 24: cnspec.policy.v1.FrameworkRef
+	(*Control)(nil),                             // 25: cnspec.policy.v1.Control
+	(*FrameworkMap)(nil),                        // 26: cnspec.policy.v1.FrameworkMap
+	(*ControlMap)(nil),                          // 27: cnspec.policy.v1.ControlMap
+	(*ControlDocs)(nil),                         // 28: cnspec.policy.v1.ControlDocs
+	(*ControlRef)(nil),                          // 29: cnspec.policy.v1.ControlRef
+	(*Asset)(nil),                               // 30: cnspec.policy.v1.Asset
+	(*ResolvedPolicy)(nil),                      // 31: cnspec.policy.v1.ResolvedPolicy
+	(*ExecutionJob)(nil),                        // 32: cnspec.policy.v1.ExecutionJob
+	(*ExecutionQuery)(nil),                      // 33: cnspec.policy.v1.ExecutionQuery
+	(*CollectorJob)(nil),                        // 34: cnspec.policy.v1.CollectorJob
+	(*StringArray)(nil),                         // 35: cnspec.policy.v1.StringArray
+	(*DataQueryInfo)(nil),                       // 36: cnspec.policy.v1.DataQueryInfo
+	(*ReportingJob)(nil),                        // 37: cnspec.policy.v1.ReportingJob
+	(*Report)(nil),                              // 38: cnspec.policy.v1.Report
+	(*Reports)(nil),                             // 39: cnspec.policy.v1.Reports
+	(*ReportCollection)(nil),                    // 40: cnspec.policy.v1.ReportCollection
+	(*FrameworkReport)(nil),                     // 41: cnspec.policy.v1.FrameworkReport
+	(*ControlScore)(nil),                        // 42: cnspec.policy.v1.ControlScore
+	(*Cvss)(nil),                                // 43: cnspec.policy.v1.Cvss
+	(*CvssStats)(nil),                           // 44: cnspec.policy.v1.CvssStats
+	(*Score)(nil),                               // 45: cnspec.policy.v1.Score
+	(*Stats)(nil),                               // 46: cnspec.policy.v1.Stats
+	(*ScoreDistribution)(nil),                   // 47: cnspec.policy.v1.ScoreDistribution
+	(*Empty)(nil),                               // 48: cnspec.policy.v1.Empty
+	(*Mrn)(nil),                                 // 49: cnspec.policy.v1.Mrn
+	(*Mqueries)(nil),                            // 50: cnspec.policy.v1.Mqueries
+	(*ListReq)(nil),                             // 51: cnspec.policy.v1.ListReq
+	(*DefaultPoliciesReq)(nil),                  // 52: cnspec.policy.v1.DefaultPoliciesReq
+	(*URLs)(nil),                                // 53: cnspec.policy.v1.URLs
+	(*PolicyAssignment)(nil),                    // 54: cnspec.policy.v1.PolicyAssignment
+	(*PolicyMutationDelta)(nil),                 // 55: cnspec.policy.v1.PolicyMutationDelta
+	(*PolicyDelta)(nil),                         // 56: cnspec.policy.v1.PolicyDelta
+	(*ResolveReq)(nil),                          // 57: cnspec.policy.v1.ResolveReq
+	(*UpdateAssetJobsReq)(nil),                  // 58: cnspec.policy.v1.UpdateAssetJobsReq
+	(*StoreResultsReq)(nil),                     // 59: cnspec.policy.v1.StoreResultsReq
+	(*EntityScoreReq)(nil),                      // 60: cnspec.policy.v1.EntityScoreReq
+	(*SynchronizeAssetsReq)(nil),                // 61: cnspec.policy.v1.SynchronizeAssetsReq
+	(*SynchronizeAssetsRespAssetDetail)(nil),    // 62: cnspec.policy.v1.SynchronizeAssetsRespAssetDetail
+	(*SynchronizeAssetsResp)(nil),               // 63: cnspec.policy.v1.SynchronizeAssetsResp
+	(*PurgeAssetsRequest)(nil),                  // 64: cnspec.policy.v1.PurgeAssetsRequest
+	(*DateFilter)(nil),                          // 65: cnspec.policy.v1.DateFilter
+	(*PurgeAssetsConfirmation)(nil),             // 66: cnspec.policy.v1.PurgeAssetsConfirmation
+	nil,                                         // 67: cnspec.policy.v1.Policy.TagsEntry
+	nil,                                         // 68: cnspec.policy.v1.Framework.TagsEntry
+	nil,                                         // 69: cnspec.policy.v1.Control.TagsEntry
+	nil,                                         // 70: cnspec.policy.v1.ExecutionJob.QueriesEntry
+	nil,                                         // 71: cnspec.policy.v1.ExecutionQuery.PropertiesEntry
+	nil,                                         // 72: cnspec.policy.v1.CollectorJob.ReportingJobsEntry
+	nil,                                         // 73: cnspec.policy.v1.CollectorJob.ReportingQueriesEntry
+	nil,                                         // 74: cnspec.policy.v1.CollectorJob.DatapointsEntry
+	nil,                                         // 75: cnspec.policy.v1.ReportingJob.DatapointsEntry
+	nil,                                         // 76: cnspec.policy.v1.ReportingJob.ChildJobsEntry
+	nil,                                         // 77: cnspec.policy.v1.Report.ScoresEntry
+	nil,                                         // 78: cnspec.policy.v1.Report.DataEntry
+	nil,                                         // 79: cnspec.policy.v1.Report.CvssScoresEntry
+	nil,                                         // 80: cnspec.policy.v1.ReportCollection.AssetsEntry
+	nil,                                         // 81: cnspec.policy.v1.ReportCollection.ReportsEntry
+	nil,                                         // 82: cnspec.policy.v1.ReportCollection.ErrorsEntry
+	nil,                                         // 83: cnspec.policy.v1.ReportCollection.ResolvedPoliciesEntry
+	nil,                                         // 84: cnspec.policy.v1.ReportCollection.VulnReportsEntry
+	nil,                                         // 85: cnspec.policy.v1.PolicyMutationDelta.PolicyDeltasEntry
+	nil,                                         // 86: cnspec.policy.v1.StoreResultsReq.DataEntry
+	nil,                                         // 87: cnspec.policy.v1.SynchronizeAssetsResp.DetailsEntry
+	nil,                                         // 88: cnspec.policy.v1.PurgeAssetsRequest.LabelsEntry
+	nil,                                         // 89: cnspec.policy.v1.PurgeAssetsConfirmation.ErrorsEntry
+	(*explorer.Mquery)(nil),                     // 90: cnquery.explorer.Mquery
+	(*explorer.Filters)(nil),                    // 91: cnquery.explorer.Filters
+	(*explorer.Author)(nil),                     // 92: cnquery.explorer.Author
+	(explorer.Action)(0),                        // 93: cnquery.explorer.Action
+	(*explorer.Impact)(nil),                     // 94: cnquery.explorer.Impact
+	(explorer.ScoringSystem)(0),                 // 95: cnquery.explorer.ScoringSystem
+	(*explorer.Property)(nil),                   // 96: cnquery.explorer.Property
+	(*explorer.QueryPack)(nil),                  // 97: cnquery.explorer.QueryPack
+	(*explorer.ObjectRef)(nil),                  // 98: cnquery.explorer.ObjectRef
+	(*explorer.MqueryRef)(nil),                  // 99: cnquery.explorer.MqueryRef
+	(*inventory.Platform)(nil),                  // 100: cnquery.providers.v1.Platform
+	(*llx.CodeBundle)(nil),                      // 101: cnquery.llx.CodeBundle
+	(*inventory.Asset)(nil),                     // 102: cnquery.providers.v1.Asset
+	(*llx.Result)(nil),                          // 103: cnquery.llx.Result
+	(*mvd.VulnReport)(nil),                      // 104: mondoo.mvd.v1.VulnReport
+	(*explorer.PropsReq)(nil),                   // 105: cnquery.explorer.PropsReq
+	(*explorer.Empty)(nil),                      // 106: cnquery.explorer.Empty
 }
 var file_cnspec_policy_proto_depIdxs = []int32{
-	9,   // 0: cnspec.policy.v1.PolicyGroup.policies:type_name -> cnspec.policy.v1.PolicyRef
-	85,  // 1: cnspec.policy.v1.PolicyGroup.checks:type_name -> cnquery.explorer.Mquery
-	85,  // 2: cnspec.policy.v1.PolicyGroup.queries:type_name -> cnquery.explorer.Mquery
+	10,  // 0: cnspec.policy.v1.PolicyGroup.policies:type_name -> cnspec.policy.v1.PolicyRef
+	90,  // 1: cnspec.policy.v1.PolicyGroup.checks:type_name -> cnquery.explorer.Mquery
+	90,  // 2: cnspec.policy.v1.PolicyGroup.queries:type_name -> cnquery.explorer.Mquery
 	0,   // 3: cnspec.policy.v1.PolicyGroup.type:type_name -> cnspec.policy.v1.GroupType
-	86,  // 4: cnspec.policy.v1.PolicyGroup.filters:type_name -> cnquery.explorer.Filters
-	14,  // 5: cnspec.policy.v1.PolicyGroup.docs:type_name -> cnspec.policy.v1.PolicyGroupDocs
-	87,  // 6: cnspec.policy.v1.PolicyGroup.authors:type_name -> cnquery.explorer.Author
-	87,  // 7: cnspec.policy.v1.PolicyGroup.reviewers:type_name -> cnquery.explorer.Author
-	2,   // 8: cnspec.policy.v1.PolicyGroup.review_status:type_name -> cnspec.policy.v1.ReviewStatus
-	88,  // 9: cnspec.policy.v1.PolicyRef.action:type_name -> cnquery.explorer.Action
-	89,  // 10: cnspec.policy.v1.PolicyRef.impact:type_name -> cnquery.explorer.Impact
-	8,   // 11: cnspec.policy.v1.Policy.groups:type_name -> cnspec.policy.v1.PolicyGroup
-	15,  // 12: cnspec.policy.v1.Policy.docs:type_name -> cnspec.policy.v1.PolicyDocs
-	90,  // 13: cnspec.policy.v1.Policy.scoring_system:type_name -> cnquery.explorer.ScoringSystem
-	87,  // 14: cnspec.policy.v1.Policy.authors:type_name -> cnquery.explorer.Author
-	62,  // 15: cnspec.policy.v1.Policy.tags:type_name -> cnspec.policy.v1.Policy.TagsEntry
-	91,  // 16: cnspec.policy.v1.Policy.props:type_name -> cnquery.explorer.Property
-	86,  // 17: cnspec.policy.v1.Policy.computed_filters:type_name -> cnquery.explorer.Filters
-	12,  // 18: cnspec.policy.v1.Policy.query_counts:type_name -> cnspec.policy.v1.QueryCounts
-	10,  // 19: cnspec.policy.v1.Policies.items:type_name -> cnspec.policy.v1.Policy
-	10,  // 20: cnspec.policy.v1.Bundle.policies:type_name -> cnspec.policy.v1.Policy
-	92,  // 21: cnspec.policy.v1.Bundle.packs:type_name -> cnquery.explorer.QueryPack
-	91,  // 22: cnspec.policy.v1.Bundle.props:type_name -> cnquery.explorer.Property
-	85,  // 23: cnspec.policy.v1.Bundle.queries:type_name -> cnquery.explorer.Mquery
-	16,  // 24: cnspec.policy.v1.Bundle.frameworks:type_name -> cnspec.policy.v1.Framework
-	21,  // 25: cnspec.policy.v1.Bundle.framework_maps:type_name -> cnspec.policy.v1.FrameworkMap
-	15,  // 26: cnspec.policy.v1.Bundle.docs:type_name -> cnspec.policy.v1.PolicyDocs
-	18,  // 27: cnspec.policy.v1.Framework.groups:type_name -> cnspec.policy.v1.FrameworkGroup
-	15,  // 28: cnspec.policy.v1.Framework.docs:type_name -> cnspec.policy.v1.PolicyDocs
-	87,  // 29: cnspec.policy.v1.Framework.authors:type_name -> cnquery.explorer.Author
-	63,  // 30: cnspec.policy.v1.Framework.tags:type_name -> cnspec.policy.v1.Framework.TagsEntry
-	19,  // 31: cnspec.policy.v1.Framework.dependencies:type_name -> cnspec.policy.v1.FrameworkRef
-	21,  // 32: cnspec.policy.v1.Framework.framework_maps:type_name -> cnspec.policy.v1.FrameworkMap
-	16,  // 33: cnspec.policy.v1.Frameworks.items:type_name -> cnspec.policy.v1.Framework
-	20,  // 34: cnspec.policy.v1.FrameworkGroup.controls:type_name -> cnspec.policy.v1.Control
-	0,   // 35: cnspec.policy.v1.FrameworkGroup.type:type_name -> cnspec.policy.v1.GroupType
-	14,  // 36: cnspec.policy.v1.FrameworkGroup.docs:type_name -> cnspec.policy.v1.PolicyGroupDocs
-	87,  // 37: cnspec.policy.v1.FrameworkGroup.authors:type_name -> cnquery.explorer.Author
-	87,  // 38: cnspec.policy.v1.FrameworkGroup.reviewers:type_name -> cnquery.explorer.Author
-	2,   // 39: cnspec.policy.v1.FrameworkGroup.review_status:type_name -> cnspec.policy.v1.ReviewStatus
-	88,  // 40: cnspec.policy.v1.FrameworkRef.action:type_name -> cnquery.explorer.Action
-	23,  // 41: cnspec.policy.v1.Control.docs:type_name -> cnspec.policy.v1.ControlDocs
-	64,  // 42: cnspec.policy.v1.Control.tags:type_name -> cnspec.policy.v1.Control.TagsEntry
-	88,  // 43: cnspec.policy.v1.Control.action:type_name -> cnquery.explorer.Action
-	93,  // 44: cnspec.policy.v1.FrameworkMap.framework_dependencies:type_name -> cnquery.explorer.ObjectRef
-	93,  // 45: cnspec.policy.v1.FrameworkMap.policy_dependencies:type_name -> cnquery.explorer.ObjectRef
-	93,  // 46: cnspec.policy.v1.FrameworkMap.query_pack_dependencies:type_name -> cnquery.explorer.ObjectRef
-	22,  // 47: cnspec.policy.v1.FrameworkMap.controls:type_name -> cnspec.policy.v1.ControlMap
-	93,  // 48: cnspec.policy.v1.FrameworkMap.framework_owner:type_name -> cnquery.explorer.ObjectRef
-	24,  // 49: cnspec.policy.v1.ControlMap.checks:type_name -> cnspec.policy.v1.ControlRef
-	24,  // 50: cnspec.policy.v1.ControlMap.policies:type_name -> cnspec.policy.v1.ControlRef
-	24,  // 51: cnspec.policy.v1.ControlMap.controls:type_name -> cnspec.policy.v1.ControlRef
-	24,  // 52: cnspec.policy.v1.ControlMap.queries:type_name -> cnspec.policy.v1.ControlRef
-	94,  // 53: cnspec.policy.v1.ControlDocs.refs:type_name -> cnquery.explorer.MqueryRef
-	88,  // 54: cnspec.policy.v1.ControlRef.action:type_name -> cnquery.explorer.Action
-	95,  // 55: cnspec.policy.v1.Asset.platform:type_name -> cnquery.providers.v1.Platform
-	27,  // 56: cnspec.policy.v1.ResolvedPolicy.execution_job:type_name -> cnspec.policy.v1.ExecutionJob
-	29,  // 57: cnspec.policy.v1.ResolvedPolicy.collector_job:type_name -> cnspec.policy.v1.CollectorJob
-	85,  // 58: cnspec.policy.v1.ResolvedPolicy.filters:type_name -> cnquery.explorer.Mquery
-	65,  // 59: cnspec.policy.v1.ExecutionJob.queries:type_name -> cnspec.policy.v1.ExecutionJob.QueriesEntry
-	66,  // 60: cnspec.policy.v1.ExecutionQuery.properties:type_name -> cnspec.policy.v1.ExecutionQuery.PropertiesEntry
-	96,  // 61: cnspec.policy.v1.ExecutionQuery.code:type_name -> cnquery.llx.CodeBundle
-	67,  // 62: cnspec.policy.v1.CollectorJob.reporting_jobs:type_name -> cnspec.policy.v1.CollectorJob.ReportingJobsEntry
-	68,  // 63: cnspec.policy.v1.CollectorJob.reporting_queries:type_name -> cnspec.policy.v1.CollectorJob.ReportingQueriesEntry
-	69,  // 64: cnspec.policy.v1.CollectorJob.datapoints:type_name -> cnspec.policy.v1.CollectorJob.DatapointsEntry
-	90,  // 65: cnspec.policy.v1.ReportingJob.scoring_system:type_name -> cnquery.explorer.ScoringSystem
-	70,  // 66: cnspec.policy.v1.ReportingJob.datapoints:type_name -> cnspec.policy.v1.ReportingJob.DatapointsEntry
-	71,  // 67: cnspec.policy.v1.ReportingJob.child_jobs:type_name -> cnspec.policy.v1.ReportingJob.ChildJobsEntry
-	6,   // 68: cnspec.policy.v1.ReportingJob.type:type_name -> cnspec.policy.v1.ReportingJob.Type
-	40,  // 69: cnspec.policy.v1.Report.score:type_name -> cnspec.policy.v1.Score
-	72,  // 70: cnspec.policy.v1.Report.scores:type_name -> cnspec.policy.v1.Report.ScoresEntry
-	73,  // 71: cnspec.policy.v1.Report.data:type_name -> cnspec.policy.v1.Report.DataEntry
-	41,  // 72: cnspec.policy.v1.Report.stats:type_name -> cnspec.policy.v1.Stats
-	41,  // 73: cnspec.policy.v1.Report.ignored_stats:type_name -> cnspec.policy.v1.Stats
-	38,  // 74: cnspec.policy.v1.Report.cvss_score:type_name -> cnspec.policy.v1.Cvss
-	74,  // 75: cnspec.policy.v1.Report.cvss_scores:type_name -> cnspec.policy.v1.Report.CvssScoresEntry
-	39,  // 76: cnspec.policy.v1.Report.cvss_stats:type_name -> cnspec.policy.v1.CvssStats
-	33,  // 77: cnspec.policy.v1.Reports.reports:type_name -> cnspec.policy.v1.Report
-	75,  // 78: cnspec.policy.v1.ReportCollection.assets:type_name -> cnspec.policy.v1.ReportCollection.AssetsEntry
-	13,  // 79: cnspec.policy.v1.ReportCollection.bundle:type_name -> cnspec.policy.v1.Bundle
-	76,  // 80: cnspec.policy.v1.ReportCollection.reports:type_name -> cnspec.policy.v1.ReportCollection.ReportsEntry
-	77,  // 81: cnspec.policy.v1.ReportCollection.errors:type_name -> cnspec.policy.v1.ReportCollection.ErrorsEntry
-	78,  // 82: cnspec.policy.v1.ReportCollection.resolved_policies:type_name -> cnspec.policy.v1.ReportCollection.ResolvedPoliciesEntry
-	79,  // 83: cnspec.policy.v1.ReportCollection.vuln_reports:type_name -> cnspec.policy.v1.ReportCollection.VulnReportsEntry
-	37,  // 84: cnspec.policy.v1.FrameworkReport.score:type_name -> cnspec.policy.v1.ControlScore
-	37,  // 85: cnspec.policy.v1.FrameworkReport.controls:type_name -> cnspec.policy.v1.ControlScore
-	37,  // 86: cnspec.policy.v1.ControlScore.assets:type_name -> cnspec.policy.v1.ControlScore
-	42,  // 87: cnspec.policy.v1.ControlScore.scores:type_name -> cnspec.policy.v1.ScoreDistribution
-	42,  // 88: cnspec.policy.v1.Stats.failed:type_name -> cnspec.policy.v1.ScoreDistribution
-	42,  // 89: cnspec.policy.v1.Stats.passed:type_name -> cnspec.policy.v1.ScoreDistribution
-	42,  // 90: cnspec.policy.v1.Stats.errors:type_name -> cnspec.policy.v1.ScoreDistribution
-	85,  // 91: cnspec.policy.v1.Mqueries.items:type_name -> cnquery.explorer.Mquery
-	88,  // 92: cnspec.policy.v1.PolicyAssignment.action:type_name -> cnquery.explorer.Action
-	80,  // 93: cnspec.policy.v1.PolicyMutationDelta.policy_deltas:type_name -> cnspec.policy.v1.PolicyMutationDelta.PolicyDeltasEntry
-	88,  // 94: cnspec.policy.v1.PolicyMutationDelta.action:type_name -> cnquery.explorer.Action
-	7,   // 95: cnspec.policy.v1.PolicyDelta.action:type_name -> cnspec.policy.v1.PolicyDelta.PolicyAssignmentActionType
-	85,  // 96: cnspec.policy.v1.ResolveReq.asset_filters:type_name -> cnquery.explorer.Mquery
-	85,  // 97: cnspec.policy.v1.UpdateAssetJobsReq.asset_filters:type_name -> cnquery.explorer.Mquery
-	40,  // 98: cnspec.policy.v1.StoreResultsReq.scores:type_name -> cnspec.policy.v1.Score
-	81,  // 99: cnspec.policy.v1.StoreResultsReq.data:type_name -> cnspec.policy.v1.StoreResultsReq.DataEntry
-	38,  // 100: cnspec.policy.v1.StoreResultsReq.cvssScores:type_name -> cnspec.policy.v1.Cvss
-	97,  // 101: cnspec.policy.v1.SynchronizeAssetsReq.list:type_name -> cnquery.providers.v1.Asset
-	82,  // 102: cnspec.policy.v1.SynchronizeAssetsResp.details:type_name -> cnspec.policy.v1.SynchronizeAssetsResp.DetailsEntry
-	60,  // 103: cnspec.policy.v1.PurgeAssetsRequest.date_filter:type_name -> cnspec.policy.v1.DateFilter
-	83,  // 104: cnspec.policy.v1.PurgeAssetsRequest.labels:type_name -> cnspec.policy.v1.PurgeAssetsRequest.LabelsEntry
-	4,   // 105: cnspec.policy.v1.DateFilter.comparison:type_name -> cnspec.policy.v1.Comparison
-	5,   // 106: cnspec.policy.v1.DateFilter.field:type_name -> cnspec.policy.v1.DateFilterField
-	84,  // 107: cnspec.policy.v1.PurgeAssetsConfirmation.errors:type_name -> cnspec.policy.v1.PurgeAssetsConfirmation.ErrorsEntry
-	28,  // 108: cnspec.policy.v1.ExecutionJob.QueriesEntry.value:type_name -> cnspec.policy.v1.ExecutionQuery
-	32,  // 109: cnspec.policy.v1.CollectorJob.ReportingJobsEntry.value:type_name -> cnspec.policy.v1.ReportingJob
-	30,  // 110: cnspec.policy.v1.CollectorJob.ReportingQueriesEntry.value:type_name -> cnspec.policy.v1.StringArray
-	31,  // 111: cnspec.policy.v1.CollectorJob.DatapointsEntry.value:type_name -> cnspec.policy.v1.DataQueryInfo
-	89,  // 112: cnspec.policy.v1.ReportingJob.ChildJobsEntry.value:type_name -> cnquery.explorer.Impact
-	40,  // 113: cnspec.policy.v1.Report.ScoresEntry.value:type_name -> cnspec.policy.v1.Score
-	98,  // 114: cnspec.policy.v1.Report.DataEntry.value:type_name -> cnquery.llx.Result
-	38,  // 115: cnspec.policy.v1.Report.CvssScoresEntry.value:type_name -> cnspec.policy.v1.Cvss
-	97,  // 116: cnspec.policy.v1.ReportCollection.AssetsEntry.value:type_name -> cnquery.providers.v1.Asset
-	33,  // 117: cnspec.policy.v1.ReportCollection.ReportsEntry.value:type_name -> cnspec.policy.v1.Report
-	26,  // 118: cnspec.policy.v1.ReportCollection.ResolvedPoliciesEntry.value:type_name -> cnspec.policy.v1.ResolvedPolicy
-	99,  // 119: cnspec.policy.v1.ReportCollection.VulnReportsEntry.value:type_name -> mondoo.mvd.v1.VulnReport
-	51,  // 120: cnspec.policy.v1.PolicyMutationDelta.PolicyDeltasEntry.value:type_name -> cnspec.policy.v1.PolicyDelta
-	98,  // 121: cnspec.policy.v1.StoreResultsReq.DataEntry.value:type_name -> cnquery.llx.Result
-	57,  // 122: cnspec.policy.v1.SynchronizeAssetsResp.DetailsEntry.value:type_name -> cnspec.policy.v1.SynchronizeAssetsRespAssetDetail
-	13,  // 123: cnspec.policy.v1.PolicyHub.SetBundle:input_type -> cnspec.policy.v1.Bundle
-	13,  // 124: cnspec.policy.v1.PolicyHub.ValidateBundle:input_type -> cnspec.policy.v1.Bundle
-	44,  // 125: cnspec.policy.v1.PolicyHub.GetBundle:input_type -> cnspec.policy.v1.Mrn
-	44,  // 126: cnspec.policy.v1.PolicyHub.GetPolicy:input_type -> cnspec.policy.v1.Mrn
-	44,  // 127: cnspec.policy.v1.PolicyHub.DeletePolicy:input_type -> cnspec.policy.v1.Mrn
-	44,  // 128: cnspec.policy.v1.PolicyHub.GetPolicyFilters:input_type -> cnspec.policy.v1.Mrn
-	46,  // 129: cnspec.policy.v1.PolicyHub.List:input_type -> cnspec.policy.v1.ListReq
-	47,  // 130: cnspec.policy.v1.PolicyHub.DefaultPolicies:input_type -> cnspec.policy.v1.DefaultPoliciesReq
-	44,  // 131: cnspec.policy.v1.PolicyHub.GetFramework:input_type -> cnspec.policy.v1.Mrn
-	44,  // 132: cnspec.policy.v1.PolicyHub.DeleteFramework:input_type -> cnspec.policy.v1.Mrn
-	46,  // 133: cnspec.policy.v1.PolicyHub.ListFrameworks:input_type -> cnspec.policy.v1.ListReq
-	49,  // 134: cnspec.policy.v1.PolicyResolver.Assign:input_type -> cnspec.policy.v1.PolicyAssignment
-	49,  // 135: cnspec.policy.v1.PolicyResolver.Unassign:input_type -> cnspec.policy.v1.PolicyAssignment
-	100, // 136: cnspec.policy.v1.PolicyResolver.SetProps:input_type -> cnquery.explorer.PropsReq
-	52,  // 137: cnspec.policy.v1.PolicyResolver.Resolve:input_type -> cnspec.policy.v1.ResolveReq
-	53,  // 138: cnspec.policy.v1.PolicyResolver.UpdateAssetJobs:input_type -> cnspec.policy.v1.UpdateAssetJobsReq
-	53,  // 139: cnspec.policy.v1.PolicyResolver.ResolveAndUpdateJobs:input_type -> cnspec.policy.v1.UpdateAssetJobsReq
-	44,  // 140: cnspec.policy.v1.PolicyResolver.GetResolvedPolicy:input_type -> cnspec.policy.v1.Mrn
-	54,  // 141: cnspec.policy.v1.PolicyResolver.StoreResults:input_type -> cnspec.policy.v1.StoreResultsReq
-	55,  // 142: cnspec.policy.v1.PolicyResolver.GetReport:input_type -> cnspec.policy.v1.EntityScoreReq
-	55,  // 143: cnspec.policy.v1.PolicyResolver.GetFrameworkReport:input_type -> cnspec.policy.v1.EntityScoreReq
-	55,  // 144: cnspec.policy.v1.PolicyResolver.GetScore:input_type -> cnspec.policy.v1.EntityScoreReq
-	56,  // 145: cnspec.policy.v1.PolicyResolver.SynchronizeAssets:input_type -> cnspec.policy.v1.SynchronizeAssetsReq
-	59,  // 146: cnspec.policy.v1.PolicyResolver.PurgeAssets:input_type -> cnspec.policy.v1.PurgeAssetsRequest
-	43,  // 147: cnspec.policy.v1.PolicyHub.SetBundle:output_type -> cnspec.policy.v1.Empty
-	43,  // 148: cnspec.policy.v1.PolicyHub.ValidateBundle:output_type -> cnspec.policy.v1.Empty
-	13,  // 149: cnspec.policy.v1.PolicyHub.GetBundle:output_type -> cnspec.policy.v1.Bundle
-	10,  // 150: cnspec.policy.v1.PolicyHub.GetPolicy:output_type -> cnspec.policy.v1.Policy
-	43,  // 151: cnspec.policy.v1.PolicyHub.DeletePolicy:output_type -> cnspec.policy.v1.Empty
-	45,  // 152: cnspec.policy.v1.PolicyHub.GetPolicyFilters:output_type -> cnspec.policy.v1.Mqueries
-	11,  // 153: cnspec.policy.v1.PolicyHub.List:output_type -> cnspec.policy.v1.Policies
-	48,  // 154: cnspec.policy.v1.PolicyHub.DefaultPolicies:output_type -> cnspec.policy.v1.URLs
-	16,  // 155: cnspec.policy.v1.PolicyHub.GetFramework:output_type -> cnspec.policy.v1.Framework
-	43,  // 156: cnspec.policy.v1.PolicyHub.DeleteFramework:output_type -> cnspec.policy.v1.Empty
-	17,  // 157: cnspec.policy.v1.PolicyHub.ListFrameworks:output_type -> cnspec.policy.v1.Frameworks
-	43,  // 158: cnspec.policy.v1.PolicyResolver.Assign:output_type -> cnspec.policy.v1.Empty
-	43,  // 159: cnspec.policy.v1.PolicyResolver.Unassign:output_type -> cnspec.policy.v1.Empty
-	101, // 160: cnspec.policy.v1.PolicyResolver.SetProps:output_type -> cnquery.explorer.Empty
-	26,  // 161: cnspec.policy.v1.PolicyResolver.Resolve:output_type -> cnspec.policy.v1.ResolvedPolicy
-	43,  // 162: cnspec.policy.v1.PolicyResolver.UpdateAssetJobs:output_type -> cnspec.policy.v1.Empty
-	26,  // 163: cnspec.policy.v1.PolicyResolver.ResolveAndUpdateJobs:output_type -> cnspec.policy.v1.ResolvedPolicy
-	26,  // 164: cnspec.policy.v1.PolicyResolver.GetResolvedPolicy:output_type -> cnspec.policy.v1.ResolvedPolicy
-	43,  // 165: cnspec.policy.v1.PolicyResolver.StoreResults:output_type -> cnspec.policy.v1.Empty
-	33,  // 166: cnspec.policy.v1.PolicyResolver.GetReport:output_type -> cnspec.policy.v1.Report
-	36,  // 167: cnspec.policy.v1.PolicyResolver.GetFrameworkReport:output_type -> cnspec.policy.v1.FrameworkReport
-	33,  // 168: cnspec.policy.v1.PolicyResolver.GetScore:output_type -> cnspec.policy.v1.Report
-	58,  // 169: cnspec.policy.v1.PolicyResolver.SynchronizeAssets:output_type -> cnspec.policy.v1.SynchronizeAssetsResp
-	61,  // 170: cnspec.policy.v1.PolicyResolver.PurgeAssets:output_type -> cnspec.policy.v1.PurgeAssetsConfirmation
-	147, // [147:171] is the sub-list for method output_type
-	123, // [123:147] is the sub-list for method input_type
-	123, // [123:123] is the sub-list for extension type_name
-	123, // [123:123] is the sub-list for extension extendee
-	0,   // [0:123] is the sub-list for field type_name
+	91,  // 4: cnspec.policy.v1.PolicyGroup.filters:type_name -> cnquery.explorer.Filters
+	19,  // 5: cnspec.policy.v1.PolicyGroup.docs:type_name -> cnspec.policy.v1.PolicyGroupDocs
+	92,  // 6: cnspec.policy.v1.PolicyGroup.authors:type_name -> cnquery.explorer.Author
+	92,  // 7: cnspec.policy.v1.PolicyGroup.reviewers:type_name -> cnquery.explorer.Author
+	3,   // 8: cnspec.policy.v1.PolicyGroup.review_status:type_name -> cnspec.policy.v1.ReviewStatus
+	93,  // 9: cnspec.policy.v1.PolicyRef.action:type_name -> cnquery.explorer.Action
+	94,  // 10: cnspec.policy.v1.PolicyRef.impact:type_name -> cnquery.explorer.Impact
+	9,   // 11: cnspec.policy.v1.Policy.groups:type_name -> cnspec.policy.v1.PolicyGroup
+	20,  // 12: cnspec.policy.v1.Policy.docs:type_name -> cnspec.policy.v1.PolicyDocs
+	95,  // 13: cnspec.policy.v1.Policy.scoring_system:type_name -> cnquery.explorer.ScoringSystem
+	92,  // 14: cnspec.policy.v1.Policy.authors:type_name -> cnquery.explorer.Author
+	67,  // 15: cnspec.policy.v1.Policy.tags:type_name -> cnspec.policy.v1.Policy.TagsEntry
+	96,  // 16: cnspec.policy.v1.Policy.props:type_name -> cnquery.explorer.Property
+	91,  // 17: cnspec.policy.v1.Policy.computed_filters:type_name -> cnquery.explorer.Filters
+	13,  // 18: cnspec.policy.v1.Policy.query_counts:type_name -> cnspec.policy.v1.QueryCounts
+	11,  // 19: cnspec.policy.v1.Policies.items:type_name -> cnspec.policy.v1.Policy
+	11,  // 20: cnspec.policy.v1.Bundle.policies:type_name -> cnspec.policy.v1.Policy
+	97,  // 21: cnspec.policy.v1.Bundle.packs:type_name -> cnquery.explorer.QueryPack
+	96,  // 22: cnspec.policy.v1.Bundle.props:type_name -> cnquery.explorer.Property
+	90,  // 23: cnspec.policy.v1.Bundle.queries:type_name -> cnquery.explorer.Mquery
+	21,  // 24: cnspec.policy.v1.Bundle.frameworks:type_name -> cnspec.policy.v1.Framework
+	26,  // 25: cnspec.policy.v1.Bundle.framework_maps:type_name -> cnspec.policy.v1.FrameworkMap
+	17,  // 26: cnspec.policy.v1.Bundle.risk_factors:type_name -> cnspec.policy.v1.RiskFactor
+	20,  // 27: cnspec.policy.v1.Bundle.docs:type_name -> cnspec.policy.v1.PolicyDocs
+	18,  // 28: cnspec.policy.v1.RiskFactor.docs:type_name -> cnspec.policy.v1.RiskFactorDocs
+	91,  // 29: cnspec.policy.v1.RiskFactor.filters:type_name -> cnquery.explorer.Filters
+	90,  // 30: cnspec.policy.v1.RiskFactor.queries:type_name -> cnquery.explorer.Mquery
+	2,   // 31: cnspec.policy.v1.RiskFactor.scope:type_name -> cnspec.policy.v1.ScopeType
+	15,  // 32: cnspec.policy.v1.RiskFactor.software:type_name -> cnspec.policy.v1.SoftwareSelector
+	16,  // 33: cnspec.policy.v1.RiskFactor.resources:type_name -> cnspec.policy.v1.ResourceSelector
+	23,  // 34: cnspec.policy.v1.Framework.groups:type_name -> cnspec.policy.v1.FrameworkGroup
+	20,  // 35: cnspec.policy.v1.Framework.docs:type_name -> cnspec.policy.v1.PolicyDocs
+	92,  // 36: cnspec.policy.v1.Framework.authors:type_name -> cnquery.explorer.Author
+	68,  // 37: cnspec.policy.v1.Framework.tags:type_name -> cnspec.policy.v1.Framework.TagsEntry
+	24,  // 38: cnspec.policy.v1.Framework.dependencies:type_name -> cnspec.policy.v1.FrameworkRef
+	26,  // 39: cnspec.policy.v1.Framework.framework_maps:type_name -> cnspec.policy.v1.FrameworkMap
+	21,  // 40: cnspec.policy.v1.Frameworks.items:type_name -> cnspec.policy.v1.Framework
+	25,  // 41: cnspec.policy.v1.FrameworkGroup.controls:type_name -> cnspec.policy.v1.Control
+	0,   // 42: cnspec.policy.v1.FrameworkGroup.type:type_name -> cnspec.policy.v1.GroupType
+	19,  // 43: cnspec.policy.v1.FrameworkGroup.docs:type_name -> cnspec.policy.v1.PolicyGroupDocs
+	92,  // 44: cnspec.policy.v1.FrameworkGroup.authors:type_name -> cnquery.explorer.Author
+	92,  // 45: cnspec.policy.v1.FrameworkGroup.reviewers:type_name -> cnquery.explorer.Author
+	3,   // 46: cnspec.policy.v1.FrameworkGroup.review_status:type_name -> cnspec.policy.v1.ReviewStatus
+	93,  // 47: cnspec.policy.v1.FrameworkRef.action:type_name -> cnquery.explorer.Action
+	28,  // 48: cnspec.policy.v1.Control.docs:type_name -> cnspec.policy.v1.ControlDocs
+	69,  // 49: cnspec.policy.v1.Control.tags:type_name -> cnspec.policy.v1.Control.TagsEntry
+	93,  // 50: cnspec.policy.v1.Control.action:type_name -> cnquery.explorer.Action
+	98,  // 51: cnspec.policy.v1.FrameworkMap.framework_dependencies:type_name -> cnquery.explorer.ObjectRef
+	98,  // 52: cnspec.policy.v1.FrameworkMap.policy_dependencies:type_name -> cnquery.explorer.ObjectRef
+	98,  // 53: cnspec.policy.v1.FrameworkMap.query_pack_dependencies:type_name -> cnquery.explorer.ObjectRef
+	27,  // 54: cnspec.policy.v1.FrameworkMap.controls:type_name -> cnspec.policy.v1.ControlMap
+	98,  // 55: cnspec.policy.v1.FrameworkMap.framework_owner:type_name -> cnquery.explorer.ObjectRef
+	29,  // 56: cnspec.policy.v1.ControlMap.checks:type_name -> cnspec.policy.v1.ControlRef
+	29,  // 57: cnspec.policy.v1.ControlMap.policies:type_name -> cnspec.policy.v1.ControlRef
+	29,  // 58: cnspec.policy.v1.ControlMap.controls:type_name -> cnspec.policy.v1.ControlRef
+	29,  // 59: cnspec.policy.v1.ControlMap.queries:type_name -> cnspec.policy.v1.ControlRef
+	99,  // 60: cnspec.policy.v1.ControlDocs.refs:type_name -> cnquery.explorer.MqueryRef
+	93,  // 61: cnspec.policy.v1.ControlRef.action:type_name -> cnquery.explorer.Action
+	100, // 62: cnspec.policy.v1.Asset.platform:type_name -> cnquery.providers.v1.Platform
+	32,  // 63: cnspec.policy.v1.ResolvedPolicy.execution_job:type_name -> cnspec.policy.v1.ExecutionJob
+	34,  // 64: cnspec.policy.v1.ResolvedPolicy.collector_job:type_name -> cnspec.policy.v1.CollectorJob
+	90,  // 65: cnspec.policy.v1.ResolvedPolicy.filters:type_name -> cnquery.explorer.Mquery
+	70,  // 66: cnspec.policy.v1.ExecutionJob.queries:type_name -> cnspec.policy.v1.ExecutionJob.QueriesEntry
+	71,  // 67: cnspec.policy.v1.ExecutionQuery.properties:type_name -> cnspec.policy.v1.ExecutionQuery.PropertiesEntry
+	101, // 68: cnspec.policy.v1.ExecutionQuery.code:type_name -> cnquery.llx.CodeBundle
+	72,  // 69: cnspec.policy.v1.CollectorJob.reporting_jobs:type_name -> cnspec.policy.v1.CollectorJob.ReportingJobsEntry
+	73,  // 70: cnspec.policy.v1.CollectorJob.reporting_queries:type_name -> cnspec.policy.v1.CollectorJob.ReportingQueriesEntry
+	74,  // 71: cnspec.policy.v1.CollectorJob.datapoints:type_name -> cnspec.policy.v1.CollectorJob.DatapointsEntry
+	95,  // 72: cnspec.policy.v1.ReportingJob.scoring_system:type_name -> cnquery.explorer.ScoringSystem
+	75,  // 73: cnspec.policy.v1.ReportingJob.datapoints:type_name -> cnspec.policy.v1.ReportingJob.DatapointsEntry
+	76,  // 74: cnspec.policy.v1.ReportingJob.child_jobs:type_name -> cnspec.policy.v1.ReportingJob.ChildJobsEntry
+	7,   // 75: cnspec.policy.v1.ReportingJob.type:type_name -> cnspec.policy.v1.ReportingJob.Type
+	45,  // 76: cnspec.policy.v1.Report.score:type_name -> cnspec.policy.v1.Score
+	77,  // 77: cnspec.policy.v1.Report.scores:type_name -> cnspec.policy.v1.Report.ScoresEntry
+	78,  // 78: cnspec.policy.v1.Report.data:type_name -> cnspec.policy.v1.Report.DataEntry
+	46,  // 79: cnspec.policy.v1.Report.stats:type_name -> cnspec.policy.v1.Stats
+	46,  // 80: cnspec.policy.v1.Report.ignored_stats:type_name -> cnspec.policy.v1.Stats
+	43,  // 81: cnspec.policy.v1.Report.cvss_score:type_name -> cnspec.policy.v1.Cvss
+	79,  // 82: cnspec.policy.v1.Report.cvss_scores:type_name -> cnspec.policy.v1.Report.CvssScoresEntry
+	44,  // 83: cnspec.policy.v1.Report.cvss_stats:type_name -> cnspec.policy.v1.CvssStats
+	38,  // 84: cnspec.policy.v1.Reports.reports:type_name -> cnspec.policy.v1.Report
+	80,  // 85: cnspec.policy.v1.ReportCollection.assets:type_name -> cnspec.policy.v1.ReportCollection.AssetsEntry
+	14,  // 86: cnspec.policy.v1.ReportCollection.bundle:type_name -> cnspec.policy.v1.Bundle
+	81,  // 87: cnspec.policy.v1.ReportCollection.reports:type_name -> cnspec.policy.v1.ReportCollection.ReportsEntry
+	82,  // 88: cnspec.policy.v1.ReportCollection.errors:type_name -> cnspec.policy.v1.ReportCollection.ErrorsEntry
+	83,  // 89: cnspec.policy.v1.ReportCollection.resolved_policies:type_name -> cnspec.policy.v1.ReportCollection.ResolvedPoliciesEntry
+	84,  // 90: cnspec.policy.v1.ReportCollection.vuln_reports:type_name -> cnspec.policy.v1.ReportCollection.VulnReportsEntry
+	42,  // 91: cnspec.policy.v1.FrameworkReport.score:type_name -> cnspec.policy.v1.ControlScore
+	42,  // 92: cnspec.policy.v1.FrameworkReport.controls:type_name -> cnspec.policy.v1.ControlScore
+	42,  // 93: cnspec.policy.v1.ControlScore.assets:type_name -> cnspec.policy.v1.ControlScore
+	47,  // 94: cnspec.policy.v1.ControlScore.scores:type_name -> cnspec.policy.v1.ScoreDistribution
+	47,  // 95: cnspec.policy.v1.Stats.failed:type_name -> cnspec.policy.v1.ScoreDistribution
+	47,  // 96: cnspec.policy.v1.Stats.passed:type_name -> cnspec.policy.v1.ScoreDistribution
+	47,  // 97: cnspec.policy.v1.Stats.errors:type_name -> cnspec.policy.v1.ScoreDistribution
+	90,  // 98: cnspec.policy.v1.Mqueries.items:type_name -> cnquery.explorer.Mquery
+	93,  // 99: cnspec.policy.v1.PolicyAssignment.action:type_name -> cnquery.explorer.Action
+	85,  // 100: cnspec.policy.v1.PolicyMutationDelta.policy_deltas:type_name -> cnspec.policy.v1.PolicyMutationDelta.PolicyDeltasEntry
+	93,  // 101: cnspec.policy.v1.PolicyMutationDelta.action:type_name -> cnquery.explorer.Action
+	8,   // 102: cnspec.policy.v1.PolicyDelta.action:type_name -> cnspec.policy.v1.PolicyDelta.PolicyAssignmentActionType
+	90,  // 103: cnspec.policy.v1.ResolveReq.asset_filters:type_name -> cnquery.explorer.Mquery
+	90,  // 104: cnspec.policy.v1.UpdateAssetJobsReq.asset_filters:type_name -> cnquery.explorer.Mquery
+	45,  // 105: cnspec.policy.v1.StoreResultsReq.scores:type_name -> cnspec.policy.v1.Score
+	86,  // 106: cnspec.policy.v1.StoreResultsReq.data:type_name -> cnspec.policy.v1.StoreResultsReq.DataEntry
+	43,  // 107: cnspec.policy.v1.StoreResultsReq.cvssScores:type_name -> cnspec.policy.v1.Cvss
+	102, // 108: cnspec.policy.v1.SynchronizeAssetsReq.list:type_name -> cnquery.providers.v1.Asset
+	87,  // 109: cnspec.policy.v1.SynchronizeAssetsResp.details:type_name -> cnspec.policy.v1.SynchronizeAssetsResp.DetailsEntry
+	65,  // 110: cnspec.policy.v1.PurgeAssetsRequest.date_filter:type_name -> cnspec.policy.v1.DateFilter
+	88,  // 111: cnspec.policy.v1.PurgeAssetsRequest.labels:type_name -> cnspec.policy.v1.PurgeAssetsRequest.LabelsEntry
+	5,   // 112: cnspec.policy.v1.DateFilter.comparison:type_name -> cnspec.policy.v1.Comparison
+	6,   // 113: cnspec.policy.v1.DateFilter.field:type_name -> cnspec.policy.v1.DateFilterField
+	89,  // 114: cnspec.policy.v1.PurgeAssetsConfirmation.errors:type_name -> cnspec.policy.v1.PurgeAssetsConfirmation.ErrorsEntry
+	33,  // 115: cnspec.policy.v1.ExecutionJob.QueriesEntry.value:type_name -> cnspec.policy.v1.ExecutionQuery
+	37,  // 116: cnspec.policy.v1.CollectorJob.ReportingJobsEntry.value:type_name -> cnspec.policy.v1.ReportingJob
+	35,  // 117: cnspec.policy.v1.CollectorJob.ReportingQueriesEntry.value:type_name -> cnspec.policy.v1.StringArray
+	36,  // 118: cnspec.policy.v1.CollectorJob.DatapointsEntry.value:type_name -> cnspec.policy.v1.DataQueryInfo
+	94,  // 119: cnspec.policy.v1.ReportingJob.ChildJobsEntry.value:type_name -> cnquery.explorer.Impact
+	45,  // 120: cnspec.policy.v1.Report.ScoresEntry.value:type_name -> cnspec.policy.v1.Score
+	103, // 121: cnspec.policy.v1.Report.DataEntry.value:type_name -> cnquery.llx.Result
+	43,  // 122: cnspec.policy.v1.Report.CvssScoresEntry.value:type_name -> cnspec.policy.v1.Cvss
+	102, // 123: cnspec.policy.v1.ReportCollection.AssetsEntry.value:type_name -> cnquery.providers.v1.Asset
+	38,  // 124: cnspec.policy.v1.ReportCollection.ReportsEntry.value:type_name -> cnspec.policy.v1.Report
+	31,  // 125: cnspec.policy.v1.ReportCollection.ResolvedPoliciesEntry.value:type_name -> cnspec.policy.v1.ResolvedPolicy
+	104, // 126: cnspec.policy.v1.ReportCollection.VulnReportsEntry.value:type_name -> mondoo.mvd.v1.VulnReport
+	56,  // 127: cnspec.policy.v1.PolicyMutationDelta.PolicyDeltasEntry.value:type_name -> cnspec.policy.v1.PolicyDelta
+	103, // 128: cnspec.policy.v1.StoreResultsReq.DataEntry.value:type_name -> cnquery.llx.Result
+	62,  // 129: cnspec.policy.v1.SynchronizeAssetsResp.DetailsEntry.value:type_name -> cnspec.policy.v1.SynchronizeAssetsRespAssetDetail
+	14,  // 130: cnspec.policy.v1.PolicyHub.SetBundle:input_type -> cnspec.policy.v1.Bundle
+	14,  // 131: cnspec.policy.v1.PolicyHub.ValidateBundle:input_type -> cnspec.policy.v1.Bundle
+	49,  // 132: cnspec.policy.v1.PolicyHub.GetBundle:input_type -> cnspec.policy.v1.Mrn
+	49,  // 133: cnspec.policy.v1.PolicyHub.GetPolicy:input_type -> cnspec.policy.v1.Mrn
+	49,  // 134: cnspec.policy.v1.PolicyHub.DeletePolicy:input_type -> cnspec.policy.v1.Mrn
+	49,  // 135: cnspec.policy.v1.PolicyHub.GetPolicyFilters:input_type -> cnspec.policy.v1.Mrn
+	51,  // 136: cnspec.policy.v1.PolicyHub.List:input_type -> cnspec.policy.v1.ListReq
+	52,  // 137: cnspec.policy.v1.PolicyHub.DefaultPolicies:input_type -> cnspec.policy.v1.DefaultPoliciesReq
+	49,  // 138: cnspec.policy.v1.PolicyHub.GetFramework:input_type -> cnspec.policy.v1.Mrn
+	49,  // 139: cnspec.policy.v1.PolicyHub.DeleteFramework:input_type -> cnspec.policy.v1.Mrn
+	51,  // 140: cnspec.policy.v1.PolicyHub.ListFrameworks:input_type -> cnspec.policy.v1.ListReq
+	54,  // 141: cnspec.policy.v1.PolicyResolver.Assign:input_type -> cnspec.policy.v1.PolicyAssignment
+	54,  // 142: cnspec.policy.v1.PolicyResolver.Unassign:input_type -> cnspec.policy.v1.PolicyAssignment
+	105, // 143: cnspec.policy.v1.PolicyResolver.SetProps:input_type -> cnquery.explorer.PropsReq
+	57,  // 144: cnspec.policy.v1.PolicyResolver.Resolve:input_type -> cnspec.policy.v1.ResolveReq
+	58,  // 145: cnspec.policy.v1.PolicyResolver.UpdateAssetJobs:input_type -> cnspec.policy.v1.UpdateAssetJobsReq
+	58,  // 146: cnspec.policy.v1.PolicyResolver.ResolveAndUpdateJobs:input_type -> cnspec.policy.v1.UpdateAssetJobsReq
+	49,  // 147: cnspec.policy.v1.PolicyResolver.GetResolvedPolicy:input_type -> cnspec.policy.v1.Mrn
+	59,  // 148: cnspec.policy.v1.PolicyResolver.StoreResults:input_type -> cnspec.policy.v1.StoreResultsReq
+	60,  // 149: cnspec.policy.v1.PolicyResolver.GetReport:input_type -> cnspec.policy.v1.EntityScoreReq
+	60,  // 150: cnspec.policy.v1.PolicyResolver.GetFrameworkReport:input_type -> cnspec.policy.v1.EntityScoreReq
+	60,  // 151: cnspec.policy.v1.PolicyResolver.GetScore:input_type -> cnspec.policy.v1.EntityScoreReq
+	61,  // 152: cnspec.policy.v1.PolicyResolver.SynchronizeAssets:input_type -> cnspec.policy.v1.SynchronizeAssetsReq
+	64,  // 153: cnspec.policy.v1.PolicyResolver.PurgeAssets:input_type -> cnspec.policy.v1.PurgeAssetsRequest
+	48,  // 154: cnspec.policy.v1.PolicyHub.SetBundle:output_type -> cnspec.policy.v1.Empty
+	48,  // 155: cnspec.policy.v1.PolicyHub.ValidateBundle:output_type -> cnspec.policy.v1.Empty
+	14,  // 156: cnspec.policy.v1.PolicyHub.GetBundle:output_type -> cnspec.policy.v1.Bundle
+	11,  // 157: cnspec.policy.v1.PolicyHub.GetPolicy:output_type -> cnspec.policy.v1.Policy
+	48,  // 158: cnspec.policy.v1.PolicyHub.DeletePolicy:output_type -> cnspec.policy.v1.Empty
+	50,  // 159: cnspec.policy.v1.PolicyHub.GetPolicyFilters:output_type -> cnspec.policy.v1.Mqueries
+	12,  // 160: cnspec.policy.v1.PolicyHub.List:output_type -> cnspec.policy.v1.Policies
+	53,  // 161: cnspec.policy.v1.PolicyHub.DefaultPolicies:output_type -> cnspec.policy.v1.URLs
+	21,  // 162: cnspec.policy.v1.PolicyHub.GetFramework:output_type -> cnspec.policy.v1.Framework
+	48,  // 163: cnspec.policy.v1.PolicyHub.DeleteFramework:output_type -> cnspec.policy.v1.Empty
+	22,  // 164: cnspec.policy.v1.PolicyHub.ListFrameworks:output_type -> cnspec.policy.v1.Frameworks
+	48,  // 165: cnspec.policy.v1.PolicyResolver.Assign:output_type -> cnspec.policy.v1.Empty
+	48,  // 166: cnspec.policy.v1.PolicyResolver.Unassign:output_type -> cnspec.policy.v1.Empty
+	106, // 167: cnspec.policy.v1.PolicyResolver.SetProps:output_type -> cnquery.explorer.Empty
+	31,  // 168: cnspec.policy.v1.PolicyResolver.Resolve:output_type -> cnspec.policy.v1.ResolvedPolicy
+	48,  // 169: cnspec.policy.v1.PolicyResolver.UpdateAssetJobs:output_type -> cnspec.policy.v1.Empty
+	31,  // 170: cnspec.policy.v1.PolicyResolver.ResolveAndUpdateJobs:output_type -> cnspec.policy.v1.ResolvedPolicy
+	31,  // 171: cnspec.policy.v1.PolicyResolver.GetResolvedPolicy:output_type -> cnspec.policy.v1.ResolvedPolicy
+	48,  // 172: cnspec.policy.v1.PolicyResolver.StoreResults:output_type -> cnspec.policy.v1.Empty
+	38,  // 173: cnspec.policy.v1.PolicyResolver.GetReport:output_type -> cnspec.policy.v1.Report
+	41,  // 174: cnspec.policy.v1.PolicyResolver.GetFrameworkReport:output_type -> cnspec.policy.v1.FrameworkReport
+	38,  // 175: cnspec.policy.v1.PolicyResolver.GetScore:output_type -> cnspec.policy.v1.Report
+	63,  // 176: cnspec.policy.v1.PolicyResolver.SynchronizeAssets:output_type -> cnspec.policy.v1.SynchronizeAssetsResp
+	66,  // 177: cnspec.policy.v1.PolicyResolver.PurgeAssets:output_type -> cnspec.policy.v1.PurgeAssetsConfirmation
+	154, // [154:178] is the sub-list for method output_type
+	130, // [130:154] is the sub-list for method input_type
+	130, // [130:130] is the sub-list for extension type_name
+	130, // [130:130] is the sub-list for extension extendee
+	0,   // [0:130] is the sub-list for field type_name
 }
 
 func init() { file_cnspec_policy_proto_init() }
@@ -6354,7 +6802,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyGroupDocs); i {
+			switch v := v.(*SoftwareSelector); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6366,7 +6814,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyDocs); i {
+			switch v := v.(*ResourceSelector); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6378,7 +6826,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Framework); i {
+			switch v := v.(*RiskFactor); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6390,7 +6838,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Frameworks); i {
+			switch v := v.(*RiskFactorDocs); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6402,7 +6850,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FrameworkGroup); i {
+			switch v := v.(*PolicyGroupDocs); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6414,7 +6862,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FrameworkRef); i {
+			switch v := v.(*PolicyDocs); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6426,7 +6874,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[12].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Control); i {
+			switch v := v.(*Framework); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6438,7 +6886,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[13].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FrameworkMap); i {
+			switch v := v.(*Frameworks); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6450,7 +6898,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[14].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ControlMap); i {
+			switch v := v.(*FrameworkGroup); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6462,7 +6910,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[15].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ControlDocs); i {
+			switch v := v.(*FrameworkRef); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6474,7 +6922,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[16].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ControlRef); i {
+			switch v := v.(*Control); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6486,7 +6934,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[17].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Asset); i {
+			switch v := v.(*FrameworkMap); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6498,7 +6946,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[18].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResolvedPolicy); i {
+			switch v := v.(*ControlMap); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6510,7 +6958,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[19].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ExecutionJob); i {
+			switch v := v.(*ControlDocs); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6522,7 +6970,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[20].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ExecutionQuery); i {
+			switch v := v.(*ControlRef); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6534,7 +6982,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[21].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*CollectorJob); i {
+			switch v := v.(*Asset); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6546,7 +6994,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[22].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StringArray); i {
+			switch v := v.(*ResolvedPolicy); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6558,7 +7006,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[23].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DataQueryInfo); i {
+			switch v := v.(*ExecutionJob); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6570,7 +7018,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[24].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ReportingJob); i {
+			switch v := v.(*ExecutionQuery); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6582,7 +7030,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[25].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Report); i {
+			switch v := v.(*CollectorJob); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6594,7 +7042,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[26].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Reports); i {
+			switch v := v.(*StringArray); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6606,7 +7054,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[27].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ReportCollection); i {
+			switch v := v.(*DataQueryInfo); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6618,7 +7066,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[28].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FrameworkReport); i {
+			switch v := v.(*ReportingJob); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6630,7 +7078,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[29].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ControlScore); i {
+			switch v := v.(*Report); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6642,7 +7090,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[30].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Cvss); i {
+			switch v := v.(*Reports); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6654,7 +7102,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[31].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*CvssStats); i {
+			switch v := v.(*ReportCollection); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6666,7 +7114,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[32].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Score); i {
+			switch v := v.(*FrameworkReport); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6678,7 +7126,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[33].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Stats); i {
+			switch v := v.(*ControlScore); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6690,7 +7138,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[34].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ScoreDistribution); i {
+			switch v := v.(*Cvss); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6702,7 +7150,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[35].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Empty); i {
+			switch v := v.(*CvssStats); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6714,7 +7162,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[36].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Mrn); i {
+			switch v := v.(*Score); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6726,7 +7174,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[37].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Mqueries); i {
+			switch v := v.(*Stats); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6738,7 +7186,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[38].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ListReq); i {
+			switch v := v.(*ScoreDistribution); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6750,7 +7198,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[39].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DefaultPoliciesReq); i {
+			switch v := v.(*Empty); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6762,7 +7210,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[40].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*URLs); i {
+			switch v := v.(*Mrn); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6774,7 +7222,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[41].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyAssignment); i {
+			switch v := v.(*Mqueries); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6786,7 +7234,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[42].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyMutationDelta); i {
+			switch v := v.(*ListReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6798,7 +7246,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[43].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyDelta); i {
+			switch v := v.(*DefaultPoliciesReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6810,7 +7258,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[44].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResolveReq); i {
+			switch v := v.(*URLs); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6822,7 +7270,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[45].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*UpdateAssetJobsReq); i {
+			switch v := v.(*PolicyAssignment); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6834,7 +7282,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[46].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StoreResultsReq); i {
+			switch v := v.(*PolicyMutationDelta); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6846,7 +7294,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[47].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*EntityScoreReq); i {
+			switch v := v.(*PolicyDelta); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6858,7 +7306,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[48].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SynchronizeAssetsReq); i {
+			switch v := v.(*ResolveReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6870,7 +7318,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[49].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SynchronizeAssetsRespAssetDetail); i {
+			switch v := v.(*UpdateAssetJobsReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6882,7 +7330,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[50].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SynchronizeAssetsResp); i {
+			switch v := v.(*StoreResultsReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6894,7 +7342,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[51].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PurgeAssetsRequest); i {
+			switch v := v.(*EntityScoreReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6906,7 +7354,7 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[52].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DateFilter); i {
+			switch v := v.(*SynchronizeAssetsReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -6918,6 +7366,54 @@ func file_cnspec_policy_proto_init() {
 			}
 		}
 		file_cnspec_policy_proto_msgTypes[53].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*SynchronizeAssetsRespAssetDetail); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_cnspec_policy_proto_msgTypes[54].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*SynchronizeAssetsResp); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_cnspec_policy_proto_msgTypes[55].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*PurgeAssetsRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_cnspec_policy_proto_msgTypes[56].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*DateFilter); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_cnspec_policy_proto_msgTypes[57].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PurgeAssetsConfirmation); i {
 			case 0:
 				return &v.state
@@ -6935,8 +7431,8 @@ func file_cnspec_policy_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_cnspec_policy_proto_rawDesc,
-			NumEnums:      8,
-			NumMessages:   77,
+			NumEnums:      9,
+			NumMessages:   81,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

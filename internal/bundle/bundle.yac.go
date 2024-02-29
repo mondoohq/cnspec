@@ -103,6 +103,7 @@ type Bundle struct {
 	Packs         []*QueryPack    `protobuf:"bytes,10,rep,name=packs,proto3" json:"packs,omitempty" yaml:"packs,omitempty"`
 	Frameworks    []*Framework    `protobuf:"bytes,8,rep,name=frameworks,proto3" json:"frameworks,omitempty" yaml:"frameworks,omitempty"`
 	FrameworkMaps []*FrameworkMap `protobuf:"bytes,9,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty" yaml:"framework_maps,omitempty"`
+	RiskFactors   []*RiskFactor   `protobuf:"bytes,11,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
 	OwnerMrn      string          `protobuf:"bytes,1,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
 	Policies      []*Policy       `protobuf:"bytes,7,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
 	Props         []*Property     `protobuf:"bytes,3,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
@@ -1470,6 +1471,55 @@ func (x *Remediation) addFileContext(node *yaml.Node) {
 	x.Comments.FootComment = node.FootComment
 }
 
+type ResourceSelector struct {
+	Selector    string      `protobuf:"bytes,1,opt,name=selector,proto3" json:"selector,omitempty" yaml:"selector,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *ResourceSelector) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp ResourceSelector
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d ResourceSelector) MarshalYAML() (interface{}, error) {
+	type alias ResourceSelector
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
 type ReviewStatus policy.ReviewStatus
 
 func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
@@ -1493,6 +1543,193 @@ func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	return errors.New("failed to unmarshal ReviewStatus")
+}
+
+type RiskFactor struct {
+	Scope              ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty" yaml:"scope,omitempty"`
+	ActiveMultiplier   float32             `protobuf:"fixed32,71,opt,name=active_multiplier,json=activeMultiplier,proto3" json:"active_multiplier,omitempty" yaml:"active_multiplier,omitempty"`
+	InactiveMultiplier float32             `protobuf:"fixed32,72,opt,name=inactive_multiplier,json=inactiveMultiplier,proto3" json:"inactive_multiplier,omitempty" yaml:"inactive_multiplier,omitempty"`
+	Software           []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
+	Resources          []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
+	Uid                string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn                string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Title              string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Filters            *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
+	Queries            []*Mquery           `protobuf:"bytes,2,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	Docs               *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	FileContext        FileContext         `json:"-" yaml:"-"`
+	Comments           Comments            `json:"-" yaml:"-"`
+}
+
+func (x *RiskFactor) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp RiskFactor
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d RiskFactor) MarshalYAML() (interface{}, error) {
+	type alias RiskFactor
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type RiskFactorDocs struct {
+	Active      string      `protobuf:"bytes,1,opt,name=active,proto3" json:"active,omitempty" yaml:"active,omitempty"`
+	Inactive    string      `protobuf:"bytes,2,opt,name=inactive,proto3" json:"inactive,omitempty" yaml:"inactive,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *RiskFactorDocs) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp RiskFactorDocs
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d RiskFactorDocs) MarshalYAML() (interface{}, error) {
+	type alias RiskFactorDocs
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type ScopeType policy.ScopeType
+
+func (s *ScopeType) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded interface{}
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v policy.ScopeType
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = ScopeType(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal ScopeType")
+}
+
+type SoftwareSelector struct {
+	Name        string      `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Version     string      `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
+	Type        string      `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty" yaml:"type,omitempty"`
+	Namespace   string      `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	MqlMrn      string      `protobuf:"bytes,5,opt,name=mql_mrn,json=mqlMrn,proto3" json:"mql_mrn,omitempty" yaml:"mql_mrn,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *SoftwareSelector) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp SoftwareSelector
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d SoftwareSelector) MarshalYAML() (interface{}, error) {
+	type alias SoftwareSelector
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type TypedDoc struct {
