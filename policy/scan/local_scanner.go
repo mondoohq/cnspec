@@ -311,6 +311,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			log.Error().Err(err).Msg("failed to open progress bar")
 		}
 	}()
+	// Make sure the progress bar is closed when we exit early. Calling this multiple times
+	// is safe
+	defer multiprogress.Close()
 
 	assetBatches := slicesx.Batch(discoveredAssets.Assets, 100)
 	for i := range assetBatches {
