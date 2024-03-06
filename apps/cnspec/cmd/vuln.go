@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -24,7 +25,7 @@ import (
 
 func init() {
 	rootCmd.AddCommand(vulnCmd)
-	vulnCmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
+	vulnCmd.Flags().StringP("output", "o", "full", "Set output format: "+reporter.AllFormats())
 	vulnCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
 	vulnCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
 	vulnCmd.Flags().String("asset-name", "", "User-override for the asset name")
@@ -176,7 +177,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {
 	// print the output using the specified output format
-	r := reporter.NewReporter(reporter.Full, false)
+	r := reporter.NewReporter(reporter.Formats[strings.ToLower(conf.OutputFormat)], false)
 
 	logger.DebugDumpJSON("vulnReport", report)
 	if err := r.PrintVulns(report, target); err != nil {
