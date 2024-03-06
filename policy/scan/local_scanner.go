@@ -26,6 +26,7 @@ import (
 	"go.mondoo.com/cnquery/v10/mrn"
 	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v10/utils/multierr"
@@ -315,30 +316,39 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// is safe
 	defer multiprogress.Close()
 
+	spaceMrn := ""
+	var services *policy.Services
+	if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
+		client, err := upstream.InitClient()
+		if err != nil {
+			return nil, err
+		}
+		spaceMrn = client.SpaceMrn
+
+		services, err = policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	assetBatches := slicesx.Batch(discoveredAssets.Assets, 100)
 	for i := range assetBatches {
 		batch := assetBatches[i]
 
 		// sync assets
-		if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
+		if services != nil {
 			log.Info().Msg("synchronize assets")
-			client, err := upstream.InitClient()
-			if err != nil {
-				return nil, err
-			}
-
-			services, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
-			if err != nil {
-				return nil, err
-			}
-
 			assetsToSync := make([]*inventory.Asset, 0, len(batch))
 			for i := range batch {
+				// If discovery has been skipped, then we don't sync that asset just yet. We will do that during the scan
+				if batch[i].Asset.Connections[0].DelayDiscovery {
+					continue
+				}
 				assetsToSync = append(assetsToSync, batch[i].Asset)
 			}
 
 			resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-				SpaceMrn: client.SpaceMrn,
+				SpaceMrn: spaceMrn,
 				List:     assetsToSync,
 			})
 			if err != nil {
@@ -356,9 +366,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				asset := batch[i].Asset
 				log.Debug().Str("asset", asset.Name).Strs("platform-ids", asset.PlatformIds).Msg("update asset")
 				platformMrn := asset.PlatformIds[0]
-				asset.Mrn = platformAssetMapping[platformMrn].AssetMrn
-				asset.Url = platformAssetMapping[platformMrn].Url
-				asset.Labels["mondoo.com/project-id"] = platformAssetMapping[platformMrn].ProjectId
+				if details, ok := platformAssetMapping[platformMrn]; ok {
+					asset.Mrn = details.AssetMrn
+					asset.Url = details.Url
+					asset.Labels["mondoo.com/project-id"] = details.ProjectId
+				}
 			}
 		} else {
 			// ensure we have non-empty asset MRNs
@@ -402,6 +414,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				default:
 				}
 
+				if asset.Connections[0].DelayDiscovery {
+					discoveredAsset, err := handleDelayedDiscovery(ctx, asset, runtime, services, spaceMrn)
+					if err != nil {
+						reporter.AddScanError(asset, err)
+						multiprogress.Errored(asset.PlatformIds[0])
+						continue
+					}
+					asset = discoveredAsset
+				}
+
 				p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: multiprogress}
 				s.RunAssetJob(&AssetJob{
 					DoRecord:         job.DoRecord,
@@ -424,6 +446,31 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	}
 	scanGroups.Wait() // wait for all scans to complete
 	return reporter.Reports(), nil
+}
+
+func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime *providers.Runtime, services *policy.Services, spaceMrn string) (*inventory.Asset, error) {
+	asset.Connections[0].DelayDiscovery = false
+	if err := runtime.Connect(&plugin.ConnectReq{Asset: asset}); err != nil {
+		return nil, err
+	}
+	if services != nil {
+		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
+			SpaceMrn: spaceMrn,
+			List:     []*inventory.Asset{asset},
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		asset = runtime.Provider.Connection.Asset
+		slices.Sort(asset.PlatformIds)
+		details := resp.Details[asset.PlatformIds[0]]
+		asset.Mrn = details.AssetMrn
+		asset.Url = details.Url
+		asset.KindString = asset.GetPlatform().Kind
+		asset.Labels["mondoo.com/project-id"] = details.ProjectId
+	}
+	return asset, nil
 }
 
 func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.Services {
