@@ -8,6 +8,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -254,14 +255,16 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 			assetScore := "U"
 			assetScoreRating := policy.ScoreRating_unrated
 			if r.data.Reports[assetsByPlatform[platform][i].Mrn] != nil {
-				assetScoreRating = r.data.Reports[assetsByPlatform[platform][i].Mrn].Score.Rating()
-				assetScore = assetScoreRating.Letter()
+				score := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score
+				assetScoreRating = score.Rating()
+				assetScore = assetScoreRating.Letter() + " [" + strconv.Itoa(int(score.Value)) + "/100]"
 			} else {
 				assetScoreRating = policy.ScoreRating_error
 				assetScore = "X"
 			}
+
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
-			output := fmt.Sprintf("    %s %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
+			output := fmt.Sprintf("    %s   %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
 			r.out.Write([]byte(output + NewLineCharacter))
 		}
 	}
