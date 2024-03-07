@@ -40,7 +40,7 @@ type BufferedCollector struct {
 	results   map[string]*llx.RawResult
 	scores    map[string]*policy.Score
 	lock      sync.Mutex
-	collector Collector
+	collector *PolicyServiceCollector
 	duration  time.Duration
 	stopChan  chan struct{}
 	wg        sync.WaitGroup
@@ -48,7 +48,7 @@ type BufferedCollector struct {
 
 type BufferedCollectorOpt func(*BufferedCollector)
 
-func NewBufferedCollector(collector Collector, opts ...BufferedCollectorOpt) *BufferedCollector {
+func NewBufferedCollector(collector *PolicyServiceCollector, opts ...BufferedCollectorOpt) *BufferedCollector {
 	c := &BufferedCollector{
 		results:   map[string]*llx.RawResult{},
 		scores:    map[string]*policy.Score{},
@@ -86,12 +86,12 @@ func (c *BufferedCollector) run() {
 			}
 			c.lock.Unlock()
 
-			if len(results) > 0 {
-				c.collector.SinkData(results)
+			if len(results) > 0 || done {
+				c.collector.SinkData(results, done)
 			}
 
-			if len(scores) > 0 {
-				c.collector.SinkScore(scores)
+			if len(scores) > 0 || done {
+				c.collector.SinkScore(scores, done)
 			}
 
 			results = results[:0]
@@ -164,7 +164,7 @@ func (c *PolicyServiceCollector) toResult(rr *llx.RawResult) *llx.Result {
 	return v
 }
 
-func (c *PolicyServiceCollector) SinkData(results []*llx.RawResult) {
+func (c *PolicyServiceCollector) SinkData(results []*llx.RawResult, isDone bool) {
 	if len(results) == 0 {
 		return
 	}
@@ -177,13 +177,14 @@ func (c *PolicyServiceCollector) SinkData(results []*llx.RawResult) {
 		AssetMrn:       c.assetMrn,
 		Data:           resultsToSend,
 		IsPreprocessed: true,
+		IsLastBatch:    isDone,
 	})
 	if err != nil {
 		log.Error().Err(err).Msg("failed to send datapoints")
 	}
 }
 
-func (c *PolicyServiceCollector) SinkScore(scores []*policy.Score) {
+func (c *PolicyServiceCollector) SinkScore(scores []*policy.Score, isDone bool) {
 	if len(scores) == 0 {
 		return
 	}
@@ -192,6 +193,7 @@ func (c *PolicyServiceCollector) SinkScore(scores []*policy.Score) {
 		AssetMrn:       c.assetMrn,
 		Scores:         scores,
 		IsPreprocessed: true,
+		IsLastBatch:    isDone,
 	})
 	if err != nil {
 		log.Error().Err(err).Msg("failed to send scores")
