@@ -251,6 +251,11 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 			if err != nil {
 				return nil, err
 			}
+			for i := range bundle.Policies {
+				if bundle.Policies[i].Version == "n/a" {
+					bundle.Policies[i].Version = "0.0.0" // space policy has no version but we need it to compile it
+				}
+			}
 			job.Bundle = bundle // also update the job with the fetched bundle
 			reporter.AddBundle(bundle)
 		}
