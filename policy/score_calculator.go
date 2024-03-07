@@ -4,6 +4,7 @@
 package policy
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -13,7 +14,7 @@ import (
 
 // ScoreCalculator interface for calculating scores
 type ScoreCalculator interface {
-	Add(score *Score)
+	Add(score *Score, impact *explorer.Impact)
 	Calculate() *Score
 	Init()
 }
@@ -48,7 +49,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 		calculator.Add(&Score{
 			ScoreCompletion: 0,
 			DataCompletion:  0,
-		})
+		}, nil)
 		return
 	}
 
@@ -62,7 +63,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 
 	// we ignore the UNSPECIFIED specs
 	if impact == nil {
-		calculator.Add(score)
+		calculator.Add(score, nil)
 		return
 	}
 
@@ -84,7 +85,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 			ScoreCompletion: score.ScoreCompletion,
 			DataCompletion:  score.DataCompletion,
 			DataTotal:       score.DataTotal,
-		})
+		}, nil)
 		return
 	}
 
@@ -94,7 +95,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 		score.Weight = 1
 	}
 
-	calculator.Add(score)
+	calculator.Add(score, impact)
 }
 
 func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
@@ -107,10 +108,10 @@ func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
 		Type:           ScoreType_Unscored,
 		DataTotal:      uint32(totalDeps),
 		DataCompletion: dataCompletion,
-	})
+	}, nil)
 }
 
-func (c *averageScoreCalculator) Add(score *Score) {
+func (c *averageScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
 	case ScoreType_Skip:
 		return
@@ -223,7 +224,7 @@ func (c *weightedScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func (c *weightedScoreCalculator) Add(score *Score) {
+func (c *weightedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
 	case ScoreType_Skip:
 		return
@@ -329,7 +330,7 @@ func (c *worstScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func (c *worstScoreCalculator) Add(score *Score) {
+func (c *worstScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
 	case ScoreType_Skip:
 		return
@@ -415,6 +416,309 @@ func (c *worstScoreCalculator) Calculate() *Score {
 	return res
 }
 
+type bandedScoreCalculator struct {
+	crit    uint32
+	high    uint32
+	mid     uint32
+	low     uint32
+	critMax uint32
+	highMax uint32
+	midMax  uint32
+	lowMax  uint32
+
+	minscore              uint32
+	value                 uint32
+	weight                uint32
+	scoreTotal            uint32
+	scoreCompletion       uint32
+	dataTotal             uint32
+	dataCompletion        uint32
+	hasResults            bool
+	hasErrors             bool
+	featureFlagFailErrors bool
+}
+
+func (c *bandedScoreCalculator) Init() {
+	c.minscore = 100
+	c.value = 100
+	c.weight = 0
+	c.scoreTotal = 0
+	c.scoreCompletion = 0
+	c.dataTotal = 0
+	c.dataCompletion = 0
+	c.hasResults = false
+	c.hasErrors = false
+}
+
+func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+	switch score.Type {
+	case ScoreType_Skip:
+		return
+	case ScoreType_Unscored:
+		c.dataCompletion += score.DataCompletion * score.DataTotal
+		c.dataTotal += score.DataTotal
+
+	case ScoreType_Result:
+		c.dataCompletion += score.DataCompletion * score.DataTotal
+		c.dataTotal += score.DataTotal
+		c.weight += score.Weight
+
+		c.scoreTotal++
+		c.scoreCompletion += score.ScoreCompletion
+
+		if score.ScoreCompletion != 0 && score.Weight != 0 {
+			category := score.Value
+			if impact != nil {
+				category = 100 - uint32(impact.Value.Value)
+			}
+
+			if category <= 10 {
+				c.critMax += score.Weight
+				if score.Value == 100 {
+					c.crit += score.Weight
+				}
+			} else if category <= 30 {
+				c.highMax += score.Weight
+				if score.Value == 100 {
+					c.high += score.Weight
+				}
+			} else if category <= 60 {
+				c.midMax += score.Weight
+				if score.Value == 100 {
+					c.mid += score.Weight
+				}
+			} else {
+				c.lowMax += score.Weight
+				if score.Value == 100 {
+					c.low += score.Weight
+				}
+			}
+		}
+		c.hasResults = true
+
+	case ScoreType_Error:
+		c.hasErrors = true
+
+		if c.featureFlagFailErrors {
+			// This case is the same as ScoreType_Result. Once the feature flag
+			// is removed, this case can be merged with the ScoreType_Result
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.weight += score.Weight
+
+			c.scoreTotal++
+			c.scoreCompletion += score.ScoreCompletion
+
+			if score.ScoreCompletion != 0 && score.Weight != 0 && score.Value < c.value {
+				c.value = score.Value
+			}
+			c.hasResults = true
+		} else {
+			// This case is the same as ScoreType_Unscored. Once the feature flag
+			// is removed, this case can be removed
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+		}
+
+	default:
+		c.dataCompletion += score.DataCompletion * score.DataTotal
+		c.dataTotal += score.DataTotal
+		c.scoreCompletion += score.ScoreCompletion
+		c.scoreTotal++
+	}
+}
+
+func (c *bandedScoreCalculator) Calculate() *Score {
+	res := &Score{
+		Type:      ScoreType_Unscored,
+		DataTotal: c.dataTotal,
+		// unless we know otherwise, we are setting the data completion to 100
+		// until we determine how many datapoints we are looking for
+		DataCompletion: 100,
+		// if the item is indeed unscored, then the score completion is 100
+		// since we are done with the scoring piece
+		ScoreCompletion: 100,
+	}
+	if c.dataTotal != 0 {
+		res.DataCompletion = c.dataCompletion / c.dataTotal
+	}
+
+	if c.scoreTotal == 0 {
+		return res
+	}
+
+	if c.hasResults {
+		res.Type = ScoreType_Result
+
+		pcrLow := float64(1)
+		if c.lowMax != 0 {
+			pcrLow = float64(c.low) / float64(c.lowMax)
+		}
+		fMid := float64(1)
+		if c.midMax != 0 {
+			fMid = float64(c.mid) / float64(c.midMax)
+		}
+		pcrMid := (3 + pcrLow) / 4 * fMid
+		fHigh := float64(1)
+		if c.highMax != 0 {
+			fHigh = float64(c.high) / float64(c.highMax)
+		}
+		pcrHigh := (1 + pcrMid) / 2 * fHigh
+		fCrit := float64(1)
+		if c.critMax != 0 {
+			fCrit = float64(c.crit) / float64(c.critMax)
+		}
+		pcrCrit := (1 + 4*pcrHigh) / 5 * fCrit
+
+		if c.crit != 0 {
+			res.Value = uint32(math.Floor(float64(50) * pcrCrit))
+		} else if c.high != 0 {
+			res.Value = uint32(math.Floor(float64(50)*pcrHigh)) + 10
+		} else if c.mid != 0 {
+			res.Value = uint32(math.Floor(float64(50)*pcrMid)) + 30
+		} else if c.low != 0 {
+			res.Value = uint32(math.Floor(float64(40)*pcrLow)) + 60
+		} else {
+			res.Value = 100
+		}
+		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
+		res.Weight = c.weight
+	} else if c.hasErrors {
+		res.Type = ScoreType_Error
+	}
+
+	return res
+}
+
+type decayedScoreCalculator struct {
+	x                     float64
+	xmax                  float64
+	value                 uint32
+	weight                uint32
+	scoreTotal            uint32
+	scoreCompletion       uint32
+	dataTotal             uint32
+	dataCompletion        uint32
+	hasResults            bool
+	hasErrors             bool
+	featureFlagFailErrors bool
+}
+
+var gravity float64 = 10
+
+func (c *decayedScoreCalculator) Init() {
+	c.x = 0
+	c.xmax = 0
+	c.value = 100
+	c.weight = 0
+	c.scoreTotal = 0
+	c.scoreCompletion = 0
+	c.dataTotal = 0
+	c.dataCompletion = 0
+	c.hasResults = false
+	c.hasErrors = false
+}
+
+func (c *decayedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+	switch score.Type {
+	case ScoreType_Skip:
+		return
+	case ScoreType_Unscored:
+		c.dataCompletion += score.DataCompletion * score.DataTotal
+		c.dataTotal += score.DataTotal
+
+	case ScoreType_Result:
+		c.dataCompletion += score.DataCompletion * score.DataTotal
+		c.dataTotal += score.DataTotal
+		c.weight += score.Weight
+
+		c.scoreTotal++
+		c.scoreCompletion += score.ScoreCompletion
+
+		if score.ScoreCompletion != 0 && score.Weight != 0 {
+			// TODO: we can add an optional accelerator here later on.
+			// The function changes to v := math.Pow( ... , accelerator)
+			// with accelerator > 0, default = 1
+			v := float64(100-score.Value) / 100
+			c.x += v * float64(score.Weight)
+			if impact.Value == nil {
+				c.xmax += 1 * float64(score.Weight)
+			} else {
+				c.xmax += float64(impact.Value.Value) / 100 * float64(score.Weight)
+			}
+		}
+		c.hasResults = true
+
+	case ScoreType_Error:
+		c.hasErrors = true
+
+		if c.featureFlagFailErrors {
+			// This case is the same as ScoreType_Result. Once the feature flag
+			// is removed, this case can be merged with the ScoreType_Result
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.weight += score.Weight
+
+			c.scoreTotal++
+			c.scoreCompletion += score.ScoreCompletion
+
+			if score.ScoreCompletion != 0 && score.Weight != 0 && score.Value < c.value {
+				c.value = score.Value
+			}
+			c.hasResults = true
+		} else {
+			// This case is the same as ScoreType_Unscored. Once the feature flag
+			// is removed, this case can be removed
+			c.dataCompletion += score.DataCompletion * score.DataTotal
+			c.dataTotal += score.DataTotal
+			c.scoreCompletion += score.ScoreCompletion
+			c.scoreTotal++
+		}
+
+	default:
+		c.dataCompletion += score.DataCompletion * score.DataTotal
+		c.dataTotal += score.DataTotal
+		c.scoreCompletion += score.ScoreCompletion
+		c.scoreTotal++
+	}
+}
+
+func (c *decayedScoreCalculator) Calculate() *Score {
+	res := &Score{
+		Type:      ScoreType_Unscored,
+		DataTotal: c.dataTotal,
+		// unless we know otherwise, we are setting the data completion to 100
+		// until we determine how many datapoints we are looking for
+		DataCompletion: 100,
+		// if the item is indeed unscored, then the score completion is 100
+		// since we are done with the scoring piece
+		ScoreCompletion: 100,
+	}
+	if c.dataTotal != 0 {
+		res.DataCompletion = c.dataCompletion / c.dataTotal
+	}
+
+	if c.scoreTotal == 0 {
+		return res
+	}
+
+	if c.hasResults {
+		res.Type = ScoreType_Result
+		relGravity := float64(c.weight) / gravity
+		xscaled := c.x / c.xmax * (relGravity)
+		floor := math.Exp(-relGravity)
+		res.Value = uint32(math.Floor(100 * (math.Exp(-xscaled) - floor) / (1 - floor)))
+		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
+		res.Weight = c.weight
+	} else if c.hasErrors {
+		res.Type = ScoreType_Error
+	}
+
+	return res
+}
+
 type scoreCalculatorOptions struct {
 	featureFlagFailErrors bool
 }
@@ -449,6 +753,14 @@ func NewScoreCalculator(scoringSystem explorer.ScoringSystem, opts ...ScoreCalcu
 		}
 	case explorer.ScoringSystem_WORST:
 		res = &worstScoreCalculator{
+			featureFlagFailErrors: options.featureFlagFailErrors,
+		}
+	case explorer.ScoringSystem_BANDED:
+		res = &bandedScoreCalculator{
+			featureFlagFailErrors: options.featureFlagFailErrors,
+		}
+	case explorer.ScoringSystem_DECAYED:
+		res = &decayedScoreCalculator{
 			featureFlagFailErrors: options.featureFlagFailErrors,
 		}
 	default:

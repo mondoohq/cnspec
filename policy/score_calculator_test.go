@@ -13,8 +13,9 @@ import (
 )
 
 type scoreTest struct {
-	in  []*Score
-	out *Score
+	in      []*Score
+	impacts []*explorer.Impact
+	out     *Score
 }
 
 func testScoring(t *testing.T, init func() ScoreCalculator, tests []scoreTest) {
@@ -23,7 +24,11 @@ func testScoring(t *testing.T, init func() ScoreCalculator, tests []scoreTest) {
 		t.Run("idx"+strconv.Itoa(i), func(t *testing.T) {
 			calc := init()
 			for j := range test.in {
-				calc.Add(test.in[j])
+				if test.impacts != nil {
+					calc.Add(test.in[j], test.impacts[j])
+				} else {
+					calc.Add(test.in[j], nil)
+				}
 			}
 			res := calc.Calculate()
 
@@ -168,6 +173,92 @@ func TestWorstScores(t *testing.T) {
 				{ScoreCompletion: 100, DataCompletion: 100, Weight: 1, Type: ScoreType_Error},
 			},
 			out: &Score{ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Type: ScoreType_Error},
+		},
+	})
+}
+
+func TestBandedScores(t *testing.T) {
+	testScoring(t, func() ScoreCalculator {
+		res := bandedScoreCalculator{}
+		res.Init()
+		return &res
+	}, []scoreTest{
+		{
+			in: []*Score{
+				// 2 critical checks (1ok, 1not)
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 80, DataTotal: 5, Weight: 1, Type: ScoreType_Result},
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 1, Type: ScoreType_Result},
+				// 8 low checks (ok)
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 8, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				// 2 critical checks
+				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &explorer.ImpactValue{Value: 100}},
+				// 8 low checks
+				{Value: &explorer.ImpactValue{Value: 20}},
+			},
+			out: &Score{Value: 25, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
+		},
+		{
+			in: []*Score{
+				// 10 critical checks (9ok, 1not)
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 80, DataTotal: 5, Weight: 1, Type: ScoreType_Result},
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 9, Type: ScoreType_Result},
+				// 10 high checks (ok)
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				// 10 critical checks
+				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &explorer.ImpactValue{Value: 100}},
+				// 10 high checks
+				{Value: &explorer.ImpactValue{Value: 80}},
+			},
+			out: &Score{Value: 45, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
+		},
+		{
+			in: []*Score{
+				// 10 critical checks (9ok, 1not)
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 80, DataTotal: 5, Weight: 1, Type: ScoreType_Result},
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 9, Type: ScoreType_Result},
+				// 10 high checks (nok)
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				// 10 critical checks
+				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &explorer.ImpactValue{Value: 100}},
+				// 10 high checks
+				{Value: &explorer.ImpactValue{Value: 80}},
+			},
+			out: &Score{Value: 9, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
+		},
+	})
+}
+
+func TestDecayedScores(t *testing.T) {
+	testScoring(t, func() ScoreCalculator {
+		res := decayedScoreCalculator{}
+		res.Init()
+		return &res
+	}, []scoreTest{
+		{
+			in: []*Score{
+				// 2 critical checks (1ok, 1not)
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 80, DataTotal: 5, Weight: 1, Type: ScoreType_Result},
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 1, Type: ScoreType_Result},
+				// 8 low checks (ok)
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 8, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				// 2 critical checks
+				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &explorer.ImpactValue{Value: 100}},
+				// 8 low checks
+				{Value: &explorer.ImpactValue{Value: 20}},
+			},
+			out: &Score{Value: 61, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
 		},
 	})
 }
