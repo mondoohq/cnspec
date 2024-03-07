@@ -142,3 +142,12 @@ test/lint/golangci-lint/run: prep/tools
 test/lint/golangci-lint/run/new: prep/tools
 	golangci-lint --version
 	golangci-lint run --timeout 10m --config .github/.golangci.yml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
+
+license: license/headers/check
+
+license/headers/check:
+	copywrite headers --plan
+
+license/headers/apply:
+	copywrite headers
+

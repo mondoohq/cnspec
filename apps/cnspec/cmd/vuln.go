@@ -143,10 +143,15 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	platform := runtime.Provider.Connection.GetAsset().GetPlatform()
+	family := []*mondoogql.String{}
+	for _, f := range platform.Family {
+		family = append(family, mondoogql.NewStringPtr(mondoogql.String(f)))
+	}
 	inputPlatform := mondoogql.PlatformInput{
 		Name:    mondoogql.NewStringPtr(mondoogql.String(platform.Name)),
 		Release: mondoogql.NewStringPtr(mondoogql.String(platform.Version)),
 		Build:   mondoogql.NewStringPtr(mondoogql.String(platform.Build)),
+		Family:  &family,
 	}
 	inputLabels := []*mondoogql.KeyValueInput{}
 	for k := range platform.Labels {
@@ -156,10 +161,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		})
 	}
 	inputPlatform.Labels = &inputLabels
-	gqlVulnReport, err := mondooClient.GetIncognitoVulnReport(mondoogql.PlatformInput{
-		Name:    mondoogql.NewStringPtr(mondoogql.String(platform.Name)),
-		Release: mondoogql.NewStringPtr(mondoogql.String(platform.Version)),
-	}, gqlPackages)
+	gqlVulnReport, err := mondooClient.GetIncognitoVulnReport(inputPlatform, gqlPackages)
 	if err != nil {
 		log.Error().Err(err).Msg("could not load advisory report")
 		return
