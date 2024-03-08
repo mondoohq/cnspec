@@ -86,15 +86,9 @@ func (c *BufferedCollector) run() {
 			}
 			c.lock.Unlock()
 
-			if len(results) > 0 {
-				c.collector.SinkData(results, false)
-			}
-
-			if len(scores) > 0 || done {
-				// Since scores are stored after data, we can send the IsLastBatch flag
-				// only here. We always need to notify the final batch has been sent once
-				// for each scan.
-				c.collector.SinkScore(scores, done)
+			// If we have something to send or this is the last batch, we do a Sink
+			if len(scores) > 0 || len(results) > 0 || done {
+				c.collector.Sink(results, scores, done)
 			}
 
 			results = results[:0]
@@ -167,39 +161,25 @@ func (c *PolicyServiceCollector) toResult(rr *llx.RawResult) *llx.Result {
 	return v
 }
 
-func (c *PolicyServiceCollector) SinkData(results []*llx.RawResult, isDone bool) {
-	if len(results) == 0 {
+func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy.Score, isDone bool) {
+	// If we have nothing to send and also this is not the last batch, we just skip
+	if len(results) == 0 && len(scores) == 0 && !isDone {
 		return
 	}
 	resultsToSend := make(map[string]*llx.Result, len(results))
 	for _, rr := range results {
 		resultsToSend[rr.CodeID] = c.toResult(rr)
 	}
-	log.Debug().Msg("Sending datapoints")
+	log.Debug().Msg("Sending datapoints and scores")
 	_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
 		AssetMrn:       c.assetMrn,
 		Data:           resultsToSend,
-		IsPreprocessed: true,
-		IsLastBatch:    isDone,
-	})
-	if err != nil {
-		log.Error().Err(err).Msg("failed to send datapoints")
-	}
-}
-
-func (c *PolicyServiceCollector) SinkScore(scores []*policy.Score, isDone bool) {
-	if len(scores) == 0 {
-		return
-	}
-	log.Debug().Msg("Sending scores")
-	_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
-		AssetMrn:       c.assetMrn,
 		Scores:         scores,
 		IsPreprocessed: true,
 		IsLastBatch:    isDone,
 	})
 	if err != nil {
-		log.Error().Err(err).Msg("failed to send scores")
+		log.Error().Err(err).Msg("failed to send datapoints and scores")
 	}
 }
 
