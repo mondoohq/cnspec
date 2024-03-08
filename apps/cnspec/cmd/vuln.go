@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -123,7 +124,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		return
 	}
 
-	client, err := runtime.UpstreamConfig.InitClient()
+	client, err := runtime.UpstreamConfig.InitClient(context.Background())
 	if err != nil {
 		if status, ok := status.FromError(err); ok {
 			code := status.Code()
