@@ -73,7 +73,7 @@ var serveCmd = &cobra.Command{
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
 
 		if scanConf != nil && scanConf.runtime.UpstreamConfig != nil {
-			client, err := scanConf.runtime.UpstreamConfig.InitClient()
+			client, err := scanConf.runtime.UpstreamConfig.InitClient(ctx)
 			if err != nil {
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 			}

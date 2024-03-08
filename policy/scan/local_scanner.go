@@ -237,7 +237,7 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 		// if we use upstream with/without incognito, we want to fetch the bundle here to ensure we only fetch it once
 		// for all assets in the same space
 		if upstream != nil && upstream.Creds != nil {
-			client, err := upstream.InitClient()
+			client, err := upstream.InitClient(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -324,7 +324,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	spaceMrn := ""
 	var services *policy.Services
 	if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
-		client, err := upstream.InitClient()
+		client, err := upstream.InitClient(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -478,14 +478,14 @@ func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime
 	return asset, nil
 }
 
-func (s *LocalScanner) upstreamServices(conf *upstream.UpstreamConfig) *policy.Services {
+func (s *LocalScanner) upstreamServices(ctx context.Context, conf *upstream.UpstreamConfig) *policy.Services {
 	if conf == nil ||
 		conf.ApiEndpoint == "" ||
 		conf.Incognito {
 		return nil
 	}
 
-	client, err := s.upstreamClient(conf)
+	client, err := s.upstreamClient(ctx, conf)
 	if err != nil {
 		log.Error().Err(err).Msg("could not init upstream client")
 		return nil
@@ -513,7 +513,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 
 	job.Reporter.AddReport(job.Asset, results)
 
-	upstream := s.upstreamServices(job.UpstreamConfig)
+	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
 	if upstream != nil {
 		// get new gql client
 		mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
@@ -536,12 +536,12 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	}
 }
 
-func (s *LocalScanner) upstreamClient(conf *upstream.UpstreamConfig) (*upstream.UpstreamClient, error) {
+func (s *LocalScanner) upstreamClient(ctx context.Context, conf *upstream.UpstreamConfig) (*upstream.UpstreamClient, error) {
 	if s._upstreamClient != nil {
 		return s._upstreamClient, nil
 	}
 
-	client, err := conf.InitClient()
+	client, err := conf.InitClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +557,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	runtimeErr := inmemory.WithDb(s.runtime, s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			client, err := s.upstreamClient(job.UpstreamConfig)
+			client, err := s.upstreamClient(job.Ctx, job.UpstreamConfig)
 			if err != nil {
 				return err
 			}
@@ -631,7 +631,7 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 		return nil, status.Errorf(codes.Internal, "missing upstream config in service")
 	}
 
-	client, err := s.upstreamClient(s.upstream)
+	client, err := s.upstreamClient(ctx, s.upstream)
 	if err != nil {
 		return nil, err
 	}
