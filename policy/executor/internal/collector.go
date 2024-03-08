@@ -86,11 +86,14 @@ func (c *BufferedCollector) run() {
 			}
 			c.lock.Unlock()
 
-			if len(results) > 0 || done {
-				c.collector.SinkData(results, done)
+			if len(results) > 0 {
+				c.collector.SinkData(results, false)
 			}
 
 			if len(scores) > 0 || done {
+				// Since scores are stored after data, we can send the IsLastBatch flag
+				// only here. We always need to notify the final batch has been sent once
+				// for each scan.
 				c.collector.SinkScore(scores, done)
 			}
 
