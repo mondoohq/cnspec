@@ -1,7 +1,7 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package reporter
+package vuln
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v10/shared"
 	"go.mondoo.com/cnspec/v10/cli/components"
-	"go.mondoo.com/cnspec/v10/cli/components/advisories"
+	"go.mondoo.com/cnspec/v10/cli/reporter/vuln/advisories"
 )
 
 // advisoryPrintable is a snapshot of the fields that get exported

@@ -28,7 +28,7 @@ import (
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v10/utils/multierr"
 	"go.mondoo.com/cnquery/v10/utils/slicesx"
 	"go.mondoo.com/cnspec/v10"
@@ -517,18 +517,9 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
 	// The vuln report is relevant only when we have an aggregate reporter
 	if vulnReporter, isAggregateReporter := job.Reporter.(VulnReporter); upstream != nil && isAggregateReporter {
-		// get new gql client
-		mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
-		if err != nil {
-			return
-		}
-
-		gqlVulnReport, err := mondooClient.GetVulnCompactReport(job.Asset.Mrn)
-		if err != nil {
-			log.Error().Err(err).Msg("could not get vulnerability report")
-			return
-		}
-		vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
+		// TODO: implement new API to get the vuln report from server
+		vulnReport := &mvd.VulnReport{}
+		vulnReporter.AddVulnReport(job.Asset, vulnReport)
 	}
 
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
