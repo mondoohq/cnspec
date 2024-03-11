@@ -125,6 +125,10 @@ func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*
 	conf := s.NewCompilerConfig()
 	for i := range req.Props {
 		prop := req.Props[i]
+		// set props is used for both setting and unsetting props
+		if prop.Mql == "" {
+			continue
+		}
 		code, err := prop.RefreshChecksumAndType(conf)
 		if err != nil {
 			return nil, err
