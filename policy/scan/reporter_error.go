@@ -8,7 +8,6 @@ import (
 
 	"go.mondoo.com/cnquery/v10/cli/theme"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnspec/v10/policy"
 	pbStatus "go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -31,9 +30,6 @@ func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) 
 }
 
 func (r *ErrorReporter) AddBundle(bundle *policy.Bundle) {}
-
-func (r *ErrorReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
-}
 
 func (c *ErrorReporter) AddScanError(asset *inventory.Asset, err error) {
 	if c.errors == nil {

@@ -12,6 +12,8 @@ import (
 	"go.mondoo.com/cnspec/v10/policy"
 )
 
+var _ VulnReporter = &AggregateReporter{}
+
 type AggregateReporter struct {
 	assets           map[string]*inventory.Asset
 	assetReports     map[string]*policy.Report

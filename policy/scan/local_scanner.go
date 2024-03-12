@@ -514,7 +514,8 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	job.Reporter.AddReport(job.Asset, results)
 
 	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
-	if upstream != nil {
+	// The vuln report is relevant only when we have an aggregate reporter
+	if vulnReporter, isAggregateReporter := job.Reporter.(VulnReporter); upstream != nil && isAggregateReporter {
 		// get new gql client
 		mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
 		if err != nil {
@@ -526,7 +527,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			log.Error().Err(err).Msg("could not get vulnerability report")
 			return
 		}
-		job.Reporter.AddVulnReport(job.Asset, gqlVulnReport)
+		vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
 	}
 
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
