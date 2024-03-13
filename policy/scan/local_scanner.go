@@ -458,6 +458,10 @@ func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime
 	if err := runtime.Connect(&plugin.ConnectReq{Asset: asset}); err != nil {
 		return nil, err
 	}
+	asset = runtime.Provider.Connection.Asset
+	slices.Sort(asset.PlatformIds)
+	asset.KindString = asset.GetPlatform().Kind
+
 	if services != nil {
 		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 			SpaceMrn: spaceMrn,
@@ -467,12 +471,9 @@ func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime
 			return nil, err
 		}
 
-		asset = runtime.Provider.Connection.Asset
-		slices.Sort(asset.PlatformIds)
 		details := resp.Details[asset.PlatformIds[0]]
 		asset.Mrn = details.AssetMrn
 		asset.Url = details.Url
-		asset.KindString = asset.GetPlatform().Kind
 		asset.Labels["mondoo.com/project-id"] = details.ProjectId
 	}
 	return asset, nil
