@@ -19,7 +19,6 @@ import (
 	"go.mondoo.com/cnquery/v10/cli/theme"
 	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnspec/v10/internal/bundle"
 	"go.mondoo.com/cnspec/v10/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v10/upstream"
@@ -115,8 +114,8 @@ var policyListCmd = &cobra.Command{
 			}
 
 			assignedOnly := !viper.GetBool("all")
-			policies, err = cnspec_upstream.SearchPolicy(
-				context.Background(), mondooClient, opts.GetParentMrn(), ptr.To(assignedOnly), ptr.To(true), ptr.To(true))
+			policies, err = mondooClient.SearchPolicy(
+				context.Background(), opts.GetParentMrn(), ptr.To(assignedOnly), ptr.To(true), ptr.To(true))
 			if err != nil {
 				return err
 			}
@@ -247,7 +246,7 @@ var policyUploadCmd = &cobra.Command{
 			fmt.Println(termenv.String("    " + getPolicyMrn(opts.GetParentMrn(), p.Uid)).Foreground(theme.DefaultTheme.Colors.Disabled))
 		}
 
-		space, err := cnspec_upstream.GetSpace(ctx, mondooClient, opts.GetParentMrn())
+		space, err := mondooClient.GetSpace(ctx, opts.GetParentMrn())
 		if err != nil {
 			log.Error().Msgf("failed to get space: %s", err)
 			os.Exit(1)
@@ -308,7 +307,7 @@ var policyDeleteCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		space, err := cnspec_upstream.GetSpace(ctx, mondooClient, opts.GetParentMrn())
+		space, err := mondooClient.GetSpace(ctx, opts.GetParentMrn())
 		if err != nil {
 			log.Error().Msgf("failed to get space: %s", err)
 			os.Exit(1)
@@ -721,7 +720,7 @@ var policyDocsCmd = &cobra.Command{
 	},
 }
 
-func getGqlClient(opts *config.Config) (*gql.MondooClient, error) {
+func getGqlClient(opts *config.Config) (*cnspec_upstream.MondooClient, error) {
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount == nil {
 		return nil, fmt.Errorf("cnspec has no credentials. Log in with `cnspec login`")
@@ -739,7 +738,7 @@ func getGqlClient(opts *config.Config) (*gql.MondooClient, error) {
 		Creds:       serviceAccount,
 	}
 
-	mondooClient, err := gql.NewClient(upstreamConfig, httpClient)
+	mondooClient, err := cnspec_upstream.NewClient(upstreamConfig, httpClient)
 	if err != nil {
 		return nil, err
 	}

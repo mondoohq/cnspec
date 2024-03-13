@@ -13,7 +13,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd/cvss"
-	"go.mondoo.com/cnspec/v10/cli/components/advisories"
+	"go.mondoo.com/cnspec/v10/cli/reporter/vuln/advisories"
 )
 
 func NewAdvisoryResultTable() AdvisoryResultTable {

@@ -5,7 +5,7 @@ package scan
 
 import (
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnspec/v10/policy"
 )
 
@@ -17,7 +17,7 @@ type AssetReport struct {
 
 type VulnReporter interface {
 	// AddVulnReport adds the vulnerability scan results to the reporter
-	AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport)
+	AddVulnReport(asset *inventory.Asset, vulnReport *mvd.VulnReport)
 }
 
 type Reporter interface {

@@ -7,7 +7,6 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnspec/v10/policy"
 )
@@ -54,15 +53,13 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 	}
 }
 
-func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
+func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *mvd.VulnReport) {
 	if vulnReport == nil {
 		return
 	}
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
-
-	mvdVulnReport := gql.ConvertToMvdVulnReport(vulnReport)
 	r.assets[asset.Mrn] = asset
-	r.assetVulnReports[asset.Mrn] = mvdVulnReport
+	r.assetVulnReports[asset.Mrn] = vulnReport
 }
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {

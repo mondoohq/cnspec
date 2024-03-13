@@ -5,11 +5,39 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
+	"go.mondoo.com/mondoo-go/option"
+	"net/http"
 
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	policy "go.mondoo.com/cnspec/v10/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
 )
+
+type MondooClient struct {
+	*mondoogql.Client
+}
+
+// NewClient creates a new GraphQL client for the Mondoo API
+// provide the http client used for rpc, to also pass in the proxy settings
+func NewClient(upstream *upstream.UpstreamConfig, httpClient *http.Client) (*MondooClient, error) {
+	gqlEndpoint := upstream.ApiEndpoint + "/query"
+	creds, err := json.Marshal(upstream.Creds)
+	if err != nil {
+		return nil, err
+	}
+	// Initialize the client
+	gqlClient, err := mondoogql.NewClient(
+		option.WithEndpoint(gqlEndpoint),
+		option.WithHTTPClient(httpClient),
+		option.WithServiceAccount(creds),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &MondooClient{gqlClient}, nil
+}
 
 type PageInfo struct {
 	StartCursor     string `json:"startCursor"`
@@ -25,9 +53,8 @@ type UpstreamPolicy struct {
 	Assigned   bool
 }
 
-func SearchPolicy(
+func (c *MondooClient) SearchPolicy(
 	ctx context.Context,
-	c *gql.MondooClient,
 	scopeMrn string,
 	assingedOnly,
 	includePublic,
@@ -92,7 +119,7 @@ type Space struct {
 	Name string
 }
 
-func GetSpace(ctx context.Context, c *gql.MondooClient, mrn string) (*Space, error) {
+func (c *MondooClient) GetSpace(ctx context.Context, mrn string) (*Space, error) {
 	var q struct {
 		Space Space `graphql:"space(mrn: $mrn)"`
 	}
