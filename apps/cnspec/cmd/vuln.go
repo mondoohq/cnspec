@@ -4,24 +4,19 @@
 package cmd
 
 import (
-	"context"
-	"encoding/json"
-	"strings"
-
+	"bytes"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v10/cli/shell"
-	"go.mondoo.com/cnquery/v10/explorer/executor"
 	"go.mondoo.com/cnquery/v10/logger"
 	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v10/sbom"
+	"go.mondoo.com/cnquery/v10/shared"
 	"go.mondoo.com/cnspec/v10/cli/reporter"
-	mondoogql "go.mondoo.com/mondoo-go"
-	"go.mondoo.com/ranger-rpc/codes"
-	"go.mondoo.com/ranger-rpc/status"
+	"go.mondoo.com/cnspec/v10/policy"
+	"strings"
 )
 
 func init() {
@@ -43,7 +38,6 @@ var vulnCmd = &cobra.Command{
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets
 		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
-
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
 		viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
@@ -51,139 +45,90 @@ var vulnCmd = &cobra.Command{
 }
 
 var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
+	pb, err := sbom.QueryPack()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load sbom query pack")
+	}
+
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
-	// conf := cnquery_app.ParseShellConfig(cmd, cliRes)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to prepare config")
+		log.Fatal().Err(err).Msg("failed to gather scan config")
 	}
 
-	unauthedErrorMsg := "vulnerability scan requires authentication, login with `cnspec login --token`"
-	if runtime.UpstreamConfig == nil {
-		log.Fatal().Msg(unauthedErrorMsg)
-	}
+	conf.PolicyNames = nil
+	conf.PolicyPaths = nil
+	conf.Bundle = policy.FromQueryPackBundle(pb)
+	conf.IsIncognito = true
 
-	err = runtime.Connect(&plugin.ConnectReq{
-		Features: conf.Features,
-		Asset:    cliRes.Asset,
-		Upstream: runtime.UpstreamConfig,
-	})
+	report, err := RunScan(conf)
 	if err != nil {
-		log.Fatal().Err(err).Msg("could not load asset information")
+		log.Fatal().Err(err).Msg("error happened during package analysis")
 	}
 
-	// when we close the shell, we need to close the backend and store the recording
-	onCloseHandler := func() {
-		// close backend connection
-		runtime.Close()
+	buf := bytes.Buffer{}
+	w := shared.IOWriter{Writer: &buf}
+	err = reporter.ReportCollectionToJSON(report, &w)
+	if err == nil {
+		logger.DebugDumpJSON("mondoo-sbom-report", buf.Bytes())
 	}
 
-	shellOptions := []shell.ShellOption{}
-	shellOptions = append(shellOptions, shell.WithOnCloseListener(onCloseHandler))
-	shellOptions = append(shellOptions, shell.WithFeatures(conf.Features))
-
-	if conf.runtime.UpstreamConfig != nil {
-		shellOptions = append(shellOptions, shell.WithUpstreamConfig(conf.runtime.UpstreamConfig))
-	}
-
-	sh, err := shell.New(runtime, shellOptions...)
+	boms, err := sbom.NewBom(buf.Bytes())
 	if err != nil {
-		log.Error().Err(err).Msg("failed to initialize cnspec shell")
+		log.Fatal().Err(err).Msg("failed to parse sbom data")
 	}
 
-	packagesQuery := "packages { name version origin format }"
-	packagesDatapointChecksum := executor.MustGetOneDatapoint(executor.MustCompile(packagesQuery))
-	codeBundle, results, err := sh.RunOnce(packagesQuery)
+	if len(boms) != 1 {
+		log.Fatal().Msg("received data for more than one asset, this is not supported yet.")
+	}
+	bom := boms[0]
+
+	ctx := cmd.Context()
+	upstreamConf := conf.runtime.UpstreamConfig
+	if upstreamConf == nil {
+		log.Fatal().Err(err).Msg("run `cnspec login` to authenticate with Mondoo platform")
+	}
+	client, err := upstreamConf.InitClient(ctx)
 	if err != nil {
-		log.Error().Err(err).Msg("failed to run query")
-		return
+		log.Fatal().Err(err).Msg("failed to initialize authentication with Mondoo platform")
 	}
 
-	// render vulnerability report
-	value, ok := results[packagesDatapointChecksum]
-	if !ok {
-		log.Error().Msg("could not find packages data\n\n")
-		return
-	}
-
-	if value == nil || value.Data == nil {
-		log.Error().Msg("could not load packages data\n\n")
-		return
-	}
-
-	if value.Data.Error != nil {
-		log.Err(value.Data.Error).Msg("could not load packages data\n\n")
-		return
-	}
-
-	packagesJson := value.Data.JSON(packagesDatapointChecksum, codeBundle)
-
-	gqlPackages := []mondoogql.PackageInput{}
-	err = json.Unmarshal(packagesJson, &gqlPackages)
+	scannerClient, err := mvd.NewAdvisoryScannerClient(client.ApiEndpoint, client.HttpClient, client.Plugins...)
 	if err != nil {
-		log.Error().Err(err).Msg("failed to unmarshal packages")
-		return
+		log.Fatal().Err(err).Msg("failed to initialize advisory scanner client")
 	}
 
-	client, err := runtime.UpstreamConfig.InitClient(context.Background())
-	if err != nil {
-		if status, ok := status.FromError(err); ok {
-			code := status.Code()
-			switch code {
-			case codes.Unauthenticated:
-				log.Fatal().Msg(unauthedErrorMsg)
-			default:
-				log.Err(err).Msg("could not authenticate upstream")
-				return
-			}
-		}
-	}
-	mondooClient, err := gql.NewClient(runtime.UpstreamConfig, client.HttpClient)
-	if err != nil {
-		log.Error().Err(err).Msg("could not initialize mondoo client")
-		return
+	req := &mvd.AnalyseAssetRequest{
+		Platform: &mvd.Platform{
+			Name:    bom.Asset.Platform.Name,
+			Arch:    bom.Asset.Platform.Arch,
+			Build:   bom.Asset.Platform.Build,
+			Release: bom.Asset.Platform.Version,
+			Labels:  bom.Asset.Platform.Labels,
+			Title:   bom.Asset.Platform.Title,
+		},
+		Packages: make([]*mvd.Package, 0),
 	}
 
-	platform := runtime.Provider.Connection.GetAsset().GetPlatform()
-	family := []*mondoogql.String{}
-	for _, f := range platform.Family {
-		family = append(family, mondoogql.NewStringPtr(mondoogql.String(f)))
-	}
-	inputPlatform := mondoogql.PlatformInput{
-		Name:    mondoogql.NewStringPtr(mondoogql.String(platform.Name)),
-		Release: mondoogql.NewStringPtr(mondoogql.String(platform.Version)),
-		Build:   mondoogql.NewStringPtr(mondoogql.String(platform.Build)),
-		Family:  &family,
-	}
-	inputLabels := []*mondoogql.KeyValueInput{}
-	for k := range platform.Labels {
-		inputLabels = append(inputLabels, &mondoogql.KeyValueInput{
-			Key:   mondoogql.String(k),
-			Value: mondoogql.NewStringPtr(mondoogql.String(platform.Labels[k])),
+	for i := range bom.Packages {
+		pkg := bom.Packages[i]
+		req.Packages = append(req.Packages, &mvd.Package{
+			Name:    pkg.Name,
+			Version: pkg.Version,
+			Arch:    pkg.Architecture,
+			Format:  pkg.Type,
+			Origin:  pkg.Origin,
 		})
 	}
-	inputPlatform.Labels = &inputLabels
-	gqlVulnReport, err := mondooClient.GetIncognitoVulnReport(inputPlatform, gqlPackages)
+
+	vulnReport, err := scannerClient.AnalyseAsset(ctx, req)
 	if err != nil {
-		log.Error().Err(err).Msg("could not load advisory report")
-		return
+		log.Fatal().Err(err).Msg("failed to analyse asset")
 	}
 
-	vulnReport := gql.ConvertToMvdVulnReport(gqlVulnReport)
-
-	target := runtime.Provider.Connection.Asset.Name
-	if target == "" {
-		target = runtime.Provider.Connection.Asset.Mrn
-	}
-
-	printVulns(vulnReport, conf, target)
-}
-
-func printVulns(report *mvd.VulnReport, conf *scanConfig, target string) {
 	// print the output using the specified output format
 	r := reporter.NewReporter(reporter.Formats[strings.ToLower(conf.OutputFormat)], false)
-
 	logger.DebugDumpJSON("vulnReport", report)
-	if err := r.PrintVulns(report, target); err != nil {
+	if err := r.PrintVulns(vulnReport, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
 }
