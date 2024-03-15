@@ -37,32 +37,42 @@ const (
 func init() {
 	rootCmd.AddCommand(scanCmd)
 
-	scanCmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
-	scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
-	scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
+	_ = scanCmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
+	_ = scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
+	_ = scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
 
-	scanCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
-	scanCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
-	scanCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
+	_ = scanCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
+
+	_ = scanCmd.Flags().Bool("inventory-format-ansible", false, "Set the inventory format to Ansible.")
+	// "inventory-ansible" is deprecated, use "inventory-format-ansible" instead
+	_ = scanCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
+	_ = scanCmd.Flags().MarkDeprecated("inventory-ansible", "use --inventory-format-ansible")
+	_ = scanCmd.Flags().MarkHidden("inventory-ansible")
+
+	_ = scanCmd.Flags().Bool("inventory-format-domainlist", false, "Set the inventory format to domain list.")
+	// "inventory-domainlist" is deprecated, use "inventory-format-domainlist" instead
+	_ = scanCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
+	_ = scanCmd.Flags().MarkDeprecated("inventory-domainlist", "use --inventory-format-domainlist")
+	_ = scanCmd.Flags().MarkHidden("inventory-domainlist")
 
 	// bundles, packs & incognito mode
-	scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to  Mondoo Platform.")
-	scanCmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.")
-	scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy file")
+	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to  Mondoo Platform.")
+	_ = scanCmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.")
+	_ = scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy file")
 	// flag completion command
-	scanCmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = scanCmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
 	})
-	scanCmd.Flags().String("asset-name", "", "User-override for the asset name")
-	scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
-	scanCmd.Flags().StringToString("props", nil, "Custom values for properties")
+	_ = scanCmd.Flags().String("asset-name", "", "User-override for the asset name")
+	_ = scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
+	_ = scanCmd.Flags().StringToString("props", nil, "Custom values for properties")
 
 	// v6 should make detect-cicd and category flag public
-	scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
-	scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
-	scanCmd.Flags().MarkHidden("category")
-	scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
-	scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
+	_ = scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
+	_ = scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
+	_ = scanCmd.Flags().MarkHidden("category")
+	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
+	_ = scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
 }
 
 var scanCmd = &cobra.Command{
@@ -89,25 +99,30 @@ To manually configure a policy, use this:
 			os.Exit(0)
 		}
 
-		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
+		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 
-		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
-		viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
-		viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
-		viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
-		viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
-		viper.BindPFlag("asset-name", cmd.Flags().Lookup("asset-name"))
-		viper.BindPFlag("category", cmd.Flags().Lookup("category"))
-		viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
+		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		_ = viper.BindPFlag("inventory-format-ansible", cmd.Flags().Lookup("inventory-format-ansible"))
+		// inventory-ansible is deprecated
+		_ = viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
+		_ = viper.BindPFlag("inventory-format-domainlist", cmd.Flags().Lookup("inventory-format-domainlist"))
+		// inventory-domainlist is deprecated
+		_ = viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
+
+		_ = viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
+		_ = viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
+		_ = viper.BindPFlag("asset-name", cmd.Flags().Lookup("asset-name"))
+		_ = viper.BindPFlag("category", cmd.Flags().Lookup("category"))
+		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 
 		// for all assets
-		viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
-		viper.BindPFlag("insecure", cmd.Flags().Lookup("insecure"))
-		viper.BindPFlag("policies", cmd.Flags().Lookup("policy"))
-		viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
-		viper.BindPFlag("record", cmd.Flags().Lookup("record"))
+		_ = viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
+		_ = viper.BindPFlag("insecure", cmd.Flags().Lookup("insecure"))
+		_ = viper.BindPFlag("policies", cmd.Flags().Lookup("policy"))
+		_ = viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
+		_ = viper.BindPFlag("record", cmd.Flags().Lookup("record"))
 
-		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		if err := viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target")); err != nil {
 			return err
 		}
