@@ -1546,19 +1546,19 @@ func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type RiskFactor struct {
-	Scope              ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty" yaml:"scope,omitempty"`
-	ActiveMultiplier   float32             `protobuf:"fixed32,71,opt,name=active_multiplier,json=activeMultiplier,proto3" json:"active_multiplier,omitempty" yaml:"active_multiplier,omitempty"`
-	InactiveMultiplier float32             `protobuf:"fixed32,72,opt,name=inactive_multiplier,json=inactiveMultiplier,proto3" json:"inactive_multiplier,omitempty" yaml:"inactive_multiplier,omitempty"`
-	Software           []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
-	Resources          []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
-	Uid                string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	Mrn                string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Title              string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
-	Filters            *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
-	Queries            []*Mquery           `protobuf:"bytes,2,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
-	Docs               *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
-	FileContext        FileContext         `json:"-" yaml:"-"`
-	Comments           Comments            `json:"-" yaml:"-"`
+	Scope       ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty" yaml:"scope,omitempty"`
+	Magnitude   float32             `protobuf:"fixed32,71,opt,name=magnitude,proto3" json:"magnitude,omitempty" yaml:"magnitude,omitempty"`
+	IsAbsolute  bool                `protobuf:"varint,72,opt,name=is_absolute,json=isAbsolute,proto3" json:"is_absolute,omitempty" yaml:"is_absolute,omitempty"`
+	Software    []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
+	Resources   []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
+	Uid         string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Title       string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Filters     *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
+	Queries     []*Mquery           `protobuf:"bytes,2,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	Docs        *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	FileContext FileContext         `json:"-" yaml:"-"`
+	Comments    Comments            `json:"-" yaml:"-"`
 }
 
 func (x *RiskFactor) UnmarshalYAML(node *yaml.Node) error {
