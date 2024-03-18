@@ -10,6 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func risks(risks ...*ScoredRiskFactor) *ScoredRiskFactors {
+	return &ScoredRiskFactors{Items: risks}
+}
+
 func TestRiskFactor_AdjustScore(t *testing.T) {
 	tests := []struct {
 		risk     RiskFactor
@@ -21,76 +25,76 @@ func TestRiskFactor_AdjustScore(t *testing.T) {
 		{
 			risk:     RiskFactor{Magnitude: 0.4},
 			score:    Score{Value: 40},
-			onDetect: Score{Value: 40, RiskFactors: []*ScoredRiskFactor{{Risk: 0.4}}},
-			onFail:   Score{Value: 64, RiskFactors: []*ScoredRiskFactor{{Risk: -0.4}}},
+			onDetect: Score{Value: 40, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.4})},
+			onFail:   Score{Value: 64, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 		},
 		{
 			risk:     RiskFactor{Magnitude: 0.4},
 			score:    Score{Value: 10},
-			onDetect: Score{Value: 10, RiskFactors: []*ScoredRiskFactor{{Risk: 0.4}}},
-			onFail:   Score{Value: 45, RiskFactors: []*ScoredRiskFactor{{Risk: -0.4}}},
+			onDetect: Score{Value: 10, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.4})},
+			onFail:   Score{Value: 45, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 		},
 		{
 			risk:     RiskFactor{Magnitude: 0.4},
 			score:    Score{Value: 90},
-			onDetect: Score{Value: 90, RiskFactors: []*ScoredRiskFactor{{Risk: 0.4}}},
-			onFail:   Score{Value: 94, RiskFactors: []*ScoredRiskFactor{{Risk: -0.4}}},
+			onDetect: Score{Value: 90, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.4})},
+			onFail:   Score{Value: 94, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 		},
 		// Absolute, decrease risk
 		{
 			risk:     RiskFactor{Magnitude: -0.4},
 			score:    Score{Value: 40},
-			onDetect: Score{Value: 64, RiskFactors: []*ScoredRiskFactor{{Risk: -0.4}}},
+			onDetect: Score{Value: 64, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 			onFail:   Score{Value: 40},
 		},
 		{
 			risk:     RiskFactor{Magnitude: -0.4},
 			score:    Score{Value: 10},
-			onDetect: Score{Value: 45, RiskFactors: []*ScoredRiskFactor{{Risk: -0.4}}},
+			onDetect: Score{Value: 45, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 			onFail:   Score{Value: 10},
 		},
 		{
 			risk:     RiskFactor{Magnitude: -0.4},
 			score:    Score{Value: 90},
-			onDetect: Score{Value: 94, RiskFactors: []*ScoredRiskFactor{{Risk: -0.4}}},
+			onDetect: Score{Value: 94, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 			onFail:   Score{Value: 90},
 		},
 		// Absolute, increase risk
 		{
 			risk:     RiskFactor{Magnitude: 0.2, IsAbsolute: true},
 			score:    Score{Value: 40},
-			onDetect: Score{Value: 20, RiskFactors: []*ScoredRiskFactor{{Risk: 0.2, IsAbsolute: true}}},
+			onDetect: Score{Value: 20, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsAbsolute: true})},
 			onFail:   Score{Value: 40},
 		},
 		{
 			risk:     RiskFactor{Magnitude: 0.2, IsAbsolute: true},
 			score:    Score{Value: 10},
-			onDetect: Score{Value: 0, RiskFactors: []*ScoredRiskFactor{{Risk: 0.2, IsAbsolute: true}}},
+			onDetect: Score{Value: 0, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsAbsolute: true})},
 			onFail:   Score{Value: 10},
 		},
 		{
 			risk:     RiskFactor{Magnitude: 0.2, IsAbsolute: true},
 			score:    Score{Value: 90},
-			onDetect: Score{Value: 70, RiskFactors: []*ScoredRiskFactor{{Risk: 0.2, IsAbsolute: true}}},
+			onDetect: Score{Value: 70, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsAbsolute: true})},
 			onFail:   Score{Value: 90},
 		},
 		// Absolute, decrease risk
 		{
 			risk:     RiskFactor{Magnitude: -0.2, IsAbsolute: true},
 			score:    Score{Value: 40},
-			onDetect: Score{Value: 60, RiskFactors: []*ScoredRiskFactor{{Risk: -0.2, IsAbsolute: true}}},
+			onDetect: Score{Value: 60, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsAbsolute: true})},
 			onFail:   Score{Value: 40},
 		},
 		{
 			risk:     RiskFactor{Magnitude: -0.2, IsAbsolute: true},
 			score:    Score{Value: 10},
-			onDetect: Score{Value: 30, RiskFactors: []*ScoredRiskFactor{{Risk: -0.2, IsAbsolute: true}}},
+			onDetect: Score{Value: 30, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsAbsolute: true})},
 			onFail:   Score{Value: 10},
 		},
 		{
 			risk:     RiskFactor{Magnitude: -0.2, IsAbsolute: true},
 			score:    Score{Value: 90},
-			onDetect: Score{Value: 100, RiskFactors: []*ScoredRiskFactor{{Risk: -0.2, IsAbsolute: true}}},
+			onDetect: Score{Value: 100, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsAbsolute: true})},
 			onFail:   Score{Value: 90},
 		},
 	}
