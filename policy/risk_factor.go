@@ -16,7 +16,10 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 				score.Value = uint32(nu)
 			}
 
-			score.RiskFactors = append(score.RiskFactors, &ScoredRiskFactor{
+			if score.RiskFactors == nil {
+				score.RiskFactors = &ScoredRiskFactors{}
+			}
+			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 				Id:         r.Uid,
 				Risk:       r.Magnitude,
 				IsAbsolute: true,
@@ -30,7 +33,10 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 	if r.Magnitude < 0 {
 		if isDetected {
 			score.Value = uint32(100 - float32(100-score.Value)*(1+r.Magnitude))
-			score.RiskFactors = append(score.RiskFactors, &ScoredRiskFactor{
+			if score.RiskFactors == nil {
+				score.RiskFactors = &ScoredRiskFactors{}
+			}
+			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 				Id:   r.Uid,
 				Risk: r.Magnitude,
 			})
@@ -46,7 +52,10 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 	// since it's a relative risk factors. The detected score just needs
 	// the flag to indicate its risk was "increased" (relative to non-detected)
 	if isDetected {
-		score.RiskFactors = append(score.RiskFactors, &ScoredRiskFactor{
+		if score.RiskFactors == nil {
+			score.RiskFactors = &ScoredRiskFactors{}
+		}
+		score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 			Id:   r.Uid,
 			Risk: r.Magnitude,
 		})
@@ -54,7 +63,10 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 	}
 
 	score.Value = uint32(100 - float32(100-score.Value)*(1-r.Magnitude))
-	score.RiskFactors = append(score.RiskFactors, &ScoredRiskFactor{
+	if score.RiskFactors == nil {
+		score.RiskFactors = &ScoredRiskFactors{}
+	}
+	score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 		Id:   r.Uid,
 		Risk: -r.Magnitude,
 	})
