@@ -52,6 +52,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 
 	builder := internal.NewBuilder()
 	for _, m := range queries {
+		log.Debug().Str("mql", m.Mql).Msg("compiling filter query")
 		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures))
 		// Errors for filter queries are common when they reference resources for
 		// providers that are not found on the system.
