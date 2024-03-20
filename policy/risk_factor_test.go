@@ -29,10 +29,10 @@ func TestRiskFactor_AdjustScore(t *testing.T) {
 			onFail:   Score{Value: 64, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 		},
 		{
-			risk:     RiskFactor{Magnitude: 0.4},
+			risk:     RiskFactor{Uid: "internet-facing", Magnitude: 0.4},
 			score:    Score{Value: 10},
-			onDetect: Score{Value: 10, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.4})},
-			onFail:   Score{Value: 45, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
+			onDetect: Score{Value: 10, RiskFactors: risks(&ScoredRiskFactor{Id: "internet-facing", Risk: 0.4})},
+			onFail:   Score{Value: 45, RiskFactors: risks(&ScoredRiskFactor{Id: "internet-facing", Risk: -0.4})},
 		},
 		{
 			risk:     RiskFactor{Magnitude: 0.4},
