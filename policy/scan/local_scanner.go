@@ -512,24 +512,46 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 		return
 	}
 
-	job.Reporter.AddReport(job.Asset, results)
-
 	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
-	// The vuln report is relevant only when we have an aggregate reporter
-	if vulnReporter, isAggregateReporter := job.Reporter.(VulnReporter); upstream != nil && isAggregateReporter {
-		// get new gql client
-		mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
-		if err != nil {
-			return
+	if upstream != nil {
+		// If we show the score, we need to fetch it from upstream and update it
+		if _, isAggregateReporter := job.Reporter.(*AggregateReporter); !job.UpstreamConfig.Incognito && isAggregateReporter {
+			assetScore := results.Report.Scores[job.Asset.Mrn]
+
+			// Retry fetching the score a few times, in case it's not updated yet
+			for i := 0; i < 15; i++ {
+				score, err := upstream.PolicyResolver.GetScore(job.Ctx, &policy.EntityScoreReq{EntityMrn: job.Asset.Mrn, ScoreMrn: job.Asset.Mrn})
+				if err != nil {
+					log.Error().Err(err).Msg("could not get asset score")
+				}
+				if score.Score.ValueModifiedTime > assetScore.ValueModifiedTime {
+					results.Report.Scores[job.Asset.Mrn] = score.Score
+					results.Report.Score = score.Score
+					log.Debug().Uint32("old score", assetScore.Value).Uint32("new score", score.Score.Value).Msg("score updated")
+					break
+				}
+				log.Debug().Msg("score not updated yet, waiting 2 seconds")
+				time.Sleep(2 * time.Second)
+			}
 		}
 
-		gqlVulnReport, err := mondooClient.GetVulnCompactReport(job.Asset.Mrn)
-		if err != nil {
-			log.Error().Err(err).Msg("could not get vulnerability report")
-			return
+		// The vuln report is relevant only when we have an aggregate reporter
+		if vulnReporter, isVulnReporter := job.Reporter.(VulnReporter); isVulnReporter {
+			// get new gql client
+			mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
+			if err != nil {
+				return
+			}
+
+			gqlVulnReport, err := mondooClient.GetVulnCompactReport(job.Asset.Mrn)
+			if err != nil {
+				log.Error().Err(err).Msg("could not get vulnerability report")
+				return
+			}
+			vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
 		}
-		vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
 	}
+	job.Reporter.AddReport(job.Asset, results)
 
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
 	// such that it is visible from the logs.
