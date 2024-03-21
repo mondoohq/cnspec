@@ -97,6 +97,11 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to initialize advisory scanner client")
 	}
 
+	var runningKernel string
+	if bom.Asset.Labels != nil {
+		runningKernel = bom.Asset.Labels[sbom.LABEL_KERNEL_RUNNING]
+	}
+
 	req := &mvd.AnalyseAssetRequest{
 		Platform: &mvd.Platform{
 			Name:    bom.Asset.Platform.Name,
@@ -106,7 +111,8 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 			Labels:  bom.Asset.Platform.Labels,
 			Title:   bom.Asset.Platform.Title,
 		},
-		Packages: make([]*mvd.Package, 0),
+		Packages:      make([]*mvd.Package, 0),
+		KernelVersion: runningKernel,
 	}
 
 	for i := range bom.Packages {
