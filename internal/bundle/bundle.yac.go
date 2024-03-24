@@ -895,6 +895,7 @@ type Policy struct {
 	Summary                string                 `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Created                int64                  `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64                  `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	RiskFactors            []*RiskFactor          `protobuf:"bytes,47,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
 	LocalContentChecksum   string                 `protobuf:"bytes,37,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
 	GraphContentChecksum   string                 `protobuf:"bytes,38,opt,name=graph_content_checksum,json=graphContentChecksum,proto3" json:"graph_content_checksum,omitempty" yaml:"graph_content_checksum,omitempty"`
 	LocalExecutionChecksum string                 `protobuf:"bytes,39,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
@@ -1546,6 +1547,7 @@ func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type RiskFactor struct {
+	Checksum    string              `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
 	Scope       ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty" yaml:"scope,omitempty"`
 	Magnitude   float32             `protobuf:"fixed32,71,opt,name=magnitude,proto3" json:"magnitude,omitempty" yaml:"magnitude,omitempty"`
 	IsAbsolute  bool                `protobuf:"varint,72,opt,name=is_absolute,json=isAbsolute,proto3" json:"is_absolute,omitempty" yaml:"is_absolute,omitempty"`
@@ -1555,7 +1557,7 @@ type RiskFactor struct {
 	Mrn         string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Title       string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
 	Filters     *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
-	Queries     []*Mquery           `protobuf:"bytes,2,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	Checks      []*Mquery           `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
 	Docs        *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext FileContext         `json:"-" yaml:"-"`
 	Comments    Comments            `json:"-" yaml:"-"`

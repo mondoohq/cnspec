@@ -3,6 +3,79 @@
 
 package policy
 
+import (
+	"context"
+
+	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/v10/checksums"
+	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/utils/multierr"
+)
+
+func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
+	nu, err := RefreshMRN(ownerMRN, r.Mrn, MRN_RESOURCE_RISK, r.Uid)
+	if err != nil {
+		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", r.Uid).Msg("failed to refresh mrn")
+		return multierr.Wrap(err, "failed to refresh mrn for query "+r.Title)
+	}
+
+	r.Mrn = nu
+	r.Uid = ""
+
+	for i := range r.Checks {
+		if err := r.Checks[i].RefreshMRN(ownerMRN); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *RiskFactor) RefreshChecksum(conf mqlc.CompilerConfig) error {
+	c := checksums.New.
+		Add(r.Mrn).
+		Add(r.Title).
+		Add(r.Docs.Active).
+		Add(r.Docs.Inactive).
+		AddUint(uint64(r.Scope)).
+		AddUint(uint64(r.Magnitude))
+
+	var err error
+	c, err = r.Filters.ComputeChecksum(c, r.Mrn, conf)
+	if err != nil {
+		return err
+	}
+
+	for i := range r.Checks {
+		check := r.Checks[i]
+		if err := check.RefreshChecksum(context.Background(), conf, nil); err != nil {
+			return err
+		}
+	}
+
+	if r.IsAbsolute {
+		c = c.Add("1")
+	} else {
+		c = c.Add("0")
+	}
+
+	for i := range r.Software {
+		cur := r.Software[i]
+		c = c.Add(cur.Type).
+			Add(cur.Name).
+			Add(cur.Namespace).
+			Add(cur.Version).
+			Add(cur.MqlMrn)
+	}
+	for i := range r.Resources {
+		cur := r.Resources[i]
+		c = c.Add(cur.Selector)
+	}
+
+	r.Checksum = c.String()
+	return nil
+}
+
 func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 	// Absolute risk factors only play a role when they are detected.
 	if r.IsAbsolute {
@@ -20,7 +93,7 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 				score.RiskFactors = &ScoredRiskFactors{}
 			}
 			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-				Id:         r.Uid,
+				Mrn:        r.Mrn,
 				Risk:       r.Magnitude,
 				IsAbsolute: true,
 			})
@@ -37,7 +110,7 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 				score.RiskFactors = &ScoredRiskFactors{}
 			}
 			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-				Id:   r.Uid,
+				Mrn:  r.Mrn,
 				Risk: r.Magnitude,
 			})
 			return
@@ -56,7 +129,7 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 			score.RiskFactors = &ScoredRiskFactors{}
 		}
 		score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-			Id:   r.Uid,
+			Mrn:  r.Mrn,
 			Risk: r.Magnitude,
 		})
 		return
@@ -67,7 +140,7 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 		score.RiskFactors = &ScoredRiskFactors{}
 	}
 	score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-		Id:   r.Uid,
+		Mrn:  r.Mrn,
 		Risk: -r.Magnitude,
 	})
 }

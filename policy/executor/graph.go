@@ -23,7 +23,19 @@ type GraphExecutor interface {
 func ExecuteResolvedPolicy(runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressReporter progress.Progress,
 ) error {
-	collector := internal.NewBufferedCollector(internal.NewPolicyServiceCollector(assetMrn, collectorSvc))
+	var opts []internal.BufferedCollectorOpt
+
+	riskOpt, err := internal.WithResolvedPolicy(resolvedPolicy)
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to execute advanced features in resolved policy")
+	} else {
+		opts = append(opts, riskOpt)
+	}
+
+	collector := internal.NewBufferedCollector(
+		internal.NewPolicyServiceCollector(assetMrn, collectorSvc),
+		opts...,
+	)
 	defer collector.FlushAndStop()
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)

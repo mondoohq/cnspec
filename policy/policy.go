@@ -90,7 +90,9 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 // Gather only the local asset filters, which means we don't descend into
 // dependent queries. Due to variants and referenced remote queries we may
 // still need to look up queries to get to their filters.
-func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQueryByMrn func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (*explorer.Filters, error) {
+func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByMrn func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (*explorer.Filters, error) {
+	groups := policy.Groups
+
 	filters := &explorer.Filters{
 		Items: map[string]*explorer.Mquery{},
 	}
@@ -131,6 +133,16 @@ func gatherLocalAssetFilters(ctx context.Context, groups []*PolicyGroup, lookupQ
 		}
 	}
 
+	for i := range policy.RiskFactors {
+		rf := policy.RiskFactors[i]
+		filters.AddFilters(rf.Filters)
+		for j := range rf.Checks {
+			filters.AddQueryFiltersFn(ctx, rf.Checks[j], func(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+				return nil, errors.New("cannot look up filters in risk factors")
+			})
+		}
+	}
+
 	return filters, nil
 }
 
@@ -143,7 +155,7 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context,
 ) ([]*explorer.Mquery, error) {
 	filters := map[string]*explorer.Mquery{}
 
-	localFilters, err := gatherLocalAssetFilters(ctx, p.Groups, getQuery)
+	localFilters, err := gatherLocalAssetFilters(ctx, p, getQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +169,15 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context,
 		for i := range group.Policies {
 			if err := p.computeAssetFilters(ctx, group.Policies[i].Mrn, getPolicy, getQuery, recursive, filters); err != nil {
 				return nil, err
+			}
+		}
+	}
+
+	for i := range p.RiskFactors {
+		rf := p.RiskFactors[i]
+		if rf.Filters != nil {
+			for i := range rf.Filters.Items {
+				filters[i] = rf.Filters.Items[i]
 			}
 		}
 	}

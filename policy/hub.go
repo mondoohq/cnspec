@@ -445,7 +445,7 @@ func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *Poli
 	bundleMap.Policies[mpolicyObj.Mrn] = mpolicyObj
 
 	// we need to re-compute the asset filters
-	localFilters, err := gatherLocalAssetFilters(ctx, mpolicyObj.Groups, s.DataLake.GetQuery)
+	localFilters, err := gatherLocalAssetFilters(ctx, mpolicyObj, s.DataLake.GetQuery)
 	if err != nil {
 		return err
 	}

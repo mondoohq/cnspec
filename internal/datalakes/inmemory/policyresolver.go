@@ -615,6 +615,10 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 
 	reportingJobs := collectorJob.ReportingJobs
 	for _, job := range reportingJobs {
+		if job.Type == policy.ReportingJob_RISK_FACTOR {
+			continue
+		}
+
 		qrid := job.QrId
 		if qrid == "root" {
 			qrid = assetMrn
@@ -812,6 +816,38 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 		Str("error_msg", score.Message).
 		Msg("resolver.db> update score")
 	return true, nil
+}
+
+// UpdateRisks sets the given risks and returns any that were updated
+func (db *Db) UpdateRisks(ctx context.Context, assetMrn string, data []*policy.ScoredRiskFactor) (map[string]struct{}, error) {
+	updates := map[string]struct{}{}
+
+	var existingRisks map[string]*policy.ScoredRiskFactor
+	dbID := dbIDAssetRisk + assetMrn
+	raw, ok := db.cache.Get(dbID)
+	if ok {
+		existingRisks = raw.(map[string]*policy.ScoredRiskFactor)
+	} else {
+		existingRisks = map[string]*policy.ScoredRiskFactor{}
+	}
+
+	nuRisks := map[string]*policy.ScoredRiskFactor{}
+	for i := range data {
+		scoredRisk := data[i]
+
+		existing, ok := existingRisks[scoredRisk.Mrn]
+		if !ok || existing.IsDetected != scoredRisk.IsDetected {
+			updates[scoredRisk.Mrn] = struct{}{}
+		}
+		nuRisks[scoredRisk.Mrn] = &policy.ScoredRiskFactor{
+			Mrn:        scoredRisk.Mrn,
+			IsDetected: scoredRisk.IsDetected,
+		}
+	}
+
+	db.cache.Set(dbID, nuRisks, 1)
+
+	return updates, nil
 }
 
 // SetProps will override properties for a given entity (asset, space, org)
