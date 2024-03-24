@@ -111,13 +111,6 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 		res.Props[i] = p.Props[ids[i]]
 	}
 
-	// risks
-	ids = sortx.Keys(p.RiskFactors)
-	res.RiskFactors = make([]*RiskFactor, len(ids))
-	for i := range ids {
-		res.RiskFactors[i] = p.RiskFactors[ids[i]]
-	}
-
 	return &res
 }
 

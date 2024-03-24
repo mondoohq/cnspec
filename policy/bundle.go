@@ -119,7 +119,6 @@ func Merge(a *Bundle, b *Bundle) *Bundle {
 	res.Queries = append(res.Queries, a.Queries...)
 	res.Frameworks = append(res.Frameworks, a.Frameworks...)
 	res.FrameworkMaps = append(res.FrameworkMaps, a.FrameworkMaps...)
-	res.RiskFactors = append(res.RiskFactors, a.RiskFactors...)
 
 	// merge in b
 	res.Policies = append(res.Policies, b.Policies...)
@@ -128,7 +127,6 @@ func Merge(a *Bundle, b *Bundle) *Bundle {
 	res.Queries = append(res.Queries, b.Queries...)
 	res.Frameworks = append(res.Frameworks, b.Frameworks...)
 	res.FrameworkMaps = append(res.FrameworkMaps, b.FrameworkMaps...)
-	res.RiskFactors = append(res.RiskFactors, b.RiskFactors...)
 
 	return res
 }
@@ -247,11 +245,6 @@ func (p *Bundle) ToMap() *PolicyBundleMap {
 	for i := range p.Props {
 		c := p.Props[i]
 		res.Props[c.Mrn] = c
-	}
-
-	for i := range p.RiskFactors {
-		c := p.RiskFactors[i]
-		res.RiskFactors[c.Mrn] = c
 	}
 
 	return res
@@ -894,16 +887,6 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 			return nil, errors.New("failed to get framework in bundle (not yet supported) for " + fm.FrameworkOwner.Mrn)
 		}
 		framework.FrameworkMaps = append(framework.FrameworkMaps, fm)
-	}
-
-	for i := range p.RiskFactors {
-		risk := p.RiskFactors[i]
-		if err := risk.RefreshMRN(ownerMrn); err != nil {
-			return nil, errors.New("failed to assign MRN to risk: " + err.Error())
-		}
-		if err := cache.compileRisk(risk, nil); err != nil {
-			return nil, errors.New("failed to compile risk: " + err.Error())
-		}
 	}
 
 	// cannot be done before all policies and queries have their MRNs set

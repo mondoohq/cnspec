@@ -103,7 +103,6 @@ type Bundle struct {
 	Packs         []*QueryPack    `protobuf:"bytes,10,rep,name=packs,proto3" json:"packs,omitempty" yaml:"packs,omitempty"`
 	Frameworks    []*Framework    `protobuf:"bytes,8,rep,name=frameworks,proto3" json:"frameworks,omitempty" yaml:"frameworks,omitempty"`
 	FrameworkMaps []*FrameworkMap `protobuf:"bytes,9,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty" yaml:"framework_maps,omitempty"`
-	RiskFactors   []*RiskFactor   `protobuf:"bytes,11,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
 	OwnerMrn      string          `protobuf:"bytes,1,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
 	Policies      []*Policy       `protobuf:"bytes,7,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
 	Props         []*Property     `protobuf:"bytes,3,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
