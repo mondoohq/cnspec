@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/explorer/transport"
 	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/mqlc"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
@@ -64,7 +64,7 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 	}
 
 	// restrict parallel upstream connections to two connections
-	httpClient.Transport = explorer.NewMaxParallelConnTransport(httpClient.Transport, 2)
+	httpClient.Transport = transport.NewMaxParallelConnTransport(httpClient.Transport, 2)
 
 	policyHub, err := NewPolicyHubClient(addr, httpClient, auth...)
 	if err != nil {

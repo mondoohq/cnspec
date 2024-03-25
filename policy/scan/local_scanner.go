@@ -27,6 +27,7 @@ import (
 	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/recording"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/cnquery/v10/utils/multierr"
@@ -103,7 +104,7 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	}
 
 	if ls.recording == nil {
-		ls.recording = providers.NullRecording{}
+		ls.recording = recording.Null{}
 	}
 
 	return ls
@@ -368,13 +369,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 			// attach the asset details to the assets list
 			for i := range batch {
-				asset := batch[i].Asset
+				cur := batch[i]
+				asset := cur.Asset
 				log.Debug().Str("asset", asset.Name).Strs("platform-ids", asset.PlatformIds).Msg("update asset")
 				platformMrn := asset.PlatformIds[0]
 				if details, ok := platformAssetMapping[platformMrn]; ok {
 					asset.Mrn = details.AssetMrn
 					asset.Url = details.Url
 					asset.Labels["mondoo.com/project-id"] = details.ProjectId
+					cur.Runtime.SetRecording(s.recording)
+					cur.Runtime.AssetUpdated(asset)
 				}
 			}
 		} else {
@@ -475,6 +479,7 @@ func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime
 		asset.Mrn = details.AssetMrn
 		asset.Url = details.Url
 		asset.Labels["mondoo.com/project-id"] = details.ProjectId
+		runtime.AssetUpdated(asset)
 	}
 	return asset, nil
 }
@@ -978,6 +983,23 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 			EntityMrn:  s.job.Asset.Mrn,
 			ScoringMrn: s.job.Asset.Mrn,
 		}, err
+	}
+
+	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) {
+		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
+		recording := s.Runtime.Recording()
+		data, ok := recording.GetAssetData("") // s.job.Asset.Mrn)
+		if !ok {
+			log.Debug().Msg("not storing resource data for this asset, nothing available")
+		} else {
+			_, err = resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
+				AssetMrn:  s.job.Asset.Mrn,
+				Resources: data,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
