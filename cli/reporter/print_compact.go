@@ -193,6 +193,10 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 
 			r.out("See more scan results and asset relationships on the Mondoo Console: ")
 			r.out(url + NewLineCharacter)
+
+			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" {
+				r.out("Asset MRN: " + orderedAssets[0].Mrn + NewLineCharacter)
+			}
 		}
 	}
 }

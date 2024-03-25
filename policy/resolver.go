@@ -16,6 +16,7 @@ import (
 	"github.com/segmentio/fasthash/fnv1a"
 	"go.mondoo.com/cnquery/v10/checksums"
 	"go.mondoo.com/cnquery/v10/explorer"
+	resources "go.mondoo.com/cnquery/v10/explorer/resources"
 	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/logger"
 	"go.mondoo.com/cnquery/v10/mqlc"
@@ -254,6 +255,14 @@ func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Re
 // GetFrameworkReport retrieves a report for a given asset and framework
 func (s *LocalServices) GetFrameworkReport(ctx context.Context, req *EntityScoreReq) (*FrameworkReport, error) {
 	panic("NOT YET IMPLEMENTED")
+}
+
+func (s *LocalServices) GetResourcesData(ctx context.Context, req *resources.EntityResourcesReq) (*resources.EntityResourcesRes, error) {
+	res, err := s.DataLake.GetResources(ctx, req.EntityMrn, req.Resources)
+	return &resources.EntityResourcesRes{
+		Resources: res,
+		EntityMrn: req.EntityMrn,
+	}, err
 }
 
 // GetScore retrieves one score for an asset
