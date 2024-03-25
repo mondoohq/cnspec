@@ -831,6 +831,7 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 			Uuid:      cache.global.relativeChecksum(risk.Mrn),
 			ChildJobs: map[string]*explorer.Impact{},
 			Type:      ReportingJob_RISK_FACTOR,
+			Notify:    []string{ownerJob.Uuid},
 		}
 		cache.global.reportingJobsByUUID[riskJob.Uuid] = riskJob
 		ownerJob.ChildJobs[riskJob.Uuid] = &explorer.Impact{
