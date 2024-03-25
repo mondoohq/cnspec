@@ -87,6 +87,10 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 	return found, nil
 }
 
+func cannotLookupFilters(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+	return nil, errors.New("cannot look up filters for mrn=" + mrn)
+}
+
 // Gather only the local asset filters, which means we don't descend into
 // dependent queries. Due to variants and referenced remote queries we may
 // still need to look up queries to get to their filters.
@@ -137,9 +141,9 @@ func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByM
 		rf := policy.RiskFactors[i]
 		filters.AddFilters(rf.Filters)
 		for j := range rf.Checks {
-			filters.AddQueryFiltersFn(ctx, rf.Checks[j], func(ctx context.Context, mrn string) (*explorer.Mquery, error) {
-				return nil, errors.New("cannot look up filters in risk factors")
-			})
+			if err := filters.AddQueryFiltersFn(ctx, rf.Checks[j], cannotLookupFilters); err != nil {
+				return nil, err
+			}
 		}
 	}
 
