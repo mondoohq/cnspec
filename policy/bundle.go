@@ -230,6 +230,11 @@ func (p *Bundle) ToMap() *PolicyBundleMap {
 	for i := range p.Policies {
 		c := p.Policies[i]
 		res.Policies[c.Mrn] = c
+
+		for j := range c.RiskFactors {
+			r := c.RiskFactors[j]
+			res.RiskFactors[r.Mrn] = r
+		}
 	}
 
 	for i := range p.Frameworks {

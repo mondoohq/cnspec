@@ -355,6 +355,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 
 		r.printAssetControls(resolved, report, controls, assetMrn, asset)
 		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
+		r.printAssetRisks(resolved, report, assetMrn, asset)
 		r.out.Write([]byte(NewLineCharacter))
 		// TODO: we should re-use the report results
 		r.printVulns(report, assetMrn)
@@ -488,6 +489,43 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 
 			r.printCheck(score, query, resolved, report, results)
 		}
+	}
+}
+
+func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, report *policy.Report, assetMrn string, asset *inventory.Asset) {
+	if report.Risks == nil || len(report.Risks.Items) == 0 {
+		return
+	}
+
+	if len(r.bundle.RiskFactors) == 0 {
+		log.Warn().Msg("found risk factors in report, but none are in the bundle for printing")
+		return
+	}
+
+	r.out.Write([]byte(NewLineCharacter + "Risks/Mitigations:" + NewLineCharacter))
+
+	for i := range report.Risks.Items {
+		risk := report.Risks.Items[i]
+		if !risk.IsDetected {
+			continue
+		}
+
+		var text string
+
+		riskInfo, ok := r.bundle.RiskFactors[risk.Mrn]
+		if !ok {
+			text = risk.Mrn
+		} else {
+			text = riskInfo.Title
+		}
+
+		if risk.Risk > 0 {
+			text = termenv.String("✕ " + text).Foreground(r.Colors.High).String()
+		} else {
+			text = termenv.String("✓ " + text).Foreground(r.Colors.Success).String()
+		}
+
+		r.out.Write([]byte(text + NewLineCharacter))
 	}
 }
 

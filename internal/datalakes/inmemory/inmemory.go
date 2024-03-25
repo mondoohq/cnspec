@@ -64,6 +64,7 @@ const (
 	dbIDData           = "d\x00"
 	dbIDAsset          = "a\x00"
 	dbIDResolvedPolicy = "rp\x00"
+	dbIDRiskFactor     = "rf\x00"
 	dbIDAssetRisk      = "ar\x00"
 	dbIDFramework      = "f\x00"
 	dbIDFrameworkMap   = "fm\x00"

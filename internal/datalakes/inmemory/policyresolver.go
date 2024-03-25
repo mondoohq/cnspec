@@ -409,10 +409,17 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 
 	assetw := x.(wrapAsset)
 	resolvedPolicy := assetw.ResolvedPolicy
+	if resolvedPolicy.CollectorJob.RiskMrns == nil {
+		resolvedPolicy.CollectorJob.RiskMrns = map[string]*policy.StringArray{}
+	}
 	resolvedPolicyVersion := assetw.resolvedPolicyVersion
 
 	includedScores := map[string]struct{}{}
 	for _, job := range resolvedPolicy.CollectorJob.ReportingJobs {
+		if job.Type == policy.ReportingJob_RISK_FACTOR {
+			continue
+		}
+
 		qrid := job.QrId
 		if qrid == "root" {
 			qrid = assetMrn
@@ -451,12 +458,22 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 		return nil, err
 	}
 
+	risks, err := db.GetRisks(ctx, assetMrn)
+	if err != nil {
+		log.Error().
+			Err(err).
+			Str("entity", assetMrn).
+			Msg("resolver.db> could not fetch risks for asset")
+		return nil, err
+	}
+
 	res := policy.Report{
 		EntityMrn:             assetMrn,
 		ScoringMrn:            qrID,
 		Score:                 &score,
 		Scores:                scores,
 		Data:                  data,
+		Risks:                 risks,
 		ResolvedPolicyVersion: resolvedPolicyVersion,
 	}
 
@@ -489,6 +506,42 @@ func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (m
 	}
 
 	return res, nil
+}
+
+// GetRisks retrieves risk scores for an asset
+func (db *Db) GetRisks(ctx context.Context, assetMrn string) (*policy.ScoredRiskFactors, error) {
+	raw, ok := db.cache.Get(dbIDAssetRisk + assetMrn)
+	if !ok {
+		return nil, nil
+	}
+
+	risks := raw.(map[string]*policy.ScoredRiskFactor)
+	res := make([]*policy.ScoredRiskFactor, len(risks))
+	idx := 0
+	for _, risk := range risks {
+		srisk := &policy.ScoredRiskFactor{
+			Mrn:        risk.Mrn,
+			IsDetected: risk.IsDetected,
+		}
+
+		raw, ok := db.cache.Get(dbIDRiskFactor + risk.Mrn)
+		if !ok {
+			return nil, errors.New("cannot find risk metadata for " + risk.Mrn)
+		}
+		riskInfo := raw.(*policy.RiskFactor)
+		srisk.IsAbsolute = riskInfo.IsAbsolute
+		srisk.Risk = riskInfo.Magnitude
+		if !risk.IsDetected {
+			srisk.Risk *= -1
+		}
+
+		res[idx] = srisk
+		idx++
+	}
+
+	return &policy.ScoredRiskFactors{
+		Items: res,
+	}, nil
 }
 
 // GetData retrieves a map of requested data fields for an asset

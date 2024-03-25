@@ -808,14 +808,14 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 }
 
 func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJob *ReportingJob, cache *policyResolverCache) error {
-	var matchingRisks []*RiskFactor
+	matchingRisks := map[string]*RiskFactor{}
 	for i := range policy.RiskFactors {
 		rf := policy.RiskFactors[i]
 		if rf.Filters != nil {
 			for j := range rf.Filters.Items {
 				filter := rf.Filters.Items[j]
 				if _, ok := cache.global.assetFilters[filter.CodeId]; ok {
-					matchingRisks = append(matchingRisks, rf)
+					matchingRisks[rf.Mrn] = rf
 					break
 				}
 			}
@@ -825,29 +825,18 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 		return nil
 	}
 
-	// A static reportingjob for all risks
-	riskMrn := policy.Mrn + "/risks"
-	var riskJob *ReportingJob
-	riskJobs := cache.childJobsByMrn[riskMrn]
-	if len(riskJobs) == 0 {
-		riskJob = &ReportingJob{
-			QrId:       riskMrn,
-			Uuid:       cache.global.relativeChecksum(policy.LocalExecutionChecksum + "/risks"),
-			ChildJobs:  map[string]*explorer.Impact{},
-			Datapoints: map[string]bool{},
-			Type:       ReportingJob_RISK_FACTOR,
+	for _, risk := range matchingRisks {
+		riskJob := &ReportingJob{
+			QrId:      risk.Mrn,
+			Uuid:      cache.global.relativeChecksum(risk.Mrn),
+			ChildJobs: map[string]*explorer.Impact{},
+			Type:      ReportingJob_RISK_FACTOR,
 		}
 		cache.global.reportingJobsByUUID[riskJob.Uuid] = riskJob
-		cache.childJobsByMrn[riskMrn] = []*ReportingJob{riskJob}
-	} else {
-		return errors.New("currently don't support having multiple risk factors defined for the same policy: " + policy.Mrn)
-	}
+		ownerJob.ChildJobs[riskJob.Uuid] = &explorer.Impact{
+			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+		}
 
-	riskJob.Notify = append(riskJob.Notify, ownerJob.Uuid)
-	ownerJob.ChildJobs[riskJob.Uuid] = &explorer.Impact{}
-
-	for i := range matchingRisks {
-		risk := matchingRisks[i]
 		for j := range risk.Checks {
 			check := risk.Checks[j]
 			if check.Checksum == "" {
@@ -858,13 +847,16 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 				continue
 			}
 
-			cache.addCheckJob(ctx, check, &explorer.Impact{}, riskJob)
+			cache.addCheckJob(ctx, check, &explorer.Impact{
+				Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+			}, riskJob)
 			cache.global.riskMrns[risk.Mrn] = check
 		}
-	}
 
-	for riskCheckJob := range riskJob.ChildJobs {
-		cache.global.reportingJobsByUUID[riskCheckJob].Type = ReportingJob_RISK_FACTOR
+		for uuid := range riskJob.ChildJobs {
+			job := cache.global.reportingJobsByUUID[uuid]
+			job.Type = ReportingJob_RISK_FACTOR
+		}
 	}
 
 	return nil

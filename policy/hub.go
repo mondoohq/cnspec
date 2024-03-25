@@ -200,6 +200,12 @@ func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundl
 		}
 	}
 
+	for _, risk := range bundleMap.RiskFactors {
+		if err := s.DataLake.SetRiskFactor(ctx, risk); err != nil {
+			return err
+		}
+	}
+
 	// sort policies, so that we store child policies before their parents
 	policies, err := bundleMap.PoliciesSortedByDependency()
 	if err != nil {
