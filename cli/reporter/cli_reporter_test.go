@@ -38,7 +38,7 @@ func TestCompactReporter(t *testing.T) {
 	rr := &defaultReporter{
 		Reporter:  r,
 		isCompact: true,
-		out:       &writer,
+		output:    &writer,
 		data:      yr,
 	}
 	rr.print()
