@@ -80,7 +80,7 @@ var serveCmd = &cobra.Command{
 
 			checkin, err := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, scanConf.AgentMrn, scanConf.runtime.UpstreamConfig, 2*time.Hour)
 			if err != nil {
-				log.Error().Err(err).Msg("could not initialize upstream check-in")
+				log.Debug().Err(err).Msg("could not initialize upstream check-in")
 			} else {
 				checkin.Start()
 				defer checkin.Stop()
