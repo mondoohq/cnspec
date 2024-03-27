@@ -95,11 +95,18 @@ var serveCmd = &cobra.Command{
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not start background listener"), 1)
 		}
 
+		autoUpdate := true
+		if viper.IsSet("auto_update") {
+			autoUpdate = viper.GetBool("auto_update")
+		}
+
 		bj.Run(func() error {
 			// Try to update the os provider before each scan
-			err = updateProviders()
-			if err != nil {
-				log.Error().Err(err).Msg("could not update providers")
+			if autoUpdate {
+				err = updateProviders()
+				if err != nil {
+					log.Error().Err(err).Msg("could not update providers")
+				}
 			}
 			// TODO: check in every 5 min via timer, init time in Background job
 			result, err := RunScan(scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR))
