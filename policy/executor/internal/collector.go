@@ -5,6 +5,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -37,16 +38,48 @@ type Collector interface {
 }
 
 type BufferedCollector struct {
-	results   map[string]*llx.RawResult
-	scores    map[string]*policy.Score
-	lock      sync.Mutex
-	collector *PolicyServiceCollector
-	duration  time.Duration
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
+	results        map[string]*llx.RawResult
+	scores         map[string]*policy.Score
+	lock           sync.Mutex
+	collector      *PolicyServiceCollector
+	resolvedPolicy *policy.ResolvedPolicy
+	riskMRNs       map[string][]string
+	duration       time.Duration
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
 }
 
 type BufferedCollectorOpt func(*BufferedCollector)
+
+func WithResolvedPolicy(resolved *policy.ResolvedPolicy) (BufferedCollectorOpt, error) {
+	// TODO: need a more native way to integrate this part. We don't want to
+	// introduce a score type.
+	riskMRNs := map[string][]string{}
+	for _, rj := range resolved.CollectorJob.ReportingJobs {
+		if rj.Type != policy.ReportingJob_RISK_FACTOR {
+			continue
+		}
+
+		for k := range rj.ChildJobs {
+			cjob := resolved.CollectorJob.ReportingJobs[k]
+			if resolved.CollectorJob.RiskMrns == nil {
+				return nil, errors.New("missing query MRNs in resolved policy")
+			}
+
+			mrns := resolved.CollectorJob.RiskMrns[cjob.Uuid]
+			if mrns == nil {
+				return nil, errors.New("missing query MRNs for job uuid=" + cjob.Uuid + " checksum=" + cjob.Checksum)
+			}
+
+			riskMRNs[cjob.QrId] = append(riskMRNs[cjob.QrId], mrns.Items...)
+		}
+	}
+
+	return func(b *BufferedCollector) {
+		b.resolvedPolicy = resolved
+		b.riskMRNs = riskMRNs
+	}, nil
+}
 
 func NewBufferedCollector(collector *PolicyServiceCollector, opts ...BufferedCollectorOpt) *BufferedCollector {
 	c := &BufferedCollector{
@@ -56,8 +89,26 @@ func NewBufferedCollector(collector *PolicyServiceCollector, opts ...BufferedCol
 		collector: collector,
 		stopChan:  make(chan struct{}),
 	}
+
+	for i := range opts {
+		opts[i](c)
+	}
+
 	c.run()
 	return c
+}
+
+func (c *BufferedCollector) consumeRisk(score *policy.Score, risks map[string]bool) bool {
+	riskMRNs, ok := c.riskMRNs[score.QrId]
+	if !ok {
+		return false
+	}
+
+	for _, riskMRN := range riskMRNs {
+		isDetected := score.Value != 100
+		risks[riskMRN] = risks[riskMRN] || isDetected
+	}
+	return true
 }
 
 func (c *BufferedCollector) run() {
@@ -68,9 +119,11 @@ func (c *BufferedCollector) run() {
 		done := false
 		results := []*llx.RawResult{}
 		scores := []*policy.Score{}
+		risksIdx := map[string]bool{}
 		for {
 
 			c.lock.Lock()
+
 			for _, rr := range c.results {
 				results = append(results, rr)
 			}
@@ -79,16 +132,30 @@ func (c *BufferedCollector) run() {
 			}
 
 			for _, s := range c.scores {
+				if c.consumeRisk(s, risksIdx) {
+					continue
+				}
 				scores = append(scores, s)
 			}
 			for k := range c.scores {
 				delete(c.scores, k)
 			}
+
+			risks := make([]*policy.ScoredRiskFactor, len(risksIdx))
+			ri := 0
+			for mrn, isDetected := range risksIdx {
+				risks[ri] = &policy.ScoredRiskFactor{
+					Mrn:        mrn,
+					IsDetected: isDetected,
+				}
+				ri++
+			}
+
 			c.lock.Unlock()
 
 			// If we have something to send or this is the last batch, we do a Sink
-			if len(scores) > 0 || len(results) > 0 || done {
-				c.collector.Sink(results, scores, done)
+			if len(scores) > 0 || len(results) > 0 || len(risks) > 0 || done {
+				c.collector.Sink(results, scores, risks, done)
 			}
 
 			results = results[:0]
@@ -161,9 +228,9 @@ func (c *PolicyServiceCollector) toResult(rr *llx.RawResult) *llx.Result {
 	return v
 }
 
-func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy.Score, isDone bool) {
+func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy.Score, risks []*policy.ScoredRiskFactor, isDone bool) {
 	// If we have nothing to send and also this is not the last batch, we just skip
-	if len(results) == 0 && len(scores) == 0 && !isDone {
+	if len(results) == 0 && len(scores) == 0 && len(risks) == 0 && !isDone {
 		return
 	}
 	resultsToSend := make(map[string]*llx.Result, len(results))
@@ -175,6 +242,7 @@ func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy
 		AssetMrn:       c.assetMrn,
 		Data:           resultsToSend,
 		Scores:         scores,
+		Risks:          risks,
 		IsPreprocessed: true,
 		IsLastBatch:    isDone,
 	})

@@ -59,6 +59,8 @@ type DataLake interface {
 	GetRawPolicy(ctx context.Context, mrn string) (*Policy, error)
 	// SetPolicy stores a given policy in the data lake
 	SetPolicy(ctx context.Context, policy *Policy, filters []*explorer.Mquery) error
+	// SetRiskFactor to the data store
+	SetRiskFactor(ctx context.Context, riskFactor *RiskFactor) error
 
 	// List all policies for a given owner
 	// Note: Owner MRN is required
@@ -85,10 +87,14 @@ type DataLake interface {
 
 	// GetScore retrieves one score for an asset
 	GetScore(ctx context.Context, assetMrn string, scoreID string) (Score, error)
-	// UpdateScores sets the given scores and returns true if any were updated
+	// GetRisks retrieves risk scores for an asset
+	GetRisks(ctx context.Context, assetMrn string) (*ScoredRiskFactors, error)
+	// UpdateScores sets the given scores and returns a list of updated IDs
 	UpdateScores(ctx context.Context, assetMrn string, scores []*Score) (map[string]struct{}, error)
 	// UpdateData sets the list of data value for a given asset and returns a list of updated IDs
 	UpdateData(ctx context.Context, assetMrn string, data map[string]*llx.Result) (map[string]types.Type, error)
+	// UpdateRisks sets the given risks and returns any that were updated
+	UpdateRisks(ctx context.Context, assetMrn string, data []*ScoredRiskFactor) (map[string]struct{}, error)
 
 	// GetReport retrieves all scores and data for a given asset
 	GetReport(ctx context.Context, assetMrn string, qrID string) (*Report, error)

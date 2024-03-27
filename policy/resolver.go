@@ -231,6 +231,11 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 		return globalEmpty, err
 	}
 
+	_, err = s.DataLake.UpdateRisks(ctx, req.AssetMrn, req.Risks)
+	if err != nil {
+		return globalEmpty, err
+	}
+
 	if s.Upstream != nil && !s.Incognito {
 		_, err := s.Upstream.PolicyResolver.StoreResults(ctx, req)
 		if err != nil {
@@ -358,6 +363,7 @@ type resolverCache struct {
 	executionQueries map[string]*ExecutionQuery
 	dataQueries      map[string]struct{}
 	queriesByMsum    map[string]*explorer.Mquery // Msum == Mquery.Checksum
+	riskMrns         map[string]*explorer.Mquery
 	propsCache       explorer.PropsCache
 
 	reportingJobsByUUID map[string]*ReportingJob
@@ -524,6 +530,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		dataQueries:          map[string]struct{}{},
 		propsCache:           explorer.NewPropsCache(),
 		queriesByMsum:        map[string]*explorer.Mquery{},
+		riskMrns:             map[string]*explorer.Mquery{},
 		reportingJobsByUUID:  map[string]*ReportingJob{},
 		reportingJobsByMsum:  map[string][]*ReportingJob{},
 		reportingJobsActive:  map[string]bool{},
@@ -790,8 +797,68 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 		}
 	}
 
+	if err = s.risksToJobs(ctx, policyObj, ownerJob, cache); err != nil {
+		return err
+	}
+
 	// finalize
 	parentCache.addChildren(cache)
+
+	return nil
+}
+
+func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJob *ReportingJob, cache *policyResolverCache) error {
+	matchingRisks := map[string]*RiskFactor{}
+	for i := range policy.RiskFactors {
+		rf := policy.RiskFactors[i]
+		if rf.Filters != nil {
+			for j := range rf.Filters.Items {
+				filter := rf.Filters.Items[j]
+				if _, ok := cache.global.assetFilters[filter.CodeId]; ok {
+					matchingRisks[rf.Mrn] = rf
+					break
+				}
+			}
+		}
+	}
+	if len(matchingRisks) == 0 {
+		return nil
+	}
+
+	for _, risk := range matchingRisks {
+		riskJob := &ReportingJob{
+			QrId:      risk.Mrn,
+			Uuid:      cache.global.relativeChecksum(risk.Mrn),
+			ChildJobs: map[string]*explorer.Impact{},
+			Type:      ReportingJob_RISK_FACTOR,
+			Notify:    []string{ownerJob.Uuid},
+		}
+		cache.global.reportingJobsByUUID[riskJob.Uuid] = riskJob
+		ownerJob.ChildJobs[riskJob.Uuid] = &explorer.Impact{
+			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+		}
+
+		for j := range risk.Checks {
+			check := risk.Checks[j]
+			if check.Checksum == "" {
+				return errors.New("invalid check encountered, missing checksum for: " + check.Mrn)
+			}
+
+			if !check.Filters.Supports(cache.global.assetFilters) {
+				continue
+			}
+
+			cache.addCheckJob(ctx, check, &explorer.Impact{
+				Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+			}, riskJob)
+			cache.global.riskMrns[risk.Mrn] = check
+		}
+
+		for uuid := range riskJob.ChildJobs {
+			job := cache.global.reportingJobsByUUID[uuid]
+			job.Type = ReportingJob_RISK_FACTOR
+		}
+	}
 
 	return nil
 }
@@ -1178,6 +1245,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 		ReportingJobs:    map[string]*ReportingJob{},
 		ReportingQueries: map[string]*StringArray{},
 		Datapoints:       map[string]*DataQueryInfo{},
+		RiskMrns:         map[string]*StringArray{},
 	}
 	executionJob := &ExecutionJob{
 		Queries: map[string]*ExecutionQuery{},
@@ -1320,6 +1388,17 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 				return nil, nil, err
 			}
 		}
+	}
+
+	for k, check := range cache.riskMrns {
+		uuid := cache.relativeChecksum(check.Checksum)
+		existing := collectorJob.RiskMrns[uuid]
+		if existing == nil {
+			existing = &StringArray{}
+			collectorJob.RiskMrns[uuid] = existing
+		}
+
+		existing.Items = append(existing.Items, k)
 	}
 
 	return executionJob, collectorJob, nil

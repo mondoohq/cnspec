@@ -34,11 +34,15 @@ type defaultReporter struct {
 	*Reporter
 	isCompact bool
 	isSummary bool
-	out       io.Writer
+	output    io.Writer
 	data      *policy.ReportCollection
 
 	// vv the items below will be automatically filled
 	bundle *policy.PolicyBundleMap
+}
+
+func (r *defaultReporter) out(s string) {
+	_, _ = r.output.Write([]byte(s))
 }
 
 func (r *defaultReporter) print() error {
@@ -109,7 +113,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			assetsString = "assets"
 		}
 		header := fmt.Sprintf("Scanned %d %s", len(r.data.Assets), assetsString)
-		r.out.Write([]byte(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String()))
+		r.out(termenv.String(header + NewLineCharacter).Foreground(r.Colors.Primary).String())
 	}
 
 	// print assets by platform
@@ -119,17 +123,17 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	if len(orderedAssets) > 1 {
 		summaryHeader := fmt.Sprintf("Summary")
 		summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
-		r.out.Write([]byte(NewLineCharacter))
-		r.out.Write([]byte(termenv.String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Primary).String()))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(NewLineCharacter)
+		r.out(termenv.String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Primary).String())
+		r.out(NewLineCharacter)
 
 		scoreHeader := "Score Distribution"
 		assetHeader := "Asset Distribution"
 		header := scoreHeader + "\t\t" + assetHeader
 		headerDivider := strings.Repeat("-", utf8.RuneCountInString(scoreHeader)) + "\t\t" + strings.Repeat("-", utf8.RuneCountInString(assetHeader))
 
-		r.out.Write([]byte(header + NewLineCharacter))
-		r.out.Write([]byte(headerDivider + NewLineCharacter))
+		r.out(header + NewLineCharacter)
+		r.out(headerDivider + NewLineCharacter)
 
 		scores := r.getScoreDistribution(assetsByScore)
 		assets := r.getAssetDistribution(assetsByPlatform)
@@ -160,12 +164,12 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				row += assets[i]
 			}
 			row += NewLineCharacter
-			r.out.Write([]byte(row))
+			r.out(row)
 		}
 	}
 
 	if r.isCompact {
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(NewLineCharacter)
 		if !r.IsIncognito && assetUrl != "" {
 			url := ""
 			if len(orderedAssets) > 1 {
@@ -187,8 +191,8 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				url = assetUrl
 			}
 
-			r.out.Write([]byte("See more scan results and asset relationships on the Mondoo Console: "))
-			r.out.Write([]byte(url + NewLineCharacter))
+			r.out("See more scan results and asset relationships on the Mondoo Console: ")
+			r.out(url + NewLineCharacter)
 		}
 	}
 }
@@ -250,7 +254,7 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 	sort.Strings(availablePlatforms)
 
 	for _, platform := range availablePlatforms {
-		r.out.Write([]byte(NewLineCharacter + platform + NewLineCharacter))
+		r.out(NewLineCharacter + platform + NewLineCharacter)
 		for i := range assetsByPlatform[platform] {
 			assetScore := "U"
 			assetScoreRating := policy.ScoreRating_unrated
@@ -265,7 +269,7 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
 			output := fmt.Sprintf("    %s   %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
-			r.out.Write([]byte(output + NewLineCharacter))
+			r.out(output + NewLineCharacter)
 		}
 	}
 }
@@ -328,12 +332,12 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
-		r.out.Write([]byte(r.Printer.H2("Asset: " + target)))
+		r.out(r.Printer.H2("Asset: " + target))
 
 		errorMsg, ok := r.data.Errors[assetMrn]
 		if ok {
-			r.out.Write([]byte(r.Printer.Error(errorMsg)))
-			r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
+			r.out(r.Printer.Error(errorMsg))
+			r.out(NewLineCharacter + NewLineCharacter)
 			continue
 		}
 
@@ -355,12 +359,13 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 
 		r.printAssetControls(resolved, report, controls, assetMrn, asset)
 		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
-		r.out.Write([]byte(NewLineCharacter))
+		r.printAssetRisks(resolved, report, assetMrn, asset)
+		r.out(NewLineCharacter)
 		// TODO: we should re-use the report results
 		r.printVulns(report, assetMrn)
 
 	}
-	r.out.Write([]byte(NewLineCharacter))
+	r.out(NewLineCharacter)
 }
 
 // TODO: this should be done during the execution, as queries come in, not at the end!
@@ -390,20 +395,20 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 		return scores[i].QrId < scores[j].QrId
 	})
 
-	_, _ = r.out.Write([]byte("Compliance controls:" + NewLineCharacter))
+	r.out("Compliance controls:" + NewLineCharacter)
 
 	for i := range scores {
 		score := scores[i]
 		control, ok := controls[score.QrId]
 		if !ok {
-			r.out.Write([]byte("Couldn't find any controls for " + score.QrId))
+			r.out("Couldn't find any controls for " + score.QrId)
 			continue
 		}
 
 		r.printControl(score, control, resolved, report)
 	}
 
-	r.out.Write([]byte(NewLineCharacter))
+	r.out(NewLineCharacter)
 }
 
 func (r *defaultReporter) printControl(score *policy.Score, control *policy.Control, resolved *policy.ResolvedPolicy, report *policy.Report) {
@@ -414,23 +419,23 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out.Write([]byte(termenv.String("! Error:        ").Foreground(r.Colors.Error).String()))
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(termenv.String("! Error:        ").Foreground(r.Colors.Error).String())
+		r.out(title)
+		r.out(NewLineCharacter)
 		if !r.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out.Write([]byte(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String()))
-			r.out.Write([]byte(NewLineCharacter))
+			r.out(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String())
+			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out.Write([]byte(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String()))
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String())
+		r.out(title)
+		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out.Write([]byte(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String()))
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String())
+		r.out(title)
+		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Result:
 		var passfail string
@@ -440,10 +445,10 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 			passfail = termenv.String("✕ Fail:  ").Foreground(r.Colors.High).String()
 		}
 
-		r.out.Write([]byte(passfail + title + NewLineCharacter))
+		r.out(passfail + title + NewLineCharacter)
 
 	default:
-		r.out.Write([]byte("unknown result for " + title + NewLineCharacter))
+		r.out("unknown result for " + title + NewLineCharacter)
 	}
 }
 
@@ -464,9 +469,9 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 	})
 
 	if len(dataQueriesOutput) > 0 {
-		r.out.Write([]byte("Data queries:" + NewLineCharacter))
-		r.out.Write([]byte(dataQueriesOutput))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out("Data queries:" + NewLineCharacter)
+		r.out(dataQueriesOutput)
+		r.out(NewLineCharacter)
 	}
 
 	foundChecks := map[string]*policy.Score{}
@@ -478,16 +483,53 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		foundChecks[id] = score
 	}
 	if len(foundChecks) > 0 {
-		r.out.Write([]byte("Checks:" + NewLineCharacter))
+		r.out("Checks:" + NewLineCharacter)
 		for id, score := range foundChecks {
 			query, ok := queries[id]
 			if !ok {
-				r.out.Write([]byte("Couldn't find any queries for incoming value for " + id))
+				r.out("Couldn't find any queries for incoming value for " + id)
 				continue
 			}
 
 			r.printCheck(score, query, resolved, report, results)
 		}
+	}
+}
+
+func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, report *policy.Report, assetMrn string, asset *inventory.Asset) {
+	if report.Risks == nil || len(report.Risks.Items) == 0 {
+		return
+	}
+
+	if len(r.bundle.RiskFactors) == 0 {
+		log.Warn().Msg("found risk factors in report, but none are in the bundle for printing")
+		return
+	}
+
+	r.out(NewLineCharacter + "Risks/Mitigations:" + NewLineCharacter)
+
+	for i := range report.Risks.Items {
+		risk := report.Risks.Items[i]
+		if !risk.IsDetected {
+			continue
+		}
+
+		var text string
+
+		riskInfo, ok := r.bundle.RiskFactors[risk.Mrn]
+		if !ok {
+			text = risk.Mrn
+		} else {
+			text = riskInfo.Title
+		}
+
+		if risk.Risk > 0 {
+			text = termenv.String("✕ " + text).Foreground(r.Colors.High).String()
+		} else {
+			text = termenv.String("✓ " + text).Foreground(r.Colors.Success).String()
+		}
+
+		r.out(text + NewLineCharacter)
 	}
 }
 
@@ -528,54 +570,54 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out.Write([]byte(termenv.String("! Error:        ").Foreground(r.Colors.Error).String()))
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(termenv.String("! Error:        ").Foreground(r.Colors.Error).String())
+		r.out(title)
+		r.out(NewLineCharacter)
 		if !r.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out.Write([]byte(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String()))
-			r.out.Write([]byte(NewLineCharacter))
+			r.out(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String())
+			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out.Write([]byte(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String()))
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String())
+		r.out(title)
+		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out.Write([]byte(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String()))
-		r.out.Write([]byte(title))
-		r.out.Write([]byte(NewLineCharacter))
+		r.out(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String())
+		r.out(title)
+		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Result:
-		r.out.Write([]byte(r.printScore(title, score, query)))
+		r.out(r.printScore(title, score, query))
 
 		// additional information about the failed query
 		if !r.isCompact && score.Value != 100 {
 			queryString := strings.ReplaceAll(stringx.Indent(4, query.Query), "\n", NewLineCharacter)
-			r.out.Write([]byte("  Query:" + NewLineCharacter + queryString))
-			r.out.Write([]byte(NewLineCharacter))
+			r.out("  Query:" + NewLineCharacter + queryString)
+			r.out(NewLineCharacter)
 
 			codeBundle := resolved.GetCodeBundle(query)
 			if codeBundle == nil {
-				r.out.Write([]byte(r.Reporter.Printer.Error("failed to find code bundle for query '" + query.Mrn + "' in bundle")))
+				r.out(r.Reporter.Printer.Error("failed to find code bundle for query '" + query.Mrn + "' in bundle"))
 			} else {
-				r.out.Write([]byte("  Result:" + NewLineCharacter))
+				r.out("  Result:" + NewLineCharacter)
 				assessment := policy.Query2Assessment(codeBundle, report)
 				if assessment != nil {
 					assessmentString := stringx.Indent(4, r.Printer.Assessment(codeBundle, assessment))
 					assessmentString = strings.ReplaceAll(assessmentString, "\n", NewLineCharacter)
-					r.out.Write([]byte(assessmentString))
+					r.out(assessmentString)
 				} else {
 					data := codeBundle.FilterResults(results)
 					result := stringx.Indent(4, r.Reporter.Printer.Results(codeBundle, data))
 					result = strings.ReplaceAll(result, "\n", NewLineCharacter)
-					r.out.Write([]byte(result))
+					r.out(result)
 				}
 			}
-			r.out.Write([]byte(NewLineCharacter))
+			r.out(NewLineCharacter)
 		}
 	default:
-		r.out.Write([]byte("unknown result for " + title + NewLineCharacter))
+		r.out("unknown result for " + title + NewLineCharacter)
 	}
 }
 
@@ -589,7 +631,7 @@ func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
 	if vulnReport == nil {
 		return
 	}
-	r.out.Write([]byte(print.Primary("Vulnerabilities:" + NewLineCharacter)))
+	r.out(print.Primary("Vulnerabilities:" + NewLineCharacter))
 
 	score := report.Scores[advisoryPolicyMrn]
 	_ = score
@@ -604,11 +646,11 @@ func (r *defaultReporter) printVulnList(report *mvd.VulnReport) {
 		indicatorChar := '■'
 		title := "No advisories found"
 		state := "(passed)"
-		r.out.Write([]byte(termenv.String(string(indicatorChar), title, state).Foreground(color).String()))
-		r.out.Write([]byte(NewLineCharacter + NewLineCharacter))
+		r.out(termenv.String(string(indicatorChar), title, state).Foreground(color).String())
+		r.out(NewLineCharacter + NewLineCharacter)
 		return
 	}
-	r.out.Write([]byte(RenderVulnReport(report)))
+	r.out(RenderVulnReport(report))
 }
 
 func (r *defaultReporter) printVulnSummary(report *mvd.VulnReport) {
@@ -626,5 +668,5 @@ func (r *defaultReporter) printVulnSummary(report *mvd.VulnReport) {
 		DataCompletion:  100,
 	}
 
-	r.out.Write([]byte(r.scoreColored(vulnScore.Rating(), fmt.Sprintf("Overall CVSS score: %.1f%s%s", cvss, NewLineCharacter, NewLineCharacter))))
+	r.out(r.scoreColored(vulnScore.Rating(), fmt.Sprintf("Overall CVSS score: %.1f%s%s", cvss, NewLineCharacter, NewLineCharacter)))
 }

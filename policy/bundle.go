@@ -32,6 +32,7 @@ const (
 	MRN_RESOURCE_FRAMEWORK    = "frameworks"
 	MRN_RESOURCE_FRAMEWORKMAP = "frameworkmaps"
 	MRN_RESOURCE_CONTROL      = "controls"
+	MRN_RESOURCE_RISK         = "risks"
 )
 
 type BundleResolver interface {
@@ -229,6 +230,11 @@ func (p *Bundle) ToMap() *PolicyBundleMap {
 	for i := range p.Policies {
 		c := p.Policies[i]
 		res.Policies[c.Mrn] = c
+
+		for j := range c.RiskFactors {
+			r := c.RiskFactors[j]
+			res.RiskFactors[r.Mrn] = r
+		}
 	}
 
 	for i := range p.Frameworks {
@@ -849,6 +855,17 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 				return nil, err
 			}
 		}
+
+		// ---- RISK FACTORS ---------
+		for i := range policy.RiskFactors {
+			risk := policy.RiskFactors[i]
+			if err := risk.RefreshMRN(ownerMrn); err != nil {
+				return nil, errors.New("failed to assign MRN to risk: " + err.Error())
+			}
+			if err := cache.compileRisk(risk, policy); err != nil {
+				return nil, errors.New("failed to compile risk: " + err.Error())
+			}
+		}
 	}
 
 	// Removing any failing queries happens after everything is compiled.
@@ -1154,6 +1171,48 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 	c.lookupProp[prop.Mrn] = explorer.PropertyRef{
 		Property: prop,
 		Name:     name,
+	}
+
+	return nil
+}
+
+func (c *bundleCache) compileRisk(risk *RiskFactor, policy *Policy) error {
+	if err := risk.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
+		c.errors = append(c.errors, errors.New("failed to compile filters for risk factor "+risk.Mrn))
+		return nil
+	}
+
+	if risk.Filters != nil {
+		for j := range risk.Filters.Items {
+			filter := risk.Filters.Items[j]
+			policy.ComputedFilters.Items[filter.CodeId] = filter
+		}
+	}
+
+	for i := range risk.Checks {
+		check := risk.Checks[i]
+
+		// filters have no dependencies, so we can compile them early
+		if err := check.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
+			c.errors = append(c.errors, errors.New("failed to compile filters for risk check "+check.Mrn))
+			return nil
+		}
+		if check.Filters != nil {
+			for j := range check.Filters.Items {
+				filter := check.Filters.Items[j]
+				policy.ComputedFilters.Items[filter.CodeId] = filter
+			}
+		}
+
+		_, err := check.RefreshChecksumAndType(c.lookupQuery, c.lookupProp, c.conf.CompilerConfig)
+		if err != nil {
+			if c.conf.RemoveFailing {
+				panic("REMOVE FAILING risk factors")
+				// c.removeQueries[check.Mrn] = struct{}{}
+			} else {
+				c.errors = append(c.errors, multierr.Wrap(err, "failed to validate query '"+check.Mrn+"'"))
+			}
+		}
 	}
 
 	return nil

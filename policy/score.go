@@ -23,14 +23,18 @@ func (s *Score) TypeLabel() string {
 	switch s.Type {
 	case ScoreType_Unknown:
 		return "unknown"
-	case ScoreType_Error:
-		return "error"
 	case ScoreType_Result:
 		return "result"
+	case ScoreType_Error:
+		return "error"
 	case ScoreType_Skip:
 		return "skip"
 	case ScoreType_Unscored:
 		return "unscored"
+	case ScoreType_OutOfScope:
+		return "out of scope"
+	case ScoreType_Disabled:
+		return "disabled"
 	default:
 		return "unknown type"
 	}

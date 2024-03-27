@@ -316,6 +316,11 @@ func (db *Db) invalidateFrameworkAndBundleAncestors(ctx context.Context, wrap *w
 	return nil
 }
 
+func (db *Db) SetRiskFactor(ctx context.Context, riskFactor *policy.RiskFactor) error {
+	db.cache.Set(dbIDRiskFactor+riskFactor.Mrn, riskFactor, 1)
+	return nil
+}
+
 // ListPolicies all policies for a given owner
 // Note: Owner MRN is required
 func (db *Db) ListPolicies(ctx context.Context, ownerMrn string, name string) ([]*policy.Policy, error) {

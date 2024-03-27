@@ -113,7 +113,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		rr := &defaultReporter{
 			Reporter:  r,
 			isCompact: true,
-			out:       r.out,
+			output:    r.out,
 			data:      data,
 		}
 		return rr.print()
@@ -122,7 +122,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 			Reporter:  r,
 			isCompact: true,
 			isSummary: true,
-			out:       r.out,
+			output:    r.out,
 			data:      data,
 		}
 		return rr.print()
@@ -130,7 +130,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		rr := &defaultReporter{
 			Reporter:  r,
 			isCompact: false,
-			out:       r.out,
+			output:    r.out,
 			data:      data,
 		}
 		return rr.print()
