@@ -5,7 +5,7 @@
 
 **Open source, cloud-native security and policy project**
 
-cnspec assesses your entire infrastructure's security and compliance. It finds vulnerabilities and misconfigurations across public and private cloud environments, Kubernetes clusters, containers, container registries, servers, and endpoints, SaaS products, infrastructure as code, APIs, and more.
+cnspec assesses your entire infrastructure's security and compliance. It finds vulnerabilities and misconfigurations across public and private cloud environments, Kubernetes clusters, containers, container registries, servers, endpoints, SaaS products, infrastructure as code, APIs, and more.
 
 A powerful policy as code engine, cnspec is built upon [`cnquery`](https://github.com/mondoohq/cnquery). It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
@@ -56,7 +56,7 @@ cnspec scan docker image ubuntu:22.04
 aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/r6z5b8t4
 cnspec scan docker image public.ecr.aws/r6z5b8t4
 
-# to scan an AWS account using the local AWS config
+# to scan an AWS account using the local AWS CLI config
 cnspec scan aws
 
 # scan an EC2 instance with EC2 Instance Connect
@@ -75,7 +75,7 @@ cnspec scan github repo <org/repo>
 
 ### Policies
 
-cnspec policies are built on the concept of [policy as code](https://mondoo.com/policy-as-code/). cnspec comes with default security policies configured for all supported targets. The default policies are available in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
+cnspec policies are built on the concept of policy as code. cnspec comes with default security policies configured for all supported targets. The default policies are available in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
 
 ## Vulnerability scan
 
@@ -108,24 +108,24 @@ cnspec vuln vsphere user@host --ask-pass
 cnspec vuln local
 ```
 
-| Platform                 | Versions                 |
-| ------------------------ | ------------------------ |
-| Alpine                   | 3.10 - 3.18              |
-| AlmaLinux                | 8, 9                     |
-| Amazon Linux             | 1, 2, 2023               |
-| Arch Linux               | Rolling                  |
-| CentOS                   | 6, 7                     |
-| Debian                   | 8, 9, 10, 11, 12         |
-| Fedora                   | 30 - 38                  |
-| openSUSE                 | Leap 15                  |
-| Oracle Linux             | 6, 7, 8, 9               |
-| Photon Linux             | 2, 3, 4, 5               |
-| Red Hat Enterprise Linux | 6, 7, 8, 9               |
-| Rocky Linux              | 8, 9                     |
-| SUSE Linux Enterprise    | 12, 15                   |
-| Ubuntu                   | 18.04, 20.04, 22.04      |
-| VMware vSphere ESXi      | 6, 7                     |
-| Windows                  | 10, 11, 2016, 2019, 2022 |
+| Platform                 | Versions                   |
+| ------------------------ | -------------------------- |
+| Alpine                   | 3.10 - 3.19                |
+| AlmaLinux                | 8, 9                       |
+| Amazon Linux             | 1, 2, 2023                 |
+| Arch Linux               | Rolling                    |
+| CentOS                   | 6, 7                       |
+| Debian                   | 8, 9, 10, 11, 12           |
+| Fedora                   | 30 - 39                    |
+| openSUSE                 | Leap 15                    |
+| Oracle Linux             | 6, 7, 8, 9                 |
+| Photon Linux             | 2, 3, 4, 5                 |
+| Red Hat Enterprise Linux | 6, 7, 8, 9                 |
+| Rocky Linux              | 8, 9                       |
+| SUSE Linux Enterprise    | 12, 15                     |
+| Ubuntu                   | 18.04, 20.04, 22.04, 24.04 |
+| VMware vSphere ESXi      | 6, 7, 8                    |
+| Windows                  | 10, 11, 2016, 2019, 2022   |
 
 ## cnspec interactive shell
 
@@ -170,7 +170,7 @@ The easiest way to scale cnspec across your fleet is to sign up for a free Mondo
 
 Mondoo Platform's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, you can assess all your assets based on consistent policies and define custom policies and exceptions for your fleet.
 
-Go to [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup) to sign up.
+Sign up at [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup).
 
 To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home/) or visit [mondoo.com](https://mondoo.com).
 
@@ -271,6 +271,6 @@ See our [development docs](docs/development.md) for information on building and 
 
 ## Legal
 
-- **Copyright:** 2018-2023, Mondoo, Inc.
+- **Copyright:** 2018-2024, Mondoo, Inc.
 - **License:** BUSL 1.1
 - **Authors:** Christoph Hartmann, Dominik Richter
