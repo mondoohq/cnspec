@@ -377,7 +377,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 					asset.Mrn = details.AssetMrn
 					asset.Url = details.Url
 					asset.Labels["mondoo.com/project-id"] = details.ProjectId
-					cur.Runtime.SetRecording(s.recording)
+					err = cur.Runtime.SetRecording(s.recording)
+					if err != nil {
+						// we do not want to stop the scan if we cannot set the recording
+						log.Error().Err(err).Msg("could not set recording")
+					}
 					cur.Runtime.AssetUpdated(asset)
 				}
 			}
