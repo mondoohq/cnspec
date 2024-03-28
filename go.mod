@@ -34,7 +34,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.9.0
-	go.mondoo.com/cnquery/v10 v10.9.2-0.20240328085036-f4c664d5adb1
+	go.mondoo.com/cnquery/v10 v10.9.2
 	go.mondoo.com/mondoo-go v0.0.0-20240312054001-2ab23a39b500
 	go.mondoo.com/ranger-rpc v0.6.0
 	go.opentelemetry.io/otel v1.24.0
@@ -50,7 +50,7 @@ require (
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
 	4d63.com/gochecknoglobals v0.2.1 // indirect
-	cloud.google.com/go v0.112.1 // indirect
+	cloud.google.com/go v0.112.2 // indirect
 	cloud.google.com/go/compute v1.25.1 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v1.1.7 // indirect
@@ -89,7 +89,7 @@ require (
 	github.com/ashanbrown/forbidigo v1.6.0 // indirect
 	github.com/ashanbrown/makezero v1.1.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go v1.51.7 // indirect
+	github.com/aws/aws-sdk-go v1.51.9 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.26.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.1 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.9 // indirect
@@ -98,7 +98,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.0 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.153.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.154.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.23.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.27.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.23.3 // indirect
@@ -106,7 +106,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.3.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.17.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.28.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.28.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.29.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.31.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.49.4 // indirect
@@ -385,7 +385,7 @@ require (
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.19.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
-	google.golang.org/api v0.171.0 // indirect
+	google.golang.org/api v0.172.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20240325203815-454cdb8f5daa // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240325203815-454cdb8f5daa // indirect
@@ -401,7 +401,7 @@ require (
 	k8s.io/component-base v0.29.0 // indirect
 	k8s.io/klog/v2 v2.110.1 // indirect
 	k8s.io/kubelet v0.29.0 // indirect
-	modernc.org/libc v1.47.0 // indirect
+	modernc.org/libc v1.49.0 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.7.2 // indirect
 	modernc.org/sqlite v1.29.5 // indirect
