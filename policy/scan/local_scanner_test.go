@@ -14,8 +14,8 @@ import (
 	"go.mondoo.com/cnquery/v10"
 	"go.mondoo.com/cnquery/v10/explorer"
 	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/recording"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/v10/policy"
@@ -78,7 +78,7 @@ func TestDefaultConfig(t *testing.T) {
 		scanner := NewLocalScanner()
 		require.NotNil(t, scanner)
 
-		require.Equal(t, providers.NullRecording{}, scanner.recording)
+		require.Equal(t, recording.Null{}, scanner.recording)
 	})
 }
 

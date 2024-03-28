@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/explorer/resources"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/metadata"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -437,6 +438,7 @@ type PolicyResolver interface {
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
+	GetResourcesData(context.Context, *resources.EntityResourcesReq) (*resources.EntityResourcesRes, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
 	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
 }
@@ -522,6 +524,11 @@ func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) GetResourcesData(ctx context.Context, in *resources.EntityResourcesReq) (*resources.EntityResourcesRes, error) {
+	out := new(resources.EntityResourcesRes)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetResourcesData"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) SynchronizeAssets(ctx context.Context, in *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error) {
 	out := new(SynchronizeAssetsResp)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SynchronizeAssets"}, ""), in, out)
@@ -566,6 +573,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetReport":            srv.GetReport,
 			"GetFrameworkReport":   srv.GetFrameworkReport,
 			"GetScore":             srv.GetScore,
+			"GetResourcesData":     srv.GetResourcesData,
 			"SynchronizeAssets":    srv.SynchronizeAssets,
 			"PurgeAssets":          srv.PurgeAssets,
 		},
@@ -841,6 +849,30 @@ func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (
 		return nil, err
 	}
 	return p.handler.GetScore(ctx, &req)
+}
+func (p *PolicyResolverServer) GetResourcesData(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req resources.EntityResourcesReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetResourcesData(ctx, &req)
 }
 func (p *PolicyResolverServer) SynchronizeAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req SynchronizeAssetsReq
