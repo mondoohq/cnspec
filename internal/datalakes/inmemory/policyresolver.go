@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/explorer/resources"
 	"go.mondoo.com/cnquery/v10/llx"
 	"go.mondoo.com/cnquery/v10/types"
 	"go.mondoo.com/cnspec/v10/policy"
@@ -458,7 +459,7 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 		return nil, err
 	}
 
-	risks, err := db.GetRisks(ctx, assetMrn)
+	risks, err := db.GetScoredRisks(ctx, assetMrn)
 	if err != nil {
 		log.Error().
 			Err(err).
@@ -508,8 +509,8 @@ func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (m
 	return res, nil
 }
 
-// GetRisks retrieves risk scores for an asset
-func (db *Db) GetRisks(ctx context.Context, assetMrn string) (*policy.ScoredRiskFactors, error) {
+// GetScoredRisks retrieves risk scores for an asset
+func (db *Db) GetScoredRisks(ctx context.Context, assetMrn string) (*policy.ScoredRiskFactors, error) {
 	raw, ok := db.cache.Get(dbIDAssetRisk + assetMrn)
 	if !ok {
 		return nil, nil
@@ -901,6 +902,28 @@ func (db *Db) UpdateRisks(ctx context.Context, assetMrn string, data []*policy.S
 	db.cache.Set(dbID, nuRisks, 1)
 
 	return updates, nil
+}
+
+// GetResources retrieves previously stored resources about an asset
+func (db *Db) GetResources(ctx context.Context, assetMrn string, req []*resources.ResourceDataReq) ([]*llx.ResourceRecording, error) {
+	res := make([]*llx.ResourceRecording, len(req))
+	for i := range req {
+		rr := req[i]
+		raw, ok := db.cache.Get(dbIDData + assetMrn + "\x00" + rr.Resource + "\x00" + rr.Id)
+		if !ok {
+			return nil, errors.New("cannot find resource " + rr.Resource + " id=" + rr.Id + " on " + assetMrn)
+		}
+		res[i] = raw.(*llx.ResourceRecording)
+	}
+	return res, nil
+}
+
+// UpdateResources stores resources recording data for a given asset
+func (db *Db) UpdateResources(ctx context.Context, assetMrn string, resourcesRecording map[string]*llx.ResourceRecording) error {
+	for _, rr := range resourcesRecording {
+		db.cache.Set(dbIDData+assetMrn+"\x00"+rr.Resource+"\x00"+rr.Id, rr.Fields, 1)
+	}
+	return nil
 }
 
 // SetProps will override properties for a given entity (asset, space, org)
