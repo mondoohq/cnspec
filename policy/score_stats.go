@@ -37,3 +37,17 @@ func (b *BlastRadiusConfig) Indicator(totalWeight float32, weight float32) Blast
 	}
 	return BlastRadius_Large
 }
+
+func (s *ScoreStats) Add(other *ScoreStats) {
+	s.Assets += other.Assets
+	s.Critical += other.Critical
+	s.High += other.High
+	s.Medium += other.Medium
+	s.Low += other.Low
+	s.Pass += other.Pass
+	s.Unknown += other.Unknown
+	s.Error += other.Error
+	s.FirstFailureTime += other.FirstFailureTime
+	s.OldestScanTime += other.OldestScanTime
+	s.NewestScanTime += other.NewestScanTime
+}
