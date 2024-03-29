@@ -105,7 +105,7 @@ func (c *BufferedCollector) consumeRisk(score *policy.Score, risks map[string]bo
 	}
 
 	for _, riskMRN := range riskMRNs {
-		isDetected := score.Value != 100
+		isDetected := score.Value == 100
 		risks[riskMRN] = risks[riskMRN] || isDetected
 	}
 	return true
