@@ -6,6 +6,7 @@ package policy
 import (
 	"context"
 
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v10/checksums"
 	"go.mondoo.com/cnquery/v10/mqlc"
@@ -53,49 +54,69 @@ func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 	return nil
 }
 
-func (r *RiskFactor) RefreshChecksum(conf mqlc.CompilerConfig) error {
+func (r *RiskFactor) ExecutionChecksum(ctx context.Context, conf mqlc.CompilerConfig) (checksums.Fast, error) {
 	c := checksums.New.
-		Add(r.Mrn).
-		Add(r.Title).
-		Add(r.Docs.Active).
-		Add(r.Docs.Inactive).
 		AddUint(uint64(r.Scope)).
 		AddUint(uint64(r.Magnitude))
+
+	if r.IsAbsolute {
+		c = c.AddUint(1)
+	} else {
+		c = c.AddUint(0)
+	}
 
 	var err error
 	c, err = r.Filters.ComputeChecksum(c, r.Mrn, conf)
 	if err != nil {
-		return err
+		return c, err
 	}
 
 	for i := range r.Checks {
 		check := r.Checks[i]
-		if err := check.RefreshChecksum(context.Background(), conf, nil); err != nil {
-			return err
+		if err := check.RefreshChecksum(ctx, conf, nil); err != nil {
+			return c, err
 		}
-	}
 
-	if r.IsAbsolute {
-		c = c.Add("1")
-	} else {
-		c = c.Add("0")
+		if check.Checksum == "" {
+			return c, errors.New("failed to get checksum for risk query " + check.Mrn)
+		}
+
+		c = c.Add(check.Checksum)
 	}
 
 	for i := range r.Software {
-		cur := r.Software[i]
-		c = c.Add(cur.Type).
-			Add(cur.Name).
-			Add(cur.Namespace).
-			Add(cur.Version).
-			Add(cur.MqlMrn)
-	}
-	for i := range r.Resources {
-		cur := r.Resources[i]
-		c = c.Add(cur.Selector)
+		sw := r.Software[i]
+		c = c.Add(sw.MqlMrn).Add(sw.Name).Add(sw.Namespace).Add(sw.Type).Add(sw.Version)
 	}
 
-	r.Checksum = c.String()
-	return nil
+	for i := range r.Resources {
+		rc := r.Resources[i]
+		c = c.Add(rc.Selector)
+	}
+
+	return c, nil
+}
+
+// RefreshChecksum updates the Checksum field of this RiskFactor and returns
+// both the ExecutionChecksum and the ContentChecksum.
+func (r *RiskFactor) RefreshChecksum(ctx context.Context, conf mqlc.CompilerConfig) (checksums.Fast, checksums.Fast, error) {
+	csum := checksums.New
+
+	esum, err := r.ExecutionChecksum(ctx, conf)
+	if err != nil {
+		return esum, csum, err
+	}
+
+	csum = csum.AddUint(uint64(esum)).
+		Add(r.Mrn).
+		Add(r.Title)
+
+	if r.Docs != nil {
+		csum = csum.Add(r.Docs.Active).Add(r.Docs.Inactive)
+	}
+
+	r.Checksum = csum.String()
+	return esum, csum, nil
 }
 
 func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {

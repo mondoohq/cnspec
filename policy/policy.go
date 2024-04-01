@@ -17,6 +17,7 @@ import (
 	"go.mondoo.com/cnquery/v10/mqlc"
 	"go.mondoo.com/cnquery/v10/mrn"
 	"go.mondoo.com/cnquery/v10/types"
+	"go.mondoo.com/cnquery/v10/utils/sortx"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -300,11 +301,8 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 
 		// POLICIES (must be sorted)
 		policyMRNs := make([]string, len(group.Policies))
-		i = 0
 		for i := range group.Policies {
-			policy := group.Policies[i]
-			policyMRNs[i] = policy.Mrn
-			i++
+			policyMRNs[i] = group.Policies[i].Mrn
 		}
 		sort.Strings(policyMRNs)
 		for _, policyMRN := range policyMRNs {
@@ -568,6 +566,23 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				Add(group.Docs.Desc)
 			contentChecksum = contentChecksum.Add(group.Docs.Justification)
 		}
+	}
+
+	// RISKS
+	riskIdx := make(map[string]*RiskFactor, len(p.RiskFactors))
+	for i := range p.RiskFactors {
+		cur := p.RiskFactors[i]
+		riskIdx[cur.Mrn] = cur
+	}
+
+	sortedRiskMRNs := sortx.Keys(riskIdx)
+	for _, riskMRN := range sortedRiskMRNs {
+		esum, csum, err := riskIdx[riskMRN].RefreshChecksum(ctx, conf)
+		if err != nil {
+			return err
+		}
+		executionChecksum = executionChecksum.AddUint(uint64(esum))
+		contentChecksum = contentChecksum.AddUint(uint64(csum))
 	}
 
 	p.LocalExecutionChecksum = executionChecksum.String()
