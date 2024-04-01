@@ -12,6 +12,11 @@ import (
 	"go.mondoo.com/cnquery/v10/utils/multierr"
 )
 
+type ScoredRiskInfo struct {
+	*RiskFactor
+	*ScoredRiskFactor
+}
+
 func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 	nu, err := RefreshMRN(ownerMRN, r.Mrn, MRN_RESOURCE_RISK, r.Uid)
 	if err != nil {
@@ -76,17 +81,17 @@ func (r *RiskFactor) RefreshChecksum(conf mqlc.CompilerConfig) error {
 	return nil
 }
 
-func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
+func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 	// Absolute risk factors only play a role when they are detected.
 	if r.IsAbsolute {
 		if isDetected {
-			nu := int(score.Value) - int(r.Magnitude*100)
+			nu := int(score.RiskScore) - int(r.Magnitude*100)
 			if nu < 0 {
-				score.Value = 0
+				score.RiskScore = 0
 			} else if nu > 100 {
-				score.Value = 100
+				score.RiskScore = 100
 			} else {
-				score.Value = uint32(nu)
+				score.RiskScore = uint32(nu)
 			}
 
 			if score.RiskFactors == nil {
@@ -105,7 +110,7 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 
 	if r.Magnitude < 0 {
 		if isDetected {
-			score.Value = uint32(100 - float32(100-score.Value)*(1+r.Magnitude))
+			score.RiskScore = uint32(100 - float32(100-score.RiskScore)*(1+r.Magnitude))
 			if score.RiskFactors == nil {
 				score.RiskFactors = &ScoredRiskFactors{}
 			}
@@ -135,7 +140,7 @@ func (r *RiskFactor) AdjustScore(score *Score, isDetected bool) {
 		return
 	}
 
-	score.Value = uint32(100 - float32(100-score.Value)*(1-r.Magnitude))
+	score.RiskScore = uint32(100 - float32(100-score.RiskScore)*(1-r.Magnitude))
 	if score.RiskFactors == nil {
 		score.RiskFactors = &ScoredRiskFactors{}
 	}
