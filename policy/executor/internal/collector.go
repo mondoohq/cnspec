@@ -155,6 +155,7 @@ func (c *BufferedCollector) run() {
 
 			// If we have something to send or this is the last batch, we do a Sink
 			if len(scores) > 0 || len(results) > 0 || len(risks) > 0 || done {
+				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
 				c.collector.Sink(results, scores, risks, done)
 			}
 
@@ -228,15 +229,49 @@ func (c *PolicyServiceCollector) toResult(rr *llx.RawResult) *llx.Result {
 	return v
 }
 
+func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.ResolvedPolicy, scores []*policy.Score, risks []*policy.ScoredRiskFactor) {
+	assetRisks := []policy.ScoredRiskInfo{}
+
+	for i := range risks {
+		cur := risks[i]
+		risk, ok := resolvedPolicy.CollectorJob.RiskFactors[cur.Mrn]
+		if !ok {
+			log.Debug().Str("riskMrn", cur.Mrn).Msg("failed to find risk factor in collector")
+			continue
+		}
+		risk.Mrn = cur.Mrn
+
+		if risk.Scope == policy.ScopeType_ASSET || risk.Scope == policy.ScopeType_ASSET_VULNS {
+			assetRisks = append(assetRisks, policy.ScoredRiskInfo{
+				RiskFactor:       risk,
+				ScoredRiskFactor: cur,
+			})
+		}
+		// TODO: resource-scoped risks
+	}
+
+	for i := range scores {
+		score := scores[i]
+		score.RiskScore = score.Value
+
+		for i := range assetRisks {
+			cur := assetRisks[i]
+			cur.RiskFactor.AdjustRiskScore(score, cur.ScoredRiskFactor.IsDetected)
+		}
+	}
+}
+
 func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy.Score, risks []*policy.ScoredRiskFactor, isDone bool) {
 	// If we have nothing to send and also this is not the last batch, we just skip
 	if len(results) == 0 && len(scores) == 0 && len(risks) == 0 && !isDone {
 		return
 	}
+
 	resultsToSend := make(map[string]*llx.Result, len(results))
 	for _, rr := range results {
 		resultsToSend[rr.CodeID] = c.toResult(rr)
 	}
+
 	log.Debug().Msg("Sending datapoints and scores")
 	_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
 		AssetMrn:       c.assetMrn,

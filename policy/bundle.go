@@ -862,6 +862,9 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 			if err := risk.RefreshMRN(ownerMrn); err != nil {
 				return nil, errors.New("failed to assign MRN to risk: " + err.Error())
 			}
+
+			risk.DetectScope()
+
 			if err := cache.compileRisk(risk, policy); err != nil {
 				return nil, errors.New("failed to compile risk: " + err.Error())
 			}
