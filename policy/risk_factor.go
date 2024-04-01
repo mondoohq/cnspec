@@ -17,6 +17,23 @@ type ScoredRiskInfo struct {
 	*ScoredRiskFactor
 }
 
+func (r *RiskFactor) DetectScope() {
+	if r.Scope != ScopeType_UNSCOPED {
+		return
+	}
+	resourceScoped := len(r.Resources) != 0
+	softwareScoped := len(r.Software) != 0
+	if resourceScoped && softwareScoped {
+		r.Scope = ScopeType_SOFTWARE_AND_RESOURCE
+	} else if resourceScoped {
+		r.Scope = ScopeType_RESOURCE
+	} else if softwareScoped {
+		r.Scope = ScopeType_SOFTWARE
+	} else {
+		r.Scope = ScopeType_ASSET
+	}
+}
+
 func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 	nu, err := RefreshMRN(ownerMRN, r.Mrn, MRN_RESOURCE_RISK, r.Uid)
 	if err != nil {

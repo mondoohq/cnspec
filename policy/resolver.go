@@ -373,6 +373,7 @@ type resolverCache struct {
 	dataQueries      map[string]struct{}
 	queriesByMsum    map[string]*explorer.Mquery // Msum == Mquery.Checksum
 	riskMrns         map[string]*explorer.Mquery
+	riskInfos        map[string]*RiskFactor
 	propsCache       explorer.PropsCache
 
 	reportingJobsByUUID map[string]*ReportingJob
@@ -540,6 +541,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		propsCache:           explorer.NewPropsCache(),
 		queriesByMsum:        map[string]*explorer.Mquery{},
 		riskMrns:             map[string]*explorer.Mquery{},
+		riskInfos:            map[string]*RiskFactor{},
 		reportingJobsByUUID:  map[string]*ReportingJob{},
 		reportingJobsByMsum:  map[string][]*ReportingJob{},
 		reportingJobsActive:  map[string]bool{},
@@ -835,6 +837,13 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 	}
 
 	for _, risk := range matchingRisks {
+		cache.global.riskInfos[risk.Mrn] = &RiskFactor{
+			Scope:      risk.Scope,
+			IsAbsolute: risk.IsAbsolute,
+			Magnitude:  risk.Magnitude,
+			Resources:  risk.Resources,
+		}
+
 		riskJob := &ReportingJob{
 			QrId:      risk.Mrn,
 			Uuid:      cache.global.relativeChecksum(risk.Mrn),
@@ -1409,6 +1418,7 @@ func (s *LocalServices) jobsToQueries(ctx context.Context, policyMrn string, cac
 
 		existing.Items = append(existing.Items, k)
 	}
+	collectorJob.RiskFactors = cache.riskInfos
 
 	return executionJob, collectorJob, nil
 }
