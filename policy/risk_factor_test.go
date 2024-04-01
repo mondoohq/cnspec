@@ -4,14 +4,135 @@
 package policy
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnquery/v10"
+	"go.mondoo.com/cnquery/v10/explorer"
+	"go.mondoo.com/cnquery/v10/mqlc"
+	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
 )
 
 func risks(risks ...*ScoredRiskFactor) *ScoredRiskFactors {
 	return &ScoredRiskFactors{Items: risks}
+}
+
+func TestRiskFactor_Checksums(t *testing.T) {
+	base := RiskFactor{
+		Mrn:   "//long/mrn",
+		Title: "Some title",
+		Docs: &RiskFactorDocs{
+			Active:   "Does exist",
+			Inactive: "Does not exist",
+		},
+		Filters: &explorer.Filters{
+			Items: map[string]*explorer.Mquery{
+				"//filters/mrn": {
+					Mrn: "//filters/mrn",
+					Mql: "true",
+				},
+			},
+		},
+		Checks: []*explorer.Mquery{
+			{
+				Mrn: "//some/check/1",
+				Mql: "1 == 1",
+			},
+			{
+				Mrn: "//some/check/2",
+				Mql: "2 == 2",
+			},
+		},
+		Scope:      ScopeType_SOFTWARE_AND_RESOURCE,
+		Magnitude:  0.5,
+		IsAbsolute: true,
+		Software: []*SoftwareSelector{{
+			Name:    "mypackage",
+			Version: "1.2.3",
+		}},
+		Resources: []*ResourceSelector{{
+			Selector: "mondoo",
+		}},
+	}
+
+	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
+	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
+
+	ctx := context.Background()
+	baseEsum, baseCsum, err := base.RefreshChecksum(ctx, conf)
+	require.NoError(t, err)
+	require.NotEqual(t, baseEsum, baseCsum)
+
+	contentChanges := []func(RiskFactor) RiskFactor{
+		// 0
+		func(rf RiskFactor) RiskFactor {
+			rf.Title = ""
+			return rf
+		},
+		// 1
+		func(rf RiskFactor) RiskFactor {
+			rf.Docs = nil
+			return rf
+		},
+	}
+
+	for i := range contentChanges {
+		test := contentChanges[i]
+		t.Run("contentChange/"+strconv.Itoa(i), func(t *testing.T) {
+			mod := test(base)
+			esum, csum, err := mod.RefreshChecksum(ctx, conf)
+			assert.NoError(t, err)
+			assert.Equal(t, baseEsum, esum)
+			assert.NotEqual(t, baseCsum, csum)
+		})
+	}
+
+	executionChanges := []func(RiskFactor) RiskFactor{
+		// 0
+		func(rf RiskFactor) RiskFactor {
+			rf.Checks = rf.Checks[0:1]
+			return rf
+		},
+		// 1
+		func(rf RiskFactor) RiskFactor {
+			rf.Checks[0].Mql = "0 != 1"
+			return rf
+		},
+		// 2
+		func(rf RiskFactor) RiskFactor {
+			rf.Resources[0].Selector = "asset"
+			return rf
+		},
+		// 3
+		func(rf RiskFactor) RiskFactor {
+			rf.Software[0].Name = "mondoo"
+			return rf
+		},
+		// 4
+		func(rf RiskFactor) RiskFactor {
+			rf.IsAbsolute = false
+			return rf
+		},
+		// 5
+		func(rf RiskFactor) RiskFactor {
+			rf.Magnitude = 0.79
+			return rf
+		},
+	}
+
+	for i := range executionChanges {
+		test := executionChanges[i]
+		t.Run("executionChanges/"+strconv.Itoa(i), func(t *testing.T) {
+			mod := test(base)
+			esum, csum, err := mod.RefreshChecksum(ctx, conf)
+			assert.NoError(t, err)
+			assert.NotEqual(t, baseEsum, esum)
+			assert.NotEqual(t, baseCsum, csum)
+		})
+	}
 }
 
 func TestRiskFactor_AdjustRiskScore(t *testing.T) {
