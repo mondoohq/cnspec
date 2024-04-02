@@ -738,7 +738,7 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 		return errors.New("cannot find policy '" + policyMrn + "' while resolving")
 	}
 
-	if len(policyObj.Groups) == 0 {
+	if len(policyObj.Groups) == 0 && len(policyObj.RiskFactors) == 0 {
 		return nil
 	}
 
