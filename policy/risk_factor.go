@@ -5,6 +5,7 @@ package policy
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -57,7 +58,7 @@ func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 func (r *RiskFactor) ExecutionChecksum(ctx context.Context, conf mqlc.CompilerConfig) (checksums.Fast, error) {
 	c := checksums.New.
 		AddUint(uint64(r.Scope)).
-		AddUint(uint64(r.Magnitude))
+		Add(strconv.FormatFloat(float64(r.Magnitude), 'f', -1, 64))
 
 	if r.IsAbsolute {
 		c = c.AddUint(1)
