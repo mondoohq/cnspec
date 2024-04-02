@@ -62,12 +62,12 @@ func (m *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, chan
 		// that's not possible right now and requires wiring through
 		// context throughout the execution.
 		for range runChan {
-			log.Info().Msg("starting background scan")
+			log.Info().Time("now", time.Now().UTC()).Msg("starting background scan")
 			err := m.Handler()
 			if err != nil {
 				log.Error().Err(err).Send()
 			} else {
-				log.Info().Msg("scan completed")
+				log.Info().Time("now", time.Now().UTC()).Msg("scan completed")
 			}
 		}
 	}()
@@ -85,14 +85,15 @@ loop:
 				splayDur = time.Duration(rand.Int63n(int64(m.Splay)))
 			}
 			nextRun := m.Timer + splayDur
-			log.Info().Msgf("next scan in %v", nextRun)
+			n := time.Now().UTC()
+			log.Info().Time("now", n).Time("next scan", n.Add(nextRun)).Msgf("next scan in %v", nextRun)
 			t.Reset(nextRun)
 		case c := <-r:
 			switch c.Cmd {
 			case svc.Interrogate:
 				changes <- c.CurrentStatus
 			case svc.Stop, svc.Shutdown:
-				log.Info().Msg("stopping cnspec service")
+				log.Info().Time("now", time.Now().UTC()).Msg("stopping cnspec service")
 				break loop
 			default:
 				log.Error().Msgf("unexpected control request #%d", c)
@@ -107,7 +108,7 @@ loop:
 func runService(isDebug bool, timer time.Duration, splay time.Duration, handler JobRunner) {
 	var err error
 
-	log.Info().Msgf("starting %s service", SvcName)
+	log.Info().Time("now", time.Now().UTC()).Msgf("starting %s service", SvcName)
 	run := svc.Run
 	if isDebug {
 		run = debug.Run
@@ -121,5 +122,5 @@ func runService(isDebug bool, timer time.Duration, splay time.Duration, handler 
 		log.Info().Msgf("%s service failed: %v", SvcName, err)
 		return
 	}
-	log.Info().Msgf("%s service stopped", SvcName)
+	log.Info().Time("now", time.Now().UTC()).Msgf("%s service stopped", SvcName)
 }
