@@ -49,7 +49,11 @@ func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 				if err != nil {
 					log.Error().Err(err).Send()
 				}
-				nextRun := timer + time.Duration(rand.Int63n(int64(splay)))
+				splayDur := time.Duration(0)
+				if splay > 0 {
+					splayDur = time.Duration(rand.Int63n(int64(splay)))
+				}
+				nextRun := timer + splayDur
 				log.Info().Msgf("next scan in %v", nextRun)
 				t.Reset(nextRun)
 			case <-shutdownChannel:

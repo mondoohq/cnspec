@@ -80,7 +80,11 @@ loop:
 			default:
 				log.Error().Msg("scan not started. may be stuck")
 			}
-			nextRun := m.Timer + time.Duration(rand.Int63n(int64(m.Splay)))
+			splayDur := time.Duration(0)
+			if m.Splay > 0 {
+				splayDur = time.Duration(rand.Int63n(int64(m.Splay)))
+			}
+			nextRun := m.Timer + splayDur
 			log.Info().Msgf("next scan in %v", nextRun)
 			t.Reset(nextRun)
 		case c := <-r:
