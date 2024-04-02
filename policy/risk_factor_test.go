@@ -20,8 +20,8 @@ func risks(risks ...*ScoredRiskFactor) *ScoredRiskFactors {
 	return &ScoredRiskFactors{Items: risks}
 }
 
-func TestRiskFactor_Checksums(t *testing.T) {
-	base := RiskFactor{
+func genRiskFactor1() RiskFactor {
+	return RiskFactor{
 		Mrn:   "//long/mrn",
 		Title: "Some title",
 		Docs: &RiskFactorDocs{
@@ -57,6 +57,10 @@ func TestRiskFactor_Checksums(t *testing.T) {
 			Selector: "mondoo",
 		}},
 	}
+}
+
+func TestRiskFactor_Checksums(t *testing.T) {
+	base := genRiskFactor1()
 
 	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
 	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
@@ -65,6 +69,27 @@ func TestRiskFactor_Checksums(t *testing.T) {
 	baseEsum, baseCsum, err := base.RefreshChecksum(ctx, conf)
 	require.NoError(t, err)
 	require.NotEqual(t, baseEsum, baseCsum)
+
+	noChanges := []func(RiskFactor) RiskFactor{
+		func(rf RiskFactor) RiskFactor {
+			return rf
+		},
+		func(rf RiskFactor) RiskFactor {
+			rf.Magnitude = 0.5
+			return rf
+		},
+	}
+
+	for i := range noChanges {
+		t.Run("noChanges/"+strconv.Itoa(i), func(t *testing.T) {
+			test := noChanges[i]
+			mod := test(genRiskFactor1())
+			esum, csum, err := mod.RefreshChecksum(ctx, conf)
+			assert.NoError(t, err)
+			assert.Equal(t, baseEsum, esum)
+			assert.Equal(t, baseCsum, csum)
+		})
+	}
 
 	contentChanges := []func(RiskFactor) RiskFactor{
 		// 0
@@ -80,9 +105,9 @@ func TestRiskFactor_Checksums(t *testing.T) {
 	}
 
 	for i := range contentChanges {
-		test := contentChanges[i]
 		t.Run("contentChange/"+strconv.Itoa(i), func(t *testing.T) {
-			mod := test(base)
+			test := contentChanges[i]
+			mod := test(genRiskFactor1())
 			esum, csum, err := mod.RefreshChecksum(ctx, conf)
 			assert.NoError(t, err)
 			assert.Equal(t, baseEsum, esum)
@@ -118,15 +143,15 @@ func TestRiskFactor_Checksums(t *testing.T) {
 		},
 		// 5
 		func(rf RiskFactor) RiskFactor {
-			rf.Magnitude = 0.79
+			rf.Magnitude = 0.7
 			return rf
 		},
 	}
 
 	for i := range executionChanges {
-		test := executionChanges[i]
 		t.Run("executionChanges/"+strconv.Itoa(i), func(t *testing.T) {
-			mod := test(base)
+			test := executionChanges[i]
+			mod := test(genRiskFactor1())
 			esum, csum, err := mod.RefreshChecksum(ctx, conf)
 			assert.NoError(t, err)
 			assert.NotEqual(t, baseEsum, esum)
