@@ -72,18 +72,19 @@ var serveCmd = &cobra.Command{
 
 		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
 
+		var checkInHandler *backgroundjob.CheckinHandler
 		if scanConf != nil && scanConf.runtime.UpstreamConfig != nil {
 			client, err := scanConf.runtime.UpstreamConfig.InitClient(ctx)
 			if err != nil {
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 			}
-
-			checkin, err := backgroundjob.NewCheckinPinger(ctx, client.HttpClient, client.ApiEndpoint, scanConf.AgentMrn, scanConf.runtime.UpstreamConfig, 2*time.Hour)
+			checkInHandler, err = backgroundjob.NewCheckInHandlerWithInfo(client.HttpClient, client.ApiEndpoint, scanConf.AgentMrn, scanConf.runtime.UpstreamConfig)
 			if err != nil {
 				log.Debug().Err(err).Msg("could not initialize upstream check-in")
 			} else {
-				checkin.Start()
-				defer checkin.Stop()
+				pinger := backgroundjob.NewCheckinPinger(ctx, 2*time.Hour, checkInHandler)
+				pinger.Start()
+				defer pinger.Stop()
 			}
 		}
 
@@ -106,6 +107,14 @@ var serveCmd = &cobra.Command{
 				err = updateProviders()
 				if err != nil {
 					log.Error().Err(err).Msg("could not update providers")
+				}
+			}
+			// check in the managed client when running a scan
+			if checkInHandler != nil {
+				log.Info().Msg("performing check-in")
+				err = checkInHandler.CheckIn(ctx)
+				if err != nil {
+					log.Error().Err(err).Msg("could not check in")
 				}
 			}
 			// TODO: check in every 5 min via timer, init time in Background job
