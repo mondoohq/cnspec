@@ -66,7 +66,7 @@ prep/tools:
 
 #   🌙 cnspec   #
 
-cnspec/generate: clean/proto cli/generate policy/generate
+cnspec/generate: clean/proto cli/generate policy/generate reporter/generate
 
 .PHONY: cli
 cli/generate:
@@ -77,6 +77,9 @@ policy/generate:
 	go generate ./policy
 	go generate ./policy/scan
 	go generate ./internal/bundle/yacit
+
+reporter/generate:
+	go generate ./cli/reporter
 
 #   🏗 Binary   #
 

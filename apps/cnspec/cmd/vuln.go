@@ -4,7 +4,8 @@
 package cmd
 
 import (
-	"bytes"
+	"strings"
+
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -13,10 +14,8 @@ import (
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v10/sbom"
-	"go.mondoo.com/cnquery/v10/shared"
 	"go.mondoo.com/cnspec/v10/cli/reporter"
 	"go.mondoo.com/cnspec/v10/policy"
-	"strings"
 )
 
 func init() {
@@ -62,17 +61,17 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	report, err := RunScan(conf)
 	if err != nil {
-		log.Fatal().Err(err).Msg("error happened during package analysis")
+		log.Fatal().Err(err).Msg("failed to run scan")
 	}
 
-	buf := bytes.Buffer{}
-	w := shared.IOWriter{Writer: &buf}
-	err = reporter.ReportCollectionToJSON(report, &w)
+	cnspecReport, err := reporter.ConvertToProto(report)
 	if err == nil {
-		logger.DebugDumpJSON("mondoo-sbom-report", buf.Bytes())
+		log.Debug().Msg("converted report to proto")
+		data, _ := cnspecReport.ToJSON()
+		logger.DebugDumpJSON("mondoo-sbom-report", data)
 	}
 
-	boms, err := sbom.NewBom(buf.Bytes())
+	boms, err := sbom.NewBom(cnspecReport.ToCnqueryReport())
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse sbom data")
 	}

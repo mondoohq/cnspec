@@ -17,8 +17,8 @@ import (
 	"go.mondoo.com/cnspec/v10/policy"
 )
 
-// ReportCollectionToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite
-func ReportCollectionToJunit(r *policy.ReportCollection, out shared.OutputHelper) error {
+// ConvertToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite
+func ConvertToJunit(r *policy.ReportCollection, out shared.OutputHelper) error {
 	noXMLHeader := false
 
 	suites := junit.Testsuites{}

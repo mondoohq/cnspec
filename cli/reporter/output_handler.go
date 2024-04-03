@@ -87,7 +87,7 @@ func reportToYaml(report *policy.ReportCollection) ([]byte, error) {
 func reportToJson(report *policy.ReportCollection) ([]byte, error) {
 	raw := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &raw}
-	err := ReportCollectionToJSON(report, &writer)
+	err := ConvertToJSON(report, &writer)
 	if err != nil {
 		return nil, err
 	}

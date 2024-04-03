@@ -14,8 +14,8 @@ import (
 	"testing"
 )
 
-func TestJunitConverter(t *testing.T) {
-	yr := &policy.ReportCollection{
+func sampleReportCollection() *policy.ReportCollection {
+	return &policy.ReportCollection{
 		Assets: map[string]*inventory.Asset{
 			"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": {
 				Name:        "X1",
@@ -88,10 +88,13 @@ func TestJunitConverter(t *testing.T) {
 			},
 		},
 	}
+}
 
+func TestJunitConverter(t *testing.T) {
+	yr := sampleReportCollection()
 	buf := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &buf}
-	err := ReportCollectionToJunit(yr, &writer)
+	err := ConvertToJunit(yr, &writer)
 	require.NoError(t, err)
 
 	junitReport := buf.String()
@@ -106,7 +109,7 @@ func TestJunitNilReport(t *testing.T) {
 
 	buf := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &buf}
-	err := ReportCollectionToJunit(yr, &writer)
+	err := ConvertToJunit(yr, &writer)
 	require.NoError(t, err)
 
 	assert.Equal(t, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites></testsuites>\n", buf.String())

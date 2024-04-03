@@ -152,10 +152,10 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 
 	case FormatJSON:
 		writer := shared.IOWriter{Writer: r.out}
-		return ReportCollectionToJSON(data, &writer)
+		return ConvertToJSON(data, &writer)
 	case FormatJUnit:
 		writer := shared.IOWriter{Writer: r.out}
-		return ReportCollectionToJunit(data, &writer)
+		return ConvertToJunit(data, &writer)
 	// case FormatCSV:
 	// 	res, err = data.ToCsv()
 	default:

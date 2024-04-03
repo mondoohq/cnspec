@@ -12,8 +12,6 @@ import (
 	"go.mondoo.com/cnspec/v10/policy"
 )
 
-//go:generate protoc --proto_path=../../:. --go_out=. --go_opt=paths=source_relative  reporter.proto
-
 type Format byte
 
 const (
