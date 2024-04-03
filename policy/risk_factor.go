@@ -188,3 +188,10 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 		Risk: -r.Magnitude,
 	})
 }
+
+func (s *ScoredRiskFactors) Add(other *ScoredRiskFactors) {
+	if other == nil {
+		return
+	}
+	s.Items = append(s.Items, other.Items...)
+}

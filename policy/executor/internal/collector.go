@@ -141,26 +141,21 @@ func (c *BufferedCollector) run() {
 				delete(c.scores, k)
 			}
 
-			risks := make([]*policy.ScoredRiskFactor, len(risksIdx))
-			ri := 0
-			for mrn, isDetected := range risksIdx {
-				risks[ri] = &policy.ScoredRiskFactor{
-					Mrn:        mrn,
-					IsDetected: isDetected,
-				}
-				ri++
-			}
-
 			c.lock.Unlock()
 
-			// If we have something to send or this is the last batch, we do a Sink
-			if len(scores) > 0 || len(results) > 0 || len(risks) > 0 || done {
-				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
-				c.collector.Sink(results, scores, risks, done)
+			if len(results) > 0 && !done {
+				c.collector.Sink(results, nil, nil, false)
+				results = results[:0]
 			}
 
-			results = results[:0]
-			scores = scores[:0]
+			if done {
+				risks := listScoredRisks(risksIdx)
+				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
+				c.collector.Sink(results, scores, risks, done)
+				results = results[:0]
+				scores = scores[:0]
+				risksIdx = map[string]bool{}
+			}
 
 			if done {
 				return
@@ -176,6 +171,19 @@ func (c *BufferedCollector) run() {
 			timer.Stop()
 		}
 	}()
+}
+
+func listScoredRisks(risksIdx map[string]bool) []*policy.ScoredRiskFactor {
+	risks := make([]*policy.ScoredRiskFactor, len(risksIdx))
+	ri := 0
+	for mrn, isDetected := range risksIdx {
+		risks[ri] = &policy.ScoredRiskFactor{
+			Mrn:        mrn,
+			IsDetected: isDetected,
+		}
+		ri++
+	}
+	return risks
 }
 
 func (c *BufferedCollector) FlushAndStop() {
@@ -241,7 +249,7 @@ func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.Resolve
 		}
 		risk.Mrn = cur.Mrn
 
-		if risk.Scope == policy.ScopeType_ASSET || risk.Scope == policy.ScopeType_ASSET_VULNS {
+		if risk.Scope == policy.ScopeType_ASSET {
 			assetRisks = append(assetRisks, policy.ScoredRiskInfo{
 				RiskFactor:       risk,
 				ScoredRiskFactor: cur,
