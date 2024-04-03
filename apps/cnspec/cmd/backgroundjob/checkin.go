@@ -5,13 +5,9 @@ package backgroundjob
 
 import (
 	"context"
-	"math/rand"
 	"net/http"
-	"sync"
-	"time"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v10"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/sysinfo"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
@@ -19,79 +15,52 @@ import (
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
 
-type checkinPinger struct {
-	ctx        context.Context
-	interval   time.Duration
-	quit       chan struct{}
-	wg         sync.WaitGroup
+type CheckinHandler struct {
 	endpoint   string
 	httpClient *http.Client
 	mrn        string
 	creds      *upstream.ServiceAccountCredentials
+	sysInfo    *sysinfo.SystemInfo
 }
 
-func NewCheckinPinger(ctx context.Context, httpClient *http.Client, endpoint string, agentMrn string, config *upstream.UpstreamConfig, interval time.Duration) (*checkinPinger, error) {
+func newCheckinHandler(
+	httpClient *http.Client,
+	endpoint string,
+	agentMrn string,
+	config *upstream.UpstreamConfig,
+	sysInfo *sysinfo.SystemInfo,
+) (*CheckinHandler, error) {
 	if agentMrn == "" {
 		return nil, errors.New("could not determine agent MRN")
 	}
-	return &checkinPinger{
-		ctx:        ctx,
-		interval:   interval,
-		quit:       make(chan struct{}),
+	return &CheckinHandler{
 		endpoint:   endpoint,
 		httpClient: httpClient,
 		mrn:        agentMrn,
 		creds:      config.Creds,
+		sysInfo:    sysInfo,
 	}, nil
 }
 
-func (c *checkinPinger) Start() {
-	// determine information about the client
+func NewCheckInHandlerWithInfo(httpClient *http.Client,
+	endpoint string,
+	agentMrn string,
+	config *upstream.UpstreamConfig,
+) (*CheckinHandler, error) {
 	sysInfo, err := sysinfo.Get()
 	if err != nil {
-		log.Error().Err(err).Msg("could not gather client information")
-		return
-	}
-	c.wg.Add(1)
-	runCheckIn := func() {
-		err := c.checkIn(sysInfo)
-		if err != nil {
-			log.Info().Err(err).Msg("could not perform check-in")
-		}
+		return nil, errors.Wrap(err, "could not determine system information")
 	}
 
-	// run check-in once on startup
-	runCheckIn()
-
-	jitter := time.Duration(rand.Int63n(int64(c.interval)))
-	ticker := time.NewTicker(c.interval + jitter)
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ticker.C:
-				runCheckIn()
-			case <-c.quit:
-				ticker.Stop()
-				return
-			}
-		}
-	}()
+	return newCheckinHandler(httpClient, endpoint, agentMrn, config, sysInfo)
 }
 
-func (c *checkinPinger) Stop() {
-	close(c.quit)
-	c.wg.Wait()
-}
-
-func (c *checkinPinger) checkIn(sysInfo *sysinfo.SystemInfo) error {
+func (c *CheckinHandler) CheckIn(ctx context.Context) error {
 	// gather service account
 	plugins := []ranger.ClientPlugin{}
-	plugins = append(plugins, sysInfoHeader(sysInfo, cnquery.DefaultFeatures))
-
-	credentials := c.creds
-	if credentials != nil && len(credentials.Mrn) > 0 {
-		certAuth, err := upstream.NewServiceAccountRangerPlugin(credentials)
+	plugins = append(plugins, sysInfoHeader(c.sysInfo, cnquery.DefaultFeatures))
+	if c.creds != nil && len(c.creds.Mrn) > 0 {
+		certAuth, err := upstream.NewServiceAccountRangerPlugin(c.creds)
 		if err != nil {
 			return errors.Wrap(err, "invalid credentials")
 		}
@@ -105,19 +74,18 @@ func (c *checkinPinger) checkIn(sysInfo *sysinfo.SystemInfo) error {
 		return errors.Wrap(err, "could not connect to mondoo platform")
 	}
 
-	_, err = client.HealthCheck(context.Background(), &upstream.AgentInfo{
+	_, err = client.HealthCheck(ctx, &upstream.AgentInfo{
 		Mrn:              c.mrn,
-		Version:          sysInfo.Version,
-		Build:            sysInfo.Build,
-		PlatformName:     sysInfo.Platform.Name,
-		PlatformRelease:  sysInfo.Platform.Version,
-		PlatformArch:     sysInfo.Platform.Arch,
-		PlatformIp:       sysInfo.IP,
-		PlatformHostname: sysInfo.Hostname,
+		Version:          c.sysInfo.Version,
+		Build:            c.sysInfo.Build,
+		PlatformName:     c.sysInfo.Platform.Name,
+		PlatformRelease:  c.sysInfo.Platform.Version,
+		PlatformArch:     c.sysInfo.Platform.Arch,
+		PlatformIp:       c.sysInfo.IP,
+		PlatformHostname: c.sysInfo.Hostname,
 		Labels:           nil,
-		PlatformId:       sysInfo.PlatformId,
+		PlatformId:       c.sysInfo.PlatformId,
 	})
-
 	if err != nil {
 		return errors.Wrap(err, "failed to check in upstream")
 	}
