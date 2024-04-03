@@ -109,7 +109,7 @@ func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
 	switch r.Format {
-	case Compact:
+	case FormatCompact:
 		rr := &defaultReporter{
 			Reporter:  r,
 			isCompact: true,
@@ -117,7 +117,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 			data:      data,
 		}
 		return rr.print()
-	case Summary:
+	case FormatSummary:
 		rr := &defaultReporter{
 			Reporter:  r,
 			isCompact: true,
@@ -126,7 +126,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 			data:      data,
 		}
 		return rr.print()
-	case Full:
+	case FormatFull:
 		rr := &defaultReporter{
 			Reporter:  r,
 			isCompact: false,
@@ -134,14 +134,14 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 			data:      data,
 		}
 		return rr.print()
-	case Report:
+	case FormatReport:
 		rr := &reportRenderer{
 			printer: r.Printer,
 			out:     r.out,
 			data:    data,
 		}
 		return rr.print()
-	case YAML:
+	case FormatYAML:
 		yaml, err := reportToYaml(data)
 		if err != nil {
 			return err
@@ -150,13 +150,13 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		_, err = r.out.Write(yaml)
 		return err
 
-	case JSON:
+	case FormatJSON:
 		writer := shared.IOWriter{Writer: r.out}
 		return ReportCollectionToJSON(data, &writer)
-	case JUnit:
+	case FormatJUnit:
 		writer := shared.IOWriter{Writer: r.out}
 		return ReportCollectionToJunit(data, &writer)
-	// case CSV:
+	// case FormatCSV:
 	// 	res, err = data.ToCsv()
 	default:
 		return errors.New("unknown reporter type, don't recognize this Format")
@@ -165,7 +165,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 
 func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 	switch r.Format {
-	case Compact:
+	case FormatCompact:
 		rr := &defaultVulnReporter{
 			Reporter:  r,
 			isCompact: true,
@@ -174,7 +174,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 			target:    target,
 		}
 		return rr.print()
-	case Summary:
+	case FormatSummary:
 		rr := &defaultVulnReporter{
 			Reporter:  r,
 			isCompact: true,
@@ -184,7 +184,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 			target:    target,
 		}
 		return rr.print()
-	case Full:
+	case FormatFull:
 		rr := &defaultVulnReporter{
 			Reporter:  r,
 			isCompact: false,
@@ -193,14 +193,14 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 			target:    target,
 		}
 		return rr.print()
-	case Report:
+	case FormatReport:
 		return errors.New("'report' is not supported for vuln reports, please use one of the other formats")
-	case JUnit:
+	case FormatJUnit:
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
-	case CSV:
+	case FormatCSV:
 		writer := shared.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)
-	case YAML:
+	case FormatYAML:
 		raw := bytes.Buffer{}
 		writer := shared.IOWriter{Writer: &raw}
 		err := VulnReportToJSON(target, data, &writer)
@@ -214,7 +214,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		}
 		_, err = r.out.Write(json)
 		return err
-	case JSON:
+	case FormatJSON:
 		writer := shared.IOWriter{Writer: r.out}
 		return VulnReportToJSON(target, data, &writer)
 	default:

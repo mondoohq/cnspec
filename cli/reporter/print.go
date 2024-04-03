@@ -17,28 +17,28 @@ import (
 type Format byte
 
 const (
-	Compact Format = iota + 1
-	Summary
-	Full
-	Report
-	YAML
-	JSON
-	JUnit
-	CSV
+	FormatCompact Format = iota + 1
+	FormatSummary
+	FormatFull
+	FormatReport
+	FormatYAML
+	FormatJSON
+	FormatJUnit
+	FormatCSV
 )
 
 // Formats that are supported by the reporter
 var Formats = map[string]Format{
-	"compact": Compact,
-	"summary": Summary,
-	"full":    Full,
-	"":        Compact,
-	"report":  Report,
-	"yaml":    YAML,
-	"yml":     YAML,
-	"json":    JSON,
-	"junit":   JUnit,
-	"csv":     CSV,
+	"compact": FormatCompact,
+	"summary": FormatSummary,
+	"full":    FormatFull,
+	"":        FormatCompact,
+	"report":  FormatReport,
+	"yaml":    FormatYAML,
+	"yml":     FormatYAML,
+	"json":    FormatJSON,
+	"junit":   FormatJUnit,
+	"csv":     FormatCSV,
 }
 
 func AllFormats() string {
