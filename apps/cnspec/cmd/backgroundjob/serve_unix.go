@@ -18,8 +18,8 @@ import (
 )
 
 func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
-	log.Info().Time("now", time.Now().UTC()).Msg("start cnspec background service")
-	log.Info().Time("now", time.Now().UTC()).Msgf("scan interval is %d minute(s) with a splay of %d minutes(s)", int(timer.Minutes()), int(splay.Minutes()))
+	log.Info().Msg("start cnspec background service")
+	log.Info().Msgf("scan interval is %d minute(s) with a splay of %d minutes(s)", int(timer.Minutes()), int(splay.Minutes()))
 
 	quitChannel := make(chan os.Signal)
 	signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)
@@ -38,14 +38,14 @@ func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 			// Give shutdown priority
 			select {
 			case <-shutdownChannel:
-				log.Info().Time("now", time.Now().UTC()).Msg("stop worker")
+				log.Info().Msg("stop worker")
 				return
 			default:
 			}
 
 			select {
 			case <-t.C:
-				log.Info().Time("now", time.Now().UTC()).Msg("starting background scan")
+				log.Info().Msg("starting background scan")
 				err := handler()
 				if err != nil {
 					log.Error().Err(err).Send()
@@ -55,11 +55,10 @@ func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 					splayDur = time.Duration(rand.Int63n(int64(splay)))
 				}
 				nextRun := timer + splayDur
-				n := time.Now().UTC()
-				log.Info().Time("now", n).Time("next scan", n.Add(nextRun)).Msgf("next scan in %v", nextRun)
+				log.Info().Time("next scan", time.Now().Add(nextRun)).Msgf("next scan in %v", nextRun)
 				t.Reset(nextRun)
 			case <-shutdownChannel:
-				log.Info().Time("now", time.Now().UTC()).Msg("stop worker")
+				log.Info().Msg("stop worker")
 				return
 			}
 		}

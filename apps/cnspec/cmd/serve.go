@@ -13,10 +13,12 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v10"
 	"go.mondoo.com/cnquery/v10/cli/config"
+
 	cli_errors "go.mondoo.com/cnquery/v10/cli/errors"
 	"go.mondoo.com/cnquery/v10/cli/execruntime"
 	"go.mondoo.com/cnquery/v10/cli/inventoryloader"
 	"go.mondoo.com/cnquery/v10/cli/prof"
+	"go.mondoo.com/cnquery/v10/logger"
 	"go.mondoo.com/cnquery/v10/providers"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
@@ -47,6 +49,7 @@ var serveCmd = &cobra.Command{
 		_ = viper.BindPFlag("scan_interval.timer", cmd.Flags().Lookup("timer"))
 		_ = viper.BindPFlag("scan_interval.splay", cmd.Flags().Lookup("splay"))
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		logger.StandardZerologLogger()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
