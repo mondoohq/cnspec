@@ -510,8 +510,7 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 		return
 	}
 
-	r.out(NewLineCharacter + "Risks/Mitigations:" + NewLineCharacter)
-
+	var res strings.Builder
 	for i := range report.Risks.Items {
 		risk := report.Risks.Items[i]
 		if !risk.IsDetected {
@@ -533,7 +532,15 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 			text = termenv.String("✓ " + text).Foreground(r.Colors.Success).String()
 		}
 
-		r.out(text + NewLineCharacter)
+		res.WriteString(text + NewLineCharacter)
+	}
+	out := res.String()
+
+	r.out(NewLineCharacter + "Risks/Mitigations:" + NewLineCharacter)
+	if out != "" {
+		r.out(out)
+	} else {
+		r.out(termenv.String("✓ no downgrading risks detected" + NewLineCharacter).Foreground(r.Colors.Disabled).String())
 	}
 }
 
