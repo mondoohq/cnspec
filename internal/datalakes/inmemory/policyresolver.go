@@ -615,6 +615,19 @@ func (db *Db) SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy 
 		return errors.New("failed to save resolved policy '" + mrn + "'")
 	}
 
+	// We need the risk factors for initial reporting, but don't require all
+	// their metadata. The risk factors in the resolved policy provides everything
+	// we need for scoring. If we fetch a full risk factor we can replace it.
+	for mrn, rf := range resolvedPolicy.CollectorJob.RiskFactors {
+		rf.Mrn = mrn
+		if _, err := db.getRiskFactor(ctx, rf.Mrn); err == nil {
+			continue
+		}
+		if err := db.SetRiskFactor(ctx, rf); err != nil {
+			return err
+		}
+	}
+
 	if cached {
 		x, ok := db.cache.Get(dbIDPolicy + mrn)
 		if !ok {

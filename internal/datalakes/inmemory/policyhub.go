@@ -316,6 +316,14 @@ func (db *Db) invalidateFrameworkAndBundleAncestors(ctx context.Context, wrap *w
 	return nil
 }
 
+func (db *Db) getRiskFactor(ctx context.Context, mrn string) (*policy.RiskFactor, error) {
+	found, ok := db.cache.Get(dbIDRiskFactor + mrn)
+	if !ok {
+		return nil, errors.New("risk factor " + mrn + " not found")
+	}
+	return found.(*policy.RiskFactor), nil
+}
+
 func (db *Db) SetRiskFactor(ctx context.Context, riskFactor *policy.RiskFactor) error {
 	db.cache.Set(dbIDRiskFactor+riskFactor.Mrn, riskFactor, 1)
 	return nil
