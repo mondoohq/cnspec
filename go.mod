@@ -7,7 +7,7 @@ go 1.22
 toolchain go1.22.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.10.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.11.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.5.1
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.6.1
 	github.com/Masterminds/semver v1.5.0
@@ -34,7 +34,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.9.0
-	go.mondoo.com/cnquery/v10 v10.10.1-0.20240404112111-403df5b5663f
+	go.mondoo.com/cnquery/v10 v10.11.0
 	go.mondoo.com/mondoo-go v0.0.0-20240312054001-2ab23a39b500
 	go.mondoo.com/ranger-rpc v0.6.0
 	go.opentelemetry.io/otel v1.24.0
