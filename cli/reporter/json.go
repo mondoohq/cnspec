@@ -59,7 +59,7 @@ func prepareAssetsForPrinting(assets map[string]*inventory.Asset) map[string]*as
 	return printableAssets
 }
 
-func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelper) error {
+func ConvertToJSON(data *policy.ReportCollection, out shared.OutputHelper) error {
 	if data == nil {
 		return nil
 	}
@@ -121,7 +121,7 @@ func ReportCollectionToJSON(data *policy.ReportCollection, out shared.OutputHelp
 			out.WriteString(pre2 + llx.PrettyPrintString(mrn) + ":")
 			pre2 = ","
 
-			err := cr.BundleResultsToJSON(query.Code, results, out)
+			err := cr.CodeBundleToJSON(query.Code, results, out)
 			if err != nil {
 				return err
 			}

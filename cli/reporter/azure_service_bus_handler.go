@@ -58,7 +58,7 @@ func (h *azureSbusHandler) WriteReport(ctx context.Context, report *policy.Repor
 	msg := &azservicebus.Message{
 		Body: data,
 	}
-	if h.format == JSON {
+	if h.format == FormatJSON {
 		typ := "application/json"
 		msg.ContentType = &typ
 	}
@@ -74,9 +74,9 @@ func (h *azureSbusHandler) WriteReport(ctx context.Context, report *policy.Repor
 
 func (h *azureSbusHandler) convertReport(report *policy.ReportCollection) ([]byte, error) {
 	switch h.format {
-	case YAML:
+	case FormatYAML:
 		return reportToYaml(report)
-	case JSON:
+	case FormatJSON:
 		return reportToJson(report)
 	default:
 		return nil, fmt.Errorf("'%s' is not supported in the azure service bus handler, please use one of the other formats", string(h.format))
