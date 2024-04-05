@@ -166,18 +166,19 @@ func TestRiskFactor_AdjustRiskScoreMultiple(t *testing.T) {
 		{Magnitude: 0.3},
 		{Magnitude: 0.4},
 	}
-	a := &Score{RiskScore: 20}
-	rfs[0].AdjustRiskScore(a, true)
-	rfs[1].AdjustRiskScore(a, true)
-	rfs[2].AdjustRiskScore(a, true)
+	a := &Score{RiskScore: 30}
+	rfs[0].AdjustRiskScore(a, false)
+	rfs[1].AdjustRiskScore(a, false)
+	rfs[2].AdjustRiskScore(a, false)
 
-	b := &Score{RiskScore: 20}
-	rfs[2].AdjustRiskScore(b, true)
-	rfs[1].AdjustRiskScore(b, true)
-	rfs[0].AdjustRiskScore(b, true)
+	b := &Score{RiskScore: 30}
+	rfs[2].AdjustRiskScore(b, false)
+	rfs[1].AdjustRiskScore(b, false)
+	rfs[0].AdjustRiskScore(b, false)
 
 	a.RiskFactors = nil
 	b.RiskFactors = nil
+	assert.Equal(t, uint32(76), a.RiskScore)
 	assert.Equal(t, a, b)
 }
 
