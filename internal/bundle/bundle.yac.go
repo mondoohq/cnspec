@@ -1552,6 +1552,7 @@ type RiskFactor struct {
 	IsAbsolute  bool                `protobuf:"varint,72,opt,name=is_absolute,json=isAbsolute,proto3" json:"is_absolute,omitempty" yaml:"is_absolute,omitempty"`
 	Software    []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
 	Resources   []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
+	Indicator   string              `protobuf:"bytes,75,opt,name=indicator,proto3" json:"indicator,omitempty" yaml:"indicator,omitempty"`
 	Uid         string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Title       string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
