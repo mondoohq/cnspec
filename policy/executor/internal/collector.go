@@ -143,7 +143,7 @@ func (c *BufferedCollector) run() {
 
 			c.lock.Unlock()
 
-			if len(results) > 0 && !done {
+			if len(results) > 0 {
 				c.collector.Sink(results, nil, nil, false)
 				results = results[:0]
 			}
@@ -151,8 +151,7 @@ func (c *BufferedCollector) run() {
 			if done {
 				risks := listScoredRisks(risksIdx)
 				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
-				c.collector.Sink(results, scores, risks, done)
-				results = results[:0]
+				c.collector.Sink(nil, scores, risks, done)
 				scores = scores[:0]
 				risksIdx = map[string]bool{}
 			}
