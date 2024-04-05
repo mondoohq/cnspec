@@ -160,6 +160,27 @@ func TestRiskFactor_Checksums(t *testing.T) {
 	}
 }
 
+func TestRiskFactor_AdjustRiskScoreMultiple(t *testing.T) {
+	rfs := []*RiskFactor{
+		{Magnitude: 0.2},
+		{Magnitude: 0.3},
+		{Magnitude: 0.4},
+	}
+	a := &Score{RiskScore: 20}
+	rfs[0].AdjustRiskScore(a, true)
+	rfs[1].AdjustRiskScore(a, true)
+	rfs[2].AdjustRiskScore(a, true)
+
+	b := &Score{RiskScore: 20}
+	rfs[2].AdjustRiskScore(b, true)
+	rfs[1].AdjustRiskScore(b, true)
+	rfs[0].AdjustRiskScore(b, true)
+
+	a.RiskFactors = nil
+	b.RiskFactors = nil
+	assert.Equal(t, a, b)
+}
+
 func TestRiskFactor_AdjustRiskScore(t *testing.T) {
 	tests := []struct {
 		risk     RiskFactor
