@@ -56,11 +56,10 @@ func (dqi *DataQueryInfo) UnmarshalJSON(data []byte) error {
 
 // WaitUntilDone for a score and an entity
 func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, timeout time.Duration) (bool, error) {
-	var found bool
 	start := time.Now()
 	ctx := context.Background()
 
-	for time.Now().Sub(start) < timeout {
+	for time.Since(start) < timeout {
 		res, err := resolver.GetScore(ctx, &EntityScoreReq{
 			EntityMrn: entity,
 			ScoreMrn:  scoringMrn,
@@ -70,7 +69,6 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 		}
 
 		if res != nil && res.Score.ScoreCompletion == 100 && res.Score.DataCompletion == 100 {
-			found = true
 			log.Debug().
 				Str("asset", entity).
 				Str("type", res.Score.TypeLabel()).
@@ -79,13 +77,13 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 				Int("data-completion", int(res.Score.DataCompletion)).
 				Int("data-total", int(res.Score.DataTotal)).
 				Msg("waituntildone> got entity score")
-			break
+			return true, nil
 		}
 
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	return found, nil
+	return false, nil
 }
 
 func cannotLookupFilters(ctx context.Context, mrn string) (*explorer.Mquery, error) {

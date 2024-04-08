@@ -281,3 +281,25 @@ func TestRiskFactor_AdjustRiskScore(t *testing.T) {
 		})
 	}
 }
+
+func TestScoredRiskFactors_Add(t *testing.T) {
+	risks := &ScoredRiskFactors{}
+	risks.Add(&ScoredRiskFactors{
+		Items: []*ScoredRiskFactor{
+			{Mrn: "//mrn1", Risk: -0.2},
+			{Mrn: "//mrn2", Risk: -0.4},
+		},
+	})
+	risks.Add(&ScoredRiskFactors{
+		Items: []*ScoredRiskFactor{
+			{Mrn: "//mrn1", Risk: -0.6},
+			{Mrn: "//mrn3", Risk: -0.9},
+		},
+	})
+
+	assert.Equal(t, []*ScoredRiskFactor{
+		{Mrn: "//mrn1", Risk: -0.6},
+		{Mrn: "//mrn2", Risk: -0.4},
+		{Mrn: "//mrn3", Risk: -0.9},
+	}, risks.Items)
+}
