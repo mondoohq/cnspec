@@ -165,7 +165,9 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create an output handler")
 	}
-	if err := outputHandler.WriteReport(ctx, report); err != nil {
+
+	fCtx := cnquery.SetFeatures(ctx, conf.Features)
+	if err := outputHandler.WriteReport(fCtx, report); err != nil {
 		log.Fatal().Err(err).Msg("failed to write report to output target")
 	}
 
