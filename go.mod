@@ -7,7 +7,6 @@ go 1.22
 toolchain go1.22.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.11.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.5.1
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.7.0
 	github.com/Masterminds/semver v1.5.0
@@ -65,6 +64,7 @@ require (
 	github.com/Antonboom/nilnil v0.1.7 // indirect
 	github.com/Antonboom/testifylint v1.2.0 // indirect
 	github.com/Azure/azure-amqp-common-go/v3 v3.2.3 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.11.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.5.2 // indirect
 	github.com/Azure/go-amqp v1.0.5 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
