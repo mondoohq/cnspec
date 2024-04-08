@@ -37,6 +37,9 @@ type defaultReporter struct {
 	output    io.Writer
 	data      *policy.ReportCollection
 
+	// indicates if the StoreResourcesData cnquery feature is enabled
+	isStoreResourcesEnabled bool
+
 	// vv the items below will be automatically filled
 	bundle *policy.PolicyBundleMap
 }
@@ -194,7 +197,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			r.out("See more scan results and asset relationships on the Mondoo Console: ")
 			r.out(url + NewLineCharacter)
 
-			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" {
+			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" && r.isStoreResourcesEnabled {
 				r.out("Asset MRN: " + orderedAssets[0].Mrn + NewLineCharacter)
 			}
 		}

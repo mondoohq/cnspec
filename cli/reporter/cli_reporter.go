@@ -108,30 +108,34 @@ func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 }
 
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
+	features := cnquery.GetFeatures(ctx)
 	switch r.Format {
 	case FormatCompact:
 		rr := &defaultReporter{
-			Reporter:  r,
-			isCompact: true,
-			output:    r.out,
-			data:      data,
+			Reporter:                r,
+			isCompact:               true,
+			output:                  r.out,
+			data:                    data,
+			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
 		}
 		return rr.print()
 	case FormatSummary:
 		rr := &defaultReporter{
-			Reporter:  r,
-			isCompact: true,
-			isSummary: true,
-			output:    r.out,
-			data:      data,
+			Reporter:                r,
+			isCompact:               true,
+			isSummary:               true,
+			output:                  r.out,
+			data:                    data,
+			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
 		}
 		return rr.print()
 	case FormatFull:
 		rr := &defaultReporter{
-			Reporter:  r,
-			isCompact: false,
-			output:    r.out,
-			data:      data,
+			Reporter:                r,
+			isCompact:               false,
+			output:                  r.out,
+			data:                    data,
+			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
 		}
 		return rr.print()
 	case FormatReport:
