@@ -193,5 +193,21 @@ func (s *ScoredRiskFactors) Add(other *ScoredRiskFactors) {
 	if other == nil {
 		return
 	}
-	s.Items = append(s.Items, other.Items...)
+
+	for i := range other.Items {
+		nu := other.Items[i]
+
+		found := false
+		for j := range s.Items {
+			if s.Items[j].Mrn == nu.Mrn {
+				s.Items[j] = nu
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			s.Items = append(s.Items, nu)
+		}
+	}
 }
