@@ -140,6 +140,7 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 				Mrn:        r.Mrn,
 				Risk:       r.Magnitude,
 				IsAbsolute: true,
+				IsDetected: isDetected,
 			})
 			return
 		}
@@ -154,8 +155,9 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 				score.RiskFactors = &ScoredRiskFactors{}
 			}
 			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-				Mrn:  r.Mrn,
-				Risk: r.Magnitude,
+				Mrn:        r.Mrn,
+				Risk:       r.Magnitude,
+				IsDetected: isDetected,
 			})
 			return
 		}
@@ -173,8 +175,9 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 			score.RiskFactors = &ScoredRiskFactors{}
 		}
 		score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-			Mrn:  r.Mrn,
-			Risk: r.Magnitude,
+			Mrn:        r.Mrn,
+			Risk:       r.Magnitude,
+			IsDetected: isDetected,
 		})
 		return
 	}
@@ -184,8 +187,9 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 		score.RiskFactors = &ScoredRiskFactors{}
 	}
 	score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
-		Mrn:  r.Mrn,
-		Risk: -r.Magnitude,
+		Mrn:        r.Mrn,
+		Risk:       -r.Magnitude,
+		IsDetected: isDetected,
 	})
 }
 
