@@ -103,7 +103,12 @@ queries:
     title: Control access to audit records
     impact: 40
     mql: |
-      file('/etc/security/audit_control') {
+      auditControlPath = [
+        "/etc/security/audit_control",
+      ]
+      auditControlPath.where(file(_).exists) {
+        file(_) {
+        path
         permissions.user_readable
         permissions.user_writeable
         permissions.user_executable == false
@@ -117,23 +122,9 @@ queries:
 
         user.name == "root"
         group.name == "wheel"
+        }
       }
-      file('/var/audit') {
-        permissions.user_readable
-        permissions.user_writeable
-        permissions.user_executable
-
-        permissions.group_writeable == false
-        permissions.group_executable == false
-
-        permissions.other_readable == false
-        permissions.other_writeable == false
-        permissions.other_executable == false
-
-        user.name == "root"
-        group.name == "wheel"
-      }
-      files.find(from: "/var/audit/", type: "file", xdev: false).all(user.name == "root" && group.name == "wheel" && permissions.other_readable == false && permissions.other_writeable == false && permissions.other_executable == false)
+      files.find(from: "/var/audit/", type: "file,dir", xdev: false).all(user.name == "root" && group.name == "wheel" && permissions.other_readable == false && permissions.other_writeable == false && permissions.other_executable == false)
     docs:
       desc: The audit system on macOS writes important operational and security information that can be both useful for an attacker and a place for an attacker to attempt to obfuscate unwanted changes that were recorded. As part of defense-in-depth the /etc/security/audit_control configuration and the files in /var/audit should be owned only by root with group wheel with read-only rights and no other access allowed. macOS ACLs should not be used for these files.
       remediation: |-
@@ -161,11 +152,13 @@ queries:
     mql: |
       users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
         name
-        filePath1 =  home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist"
-        file(filePath1).exists == true
-          parse.plist(filePath1) {
-            params['PrefKeyServicesEnabled'] == null || params['PrefKeyServicesEnabled'] == false
+        filePath1 = home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist"
+        filePathsLocations = [filePath1]
+        filePathsLocations.where(file(_).exists) {
+          parse.plist(_) {
+            params['PrefKeyServicesEnabled'] == false || params['PrefKeyServicesEnabled'] == null
           }
+        }
       }
     docs:
       desc: Bluetooth Sharing allows files to be exchanged with Bluetooth-enabled devices.
@@ -934,8 +927,11 @@ queries:
     title: Ensure security auditing retention
     impact: 40
     mql: |
-      file("/etc/security/audit_control").content.lines.where( _ == /^expire-after/) {
-        _.split(":")[1] == /[6-9]\dd|\d{3,}d/ || _.split(":")[1] == /\d+0G|[1-9G]/
+      file("/etc/security/audit_control").exists;
+      ["/etc/security/audit_control"].where(file(_).exists) {
+        file(_).content.lines.where( _ == /^expire-after/) {
+          _.split(":")[1] == /[6-9]\dd|\d{3,}d/ || _.split(":")[1] == /\d+0G|[1-9G]/
+        }
       }
     docs:
       desc: |-
