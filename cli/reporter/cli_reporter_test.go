@@ -86,7 +86,7 @@ func TestVulnReporter(t *testing.T) {
 	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
 	assert.Contains(t, buf.String(), "USN-5279-1")
 
-	r = NewReporter(FormatYAML, false)
+	r = NewReporter(FormatYAMLv1, false)
 	r.out = &writer
 	require.NoError(t, err)
 

@@ -145,18 +145,36 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 			data:    data,
 		}
 		return rr.print()
-	case FormatYAML:
-		yaml, err := reportToYaml(data)
+	case FormatYAMLv1:
+		yaml, err := reportToYamlV1(data)
 		if err != nil {
 			return err
 		}
 
 		_, err = r.out.Write(yaml)
 		return err
+	case FormatJSONv1:
+		yaml, err := reportToJsonV1(data)
+		if err != nil {
+			return err
+		}
 
-	case FormatJSON:
-		writer := shared.IOWriter{Writer: r.out}
-		return ConvertToJSON(data, &writer)
+		_, err = r.out.Write(yaml)
+		return err
+	case FormatJSONv2:
+		data, err := reportToJsonV2(data)
+		if err != nil {
+			return err
+		}
+		_, err = r.out.Write(data)
+		return err
+	case FormatYAMLv2:
+		data, err := reportToYamlV2(data)
+		if err != nil {
+			return err
+		}
+		_, err = r.out.Write(data)
+		return err
 	case FormatJUnit:
 		writer := shared.IOWriter{Writer: r.out}
 		return ConvertToJunit(data, &writer)
@@ -204,7 +222,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 	case FormatCSV:
 		writer := shared.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)
-	case FormatYAML:
+	case FormatYAMLv1, FormatYAMLv2:
 		raw := bytes.Buffer{}
 		writer := shared.IOWriter{Writer: &raw}
 		err := VulnReportToJSON(target, data, &writer)
@@ -218,7 +236,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		}
 		_, err = r.out.Write(json)
 		return err
-	case FormatJSON:
+	case FormatJSONv1, FormatJSONv2:
 		writer := shared.IOWriter{Writer: r.out}
 		return VulnReportToJSON(target, data, &writer)
 	default:

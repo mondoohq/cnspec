@@ -47,10 +47,14 @@ func (h *awsSqsHandler) WriteReport(ctx context.Context, report *policy.ReportCo
 
 func (h *awsSqsHandler) convertReport(report *policy.ReportCollection) ([]byte, error) {
 	switch h.format {
-	case FormatYAML:
-		return reportToYaml(report)
-	case FormatJSON:
-		return reportToJson(report)
+	case FormatYAMLv1:
+		return reportToYamlV1(report)
+	case FormatJSONv1:
+		return reportToJsonV1(report)
+	case FormatYAMLv2:
+		return reportToYamlV2(report)
+	case FormatJSONv2:
+		return reportToJsonV2(report)
 	default:
 		return nil, fmt.Errorf("'%s' is not supported in the aws sqs handler, please use one of the other formats", string(h.format))
 	}
