@@ -409,6 +409,7 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 		control, ok := controls[score.QrId]
 		if !ok {
 			r.out("Couldn't find any controls for " + score.QrId)
+			r.out(NewLineCharacter)
 			continue
 		}
 

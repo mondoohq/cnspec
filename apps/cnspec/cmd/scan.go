@@ -344,7 +344,8 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 			return err
 		}
 
-		bundle.ConvertQuerypacks()
+		// prepare the bundle for compilation
+		bundle.Prepare()
 		conf := mqlc.NewConfig(c.runtime.Schema(), cnquery.DefaultFeatures)
 
 		_, err = bundle.CompileExt(ctx, policy.BundleCompileConf{

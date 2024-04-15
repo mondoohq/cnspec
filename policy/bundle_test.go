@@ -311,6 +311,27 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 	require.Equal(t, expectedGrpFilters, bundle.Policies[0].Groups[1].Filters)
 }
 
+func TestBundle_ConvertEvidence(t *testing.T) {
+	bundleLoader := policy.DefaultBundleLoader()
+	bundle, err := bundleLoader.BundleFromPaths("testdata/evidence.mql.yaml")
+	require.NotNil(t, bundle)
+	require.NoError(t, err)
+
+	require.Equal(t, 0, len(bundle.Policies))
+	require.Equal(t, 0, len(bundle.FrameworkMaps))
+	require.Equal(t, 1, len(bundle.Frameworks))
+
+	// the framework in this bundle contains 2 controls with 2 evidences per control
+	bundle.ConvertEvidence()
+
+	// assert that we now have a policy per evidence and one frameworkmap to tie them together
+	require.Equal(t, 4, len(bundle.Policies))
+	require.Equal(t, 1, len(bundle.FrameworkMaps))
+	require.Equal(t, 2, len(bundle.FrameworkMaps[0].Controls))
+	require.Equal(t, 4, len(bundle.FrameworkMaps[0].PolicyDependencies))
+	require.Equal(t, 1, len(bundle.Frameworks))
+}
+
 func TestBundleCompile_FromQueryPackBundle(t *testing.T) {
 	// this bundle has both built-in queries and group queries
 	qBundleStr := `

@@ -479,8 +479,8 @@ func (c *Control) refreshMRN(ownerMRN string, cache *bundleCache) error {
 func (c *ControlMap) refreshMRNs(ownerMRN string, cache *bundleCache) error {
 	nu, err := RefreshMRN(ownerMRN, c.Mrn, MRN_RESOURCE_CONTROL, c.Uid)
 	if err != nil {
-		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", c.Uid).Msg("failed to refresh control mrn")
-		return errors.Wrap(err, "failed to refresh mrn for control "+c.Uid)
+		log.Error().Err(err).Str("owner", ownerMRN).Str("uid", c.Uid).Msg("failed to refresh control map")
+		return errors.Wrap(err, "failed to refresh mrn for control map "+c.Uid)
 	}
 
 	if c.Uid != "" {
