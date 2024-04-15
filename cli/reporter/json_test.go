@@ -30,7 +30,7 @@ func TestJsonOutput(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  FormatJSON,
+		Format:  FormatJSONv1,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 		out:     &writer,
@@ -57,7 +57,7 @@ func TestJsonOutputOnlyErrors(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  FormatJSON,
+		Format:  FormatJSONv1,
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 		out:     &writer,

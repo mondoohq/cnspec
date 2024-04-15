@@ -72,8 +72,8 @@ func determineOutputType(target string) OutputTarget {
 	return LOCAL_FILE
 }
 
-func reportToYaml(report *policy.ReportCollection) ([]byte, error) {
-	json, err := reportToJson(report)
+func reportToYamlV1(report *policy.ReportCollection) ([]byte, error) {
+	json, err := reportToJsonV1(report)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func reportToYaml(report *policy.ReportCollection) ([]byte, error) {
 	return yaml, nil
 }
 
-func reportToJson(report *policy.ReportCollection) ([]byte, error) {
+func reportToJsonV1(report *policy.ReportCollection) ([]byte, error) {
 	raw := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &raw}
 	err := ConvertToJSON(report, &writer)
@@ -92,4 +92,25 @@ func reportToJson(report *policy.ReportCollection) ([]byte, error) {
 		return nil, err
 	}
 	return raw.Bytes(), nil
+}
+
+func reportToYamlV2(report *policy.ReportCollection) ([]byte, error) {
+	json, err := reportToJsonV2(report)
+	if err != nil {
+		return nil, err
+	}
+	yaml, err := yaml.JSONToYAML(json)
+	if err != nil {
+		return nil, err
+	}
+	return yaml, nil
+}
+
+func reportToJsonV2(report *policy.ReportCollection) ([]byte, error) {
+	r, err := ConvertToProto(report)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.ToJSON()
 }

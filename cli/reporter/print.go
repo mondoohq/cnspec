@@ -19,10 +19,12 @@ const (
 	FormatSummary
 	FormatFull
 	FormatReport
-	FormatYAML
-	FormatJSON
+	FormatYAMLv1
+	FormatJSONv1
 	FormatJUnit
 	FormatCSV
+	FormatJSONv2
+	FormatYAMLv2
 )
 
 // Formats that are supported by the reporter
@@ -32,9 +34,13 @@ var Formats = map[string]Format{
 	"full":    FormatFull,
 	"":        FormatCompact,
 	"report":  FormatReport,
-	"yaml":    FormatYAML,
-	"yml":     FormatYAML,
-	"json":    FormatJSON,
+	"yaml-v1": FormatYAMLv1,
+	"yaml-v2": FormatYAMLv2,
+	"yaml":    FormatYAMLv1,
+	"yml":     FormatYAMLv2,
+	"json-v1": FormatJSONv1,
+	"json-v2": FormatJSONv2,
+	"json":    FormatJSONv1,
 	"junit":   FormatJUnit,
 	"csv":     FormatCSV,
 }

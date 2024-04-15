@@ -66,6 +66,7 @@ func init() {
 	_ = scanCmd.Flags().String("asset-name", "", "User-override for the asset name")
 	_ = scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset.") // user-added, editable
 	_ = scanCmd.Flags().StringToString("props", nil, "Custom values for properties")
+	_ = scanCmd.Flags().String("trace-id", "", "Trace identifier")
 
 	// v6 should make detect-cicd and category flag public
 	_ = scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
@@ -112,6 +113,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
 		_ = viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
 		_ = viper.BindPFlag("asset-name", cmd.Flags().Lookup("asset-name"))
+		_ = viper.BindPFlag("trace-id", cmd.Flags().Lookup("trace-id"))
 		_ = viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 
@@ -243,6 +245,11 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	}
 	if assetName != "" && cliRes.Asset != nil {
 		cliRes.Asset.Name = assetName
+	}
+
+	traceId := viper.GetString("trace-id")
+	if traceId != "" && cliRes.Asset != nil {
+		cliRes.Asset.TraceId = traceId
 	}
 
 	inv, err := inventoryloader.ParseOrUse(cliRes.Asset, viper.GetBool("insecure"), optAnnotations)

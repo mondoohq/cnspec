@@ -54,6 +54,7 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			Mrn:          a.Mrn,
 			Name:         a.Name,
 			PlatformName: platformName,
+			TraceId:      a.TraceId,
 		}
 		protoReport.Assets[assetMrn] = pAsset
 	}
@@ -178,8 +179,9 @@ func (r *Report) ToCnqueryReport() *cr.Report {
 
 	for id, asset := range r.Assets {
 		report.Assets[id] = &cr.Asset{
-			Mrn:  asset.Mrn,
-			Name: asset.Name,
+			Mrn:     asset.Mrn,
+			Name:    asset.Name,
+			TraceId: asset.TraceId,
 		}
 	}
 
