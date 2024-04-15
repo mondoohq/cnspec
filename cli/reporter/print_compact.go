@@ -263,12 +263,12 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 	for _, platform := range availablePlatforms {
 		r.out(NewLineCharacter + platform + NewLineCharacter)
 		for i := range assetsByPlatform[platform] {
-			assetScore := "U"
+			assetScore := ""
 			assetScoreRating := policy.ScoreRating_unrated
 			if r.data.Reports[assetsByPlatform[platform][i].Mrn] != nil {
 				score := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score
 				assetScoreRating = score.Rating()
-				assetScore = assetScoreRating.Letter() + " [" + strconv.Itoa(int(score.Value)) + "/100]"
+				assetScore = "[" + strconv.Itoa(int(score.Value)) + "/100]"
 			} else {
 				assetScoreRating = policy.ScoreRating_error
 				assetScore = "X"
@@ -282,8 +282,7 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 }
 
 func printCompactScoreSummary(score *policy.Score) string {
-	return fmt.Sprintf("%s   %3d/100     (%d%% completed)",
-		score.Rating().Letter(),
+	return fmt.Sprintf("%3d/100     (%d%% completed)",
 		score.Value, score.Completion())
 }
 
@@ -427,21 +426,21 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out(termenv.String("! Error:        ").Foreground(r.Colors.Error).String())
+		r.out(termenv.String("! Error:      ").Foreground(r.Colors.Error).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 		if !r.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String())
+			r.out(termenv.String("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
 			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(". Unknown:    ").Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(". Skipped:    ").Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
@@ -567,10 +566,10 @@ func (r *defaultReporter) printScore(title string, score *policy.Score, query *e
 		passfail = termenv.String("✕ Fail:  ").Foreground(color).String()
 	}
 
-	scoreIndicator := "       "
+	scoreIndicator := "     "
 	if query.Impact != nil {
 		scoreIndicator = termenv.String(
-			fmt.Sprintf("%s %3d  ", rating.Letter(), score.Value),
+			fmt.Sprintf("%3d  ", score.Value),
 		).Foreground(color).String()
 	}
 
@@ -585,21 +584,21 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out(termenv.String("! Error:        ").Foreground(r.Colors.Error).String())
+		r.out(termenv.String("! Error:      ").Foreground(r.Colors.Error).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 		if !r.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out(termenv.String("  Message:      " + errorMessage).Foreground(r.Colors.Error).String())
+			r.out(termenv.String("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
 			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out(termenv.String(". Unknown:      ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(". Unknown:    ").Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out(termenv.String(". Skipped:      ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(". Skipped:    ").Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
