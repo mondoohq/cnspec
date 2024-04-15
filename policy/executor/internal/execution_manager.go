@@ -5,6 +5,7 @@ package internal
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 	"time"
 
@@ -95,6 +96,10 @@ func (em *executionManager) Start() {
 					}
 					return
 				}
+				// FIXME: Run the garbage collector after each query execution because we alloc a
+				// lot of objects. The objects are stacking and spike the memory usage. We should
+				// come back to this and address the underlying cause.
+				runtime.GC()
 			case <-em.stopChan:
 				return
 			}
