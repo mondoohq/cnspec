@@ -143,6 +143,12 @@ func (p *Bundle) ToYAML() ([]byte, error) {
 	return yaml.Marshal(p)
 }
 
+// Prepares the bundle for compilation
+func (b *Bundle) Prepare() {
+	b.ConvertEvidence()
+	b.ConvertQuerypacks()
+}
+
 // ConvertQuerypacks takes any existing querypacks in the bundle
 // and turns them into policies for execution by cnspec.
 func (p *Bundle) ConvertQuerypacks() {
@@ -172,6 +178,32 @@ func (p *Bundle) ConvertQuerypacks() {
 			ScoringSystem: explorer.ScoringSystem_DATA_ONLY,
 		}
 		p.Policies = append(p.Policies, &policy)
+	}
+}
+
+func (b *Bundle) ConvertEvidence() {
+	for _, f := range b.Frameworks {
+		policies := []*Policy{}
+		cmaps := []*ControlMap{}
+		for _, g := range f.Groups {
+			for _, c := range g.Controls {
+				evidencePolicies := c.GenerateEvidencePolicies(f.Uid)
+				policies = append(policies, evidencePolicies...)
+				controlMap := c.GenerateEvidenceControlMap()
+				// if the control has evidence, we add the control map
+				if controlMap != nil {
+					cmaps = append(cmaps, controlMap)
+				}
+			}
+		}
+		// we only want a new framework map if there's at least one control map
+		if len(cmaps) > 0 {
+			frameworkMap := GenerateFrameworkMap(cmaps, f, policies)
+			b.FrameworkMaps = append(b.FrameworkMaps, frameworkMap)
+		}
+		if len(policies) > 0 {
+			b.Policies = append(b.Policies, policies...)
+		}
 	}
 }
 
