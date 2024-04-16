@@ -4,7 +4,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Microsoft Azure Security
-    version: 1.4.0
+    version: 2.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -18,32 +18,49 @@ policies:
 
         Microsoft Azure Security by Mondoo provides guidance for establishing minimum recommended security and operational best practices for Microsoft Azure.
 
-        ## Remote scan
+        ## Getting Started
 
-        Remote scans use cnspec providers to retrieve on-demand scan results without having to install any agents.
+        Step 1: Download and Install cnspec
+        Download the latest version of cnspec from the official releases page. (https://releases.mondoo.com/cnspec/)
 
-        For a complete list of providers, run:
+          **Example for Ubuntu System:**
 
-        ```bash
-        cnspec scan --help
+            Download cnspec_10.11.1_linux_amd64.tar.gz.
+            Extract the archive:
+
+            ```
+            tar -xvf cnspec_10.11.1_linux_amd64.tar.gz
+            ```
+            This command unpacks the cnspec binary, which you can now use to scan your Azure environment.
+
+        Step 2: Authentication to Azure
+        There are two primary methods to authenticate cnspec to your Azure environments:
+        
+        **a. Azure CLI Login**
+
+        ```
+        az login
         ```
 
-        ### Prerequisites
+        Once logged in, you can scan your Azure environment using the policy bundle:
 
-        Remote scans of Azure require API credentials with access to the subscription.
+        ```
+        cnspec scan azure --subscription <subscription_id> --policy-bundle mondoo-azure-security.mql.yaml
+        ```
 
-        Note: Some of the checks in this policy query data using Microsoft's Graph API. To successfully run these checks, you must create an Azure AD app registration for cnspec with proper permissions. Follow the instructions on https://mondoo.com/docs/platform/infra/cloud/azure/azure-integration-scan-subscription/ to set up this app.
+        To run MQL commands individually in an interactive session:
 
-        To run all checks at the same time, ensure your app registration has the necessary permissions (as described in the document linked above) and then run:
+        ```
+        cnspec shell azure --subscription <subscription_id>
+        ```
 
-        ```bash
+        **b. Azure AD App Registration**
+
+        Set up an Azure AD application registration for cnspec with the appropriate permissions as per the instructions on Mondoo Docs. Follow the instructions on https://mondoo.com/docs/platform/infra/cloud/azure/azure-integration-scan-subscription/ to set up this app.
+        Use the following command to initiate a scan with the Azure AD application:
+
+        ```
         cnspec scan azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id> --policy-bundle mondoo-azure-security.mql.yaml
-        ```
-
-        ### Scan an Azure subscription
-
-        ```bash
-        cnspec scan azure --subscription <subscription_id>
         ```
 
         ## Join the community!
@@ -84,43 +101,53 @@ policies:
     scoring_system: 2
 queries:
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
-    title: Ensure that OS disks are encrypted
+    title: Ensure OS Disks in azure virtual machines are encrypted with Customer Managed Keys (CMK)
     impact: 80
     variants:
       - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-single
       - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-api
     docs:
       desc: |
-        This check ensures that both OS disks (boot volumes) are encrypted. Customer managed keys can be either Azure Disk Encryption (ADE) or server-side encryption (SSE).
+        Encryption of OS disks for Azure virtual machines is critical for securing boot volumes from unauthorized access and data breaches. The use of Customer Managed Keys (CMK) offers enhanced control over the encryption and decryption processes, allowing organizations to manage their own keys via Azure Key Vault. This approach not only meets compliance requirements but also provides a higher level of security by enabling key rotation and revocation capabilities. Encrypting OS disks ensures that the data is unreadable to unauthorized users, protecting it from both external attacks and insider threats.. Customer managed keys can be either Azure Disk Encryption (ADE) or server-side encryption (SSE).
       audit: |
-        __cnspec run__
+        **Manual Audit via Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`:
+        1. Navigate to **Virtual machines** in the Azure Portal.
+        2. Select a virtual machine and access **Disks** under the Settings menu.
+        3. Verify the encryption settings for the OS disk to ensure it uses CMK.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        **Automated Audit with Azure CLI:**
 
-          ```bash
-          cnspec run azure -c "azure.subscription.compute.vms.all(osDisk.properties.encryption != empty)"
-          ```
+        List and check the encryption settings for all disks in a specific resource group:
 
-        __cnspec shell__
+        ```bash
+        az disk list --resource-group "yourResourceGroupName" --query "[].{Name:name, ResourceGroupName:resourceGroup, EncryptionSettings:encryptionSettingsCollection}" -o table
+        ``` 
 
-        To audit Microsoft Azure with `cnspec shell`:
+        **Automated Audit with PowerShell:**
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          azure.subscription.compute.vms.all(osDisk.properties.encryption != empty)
-          ```
+        ```powershell
+        Get-AzDisk -ResourceGroupName "yourResourceGroupName" | Select-Object Name, ResourceGroupName, EncryptionSettingsCollection
+        ```
+        
+        Ensure the EncryptionType is set to EncryptionAtRestWithCustomerKey for OS disks.
       remediation: |
+        ### Microsoft Azure Portal
+
+        To update using Microsoft Azure Portal:
+
+        1. Log into the Azure Portal and navigate to **Disks**.
+        2. Select the OS disk you wish to encrypt.
+        3. In the **Encryption** section, set **Encryption type** to **Customer-managed keys**.
+        4. Specify the Azure Key Vault and select the appropriate key.
+        5. Save the changes.
+
+        ### Azure CLI
+
+        ```bash
+        az vm encryption enable --resource-group <ResourceGroupName> --name <VMName> --disk-encryption-keyvault <KeyVaultName> --key-encryption-key <KeyName> --volume-type OS
+        ```
+
         ### Terraform
 
         __Encrypt disks Linux VM__
@@ -172,28 +199,6 @@ queries:
           ...
         }
         ```
-
-        ### Microsoft Azure Portal
-
-        To update using Microsoft Azure Portal:
-
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Virtual machines**.
-        3. For each virtual machine:
-           a. Select the virtual machine.
-           b. Select **Disks**.
-           c. Select the **X** to detach the disk from the VM.
-           d. Search for **Disks** and locate any unattached disk.
-           e. Select the disk and select **Encryption**.
-           f. Change the encryption type, then select the encryption set.
-           g. Select **Save**.
-           h. Go back to the VM and re-attach the disk.
-
-        ### Azure CLI
-
-        ```bash
-        az vm encryption enable -g <resource_group> --name <vm_name> --disk-encryption-keyvault <keyvault_name> --key-encryption-key <key_name> --volume-type [ALL|OS|DATA]
-        ```
     refs:
       - url: https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview
         title: Overview of managed disk encryption options
@@ -202,13 +207,13 @@ queries:
       asset.platform == "azure-compute-vm-api"
       asset.kind == "azure-object"
     mql: |
-      azure.subscription.compute.vm.osDisk.properties.encryption != empty
+      azure.subscription.compute.vm.osDisk.properties.encryption.type == "EncryptionAtRestWithCustomerKey"
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-api
     filters: |
       asset.platform == "azure"
       asset.kind == "api"
     mql: |
-      azure.subscription.compute.vms.all(osDisk.properties.encryption != empty)
+      azure.subscription.compute.vms.all(osDisk.properties.encryption.type == "EncryptionAtRestWithCustomerKey")
   - uid: mondoo-azure-security-ssh-access-restricted-from-internet
     title: Ensure that SSH access is restricted from the internet
     impact: 80
@@ -224,54 +229,49 @@ queries:
       - uid: mondoo-azure-security-ssh-access-restricted-from-internet-api
     docs:
       desc: |
-        This check ensures that SSH on port 22 is not configured to allow access from anywhere with the CIDR block "0.0.0.0".
+        Restricting SSH access from the internet minimizes the risk of brute force and other unauthorized access attempts on Azure resources such as virtual machines. Public internet exposure of SSH, especially on the default port 22, significantly increases the attack surface. It's crucial to evaluate and restrict SSH access by configuring network security groups (NSGs) to allow only necessary connections, preferably from known, secure sources. Implementing stringent access controls for SSH enhances security by preventing attackers from using compromised VMs as a pivot point for broader network intrusions.
       audit: |
-        __cnspec run__
+       **Manual Audit via Azure Portal:**     
 
-        To audit Microsoft Azure with `cnspec run`:
+        **Checking via Network Security Groups (NSGs) for All Resources:**
+        1. From the main Azure Portal menu, navigate to **Network security groups**.
+        2. Select an NSG associated with the resources you want to check.
+        3. Go to the **Inbound security rules** section.
+        4. Review all the rules to ensure none allow SSH access (port 22, TCP) from broadly defined sources such as 'Any', '0.0.0.0', or 'Internet'.
+        5. Confirm that rules configured to permit SSH access are scoped to specific, known IP addresses or ranges to minimize exposure.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        **Checking Specific Virtual Machines:**
+        1. Log into the Azure Portal.
+        2. Navigate to **Virtual machines**.
+        3. Select a specific virtual machine to review.
+        4. Within the virtual machine's blade, select **Networking** under the settings menu.
+        5. Access the **Networking** blade of the selected VM, then review the **Inbound port rules**.
+        6. Ensure there are no rules allowing SSH access (port 22, TCP) from 'Any' or 'Internet' source address prefixes. Only secure, specified IP ranges should be allowed, if necessary.
 
-          ```bash
-          cnspec run azure -c "allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-        )
-        allNsgTCP.all(securityRules.all(properties.destinationPortRange != "*"))
-        allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= 22 && toPort >= 22)))"
-          ```
 
-        __cnspec shell__
+        **Automated Audit with Azure CLI:**
 
-        To audit Microsoft Azure with `cnspec shell`:
+        List NSGs and check for SSH access rules:
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-        )
-        allNsgTCP.all(securityRules.all(properties.destinationPortRange != "*"))
-        allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= 22 && toPort >= 22)))
-          ```
+        ```bash
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='22' || destinationPortRanges.contains('22')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='<nw>/0' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        ```
       remediation: |
+        ### Configuring Network Security via Azure Portal:
+
+        1. In the Azure Portal, navigate to **Network Security Groups (NSG)** associated with your VMs.
+        2. Review or modify the inbound security rules:
+          - Set `source_address_prefix` to a specific IP range or a VPN gateway rather than 'Any' or 'Internet'.
+          - Ensure that the `destination_port_range` does not include TCP port 22 unless absolutely necessary and from a secure source.
+
+        ### Using Azure CLI:
+
+        Update or create a new NSG rule to restrict SSH access:
+
+        ```bash
+        az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictSSH --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes <YourSecureIPRange> --destination-port-ranges 22
+        ```
+
         ### Terraform
 
         ```hcl
@@ -347,54 +347,47 @@ queries:
       - uid: mondoo-azure-security-rdp-access-restricted-from-internet-api
     docs:
       desc: |
-        This check ensures that RDP on port 3389 is not configured to allow access from anywhere with the CIDR block "0.0.0.0".
+        Restricting RDP access from the internet is crucial for protecting Azure resources against unauthorized access and potential security breaches. RDP, typically listening on TCP port 3389, is a common target for many Cyber attacks. By limiting RDP access to only trusted internal networks or through secure tunnels, the risk of these attacks is significantly reduced. This security measure is essential for maintaining the integrity and security of Azure environments, preventing attackers from using compromised VMs as launch points for further attacks within and beyond the Azure network.
       audit: |
-        __cnspec run__
+        **Manual Audit via Azure Portal:**     
 
-        To audit Microsoft Azure with `cnspec run`:
+        1. Log into the Azure Portal.
+        2. Navigate to **Network security groups** under the Networking or directly through the search bar.
+        3. For each NSG, access the **Inbound security rules**.
+        4. Carefully review each rule to identify any that allow inbound RDP traffic (TCP port 3389):
+          - Check for rules where the protocol is set to `TCP`.
+          - The destination port or port range includes `3389`.
+          - The source address prefix is too broad, such as 'Any', '0.0.0.0', '<nw>/0', '/0', 'internet', or 'any'.
+        5. Note down any NSG rules that do not comply with your organization’s security policy regarding restricted access to RDP. These rules should ideally allow access only from trusted, secure networks, and not from the open internet.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        1. Navigate to **Virtual Machines** in the Azure Portal.
+        2. For each VM, select the **Networking** blade to review network configurations.
+        3. Check the **Inbound port rules** under the associated Network Security Group (NSG).
+        4. Verify that there are no rules allowing RDP access (TCP port 3389) from 'Any' or 'Internet'. Only secure, specified IP ranges should be allowed if necessary.
 
-          ```bash
-          cnspec run azure -c "allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-        )
-        allNsgTCP.all(securityRules.all(properties.destinationPortRange != "*"))
-        allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= 3389 && toPort >= 3389)))"
-          ```
+        **Automated Audit with Azure CLI:**
 
-        __cnspec shell__
+        List NSGs and verify RDP access rules:
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          allNsgTCP = azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-        )
-        allNsgTCP.all(securityRules.all(properties.destinationPortRange != "*"))
-        allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= 3389 && toPort >= 3389)))
-          ```
+        ```bash
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='3389' || destinationPortRanges.contains('3389')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='<nw>/0' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        ```
       remediation: |
+        ### Azure Portal Method:
+
+        1. Log into the Azure Portal and navigate to **Network Security Groups**.
+        2. Select the NSG associated with your VM.
+        3. Review the **Inbound security rules** and modify or delete any rules that allow internet access to port 3389.
+        4. Preferably, change the `source_address_prefix` to more restrictive settings, such as a specific IP range or a secure VPN gateway.
+
+        ### Using Azure CLI:
+
+        Update or create NSG rules to securely restrict RDP access:
+
+        ```bash
+        az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictRDP --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes <YourSecureIPRange> --destination-port-ranges 3389
+        ```
+
         ### Terraform
 
         ```hcl
@@ -456,7 +449,7 @@ queries:
         allNsgTCP.all(securityRules.none(destinationPortRange.any(fromPort <= disallowedPortRDP && toPort >= disallowedPortRDP)))
       }
   - uid: mondoo-azure-security-secure-transfer-required-enabled
-    title: Ensure that all data must be encrypted in transit
+    title: Mandate HTTPS for Secure Data Transfer to azure storage accounts
     impact: 80
     variants:
       - uid: mondoo-azure-security-secure-transfer-required-enabled-api
@@ -466,34 +459,36 @@ queries:
         This check ensures that "Secure transfer required" is enabled.  This setting enforces the use of HTTPS for data operations, ensuring that data transmitted to and from Azure storage accounts is secured. It's an important security measure to protect data from interception or tampering during transmission, aligning with best practices for data security in the cloud.
         When the 'secure transfer required' setting is enabled in Azure, it mandates the use of HTTPS for accessing storage accounts through REST APIs. Any HTTP requests are automatically rejected. This also impacts the Azure files service; unencrypted connections, including certain SMB protocols and some Linux SMB clients, will fail. However, it's important to note that Azure storage doesn't support HTTPS for custom domain names, so this security feature doesn't apply when using a custom domain. This setting is crucial for ensuring that data in transit is encrypted and secure.
       audit: |
-        __cnspec run__
+        **Manual Audit via Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`:
+        1. Navigate to **Storage Accounts** from the Azure portal.
+        2. For each storage account, select **Configuration** under the settings panel.
+        3. Verify that the **Secure transfer required** option is set to **Enabled**.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        **Automated Audit with Azure CLI:**
 
-          ```bash
-          cnspec run azure -c " azure.subscription.storage.accounts.all(properties.EnableHttpsTrafficOnly == true)"
-          ```
+        Use the Azure CLI to check the status of the 'Secure transfer required' setting across all storage accounts:
 
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-           azure.subscription.storage.accounts.all(properties.EnableHttpsTrafficOnly == true)
-          ```
+        ```bash
+        az storage account list --query "[].{AccountName:name, SecureTransferEnabled: enableHttpsTrafficOnly}" -o table
+        ```
       remediation: |
+        ### Enforcing Secure Transfer via Azure Portal:
+
+        1. Access the Azure Portal and go to **Storage Accounts**.
+        2. Select each storage account individually.
+        3. Navigate to **Configuration** under the settings menu.
+        4. Set the **Secure transfer required** option to **Enabled**.
+        5. Save the changes to enforce HTTPS for all incoming and outgoing data transactions.
+
+        ### Using Azure CLI:
+
+        Enable 'Secure transfer required' for an individual storage account using the following command:
+
+        ```bash
+        az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --https-only true
+        ```
+
         ### Terraform
 
         ```hcl
@@ -522,38 +517,29 @@ queries:
       - uid: mondoo-azure-security-public-access-level-private-blob-containers-api
     docs:
       desc: |
-        This check ensures that anonymous access to blob containers is disabled. It also checks that public access on storage accounts is disabled.
+        This check ensures that anonymous access to blob containers is disabled and public access on storage accounts is disabled. The configuration should prevent any form of anonymous blob access and ensure that all access to storage accounts and their blob containers are authenticated and authorized.
       audit: |
-        __cnspec run__
+        From Azure Portal:
 
-        To audit Microsoft Azure with `cnspec run`:
+        1.Go to Storage Accounts.
+        2.For each storage account, go to the Networking setting under Security + networking.
+        3.Ensure the 'Public Network Access' setting is set to 'Disabled'.
+        4.In the storage account menu pane, under the 'Settings' section, select 'Configuration'.
+        5.Under 'Allow Blob Anonymous Access', ensure that the setting is 'Disabled'.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        From Azure CLI:
 
-          ```bash
-          cnspec run azure -c "azure.subscription.storage.accounts.all(properties.AllowBlobPublicAccess == "false" ) ||
-            azure.subscription.storage.accounts.all(containers.all(properties.publicAccess == "None" ))"
-          ```
+        1.Authenticate using az login and ensure you are in the correct subscription.
+        2.Use the following command to check the 'Public Network Access' setting:
 
-        __cnspec shell__
+        ```
+        az storage account show --name <storage-account> --resource-group <resource-group> --query "{publicNetworkAccess:publicNetworkAccess}"
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
+        ```
+        az storage account show --name <yourStorageAccountName> --query allowBlobPublicAccess
+        ``` 
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          azure.subscription.storage.accounts.all(properties.AllowBlobPublicAccess == "false" ) ||
-            azure.subscription.storage.accounts.all(containers.all(properties.publicAccess == "None" ))
-
-          ```
       remediation: |
         ### Terraform
 
@@ -566,77 +552,86 @@ queries:
 
         ### Microsoft Azure Portal
 
-        1. Log into the Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Storage accounts**.
-        3. For each storage account:
-           a. Select the storage account.
-           b. For each container:
-             i. Select the container.
-             ii. Select **Change access level**.
-             iii. Select **Private (no anonymous access)**.
-             iv. Select the **OK** button.
+        1. Go to Storage Accounts.
+        2. For each storage account, go to Networking in Security + networking.
+        3. Set 'Public Network Access' to 'Disabled'.
+        4. Select a Storage Account and in the settings pane, select 'Configuration'.
+        5. Under 'Allow Blob Anonymous Access', select 'Disabled'.
+        6. For each container, change the access level to 'Private (no anonymous access)'.
 
         ### Azure CLI
 
-        ```bash
-        az storage container set-permission
-        --name <container_name>
-        --public-access off
-        --account-name <account_name>
-        --account-key <account_key>
-        ```
+        - Disable public network access:
+          ```
+          az storage account update --name <storage-account> --resource-group <resource-group> --public-network-access Disabled
+          ```
+        
+        - Set blob containers to private access:
+          ```
+          az storage container set-permission --name <container_name> --public-access off --account-name <account_name> --account-key <account_key>
+          ```
   - uid: mondoo-azure-security-public-access-level-private-blob-containers-api
     filters: |
       asset.platform == "azure"
       asset.kind == "api"
     mql: |
-      azure.subscription.storage.accounts.all(properties.AllowBlobPublicAccess == "false" ) ||
-       azure.subscription.storage.accounts.all(containers.all(properties.publicAccess == "None" ))
+      azure.subscription.storage.accounts.all(properties.AllowBlobPublicAccess == "false" )
+      azure.subscription.storage.accounts.all(containers.all(properties.publicAccess == "None" ))
+      azure.subscription.storage.accounts.all(properties.PublicNetworkAccess == "Disabled")
   - uid: mondoo-azure-security-public-access-level-private-blob-containers-single
     filters: |
       asset.platform == "azure-storage-account"
       asset.kind == "azure-object"
     mql: |
-      azure.subscription.storage.account.properties.AllowBlobPublicAccess == "false" ||
-       azure.subscription.storage.account.containers.all(properties.publicAccess == "None")
+      azure.subscription.storage.account.properties.AllowBlobPublicAccess == "false"
+      azure.subscription.storage.account.containers.all(properties.publicAccess == "None")
+      azure.subscription.storage.account.properties.AllowBlobPublicAccess == "false"
   - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
-    title: Ensure the default network access rule for Storage Accounts is set to deny
+    title: Enforce Deny as Default Network Access for Azure Storage Accounts
     impact: 80
     variants:
       - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny-single
       - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny-api
     docs:
       desc: |
-        This check ensures that access to the default network for storage accounts is set to deny.
+        This check ensures that Azure storage accounts have their default network access rule set to "Deny". This setting is pivotal in enhancing security by ensuring that only explicitly allowed networks can access the storage accounts. When the default action is set to "Deny", access is blocked for any request that does not match a specified allowed rule. This configuration minimizes the risk of unauthorized access, ensuring that only traffic from approved sources, such as specific Azure Virtual Networks or designated public IP addresses, can access the storage data. It is a foundational element in securing storage accounts from potential external threats and unauthorized access attempts.
       audit: |
-        __cnspec run__
+        **Manual Audit via Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`:
+        1. Navigate to **Storage Accounts** in the Azure Portal.
+        2. Select a storage account and select the **Networking** blade.
+        3. Under the **Firewalls and virtual networks** section, review the **Default action**.
+        4. Ensure the Default action is set to **Deny**. This setting should block all access unless explicitly allowed by other network rules.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        **Automated Audit with Azure CLI:**
 
-          ```bash
-          cnspec run azure -c "azure.subscription.storage.accounts.all(properties.NetworkRuleSet.defaultAction == "Deny")"
-          ```
+        Use the Azure CLI to verify the default network access rule for all storage accounts:
 
-        __cnspec shell__
+        ```bash
+        az storage account list --query "[].{AccountName: name, DefaultAction: networkRuleSet.defaultAction}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          azure.subscription.storage.accounts.all(properties.NetworkRuleSet.defaultAction == "Deny")
-          ```
+        This command lists each storage account along with the default action. Verify that all entries show "Deny" as the default action.
       remediation: |
+        ### Configuring Default Action via Azure Portal:
+
+        1. Access the Azure Portal and go to **Storage Accounts**.
+        2. Select the storage account you wish to configure.
+        3. select the **Networking** blade.
+        4. Navigate to the **Firewalls and virtual networks** section.
+        5. Set the **Default action** to **Deny**.
+        6. Save your changes to enforce that all unrecognized network traffic is blocked by default.
+
+        ### Using Azure CLI:
+
+        To set the default network access rule to "Deny" for an existing storage account, use the following Azure CLI command:
+
+        ```bash
+        az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --default-action Deny
+        ```
+
+        This command updates the storage account to deny all traffic by default, significantly enhancing the security posture by limiting access to only configured exceptions.
+
         ### Terraform
 
         ```hcl
@@ -676,7 +671,7 @@ queries:
     mql: |
       azure.subscription.storage.account.properties.NetworkRuleSet.defaultAction == "Deny"
   - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
-    title: Ensure "Trusted Microsoft Services" is enabled for storage account access
+    title: Ensure "Trusted Microsoft Services" have access to azure storage accounts
     impact: 80
     variants:
       - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access-single
@@ -685,34 +680,37 @@ queries:
       desc: |
         This check ensures that "Trusted Microsoft Services" is enabled for storage account access. When using Azure storage accounts, certain Azure services might need to bypass network rules due to their operational networks. The "Allow trusted Azure services" exception allows these services to access the storage account securely, using strong authentication. This exception is crucial for services that interact directly with storage accounts but are not able to conform to network rules. Services such as Azure Backup, Azure Site Recovery, Azure DevTest Labs, Azure Event Grid, Azure Event Hubs, Azure Networking, Azure Monitor, and Azure SQL Data Warehouse are examples of services that can be granted access through this exception when they are registered in the subscription. This setup is important for maintaining both functionality and security in Azure environments.
       audit: |
-        __cnspec run__
+        From Azure Portal:
 
-        To audit Microsoft Azure with `cnspec run`:
+        1.Go to Storage Accounts.
+        2.Select a specific storage account.
+        3.Navigate to the Networking blade.
+        4.Under Firewalls and virtual networks, check if Allow Azure services on the trusted services list to access this storage account is enabled.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        From Azure CLI:
 
-          ```bash
-          cnspec run azure -c "azure.subscription.storage.accounts.all(properties.NetworkRuleSet.bypass.contains("AzureServices"))"
-          ```
+        List the network rules for all storage accounts and verify that AzureServices is included in the bypass list:
 
-        __cnspec shell__
+        ```
+        az storage account list --query "[*].{AccountName:name, BypassRules:networkRuleSet.bypass}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          azure.subscription.storage.accounts.all(properties.NetworkRuleSet.bypass.contains("AzureServices"))
-          ```
       remediation: |
+        From Azure Portal:
+            1. Go to `Storage Accounts` and select the relevant account.
+            2. Select the `Networking` blade.
+            3. Under `Firewalls and virtual networks`, select `Enabled from selected virtual networks and IP addresses`.
+            4. Check the box for `Allow Azure services on the trusted services list to access this storage account` to enable it.
+            5. Save the changes.
+
+        **From Azure CLI:**
+
+        Enable the trusted Microsoft services for a storage account:
+
+        ```
+        az storage account update --name <StorageAccountName> --resource-group <resourceGroupName> --bypass AzureServices
+        ```
+
         ### Terraform
 
         ```hcl
@@ -738,43 +736,47 @@ queries:
     mql: |
       azure.subscription.storage.account.properties.NetworkRuleSet.bypass.contains("AzureServices")
   - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days
-    title: Ensure that audit logs are retained for at least 30 days
+    title: Ensure minimum 30-Day retention for SQL server Audit Logs
     impact: 80
     variants:
       - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days-single
       - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days-api
     docs:
       desc: |
-        This check ensures that auditing retention is set to greater than or equal to 30 days.
+        Maintaining audit logs for an extended period is crucial for compliance and security analysis. This check verifies that Azure SQL servers have an audit log retention policy set to at least 30 days. Setting a retention policy of 30 days or more allows organizations to analyze historical data for security incidents and comply with regulatory requirements. It is particularly important for identifying patterns that could indicate security threats or breaches over time.
       audit: |
-        __cnspec run__
+        **Manual Audit via Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`:
+        1. Navigate to **SQL servers** in the Azure Portal.
+        2. Select a server and select **Auditing** under the **Security** settings.
+        3. Check if the **Retention (days)** is set to 30 or more.
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        **Automated Audit with Azure CLI:**
 
-          ```bash
-          cnspec run azure -c "azure.subscription.sql.servers.all(auditingPolicy.retentionDays >= 30) || azure.subscription.sql.servers.all(auditingPolicy.retentionDays == 0)"
-          ```
+        Retrieve the audit retention settings for all SQL servers:
 
-        __cnspec shell__
+        ```bash
+        az sql server list --query "[].{ServerName:name, RetentionDays:auditingSettings.retentionDays}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          azure.subscription.sql.servers.all(auditingPolicy.retentionDays >= 30) || azure.subscription.sql.servers.all(auditingPolicy.retentionDays == 0)
-          ```
+        Ensure that each server listed has a retention period of 30 days or more.
       remediation: |
+        **Configuring Audit Retention via Azure Portal:**
+
+        1. Access the Azure Portal and navigate to **SQL servers**.
+        2. Select the relevant SQL server.
+        3. Go to **Auditing** under the **Security** section.
+        4. Set the **Retention (days)** to at least 30 days, or use '0' for unlimited retention.
+        5. Select **Save** to apply the changes.
+
+        **Using Azure CLI:**
+
+        Update the audit retention policy for a specific SQL server:
+
+        ```bash
+        az sql server audit-policy update --name <ServerName> --resource-group <ResourceGroupName> --retention-days 30
+        ```
+
         ### Terraform
 
         ```hcl
@@ -815,42 +817,41 @@ queries:
       - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-api
     docs:
       desc: |
-        This check ensures that no SQL databases allow ingress connections from "0.0.0.0".
+        This configuration ensures that SQL databases across various platforms (Azure SQL, PostgreSQL, MySQL, MariaDB) do not permit unrestricted network access by blocking ingress from the IP address range "0.0.0.0/0". Limiting access is crucial to protect databases from unauthorized access and potential breaches. This setting is fundamental for enforcing the principle of least privilege, where only specific, approved IP addresses or ranges are permitted to access database resources, enhancing the security posture of Azure environments.
       audit: |
-        __cnspec run__
+        **Automated Auditing with Azure CLI**
 
-        To audit Microsoft Azure with `cnspec run`:
+        **Azure CLI:**
 
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Run this query:
+        List the firewall rules for all SQL servers and verify that none allow ingress from "0.0.0.0/0":
 
-          ```bash
-          cnspec run azure -c "azure.subscription.sql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))"
-          cnspec run azure -c "azure.subscription.postgreSql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))"
-          cnspec run azure -c "azure.subscription.mySql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))"
-          cnspec run azure -c "azure.subscription.mariaDb.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))"
-          ```
-
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Run `az login` to authenticate with the correct Azure subscription and tenant.
-        2. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure
-          ```
-
-        3. Run this query:
-
-          ```mql
-          azure.subscription.sql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-          azure.subscription.postgreSql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-          azure.subscription.mySql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-          azure.subscription.mariaDb.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
-          ```
+        ```bash
+        az sql server firewall-rule list --server <server-name> --resource-group <resource-group> --query "[?startIpAddress=='0.0.0.0'].{Name:name, StartIP:startIpAddress}"
+        az postgres server firewall-rule list --server <server-name> --resource-group <resource-group> --query "[?startIpAddress=='0.0.0.0'].{Name:name, StartIP:startIpAddress}"
+        az mysql server firewall-rule list --server <server-name> --resource-group <resource-group> --query "[?startIpAddress=='0.0.0.0'].{Name:name, StartIP:startIpAddress}"
+        az mariadb server firewall-rule list --server <server-name> --resource-group <resource-group> --query "[?startIpAddress=='0.0.0.0'].{Name:name, StartIP:startIpAddress}"
+        ```
       remediation: |
+        **Azure CLI Commands for Restricting Ingress at the Firewall Level:**
+
+        Ensure that the start and end IP addresses in the firewall rules are set to secure IPs within your controlled network range, effectively blocking public access.
+
+        ```bash
+        # Replace <server-name>, <resource-group>, and <rule-name> with your specific details
+
+        # Azure SQL
+        az sql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+
+        # PostgreSQL
+        az postgres server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+
+        # MySQL
+        az mysql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+
+        # MariaDB
+        az mariadb server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+        ```
+
         ### Terraform
 
         __mySQL__
@@ -934,40 +935,30 @@ queries:
       azure.subscription.mySql.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
       azure.subscription.mariaDb.servers.all(firewallRules.all(startIpAddress != "0.0.0.0"))
   - uid: mondoo-azure-security-ensure-register-with-ad-is-enabled-on-app-service
-    title: Ensure that app services can authenticate with Microsoft Entra ID
+    title: Enable Managed Identities for App services to Authenticate via Microsoft Entra ID
     impact: 80
     mql: |
-      azure.subscription.web.apps.all(identity.type == "SystemAssigned") ||
-       azure.subscription.web.apps.all(identity.principalId != empty)
+      azure.subscription.web.apps.all(identity.type == "SystemAssigned")
+      azure.subscription.web.apps.all(identity.principalId != empty)
     docs:
       desc: |
-        This check ensures that all app services can authenticate through Microsoft Entra ID (formerly Azure AD). This approach removes secrets from the app itself. Instead, the app connects to other Azure services securely without the need for user names and passwords.
+        Enabling Managed Identities for Azure App Services allows for secure and streamlined authentication with Microsoft Entra ID. This configuration eliminates the need for storing sensitive credentials within the app, as it can directly authenticate to other Azure services. Managed identities use a system-assigned identity that is tied to the application and managed by Azure. Services like Azure SQL Database, Azure Storage, and Azure Key Vault can authenticate an app service without any stored credentials, which enhances security by reducing the attack surface related to credential theft.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **App Services**.
+        3. Select an app service and select **Identity** under **Settings**.
+        4. Verify that the **Status** for **System assigned managed identity** is set to **On**.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.web.apps.all(identity.type == "SystemAssigned") || azure.subscription.web.apps.all(identity.principalId != empty)" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for the app connection instead of a certificate.
+        Verify that the system assigned identity is enabled for each App Service:
 
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.web.apps.all(identity.type == "SystemAssigned") || azure.subscription.web.apps.all(identity.principalId != empty)
-          ```
+        ```bash
+        az webapp identity show --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME> --query principalId
+        ```
+        The command should return a non-null principal ID, indicating that the managed identity is properly configured.
       remediation: |
         ### Microsoft Azure Portal
 
@@ -978,8 +969,28 @@ queries:
            a. Select the app.
            b. Under **Settings**, select **Identity**.
            c. On the **System assigned** tab, set **Status** to **On**.
+
+        **Using Azure CLI:**
+
+        Enable a system-assigned managed identity for an App Service:
+
+        ```bash
+        az webapp identity assign --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME>
+        ```
+
+        ### Terraform
+        resource "azurerm_app_service" "example" {
+          name                = "example-app-service"
+          location            = azurerm_resource_group.example.location
+          resource_group_name = azurerm_resource_group.example.name
+          app_service_plan_id = azurerm_app_service_plan.example.id
+
+          identity {
+            type = "SystemAssigned"
+          }
+        }
   - uid: mondoo-azure-security-ensure-the-kv-is-recoverable
-    title: Ensure it is possible to recover key vaults
+    title: Ensure Key Vaults are configured with Recovery features
     impact: 80
     variants:
       - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-single
@@ -988,66 +999,53 @@ queries:
       desc: |
         Azure Key Vault can store keys, secrets, and certificates. Accidental unavailability of a key vault can cause serious problems in any organization.
 
-        Soft delete is a feature of Azure Key Vault that retains key vaults and key vault items after initial deletion. By default, new key vaults created through the portal are configured with soft delete for 90 days.
-
-        Once enabled, soft delete can not be disabled. When soft delete is enabled, it is possible to purge soft deleted vaults and vault items.
-
-        Purge protection is another feature of key vaults that is used to protect deleted key vaults for a certain period, called the "retention period." Once enabled, purge protection prevents deleted key vaults from being purged until the retention period is reached. This selection cannot be changed once the key vault is created.
+        Purge protection is a feature of key vaults that is used to protect deleted key vaults for a certain period, called the "retention period." Once enabled, purge protection prevents deleted key vaults from being purged until the retention period is reached. This selection cannot be changed once the key vault is created.
 
         If a key vault is created with purge protection, you can still delete it, but you will not be able to purge it once it is deleted. In this case, the deleted key vaults must wait 90 days to be permanently purged.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **Key Vaults**.
+        3. Select a key vault and select **Properties**.
+        4. Verify that **Purge Protection** is enabled, which ensures that deleted vaults and vault objects are recoverable during the retention period.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(properties.enablePurgeProtection == "true")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(properties.enableSoftDelete == "true")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        Verify Purge Protection is enabled for each Key Vault:
 
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.keyVault.vaults.all(properties.enablePurgeProtection == "true")
-          azure.subscription.keyVault.vaults.all(properties.enableSoftDelete == "true")
-          ```
+        ```bash
+        az keyvault list --query "[].{Name: name, PurgeProtection: properties.enablePurgeProtection}"
+        ```
+        Check the output for each Key Vault, ensuring that PurgeProtection is set to true.
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **Key Vaults**.
+        3. Select a key vault and select **Properties**.
+        4. Scroll to the **Security** section.
+        5. If **Purge Protection** is not enabled, enable it. Note that once enabled, this setting cannot be disabled.
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Key vaults**.
-        3. for each key vault:
-           a. Select **Properties** and ensure **Soft-delete** is enabled.
-           b. Select **Enable Purge Protection**.
-           c. Select **Save**.
+        **From Azure CLI:**
+
+        Enable Purge Protection for a specific Key Vault:
+
+        ```bash
+        az keyvault update --name <VaultName> --resource-group <ResourceGroupName> --set properties.enablePurgeProtection=true
+        ```
   - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-single
     filters: |
       asset.platform == "azure-keyvault-vault"
       asset.kind == "azure-object"
     mql: |
       azure.subscription.keyVault.vault.properties.enablePurgeProtection == true
-      azure.subscription.keyVault.vault.properties.enableSoftDelete == true
   - uid: mondoo-azure-security-ensure-the-kv-is-recoverable-api
     filters: |
       asset.platform == "azure"
       asset.kind == "api"
     mql: |
       azure.subscription.keyVault.vaults.all(properties.enablePurgeProtection == "true")
-      azure.subscription.keyVault.vaults.all(properties.enableSoftDelete == "true")
   - uid: mondoo-azure-security-ensure-web-app-is-using-the-latest-tls
     title: Ensure that Web Apps use the latest available version of TLS encryption
     impact: 80
@@ -1057,31 +1055,26 @@ queries:
       desc: |
         It is highly recommended to use the latest TLS version available with Azure App Services for all secure Web App connections. Currently Azure App Services supports TLS 1.2.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
+  
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **App Services**.
+        3. Select an app service and select **TLS/SSL settings** under **Settings**.
+        4. Verify that the **Minimum TLS Version** is set to **1.2**.
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        **From Azure CLI:**
 
-          ```bash
-          cnspec run azure -c "azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        Verify that the minimum TLS version is set to 1.2 for each App Service:
+        
+        ```bash
+        az webapp config show --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME> --query minTlsVersion
+        ```
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        **From PowerShell**
 
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.web.apps.all(configuration.properties.minTlsVersion == "1.2")
-          ```
+        Get-AzWebApp | foreach {
+          Get-AzWebApp -ResourceGroupName $_.ResourceGroup -Name $_.Name | Select-Object Name, ResourceGroup, @{Name="TLS Version"; Expression={$_.SiteConfig.MinTlsVersion}}
+        }
       remediation: |
         ### Microsoft Azure Portal
 
@@ -1093,6 +1086,33 @@ queries:
            b. Select **Configuration** and select the **General settings** tab.
            c. Under **Minimum Inbound TLS Version**, select **1.2**.
            d. Select **Save**.
+        
+        **From Azure CLI:**
+
+        Set the minimum TLS version to 1.2 for an existing app service:
+
+        ```bash
+        az webapp config set --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME> --min-tls-version 1.2
+        ```
+
+        **From PowerShell**
+
+        Get-AzWebApp | foreach {
+          Set-AzWebApp -ResourceGroupName $_.ResourceGroup -Name $_.Name -MinTlsVersion "1.2"
+        }
+
+        ### Terraform
+
+        resource "azurerm_app_service" "example" {
+          name                = "example-app-service"
+          location            = azurerm_resource_group.example.location
+          resource_group_name = azurerm_resource_group.example.name
+          app_service_plan_id = azurerm_app_service_plan.example.id
+
+          site_config {
+            min_tls_version = "1.2"
+          }
+        }
   - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
     title: Ensure that the expiration date is set for all keys and secrets in key vaults
     impact: 80
@@ -1103,34 +1123,38 @@ queries:
       desc: |
         The expiration date attribute identifies when you can no longer use the key/secret for a cryptographic operation. By default, keys/secrets never expire. Therefore, it is highly recommended that you rotate keys/secrets in the key vault and set an explicit expiration date.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Navigate to **Key Vaults** via the Azure Portal at https://portal.azure.com.
+        2. Select a key vault and then select **Keys** or **Secrets**.
+        3. Check each key and secret to verify that an expiration date is set and is appropriate.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(keys.all(enabled && expires != empty))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(secrets.all(enabled && expires != empty))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
-
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
+        - For keys:
 
           ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          az keyvault key list --vault-name <KeyVaultName> --query "[?attributes.expires && attributes.enabled == \`true\`].{name: name, expires: attributes.expires}" -o table
           ```
 
-        2. Run this query:
+        - For secrets:
 
-          ```mql
-          azure.subscription.keyVault.vaults.all(keys.all(enabled == true))
-          azure.subscription.keyVault.vaults.all(keys.all(expires != empty))
-          azure.subscription.keyVault.vaults.all(secrets.all(enabled == true))
-          azure.subscription.keyVault.vaults.all(secrets.all(expires != empty))
+          ```bash
+          az keyvault secret list --vault-name <KeyVaultName> --query "[?attributes.expires && attributes.enabled == \`true\`].{name: name, expires: attributes.expires}" -o table
+          ```
+
+        **From PowerShell:**
+
+        - For keys:
+
+          ```powershell
+          Get-AzKeyVaultKey -VaultName <VaultName> | Where-Object {$_.Enabled -eq $true -and $_.Expires -ne $null}
+          ```
+
+        - For secrets:
+
+          ```powershell
+          Get-AzKeyVaultSecret -VaultName <VaultName> | Where-Object {$_.Enabled -eq $true -and $_.Expires -ne $null}
           ```
       remediation: |
         ### Microsoft Azure Portal
@@ -1143,24 +1167,79 @@ queries:
            a. Select the key vault.
            b. Select **Keys** or **Secrets**.
            c. Make sure that the key/secret in the key vault has an expiration date.
+        
+        **From Azure CLI:**
+
+        - For keys:
+
+          ```bash
+          az keyvault key set-attributes --vault-name <VaultName> --name <KeyName> --expires <DateTime-in-ISO8601>
+          ```
+
+        - For secrets:
+
+          ```bash
+          az keyvault secret set-attributes --vault-name <VaultName> --name <SecretName> --expires <DateTime-in-ISO8601>
+          ```
+
+        **From PowerShell:**
+
+        - For keys:
+
+          ```powershell
+          $key = Get-AzKeyVaultKey -VaultName <VaultName> -Name <KeyName>
+          $key.Expires = (Get-Date).AddYears(1)
+          Update-AzKeyVaultKey -VaultName <VaultName> -Key $key
+          ```
+
+        - For secrets:
+
+          ```powershell
+          $secret = Get-AzKeyVaultSecret -VaultName <VaultName> -Name <SecretName>
+          $secret.Expires = (Get-Date).AddYears(1)
+          Update-AzKeyVaultSecret -VaultName <VaultName> -Secret $secret
+          ```
+
+        ### Terraform Example:
+
+        ```hcl
+        resource "azurerm_key_vault_key" "example" {
+          name         = "example-key"
+          key_vault_id = azurerm_key_vault.example.id
+          key_type     = "RSA"
+          key_size     = 2048
+          expiration_date = "2025-05-01T01:02:03Z"
+
+          key_opts = [
+            "decrypt",
+            "encrypt",
+            "sign",
+            "unwrapKey",
+            "verify",
+            "wrapKey",
+          ]
+        }
+
+        resource "azurerm_key_vault_secret" "example" {
+          name         = "example-secret"
+          value        = "exampleValue"
+          key_vault_id = azurerm_key_vault.example.id
+          expiration_date = "2025-05-01T01:02:03Z"
+        }
   - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv-single
     filters: |
       asset.platform == "azure-keyvault-vault"
       asset.kind == "azure-object"
     mql: |
-      azure.subscription.keyVault.vault.keys.all(enabled == true)
-      azure.subscription.keyVault.vault.keys.all(expires != empty)
-      azure.subscription.keyVault.vault.secrets.all(enabled == true)
-      azure.subscription.keyVault.vault.secrets.all(expires != empty)
+      azure.subscription.keyVault.vault.keys.where(enabled == true).all(expires != empty)
+      azure.subscription.keyVault.vault.secrets.where(enabled == true).all(expires != empty)
   - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv-api
     filters: |
       asset.platform == "azure"
       asset.kind == "api"
     mql: |
-      azure.subscription.keyVault.vaults.all(keys.all(enabled == true))
-      azure.subscription.keyVault.vaults.all(keys.all(expires != empty))
-      azure.subscription.keyVault.vaults.all(secrets.all(enabled == true))
-      azure.subscription.keyVault.vaults.all(secrets.all(expires != empty))
+      azure.subscription.keyVault.vaults.all(keys.where(enabled == true).all(expires != empty))
+      azure.subscription.keyVault.vaults.all(secrets.where(enabled == true).all(expires != empty))
   - uid: mondoo-azure-security-ensure-logging-enabled-kv
     title: Ensure all operations in Azure Key Vault are logged
     impact: 80
@@ -1169,58 +1248,143 @@ queries:
       - uid: mondoo-azure-security-ensure-logging-enabled-kv-api
     docs:
       desc: |
-        Monitoring how, by whom, and when key vaults are accessed creates an audit trail of interactions with confidential information, keys, secrets, and certificates.
-
-        Enabling logging for Azure Key Vault saves information in an Azure storage account that you provide. This creates a new container called insights-logs-auditevent for the specified storage account.
+        Monitoring interactions with Azure Key Vault is critical for maintaining security and compliance. Logging operations allow organizations to audit access and use of keys, secrets, and certificates, thereby ensuring that any unauthorized access or anomalies are detected and addressed. Enabling logging involves storing log data in Azure Storage Accounts, which provides a durable audit trail that is essential for security audits and compliance reporting.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Navigate to the Azure Portal at https://portal.azure.com.
+        2. Go to **Key Vaults** and select a Key Vault.
+        3. Under **Monitoring**, select **Diagnostic settings**.
+        4. Verify that logging for both **AuditEvent** and **AllLogs** categories are enabled and that they are configured to send logs to an Azure Storage Account, Log Analytics workspace, or Event Hub.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(category == "AuditEvent").all(retentionPolicy.days >= 180)))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        Retrieve the diagnostic settings for each Key Vault to ensure that logging is enabled:
 
-        __cnspec shell__
+        ```bash
+        az monitor diagnostic-settings list --resource <Key Vault Resource ID> --output table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
+        Ensure that the output shows that logs for AuditEvent and AllLogs categories are enabled and properly configured to a storage account or other supported destinations.
 
-        1. Launch `cnspec shell`:
+        **From PowerShell:**
 
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(category == "AuditEvent").all(retentionPolicy.days >= 180)))
-          ```
+        ```powershell
+        Get-AzKeyVault | ForEach-Object {
+            Get-AzDiagnosticSetting -ResourceId $_.ResourceId
+        }
+        ```
+        Verify that each Key Vault has AuditEvent and AllLogs enabled and is logging to the designated destinations.
       remediation: |
         ### Microsoft Azure Portal
 
         1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Key vaults**.
-        3. For each key vault:
-           a. Select the key vault.
-           b. Under **Monitoring**, select **Diagnostic settings** and then select **+ Add diagnostic setting**.
-           c. Select **Audit** and **All logs**.
-           d. Select **Archive to a storage account** and choose a storage account.
-           e. Select **Save**.
+        2. Visit `Key vaults` and select a vault.
+        3. Go to `Diagnostic settings`.
+        4. Edit an existing setting or add a new one, ensuring `AuditEvent` and `All logs` are selected.
+        5. Set the appropriate destination for logs, such as an Azure storage account or Log Analytics workspace.
+        6. Save the configuration.
+
+        **From Azure CLI:**
+
+        To create or update diagnostic settings for a Key Vault:
+
+        ```bash
+        az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"category": "AuditEvent", "enabled": true}, {"category": "AllLogs", "enabled": true}]' --storage-account <Storage Account ID> | --workspace <Log Analytics Workspace ID> | --event-hub <Event Hub Name>
+        ```
+
+        **From PowerShell:**
+
+        ```powershell
+        $logs = @(
+            New-AzDiagnosticSettingLogConfig -Category "AuditEvent" -Enabled $true
+            New-AzDiagnosticSettingLogConfig -Category "AllLogs" -Enabled $true
+        )
+        Set-AzDiagnosticSetting -ResourceId <Key Vault Resource ID> -Log $logs -StorageAccountId <Storage Account ID> | -WorkspaceId <Log Analytics Workspace ID> | -EventHubAuthorizationRuleId <Event Hub Authorization Rule ID> | -EventHubName <Event Hub Name>
+        ```
+
+        ### Terraform Example:
+
+        ```hcl
+        resource "azurerm_monitor_diagnostic_setting" "example" {
+          name               = "kv-logging"
+          target_resource_id = azurerm_key_vault.example.id
+          log_analytics_workspace_id = azurerm_log_analytics_workspace.example.id
+
+          log {
+            category = "AuditEvent"
+            enabled  = true
+
+            retention_policy {
+              enabled = true
+              days    = 0
+            }
+          }
+
+          log {
+            category = "AllLogs"
+            enabled  = true
+
+            retention_policy {
+              enabled = true
+              days    = 0
+            }
+          }
+
+          metric {
+            category = "AllMetrics"
+            enabled  = false
+
+            retention_policy {
+              enabled = false
+              days    = 0
+            }
+          }
+        }
+        ```
   - uid: mondoo-azure-security-ensure-logging-enabled-kv-single
     filters: |
       asset.platform == "azure-keyvault-vault"
       asset.kind == "azure-object"
     mql: |
-      azure.subscription.keyVault.vault.diagnosticSettings.all(properties.logs.where(category == "AuditEvent").all(retentionPolicy {days >= 180}))
+      // Step 1: Verify that diagnostic settings are configured for the Key Vault vaults.
+      azure.subscription.keyVault.vault.diagnosticSettings != empty
+      // Step 2: Confirm the presence and enablement of specific log categories within the diagnostic settings.
+      // The checks ensure that both 'audit' and 'allLogs' category groups are actively enabled for comprehensive logging.
+      azure.subscription.keyVault.vault.diagnosticSettings.all(properties.logs.any(categoryGroup == "AuditEvent"))
+      azure.subscription.keyVault.vault.diagnosticSettings.all(properties.logs.any(categoryGroup == "allLogs"))
+      azure.subscription.keyVault.vault.diagnosticSettings.any(properties.logs.where(categoryGroup == "AuditEvent").all(enabled == true))
+      azure.subscription.keyVault.vault.diagnosticSettings.any(properties.logs.where(categoryGroup == "allLogs").all(enabled == true))
+      // Step 3: Ensure that there is an appropriate destination for the logs.
+      // Diagnostic settings should forward logs to one or more of the following destinations:
+      // an Azure Storage account, an Azure Monitor Log Analytics workspace, an event hub, or a partner solution.
+      // The existence of any of these destination settings confirms that the logs are not only enabled but also appropriately stored.
+      azure.subscription.keyVault.vault.diagnosticSettings.all(properties.eventHubAuthorizationRuleId != empty) ||
+        azure.subscription.keyVault.vault.diagnosticSettings.all(properties.workspaceId != empty) ||
+          azure.subscription.keyVault.vault.diagnosticSettings.all(properties.storageAccountId != empty) ||
+            azure.subscription.keyVault.vault.diagnosticSettings.all(properties.marketplacePartnerId != empty)
   - uid: mondoo-azure-security-ensure-logging-enabled-kv-api
     filters: |
       asset.platform == "azure"
       asset.kind == "api"
     mql: |
-      azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(category == "AuditEvent").all(retentionPolicy.days >= 180)))
+      mql: |
+      // Step 1: Verify that diagnostic settings are configured for the Key Vault vaults.
+      azure.subscription.keyVault.vaults.all(diagnosticSettings != empty)
+      // Step 2: Confirm the presence and enablement of specific log categories within the diagnostic settings.
+      // The checks ensure that both 'audit' and 'allLogs' category groups are actively enabled for comprehensive logging.
+      azure.subscription.keyVault.vaults.all(diagnosticSettings.all(properties.logs.any(categoryGroup == "AuditEvent")))
+      azure.subscription.keyVault.vaults.all(diagnosticSettings.all(properties.logs.any(categoryGroup == "allLogs")))
+      azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(categoryGroup == "AuditEvent").all(enabled == true)))
+      azure.subscription.keyVault.vaults.all(diagnosticSettings.any(properties.logs.where(categoryGroup == "allLogs").all(enabled == true)))
+      // Step 3: Ensure that there is an appropriate destination for the logs.
+      // Diagnostic settings should forward logs to one or more of the following destinations:
+      // an Azure Storage account, an Azure Monitor Log Analytics workspace, an event hub, or a partner solution.
+      // The existence of any of these destination settings confirms that the logs are not only enabled but also appropriately stored.
+      azure.subscription.keyVault.vaults.all(diagnosticSettings.all(properties.eventHubAuthorizationRuleId != empty)) ||
+        azure.subscription.keyVault.vaults.all(diagnosticSettings.all(properties.workspaceId != empty)) ||
+          azure.subscription.keyVault.vaults.all(diagnosticSettings.all(properties.storageAccountId != empty)) ||
+            azure.subscription.keyVault.vaults.all(diagnosticSettings.all(properties.marketplacePartnerId != empty))
   - uid: mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group
     title: Ensure that activity log alerts exist for the commands Create, Update, and Delete Network Security Group
     impact: 80
@@ -1229,35 +1393,39 @@ queries:
       azure.subscription.monitor.activityLog.alerts.where(actions != empty).any(conditions.any(equals == "Microsoft.Network/networkSecurityGroups/delete" && fieldName == "operationName"))
     docs:
       desc: |
-        Monitoring network security group events can give clear insight into network access changes and is useful for detecting suspicious activity.
+        Monitoring events related to the creation, update, and deletion of network security groups provides insights into network access changes and helps in detecting suspicious activities.
       audit: |
-        __cnspec run__
+       **From Azure Portal**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Navigate to the `Monitor` blade.
+        2. Select `Alerts`.
+        3. In the Alerts window, select `Alert rules`.
+        4. Verify that alert rules exist for the following conditions:
+          - Operation name equals `Microsoft.Network/networkSecurityGroups/write` for Create/Update events.
+          - Operation name equals `Microsoft.Network/networkSecurityGroups/delete` for Delete events.
+        5. Select the alert rule name to review its configuration.
+          - Ensure the `Condition` panel specifies the correct operation names and does not filter on irrelevant criteria like `Level`, `Status`, or `Caller`.
+          - Confirm that the `Actions` panel is set up to notify the appropriate personnel within your organization.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.monitor.activityLog.alerts.where(actions != empty).any(conditions.any(equals == "Microsoft.Network/networkSecurityGroups/write" && fieldName == "operationName" ))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.monitor.activityLog.alerts.where(actions != empty).any(conditions.any(equals == "Microsoft.Network/networkSecurityGroups/delete" && fieldName == "operationName" ))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+       **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        Run the following commands to list the current alert rules and verify their conditions:
 
-        __cnspec shell__
+        ```bash
+        az monitor activity-log alert list --subscription <subscription ID> --query "[].{Name:name, Enabled:enabled, Condition:condition.allOf, Actions:actions}"
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
+        Check for the presence of conditions targeting the `Microsoft.Network/networkSecurityGroups/write` and `Microsoft.Network/networkSecurityGroups/delete` operation names in the output.
 
-        1. Launch `cnspec shell`:
+        **From PowerShell:**
 
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        Utilize the following PowerShell commands to inspect the alert rules:
 
-        2. Run this query:
+        ```powershell
+        Get-AzActivityLogAlert -SubscriptionId <subscription ID> | where-object {$_.ConditionAllOf.Equal -match "Microsoft.Network/networkSecurityGroups/write"} | select-object Location, Name, Enabled, ResourceGroupName, ConditionAllOf
 
-          ```mql
-          azure.subscription.monitor.activityLog.alerts.where(actions != empty).any(conditions.any(equals == "Microsoft.Network/networkSecurityGroups/write" && fieldName == "operationName" ))
-          azure.subscription.monitor.activityLog.alerts.where(actions != empty).any(conditions.any(equals == "Microsoft.Network/networkSecurityGroups/delete" && fieldName == "operationName" ))
-          ```
+        Get-AzActivityLogAlert -SubscriptionId <subscription ID> | where-object {$_.ConditionAllOf.Equal -match "Microsoft.Network/networkSecurityGroups/delete"} | select-object Location, Name, Enabled, ResourceGroupName, ConditionAllOf
+        ```
       remediation: |
         ### Microsoft Azure Portal
 
@@ -1266,7 +1434,7 @@ queries:
         1. Log into Microsoft Azure Portal at https://portal.azure.com.
         2. Go to **Monitor**.
         3. Select **Alerts**.
-        4. In the **+ Create** drop-down, select **Alert rule**.
+        4. Select **+ Create**.
         5. Under **Resource types**, select **Network security group**.
         6. Select the subscription name, resource group, or network security group" to apply the rule to.
         7. Verify that the selection preview shows:
@@ -1292,41 +1460,57 @@ queries:
       desc: |
         Enabling security alert email ensures that Microsoft makes administrators aware of any potential security issues so they can react quickly.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+          1. From Azure Home, select the Portal Menu.
+          2. Select `Microsoft Defender for Cloud`.
+          3. Select `Environment Settings`.
+          4. Select the appropriate Management Group, Subscription, or Workspace.
+          5. Select `Email notifications`.
+          6. Verify that the `Notify about alerts with the following severity (or higher):` setting is checked and set to `High`.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.cloudDefender.securityContacts.all(alertNotifications.minimalSeverity == "High" && alertNotifications.state == "On" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
-
-        __cnspec shell__
-
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
+          Run the following command to check the notification settings for high severity alerts. Make sure the output is set to `true`, indicating that notifications for high severity alerts are enabled.
 
           ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          az account get-access-token --query "{subscription:subscription,accessToken:accessToken}" --out tsv | xargs -L1 bash -c 'curl -X GET -H "Authorization: Bearer $1" -H "Content-Type: application/json" https://management.azure.com/subscriptions/$0/providers/Microsoft.Security/securityContacts?api-version=2020-01-01-preview' | jq '.|.[] | select(.name=="default")'|jq '.properties.alertNotifications'
           ```
 
-        2. Run this query:
-
-          ```mql
-          azure.subscription.cloudDefender.securityContacts.all(alertNotifications.minimalSeverity == "High")
-          azure.subscription.cloudDefender.securityContacts.all(alertNotifications.state == "On")
-          ```
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        To configure alert notifications in Microsoft Azure Portal:
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Microsoft Defender for Cloud**.
-        3. Select **Environment Settings** and select the management group, subscription, or workspace.
-        4. Select **Email notifications** and ensure that the **Notify about alerts with the following severity (or higher)** setting is checked and set to **High**.
+          1. Log into the Microsoft Azure Portal at https://portal.azure.com.
+          2. Select `Microsoft Defender for Cloud` from the Portal Menu.
+          3. Go to `Environment Settings` and select the appropriate management group, subscription, or workspace.
+          4. Navigate to `Email notifications`.
+          5. Ensure the `Notify about alerts with the following severity (or higher):` option is enabled and set to `High`.
+          6. Select `Save` to apply the changes.
+
+        **From Azure CLI:**
+
+        Use the following command to update the security contact settings to enable high severity alert notifications. Replace `<Your_Subscription_Id>` and `<validEmailAddress>` with the appropriate values.
+
+          ```bash
+          az account get-access-token --query "{subscription:subscription,accessToken:accessToken}" --out tsv | xargs -L1 bash -c 'curl -X PUT -H "Authorization: Bearer $1" -H "Content-Type: application/json" https://management.azure.com/subscriptions/<$0>/providers/Microsoft.Security/securityContacts/default1?api-version=2017-08-01-preview -d "@input.json"'
+          ```
+
+          Ensure the `input.json` file contains the following data, with `<validEmailAddress>` replaced with your contact email:
+
+          ```json
+          {
+            "id": "/subscriptions/<Your_Subscription_Id>/providers/Microsoft.Security/securityContacts/default1",
+            "name": "default1",
+            "type": "Microsoft.Security/securityContacts",
+            "properties": {
+              "email": "<validEmailAddress>",
+              "alertNotifications": "On",
+              "alertsToAdmins": "On"
+            }
+          }
+          ```
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql
     title: Ensure SSL connection enabled for PostgreSQL database servers
     impact: 80
@@ -1335,41 +1519,69 @@ queries:
       - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-single
     docs:
       desc: |
-        All communication between clients and PostgreSQL database servers should be through SSL/TLS. This added layer of encryption prevents man-in-the-middle attacks.
+        Ensuring that SSL/TLS is enforced for all connections to PostgreSQL database servers is crucial for safeguarding data in transit. This security measure helps prevent eavesdropping and man-in-the-middle attacks, maintaining the confidentiality and integrity of data.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Log in to Azure Portal at https://portal.azure.com.
+        2. Navigate to `Azure Database for PostgreSQL server`.
+        3. Select each database server to review its settings.
+        4. Under `Connection security`, confirm that `Enforce SSL connection` is set to `ENABLED`. This setting should be consistent across all PostgreSQL database servers to ensure uniform security posture.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.postgreSql.servers.all(properties.sslEnforcement == "Enabled")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        To verify the SSL enforcement setting across all PostgreSQL servers in a resource group, you can use the Azure CLI. The expected output for compliant servers is `Enabled`:
 
-        __cnspec shell__
+        ```bash
+        az postgres server list --resource-group <resourceGroupName> --query "[].{Name:name, SSL:sslEnforcement}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
+        This command provides a clear, tabulated output indicating which servers have SSL enforced and which do not, enabling quick identification of non-compliant resources.
 
-        1. Launch `cnspec shell`:
+        **From PowerShell:**
 
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        PowerShell can also be used for a detailed audit. The command should return `Enabled` for each server checked:
 
-        2. Run this query:
+        ```powershell
+        Get-AzPostgreSqlServer -ResourceGroupName <ResourceGroupName> | Select-Object Name, SslEnforcement
+        ```
 
-          ```mql
-          azure.subscription.postgreSql.servers.all(properties.sslEnforcement == "Enabled")
-          ```
+        This command lists all PostgreSQL servers in the specified resource group along with their SSL enforcement status, providing a comprehensive overview.
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        To enforce SSL connections:
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Azure Database for PostgreSQL**.
-        3. For each database, select **Connection security** and enable SSL.
+        1. Access the Azure Portal at https://portal.azure.com.
+        2. Navigate to `Azure Database for PostgreSQL server`.
+        3. For each server, access `Connection security`.
+        4. Locate the `SSL settings` and set `Enforce SSL connection` to `ENABLED`.
+        5. Apply the changes to ensure that the setting is enforced across all servers.
+
+        Consistency in enforcement is key. Verify that all PostgreSQL servers within your Azure environment have this setting enabled to maintain a high security standard.
+
+        **From Azure CLI:**
+
+        For a batch update or to automate the enforcement across multiple servers, use the Azure CLI:
+
+        ```bash
+        az postgres server update --resource-group <resourceGroupName> --name <serverName> --ssl-enforcement Enabled
+        ```
+
+        Automate this process using scripts to iterate over all PostgreSQL servers in a subscription or resource group, ensuring no server is left without SSL enforcement.
+
+        **From PowerShell:**
+
+        PowerShell provides a similar capability for batch processing:
+
+        ```powershell
+        $servers = Get-AzPostgreSqlServer -ResourceGroupName <ResourceGroupName>
+        foreach ($server in $servers) {
+            Update-AzPostgreSqlServer -ResourceGroupName <ResourceGroupName> -ServerName $server.Name -SslEnforcement Enabled
+        }
+        ```
+
+        This script iterates over all PostgreSQL servers in the specified resource group, enforcing SSL on each one. Regularly running such scripts can help maintain compliance over time, especially in dynamic environments where new servers are frequently deployed.
 
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-single
     filters: |
@@ -1391,45 +1603,47 @@ queries:
       - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-api
     docs:
       desc: |
-        All communication between clients and MySQL servers should be through SSL/TLS. This adds a layer of encryption to prevent man-in-the-middle attacks.
+        Ensuring that SSL connections are enforced for MySQL database servers is essential to protect data in transit from eavesdropping and man-in-the-middle attacks. Additionally, it is critical to ensure the use of the latest supported TLS version to mitigate vulnerabilities associated with older versions.
       audit: |
-        __cnspec run__
+        **From Azure Portal:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to `Azure Database for MySQL servers`.
+        3. Select each server to inspect its settings.
+        4. Under `Connection security`, verify that `Enforce SSL connection` is set to `ENABLED`.
+        5. Additionally, ensure that the server is configured to use the latest supported TLS version (e.g., TLS 1.2 or higher).
 
-          ```bash
-          cnspec run azure -c "azure.subscription.mySql.servers.all(properties.sslEnforcement == "Enabled" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.mySql.servers.all(properties.minimalTlsVersion == "TLS1_2" )" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **From Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        Run the following command to inspect the SSL enforcement and the minimum TLS version for each MySQL server:
 
-        __cnspec shell__
+        ```bash
+        az mysql server list --resource-group <resourceGroupName> --query "[].{Name:name, SSL:sslEnforcement, TLS:minimalTlsVersion}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
+        This command provides a tabulated view showing the SSL enforcement and TLS version for each server, facilitating quick identification of non-compliant or outdated configurations.
 
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.mySql.servers.all(properties.sslEnforcement == "Enabled")
-          azure.subscription.mySql.servers.all(properties.minimalTlsVersion == "TLS1_2")
-          ```
       remediation: |
-        ### Microsoft Azure Portal
+        To enforce SSL connections and ensure the use of the latest TLS version:
 
-        To update using Microsoft Azure Portal:
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Azure Database for mySQL server**.
-        3. For each database:
-           a. Select **Connection security**.
-           b. Enable **SSL**.
-           c. Ensure that the latest version of TLS is selected as the minimum.
+        1. Access the Azure Portal at https://portal.azure.com.
+        2. Go to `Azure Database for MySQL servers`.
+        3. For each server, navigate to `Connection security`.
+        4. Set `Enforce SSL connection` to `ENABLED`.
+        5. Select the latest supported TLS version from the dropdown menu to ensure maximum security.
+        6. Apply these settings to ensure compliance across all MySQL servers.
+
+        Regular reviews and updates of these settings are recommended to adapt to new TLS versions as they become available, ensuring that the security configurations remain up-to-date.
+
+        **From Azure CLI:**
+
+        To batch update MySQL servers for SSL enforcement and TLS version settings, use the following Azure CLI command:
+
+        ```bash
+        az mysql server update --resource-group <resourceGroupName> --name <serverName> --ssl-enforcement Enabled --minimal-tls-version TLS1_2
+        ```
+
+        For enhancing data security during transmission, it's pivotal to use the latest TLS version. Currently, the most advanced standard available is TLS 1.3, known for its enhanced security and performance benefits. However, it's important to note that, as of the latest information, Azure's MySQL service supports up to TLS 1.2. While TLS 1.2 provides robust security, the adoption of TLS 1.3 across various platforms, including Azure, is anticipated.
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-single
     filters: |
       asset.platform == "azure-mysql-server"
@@ -1452,47 +1666,52 @@ queries:
       - uid: mondoo-azure-security-ensure-disabled-public-access-sql-api
     docs:
       desc: |
+        Limiting public network access to Azure SQL servers enhances security by reducing exposure to attacks. Configuring SQL servers to allow connections only from private endpoints or specific public IP addresses through firewall rules significantly mitigates potential risks.
+
         Customers can choose to connect to a database by either:
           * Public endpoints (with IP-based server-level firewall rules or with virtual-network firewall rules)
           * Private endpoints (using Azure Private Link)
 
         When public network access is disabled, only connections from private endpoints are allowed. All connections from public endpoints are denied.
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **SQL servers** under Azure SQL services.
+        3. Select each SQL server to review its networking settings.
+        4. Under the **Security** section, select **Networking**.
+        5. Verify that for **Public network access**, the setting is either **Disabled** or configured to allow **Selected networks** only, ensuring no open access to all networks.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.sql.servers.all(properties.publicNetworkAccess == "Disabled") || azure.subscription.sql.servers.where(properties.publicNetworkAccess == "Enabled").all(virtualNetworkRules != empty || firewallRules != empty)" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **Automated Audit through Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        You can also verify the public network access settings using Azure CLI:
 
-        __cnspec shell__
+        ```bash
+        az sql server list --query "[].{Name:name, PublicNetworkAccess:publicNetworkAccess}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.sql.servers.all(properties.publicNetworkAccess == "Disabled") || azure.subscription.sql.servers.where(properties.publicNetworkAccess == "Enabled").all(virtualNetworkRules != empty || firewallRules != empty)
-          ```
+        This command lists all SQL servers along with their public network access settings. Ensure that none of the servers are listed as having unrestricted public network access unless specific rules are applied.
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        To Restrict Public Network Access in Azure Portal:
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **SQL servers**.
-        3. For each server:
-           a. Under **Security**, select **Networking**.
-           b. For **Public network access**, select **Disable** or **Selected networks**.
+        1. Log into the Azure Portal at https://portal.azure.com.
+        2. Navigate to **SQL servers** and select the server you wish to configure.
+        3. In the server's settings, select **Networking** under the **Security** section.
+        4. Locate the **Public network access** setting.
+        5. Change the setting to **Disabled** to completely block public access or to **Selected networks** to restrict access to specific IP addresses or ranges.
+        6. If selecting **Selected networks**, ensure you configure the necessary firewall rules or virtual network settings to specify which networks can access the server.
+
+        ### Automating Remediation with Azure CLI:
+
+        To disable public network access for all SQL servers in a subscription, you can use the following Azure CLI command for each server:
+
+        ```bash
+        az sql server update --name <ServerName> --resource-group <ResourceGroupName> --set publicNetworkAccess='Disabled'
+        ```
+
+        Replace `<ServerName>` and `<ResourceGroupName>` with your actual server names and resource group names. For granular control, manually configure network settings in the Azure Portal to specify allowed networks if opting for the "Selected networks" setting.
   - uid: mondoo-azure-security-ensure-disabled-public-access-sql-single
     filters: |
       asset.platform == "azure-sql-server"
@@ -1524,42 +1743,41 @@ queries:
 
         Implementing these measures ensures that only authorized networks and applications can access your key vault, significantly bolstering its security.
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Log in to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **Key vaults** to list all key vaults in your subscriptions.
+        3. Select each key vault to review its networking settings.
+        4. In the key vault's **Settings**, select **Networking**.
+        5. Check the **Firewalls and virtual networks** settings to ensure public access is either disabled or limited:
+          - Verify that **Public network access** is set to **Disabled**.
+          - If public access is enabled, ensure that access is restricted to selected networks by configuring IP rules or linking to specific virtual networks.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.keyVault.vaults.all(properties.publicNetworkAccess == "Disabled") || azure.subscription.keyVault.vaults.where(properties.publicNetworkAccess == "Enabled").all(properties.networkAcls.virtualNetworkRules != empty || properties.networkAcls.ipRules != empty)" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **Automated Audit via Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        You can check the public network access settings for all key vaults in a given subscription using the Azure CLI:
 
-        __cnspec shell__
+        ```bash
+        az keyvault list --query "[].{Name:name, PublicNetworkAccess:properties.publicNetworkAccess}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.keyVault.vaults.all(properties.publicNetworkAccess == "Disabled") ||
-        azure.subscription.keyVault.vaults.where(properties.publicNetworkAccess == "Enabled").all(properties.networkAcls.virtualNetworkRules != empty || properties.networkAcls.ipRules != empty)
-          ```
+        This command outputs the public network access settings for each key vault, allowing you to quickly identify configurations that do not align with best practices.
       remediation: |
         ### Microsoft Azure Portal
 
         To update using Microsoft Azure Portal:
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Key vaults**.
-        3. For each key vault:
-           a. Under **Settings**, select **Networking**.
-           b. For **Firewalls and virtual networks**, select **Disable public access**.
+        1. Access the Azure Portal at https://portal.azure.com and go to **Key vaults**.
+        2. Select the key vault you wish to configure.
+        3. In the key vault's **Settings**, choose **Networking**.
+        4. Navigate to **Firewalls and virtual networks**.
+        5. To block all public network access, set **Public network access** to **Disabled**.
+        6. If you need to allow access from specific networks:
+          - Set **Public network access** to **Enabled**.
+          - Configure **Firewall rules** to define allowed IP address ranges.
+          - Link to specific **Virtual networks** to restrict access to designated networks only.
+
+        By tightly controlling network access to your Azure Key Vault, you enhance its security posture, ensuring that only approved entities can access its contents.
   - uid: mondoo-azure-security-keyvault-public-access-disabled-single
     filters: |
       asset.platform == "azure-keyvault-vault"
@@ -1589,39 +1807,44 @@ queries:
 
         If you enable both server- and database-level auditing for a database, you can choose predicate expressions to filter the events and ensure you don't duplicate data.
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Go to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **SQL servers** and select each server to inspect its auditing settings.
+        3. Select **Auditing** for each server.
+        4. Verify that `Enable Azure SQL Auditing` is switched to `On`. Check that an appropriate storage account, Log Analytics workspace, or Event Hub is selected as the audit log destination.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.sql.servers.all(auditingPolicy.state == "Enabled")" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **Automated Audit via Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        To verify the auditing settings for all SQL Servers in a subscription: (replace <resourceGroupName> with your resource group name)
 
-        __cnspec shell__
+        ```bash
+        az sql server list --query "[].{Name:name, ResourceGroupName:<resourceGroupName>}" -o tsv | while read -r name rg; do
+          echo "Server: $name"
+          az sql server audit-policy show --name $name --resource-group $rg
+        done
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.sql.servers.all(auditingPolicy.state == "Enabled")
-          ```
+        This script iterates over all SQL servers, displaying their audit policy status, ensuring that auditing is enabled and correctly configured.
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        1. In the Azure Portal, go to **SQL servers** and select the server you want to configure.
+        2. Under **Security**, select **Auditing**.
+        3. Set `Enable Azure SQL Auditing` to `On`.
+        4. Select a destination for the audit logs: Storage Account, Log Analytics workspace, or Event Hub.
+        5. Configure the retention period, ensuring it aligns with your organization's compliance requirements.
+        6. Select `Save` to apply the settings.
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **SQL servers**.
-        3. For each SQL server select **Auditing** and make sure the **Enable Azure SQL Auditing** toggle is on.
+        ### Automating Auditing Configuration via Azure CLI:
+
+        For each SQL server, enable auditing and specify the log retention settings and destination. Here's how you can enable auditing to a Storage Account with a retention period:
+
+        ```bash
+        az sql server audit-policy update --name <ServerName> --resource-group <ResourceGroupName> --state Enabled --blob-storage-target-state Enabled --storage-endpoint <StorageAccountBlobEndpoint> --storage-key <StorageAccountKey> --retention-days 90
+        ```
+
+        Replace placeholders with your specific details. Similar commands can be executed to set up auditing with Log Analytics or Event Hub as the destination. Ensuring that auditing is enabled and properly configured across all SQL servers in your Azure environment is a key step in maintaining a strong security and compliance posture.
   - uid: mondoo-azure-security-sql-server-audit-on-single
     filters: |
       asset.platform == "azure-sql-server"
@@ -1650,42 +1873,56 @@ queries:
 
         Note: TDE is not available for system databases.
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with cnspec, run this query:
+        1. In the Azure Portal, navigate to **SQL databases** under your SQL Server instances.
+        2. Select each database to inspect its settings.
+        3. Select **Transparent data encryption** under the **Security** settings.
+        4. Verify that `Data encryption` is set to `On` for each database (except the master database, which cannot be encrypted with TDE).
 
-          ```bash
-          cnspec run azure -c "azure.subscription.sql.servers.all(databases.where(name != "master").all(transparentDataEncryption.state == "Enabled"))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **Automated Audit with Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        To check the TDE status for all databases in a specific SQL server:
 
-        __cnspec shell__
+        ```bash
+        az sql db list --resource-group <ResourceGroupName> --server <ServerName> --query "[].{Name:name, TDE:transparentDataEncryption}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
+        Use the following command to check the TDE status of a specific database:
 
-        1. Launch `cnspec shell`:
+        ```bash
+        az sql db tde show --name <DatabaseName> --resource-group <ResourceGroupName> --server <ServerName>
+        ```
 
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.sql.servers.all(databases.where(name != "master").all(transparentDataEncryption.state == "Enabled"))
-          ```
+        Ensure the TDE status is `Enabled` for each database.
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        1. Access **SQL databases** in the Azure Portal.
+        2. Select a database under your SQL Server instance.
+        3. Go to **Transparent data encryption** under the **Security** section.
+        4. Switch `Data encryption` to `On`.
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **SQL databases**.
-        3. For each database instance:
-           a. Select the database.
-           b. Under **Security**, select **Data encryption**.
-           c. On the **Transparent data encryption** tab, make sure **Data encryption** is set to **On**.
+        ### Using Azure CLI:
+
+        To enable TDE on a specific database:
+
+        ```bash
+        az sql db tde set --database <DatabaseName> --resource-group <ResourceGroupName> --server <ServerName> --status Enabled
+        ```
+
+        ### Using PowerShell:
+
+        For each database, enable TDE with the following command:
+
+        ```powershell
+        Set-AzSqlDatabaseTransparentDataEncryption -DatabaseName <DatabaseName> -ServerName <ServerName> -ResourceGroupName <ResourceGroupName> -State 'Enabled'
+        ```
+
+        **Note:**
+
+        - Ensure you repeat the process for each database in your SQL Server instances, excluding the master database.
+        - Regularly review the TDE status of your databases to maintain compliance and data protection.
   - uid: mondoo-azure-security-sql-server-tde-on-single
     filters: |
       asset.platform == "azure-sql-server"
@@ -1726,40 +1963,59 @@ queries:
 
         A diagnostic setting controls how logs are exported. By default, logs are retained only for 90 days. By using diagnostic settings, we can export logs and store them for longer periods in order to analyze the activities and find any security-related issues.
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Go to the Azure Portal at https://portal.azure.com.
+        2. Navigate to **Monitor** and then **Activity log**.
+        3. Select **Diagnostic settings** and review the settings for your subscription.
+        4. Ensure that there are diagnostic settings configured and that they cover the essential log categories: Administrative, Security, Alert, and Policy.
+
+        **Automated Audit via Azure CLI:**
+
+        To check the diagnostic settings for the subscription:
+
+        ```bash
+        az monitor diagnostic-settings list --resource /subscriptions/{subscriptionId}
+        ```
+
+        Verify that the output includes diagnostic settings with the necessary categories enabled.
+        remediation: |
+          ### Microsoft Azure Portal
+
+          ### Configuring Diagnostic Settings in Azure Portal:
+
+          1. In the Azure Portal, navigate to **Monitor** > **Activity log**.
+          2. Select **Diagnostic settings** and then **Add diagnostic setting**.
+          3. Provide a name for the diagnostic setting.
+          4. Select the necessary log categories: Administrative, Security, Alert, and Policy.
+          5. Choose the destination for the logs, such as an Azure Storage account, a Log Analytics workspace, or an Event Hub, based on your organizational needs.
+          6. Save the configuration to ensure continuous monitoring.
+
+          ### Using Azure CLI:
+
+          Create a new diagnostic setting using the Azure CLI:
 
           ```bash
-          cnspec run azure -c "azure.subscription.monitor.diagnosticSettings != empty" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --storage-account <StorageAccountId> --workspace <LogAnalyticsWorkspaceId> --event-hub <EventHubName>
           ```
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+          Replace the placeholders with your specific resource IDs and desired diagnostic setting name.
 
-        __cnspec shell__
+          ### Using PowerShell:
 
-        To audit Microsoft Azure with `cnspec shell`:
+          Configure diagnostic settings with PowerShell:
 
-        1. Launch `cnspec shell`:
+          ```powershell
+          $subsId = "<SubscriptionId>"
+          $settingName = "<DiagnosticSettingName>"
+          $storageAccountId = "<StorageAccountId>"
+          $workspaceId = "<LogAnalyticsWorkspaceId>"
+          $eventHubAuthRuleId = "<EventHubAuthorizationRuleId>"
 
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
+          Set-AzDiagnosticSetting -ResourceId "/subscriptions/$subsId" -StorageAccountId $storageAccountId -WorkspaceId $workspaceId -Enabled $true -Name $settingName -Category @("Administrative", "Security", "Alert", "Policy")
           ```
 
-        2. Run this query:
-
-          ```mql
-          azure.subscription.monitor.diagnosticSettings != empty
-          ```
-      remediation: |
-        ### Microsoft Azure Portal
-
-        To update using Microsoft Azure Portal:
-
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Monitor**.
-        3. Under **Settings**, select **Diagnostic settings**.
-        4. Select a subscription and make sure there are diagnostic settings for that subscription.
+          Modify the script to match your specific resource IDs and configuration preferences. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
   - uid: mondoo-azure-security-diagnostic-settings-essential-categories
     title: Ensure that diagnostic settings collect essential security categories
     impact: 80
@@ -1782,75 +2038,81 @@ queries:
           * Administrative
           * Policy
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Access **Azure Monitor** within the Azure Portal.
+        2. Navigate to **Activity log** and proceed to **Diagnostic settings**.
+        3. Review the settings for each subscription ensuring the collection of Administrative, Security, Alert, and Policy logs.
+        4. Confirm that these categories are enabled and correctly configured to export to an appropriate destination.
 
-          ```bash
-          cnspec run azure -c "azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Administrative").all(enabled == true))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Security").all(enabled == true))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Alert").all(enabled == true))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          cnspec run azure -c "azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Policy").all(enabled == true))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
+        **Automated Audit via Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        Use the Azure CLI to list and verify the diagnostic settings across subscriptions:
 
-        __cnspec shell__
+        ```bash
+        az monitor diagnostic-settings list --resource /subscriptions/{subscriptionId}
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Administrative").all(enabled == true))
-          azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Security").all(enabled == true))
-          azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Alert").all(enabled == true))
-          azure.subscription.monitor.diagnosticSettings.all(properties.logs.where(category == "Policy").all(enabled == true))
-          ```
+        Review the settings to confirm that the essential categories are enabled.
       remediation: |
         ### Microsoft Azure Portal
 
-        To update using Microsoft Azure Portal:
+        1. Visit **Azure Monitor** > **Activity log** in the Azure Portal.
+        2. Go to **Diagnostic settings** and either add a new setting or edit an existing one.
+        3. Name your diagnostic setting and ensure the inclusion of Administrative, Security, Alert, and Policy logs.
+        4. Select the destination for these logs, such as an Azure Storage account, Log Analytics workspace, or Event Hub.
+        5. Apply and save these settings to maintain a robust monitoring framework.
 
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **Monitor** and select **Activity Log**.
-        3. Select **Export Activity logs**.
-        4. Select a subscription and select make sure there are diagnostic settings for **Administrative**, **Security**, and **Alert** data.
+        ### Enabling Diagnostic Settings via Azure CLI:
+
+        To create or update diagnostic settings for capturing essential log categories, use:
+
+        ```bash
+        az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --storage-account <StorageAccountId> --workspace <LogAnalyticsWorkspaceId> --event-hub <EventHubName>
+        ```
+
+        ### PowerShell Command for Diagnostic Settings:
+
+        Apply the following command to set up diagnostic logging for the necessary categories:
+
+        ```powershell
+        $categories = @("Administrative", "Security", "Alert", "Policy")
+        $settings = @()
+        foreach ($category in $categories) {
+            $settings += New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category $category -Enabled $true
+        }
+
+        New-AzSubscriptionDiagnosticSetting -SubscriptionId <SubscriptionId> -Name <SettingName> -Log $settings
+        ```
+
+        Replace placeholder values with your actual subscription ID, setting name, and destination details. Regular review and adjustment of these settings are crucial to adapt to evolving security and operational requirements.
+
   - uid: mondoo-azure-security-disable-udp-virtualmachines
-    title: Ensure direct UDP access to Azure virtual machines from the internet is restricted
+    title: Ensure direct UDP access to Resources from the internet is restricted
     impact: 80
     props:
       - uid: disallowedPortsUDP
         title: a list of disallowed UDP ports, by default covering common UDP services, add more as needed
         mql: |
           return [
-            53,
-            123,
-            161,
-            389,
-            1900
+            53,    // DNS
+            123,   // NTP
+            161,   // SNMP
+            389,   // CLDAP
+            1900   // SSDP
           ]
     variants:
       - uid: mondoo-azure-security-disable-udp-virtualmachines-single
       - uid: mondoo-azure-security-disable-udp-virtualmachines-api
     docs:
       desc: |
-        The main security issue with exposing UDP services over the internet is the broad attack surface that allows attackers to use reflection amplification attack against virtual machines.
+        Exposing UDP services to the internet increases the attack surface significantly and can make Azure resources susceptible to reflection amplification attacks. These attacks exploit the connectionless nature of the UDP protocol, allowing attackers to spoof a target's IP address and send information requests using UDP. The victimized server, deceived by the spoofed IP, sends responses to the target instead of the attacker, leading to a reflection attack that can amplify the traffic directed at the victim, often resulting in a denial-of-service (DoS).
 
-        A reflection attack involves an attacker spoofing a target's IP address and sending a request for information, mainly using UDP. The server then responds by sending an answer. This is called "reflection" (using the same protocol in both directions) attack.
+        The inherent risk lies in UDP's lack of connection verification, which doesn't authenticate source IP addresses, making it trivial for attackers to manipulate IP datagrams to stage such attacks. Servers with open UDP ports, especially those using well-known protocols like DNS, NTP, CLDAP, CharGEN, SSDP, BitTorrent, SNMPv2, RPC, NetBIOS, or TFTP, can be exploited as amplifiers in such attacks.
 
-        The main issue is related to the way UDP protocol is designed. UDP is a connection-less protocol that does not validate source IP addresses. Unless the application layer protocol uses countermeasures, an attacker can easily forge the IP packet datagram to include an arbitrary source IP address.
+        To mitigate these risks across Azure resources, not just virtual machines but including any service that might expose UDP ports to the internet, it's crucial to ensure that access to known UDP services is strictly controlled. By limiting unnecessary UDP traffic from the internet and employing best practices for network security, you can reduce the likelihood of these attacks significantly.
 
-        When many UDP packets have their source IP address forged to the victim IP address, the destination server (or amplifier) responds to the victim (instead of the attacker), creating a reflected denial-of-service (DoS) attack.
-
-        Any server with open UDP ports can be targeted as a reflector. One way of protecting against this attack is to make sure well known UDP port services are not disclosed to the internet.
-
+        Employing Network Security Groups (NSGs) to deny or control inbound UDP traffic, especially on ports known to be vulnerable or unnecessary for internet exposure, is a key defensive measure. Additionally, monitoring and logging traffic can help identify potential abuse or misconfiguration. For services that require UDP access, ensure they are secured, monitored, and only exposed when absolutely necessary, using the principle of least privilege to minimize potential attack vectors.
         Some application-layer protocols that rely on the UDP are:
 
           * Domain Name System (DNS)
@@ -1864,61 +2126,43 @@ queries:
           * Network Basic Input/Output System (NetBIOS)
           * Trivial File Transfer Protocol (TFTP)
       audit: |
-        __cnspec run__
+        **Manual Audit Steps:**
 
-        To audit Microsoft Azure with `cnspec run`, run this query:
+        1. Access the Azure Portal and review the networking settings for each resource, focusing on those with public internet exposure.
+        2. Inspect inbound port rules for associated Network Security Groups (NSGs) and any other relevant firewall settings.
+        3. Confirm that none of the critical UDP ports are allowed from the internet, particularly for resources that do not require such access.
 
-          ```bash
-          cnspec run azure -c "allNsgUDP = azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /UDP/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-        )
-        allNsgUDP.all(securityRules.all(properties.destinationPortRange != "*"))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 53 && toPort >= 53)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 123 && toPort >= 123)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 161 && toPort >= 161)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 389 && toPort >= 389)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 1900 && toPort >= 1900)))" --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>```
+        **Automated Audit with Azure CLI:**
 
-        Note: It is also possible to use a client secret for app connection instead of a certificate.
+        Use the Azure CLI to review NSG rules across your Azure environment:
 
-        __cnspec shell__
+        ```bash
+        az network nsg rule list --query "[].{NSG:networkSecurityGroup, Protocol:protocol, Access:access, Direction:direction, SourceAddressPrefix:sourceAddressPrefix, DestinationPortRange:destinationPortRange}" -o table
+        ```
 
-        To audit Microsoft Azure with `cnspec shell`:
-
-        1. Launch `cnspec shell`:
-
-          ```bash
-          cnspec shell azure --certificate-path <*.pem> --tenant-id <tenant_id> --client-id <client_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-        allNsgUDP = azure.subscription.network.securityGroups.where(securityRules
-        .where(
-          properties.access == 'Allow'
-            && direction == 'Inbound'
-            && properties.protocol == /UDP/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
-        )
-        )
-        allNsgUDP.all(securityRules.all(properties.destinationPortRange != "*"))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 53 && toPort >= 53)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 123 && toPort >= 123)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 161 && toPort >= 161)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 389 && toPort >= 389)))
-        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= 1900 && toPort >= 1900)))
-          ```
+        Ensure no rule improperly exposes the specified UDP ports to the internet.
       remediation: |
-        Disable direct UDP access to your Azure virtual machines from the internet. There are other options you can use to access UDP-based services running on these virtual machines:
-        * Point-to-site VPN
-        * Site-to-site VPN
-        * ExpressRoute
+        **To Restrict UDP Traffic in Azure Portal:**
+
+        1. Navigate to the networking settings for each Azure resource, accessed via its specific blade in the Azure Portal.
+        2. Modify or remove any inbound security rules that allow traffic on the disallowed UDP ports from the internet.
+        3. Where necessary, employ alternative secure access methods like VPNs or private connections (e.g., Azure ExpressRoute).
+
+        **To Update NSG Rules via Azure CLI:**
+
+        For each identified rule that allows risky UDP traffic, either delete the rule:
+
+        ```bash
+        az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <RuleName>
+        ```
+
+        Or update it to restrict or deny such traffic:
+
+        ```bash
+        az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <RuleName> --access Deny
+        ```
+
+        Regularly reviewing and adjusting these settings helps maintain robust defense mechanisms against potential UDP-based network exploits across all your Azure resources.
   - uid: mondoo-azure-security-disable-udp-virtualmachines-single
     filters: |
       asset.platform == "azure-network-security-group"
@@ -1954,4 +2198,5 @@ queries:
       props.disallowedPortsUDP {
         disallowedPortUDP = _
         disallowedPortUDP
+        allNsgUDP.all(securityRules.none(destinationPortRange.any(fromPort <= disallowedPortUDP && toPort >= disallowedPortUDP)))
       }
