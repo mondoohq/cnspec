@@ -72,6 +72,41 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 		require.Equal(t, expected, cm)
 	})
 
+	t.Run("generate control map with evidence by mrn", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Mrn: "check1"},
+						{Mrn: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Mrn: "query1"},
+						{Mrn: "query2"},
+					},
+				},
+			},
+		}
+
+		cm := c.generateEvidenceControlMap()
+		expected := &ControlMap{
+			Uid: "control-uid",
+			Checks: []*ControlRef{
+				{Mrn: "check1"},
+				{Mrn: "check2"},
+			},
+			Queries: []*ControlRef{
+				{Mrn: "query1"},
+				{Mrn: "query2"},
+			},
+		}
+		require.Equal(t, expected, cm)
+	})
+
 	t.Run("generate control map with multiple evidences", func(t *testing.T) {
 		c := &Control{
 			Uid: "control-uid",
@@ -192,6 +227,109 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Queries: []*ControlRef{
 						{Uid: "query1"},
 						{Uid: "query2"},
+					},
+				},
+			},
+			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
+		}
+		require.Equal(t, expected, fm)
+	})
+
+	t.Run("generate framework map with evidence by mrn", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Mrn: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Mrn: "query2"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid: "framework-uid",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		fm := f.generateEvidenceFrameworkMap(nil)
+		expected := &FrameworkMap{
+			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			Uid:            "framework-uid-evidence-mapping",
+			Controls: []*ControlMap{
+				{
+					Uid: "control-uid",
+					Checks: []*ControlRef{
+						{Mrn: "check2"},
+					},
+					Queries: []*ControlRef{
+						{Mrn: "query2"},
+					},
+				},
+			},
+		}
+		require.Equal(t, expected, fm)
+	})
+
+	t.Run("generate framework map with evidence by mrn and uid", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Mrn: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Mrn: "query2"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid: "framework-uid",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		fm := f.generateEvidenceFrameworkMap(&Policy{Uid: "policy-uid"})
+		expected := &FrameworkMap{
+			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			Uid:            "framework-uid-evidence-mapping",
+			Controls: []*ControlMap{
+				{
+					Uid: "control-uid",
+					Checks: []*ControlRef{
+						{Uid: "check1"},
+						{Mrn: "check2"},
+					},
+					Queries: []*ControlRef{
+						{Uid: "query1"},
+						{Mrn: "query2"},
 					},
 				},
 			},
@@ -370,6 +508,43 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 		}
 		require.Equal(t, expected, pol)
 	})
+
+	t.Run("generate policy with evidence, referencing queries by mrn only", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Mrn: "check1"},
+					},
+					Queries: []*explorer.Mquery{
+						{Mrn: "query1"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid:  "framework-uid",
+			Name: "soc2",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		// the evidence section only has MRN references, so the policy should not be generated
+		pol := f.generateEvidencePolicy()
+		require.Nil(t, pol)
+	})
+
 	t.Run("generate policy with multiple evidences", func(t *testing.T) {
 		c := &Control{
 			Uid: "control-uid",
@@ -468,29 +643,49 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 }
 
 func TestEvidenceConvertToPolicyGroup(t *testing.T) {
-	e := &Evidence{
-		Uid:   "evidence-uid",
-		Title: "evidence-title",
-		Desc:  "evidence-desc",
-		Checks: []*explorer.Mquery{
-			{Uid: "check1"},
-			{Uid: "check2"},
-		},
-		Queries: []*explorer.Mquery{
-			{Uid: "query1"},
-			{Uid: "query2"},
-		},
-	}
-	polGroup := e.convertToPolicyGroup()
-	expected := &PolicyGroup{
-		Uid:     "evidence-uid",
-		Title:   "evidence-title",
-		Type:    GroupType_CHAPTER,
-		Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
-		Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
-		Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
-	}
-	require.Equal(t, expected, polGroup)
+	t.Run("convert evidence with uids to policy group", func(t *testing.T) {
+		e := &Evidence{
+			Uid:   "evidence-uid",
+			Title: "evidence-title",
+			Desc:  "evidence-desc",
+			Checks: []*explorer.Mquery{
+				{Uid: "check1"},
+				{Uid: "check2"},
+				{Mrn: "check3"},
+			},
+			Queries: []*explorer.Mquery{
+				{Uid: "query1"},
+				{Uid: "query2"},
+				{Mrn: "query3"},
+			},
+		}
+		polGroup := e.convertToPolicyGroup()
+		expected := &PolicyGroup{
+			Uid:     "evidence-uid",
+			Title:   "evidence-title",
+			Type:    GroupType_CHAPTER,
+			Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
+			Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
+			Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+		}
+		require.Equal(t, expected, polGroup)
+	})
+	t.Run("convert evidence with mrns to policy group", func(t *testing.T) {
+		e := &Evidence{
+			Uid:   "evidence-uid",
+			Title: "evidence-title",
+			Desc:  "evidence-desc",
+			Checks: []*explorer.Mquery{
+				{Mrn: "check3"},
+			},
+			Queries: []*explorer.Mquery{
+				{Mrn: "query3"},
+			},
+		}
+		polGroup := e.convertToPolicyGroup()
+		// the evidence section references MRNs only, so the policy group should not be generated
+		require.Nil(t, polGroup)
+	})
 }
 
 func TestGenerateEvidenceObjects(t *testing.T) {
@@ -585,6 +780,61 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 			PolicyDependencies: []*explorer.ObjectRef{{Uid: "framework-uid-evidence-policy"}},
 		}
 		require.Equal(t, expectedPol, pol)
+		require.Equal(t, expectedFm, fm)
+		// check that the original framework's evidence is cleared.
+		require.Nil(t, f.Groups[0].Controls[0].Evidence)
+	})
+
+	t.Run("generate evidence objects with evidence by mrn", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Mrn: "check1"},
+					},
+					Queries: []*explorer.Mquery{
+						{Mrn: "query1"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid:  "framework-uid",
+			Name: "soc2",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		pol, fm := f.GenerateEvidenceObjects()
+
+		expectedFm := &FrameworkMap{
+			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			Uid:            "framework-uid-evidence-mapping",
+			Controls: []*ControlMap{
+				{
+					Uid: "control-uid",
+					Checks: []*ControlRef{
+						{Mrn: "check1"},
+					},
+					Queries: []*ControlRef{
+						{Mrn: "query1"},
+					},
+				},
+			},
+		}
+		// the evidence section contains entirely MRNs, we do not have to generate a policy
+		require.Nil(t, pol)
 		require.Equal(t, expectedFm, fm)
 		// check that the original framework's evidence is cleared.
 		require.Nil(t, f.Groups[0].Controls[0].Evidence)

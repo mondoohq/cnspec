@@ -18,20 +18,34 @@ func (e *Evidence) fillUidIfEmpty(frameworkUid string, controlUid string, suffix
 }
 
 func (e *Evidence) convertToPolicyGroup() *PolicyGroup {
+	queries := []*explorer.Mquery{}
+	checks := []*explorer.Mquery{}
+
+	for _, q := range e.Queries {
+		if q.Mrn == "" {
+			queries = append(queries, q)
+		}
+	}
+	for _, c := range e.Checks {
+		if c.Mrn == "" {
+			checks = append(checks, c)
+		}
+	}
+
+	// no queries or checks, we dont need a policy group
+	if len(queries) == 0 && len(checks) == 0 {
+		return nil
+	}
+
 	p := &PolicyGroup{
-		Uid:   e.Uid,
-		Type:  GroupType_CHAPTER,
-		Title: e.Title,
+		Uid:     e.Uid,
+		Type:    GroupType_CHAPTER,
+		Title:   e.Title,
+		Queries: queries,
+		Checks:  checks,
 	}
 	if e.Desc != "" {
 		p.Docs = &PolicyGroupDocs{Desc: e.Desc}
-	}
-
-	if len(e.Queries) > 0 {
-		p.Queries = append(p.Queries, e.Queries...)
-	}
-	if len(e.Checks) > 0 {
-		p.Checks = append(p.Checks, e.Checks...)
 	}
 	return p
 }
@@ -47,7 +61,10 @@ func (f *Framework) generateEvidencePolicy() *Policy {
 			for idx, e := range c.GetEvidence() {
 				// we use the index as a suffix to ensure no uid collisions
 				e.fillUidIfEmpty(f.Uid, c.Uid, fmt.Sprintf("%d", idx))
-				policyGroups = append(policyGroups, e.convertToPolicyGroup())
+				polGrp := e.convertToPolicyGroup()
+				if polGrp != nil {
+					policyGroups = append(policyGroups, polGrp)
+				}
 			}
 		}
 	}
@@ -79,12 +96,15 @@ func (f *Framework) generateEvidenceFrameworkMap(evidencePolicy *Policy) *Framew
 	if len(controlMaps) == 0 {
 		return nil
 	}
-	return &FrameworkMap{
-		FrameworkOwner:     &explorer.ObjectRef{Uid: f.Uid},
-		Uid:                f.Uid + "-evidence-mapping",
-		Controls:           controlMaps,
-		PolicyDependencies: []*explorer.ObjectRef{{Uid: evidencePolicy.Uid}},
+	fm := &FrameworkMap{
+		FrameworkOwner: &explorer.ObjectRef{Uid: f.Uid},
+		Uid:            f.Uid + "-evidence-mapping",
+		Controls:       controlMaps,
 	}
+	if evidencePolicy != nil {
+		fm.PolicyDependencies = []*explorer.ObjectRef{{Uid: evidencePolicy.Uid}}
+	}
+	return fm
 }
 
 // Generates a policy and a framework map from the framework's control evidences.
@@ -92,9 +112,6 @@ func (f *Framework) generateEvidenceFrameworkMap(evidencePolicy *Policy) *Framew
 // The evidence objects are set to nil after this function is called.
 func (f *Framework) GenerateEvidenceObjects() (*Policy, *FrameworkMap) {
 	evidencePolicy := f.generateEvidencePolicy()
-	if evidencePolicy == nil {
-		return nil, nil
-	}
 	evidenceFm := f.generateEvidenceFrameworkMap(evidencePolicy)
 	// clear the evidence after we have generated the policy and framework map
 	for _, fg := range f.GetGroups() {
@@ -106,27 +123,34 @@ func (f *Framework) GenerateEvidenceObjects() (*Policy, *FrameworkMap) {
 }
 
 // Generates a control map by extracting the control's evidence. If no evidence is present, this function returns nil.
-func (c *Control) generateEvidenceControlMap() *ControlMap {
+func (ctrl *Control) generateEvidenceControlMap() *ControlMap {
 	// if no evidence, we dont need a control map
-	if len(c.GetEvidence()) == 0 {
+	if len(ctrl.GetEvidence()) == 0 {
 		return nil
 	}
 
 	checkRefs := []*ControlRef{}
 	queryRefs := []*ControlRef{}
 
-	for _, e := range c.GetEvidence() {
-		for c := range e.Checks {
-			checkRefs = append(checkRefs, &ControlRef{Uid: e.Checks[c].Uid})
+	for _, e := range ctrl.GetEvidence() {
+		for _, ch := range e.Checks {
+			if ch.Mrn != "" {
+				checkRefs = append(checkRefs, &ControlRef{Mrn: ch.Mrn})
+			} else {
+				checkRefs = append(checkRefs, &ControlRef{Uid: ch.Uid})
+			}
 		}
-
-		for q := range e.Queries {
-			queryRefs = append(queryRefs, &ControlRef{Uid: e.Queries[q].Uid})
+		for _, q := range e.Queries {
+			if q.Mrn != "" {
+				queryRefs = append(queryRefs, &ControlRef{Mrn: q.Mrn})
+			} else {
+				queryRefs = append(queryRefs, &ControlRef{Uid: q.Uid})
+			}
 		}
 	}
 
 	return &ControlMap{
-		Uid:     c.Uid,
+		Uid:     ctrl.Uid,
 		Checks:  checkRefs,
 		Queries: queryRefs,
 	}
