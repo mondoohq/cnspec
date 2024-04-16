@@ -17,63 +17,96 @@ func (e *Evidence) fillUidIfEmpty(frameworkUid string, controlUid string, suffix
 	e.Uid = fmt.Sprintf("%s-%s-evidence-%s", frameworkUid, controlUid, suffix)
 }
 
-func (e *Evidence) convertToPolicy() *Policy {
-	p := &Policy{
-		Uid:  e.Uid + "-policy",
-		Name: e.Title + "-policy",
+func (e *Evidence) convertToPolicyGroup() *PolicyGroup {
+	p := &PolicyGroup{
+		Uid:   e.Uid,
+		Type:  GroupType_CHAPTER,
+		Title: e.Title,
 	}
 	if e.Desc != "" {
-		p.Docs = &PolicyDocs{Desc: e.Desc}
+		p.Docs = &PolicyGroupDocs{Desc: e.Desc}
 	}
+
 	if len(e.Queries) > 0 {
-		queriesG := &PolicyGroup{
-			Queries: e.Queries,
-			Type:    GroupType_CHAPTER,
-			Uid:     "evidence-queries",
-		}
-		p.Groups = append(p.Groups, queriesG)
+		p.Queries = append(p.Queries, e.Queries...)
 	}
 	if len(e.Checks) > 0 {
-		checksG := &PolicyGroup{
-			Checks: e.Checks,
-			Type:   GroupType_CHAPTER,
-			Uid:    "evidence-checks",
-		}
-		p.Groups = append(p.Groups, checksG)
+		p.Checks = append(p.Checks, e.Checks...)
 	}
 	return p
 }
 
-// Pulls the control's evidences out into policies. If no evidence is present, this function returns nil.
-func (c *Control) GenerateEvidencePolicies(frameworkUid string) []*Policy {
-	// if no evidence, we dont need policies
-	if len(c.GetEvidence()) == 0 {
+// Pulls the framework's control evidences out into a policy. If no evidence is at all present, this function returns nil.
+func (f *Framework) generateEvidencePolicy() *Policy {
+	policyGroups := []*PolicyGroup{}
+	for _, fg := range f.GetGroups() {
+		for _, c := range fg.GetControls() {
+			if len(c.GetEvidence()) == 0 {
+				continue
+			}
+			for idx, e := range c.GetEvidence() {
+				// we use the index as a suffix to ensure no uid collisions
+				e.fillUidIfEmpty(f.Uid, c.Uid, fmt.Sprintf("%d", idx))
+				policyGroups = append(policyGroups, e.convertToPolicyGroup())
+			}
+		}
+	}
+
+	if len(policyGroups) == 0 {
 		return nil
 	}
-	policies := []*Policy{}
-	for idx, e := range c.GetEvidence() {
-		// we use the index as a suffix to ensure no uid collisions
-		e.fillUidIfEmpty(frameworkUid, c.Uid, fmt.Sprintf("%d", idx))
-		policies = append(policies, e.convertToPolicy())
+
+	pol := &Policy{
+		Uid:    f.Uid + "-evidence-policy",
+		Name:   f.Name + "-evidence-policy",
+		Docs:   f.Docs,
+		Groups: policyGroups,
 	}
-	return policies
+	return pol
 }
 
-func GenerateFrameworkMap(controlMaps []*ControlMap, framework *Framework, policies []*Policy) *FrameworkMap {
-	policyRefs := []*explorer.ObjectRef{}
-	for _, p := range policies {
-		policyRefs = append(policyRefs, &explorer.ObjectRef{Uid: p.Uid})
+// Pulls the framework's control evidences out into a framework map. If no evidence is at all present, this function returns nil.
+func (f *Framework) generateEvidenceFrameworkMap(evidencePolicy *Policy) *FrameworkMap {
+	controlMaps := []*ControlMap{}
+	for _, fg := range f.GetGroups() {
+		for _, c := range fg.GetControls() {
+			cm := c.generateEvidenceControlMap()
+			if cm != nil {
+				controlMaps = append(controlMaps, cm)
+			}
+		}
+	}
+	if len(controlMaps) == 0 {
+		return nil
 	}
 	return &FrameworkMap{
-		FrameworkOwner:     &explorer.ObjectRef{Uid: framework.Uid},
-		Uid:                framework.Uid + "-evidence-mapping",
+		FrameworkOwner:     &explorer.ObjectRef{Uid: f.Uid},
+		Uid:                f.Uid + "-evidence-mapping",
 		Controls:           controlMaps,
-		PolicyDependencies: policyRefs,
+		PolicyDependencies: []*explorer.ObjectRef{{Uid: evidencePolicy.Uid}},
 	}
+}
+
+// Generates a policy and a framework map from the framework's control evidences.
+// If no evidence is present, this function returns nil for both objects.
+// The evidence objects are set to nil after this function is called.
+func (f *Framework) GenerateEvidenceObjects() (*Policy, *FrameworkMap) {
+	evidencePolicy := f.generateEvidencePolicy()
+	if evidencePolicy == nil {
+		return nil, nil
+	}
+	evidenceFm := f.generateEvidenceFrameworkMap(evidencePolicy)
+	// clear the evidence after we have generated the policy and framework map
+	for _, fg := range f.GetGroups() {
+		for _, c := range fg.GetControls() {
+			c.Evidence = nil
+		}
+	}
+	return evidencePolicy, evidenceFm
 }
 
 // Generates a control map by extracting the control's evidence. If no evidence is present, this function returns nil.
-func (c *Control) GenerateEvidenceControlMap() *ControlMap {
+func (c *Control) generateEvidenceControlMap() *ControlMap {
 	// if no evidence, we dont need a control map
 	if len(c.GetEvidence()) == 0 {
 		return nil

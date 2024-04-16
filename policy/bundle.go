@@ -183,26 +183,12 @@ func (p *Bundle) ConvertQuerypacks() {
 
 func (b *Bundle) ConvertEvidence() {
 	for _, f := range b.Frameworks {
-		policies := []*Policy{}
-		cmaps := []*ControlMap{}
-		for _, g := range f.Groups {
-			for _, c := range g.Controls {
-				evidencePolicies := c.GenerateEvidencePolicies(f.Uid)
-				policies = append(policies, evidencePolicies...)
-				controlMap := c.GenerateEvidenceControlMap()
-				// if the control has evidence, we add the control map
-				if controlMap != nil {
-					cmaps = append(cmaps, controlMap)
-				}
-			}
+		pol, fm := f.GenerateEvidenceObjects()
+		if pol != nil {
+			b.Policies = append(b.Policies, pol)
 		}
-		// we only want a new framework map if there's at least one control map
-		if len(cmaps) > 0 {
-			frameworkMap := GenerateFrameworkMap(cmaps, f, policies)
-			b.FrameworkMaps = append(b.FrameworkMaps, frameworkMap)
-		}
-		if len(policies) > 0 {
-			b.Policies = append(b.Policies, policies...)
+		if fm != nil {
+			b.FrameworkMaps = append(b.FrameworkMaps, fm)
 		}
 	}
 }
