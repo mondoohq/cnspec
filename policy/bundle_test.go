@@ -324,11 +324,11 @@ func TestBundle_ConvertEvidence(t *testing.T) {
 	// the framework in this bundle contains 2 controls with 2 evidences per control
 	bundle.ConvertEvidence()
 
-	// assert that we now have a policy per evidence and one frameworkmap to tie them together
-	require.Equal(t, 4, len(bundle.Policies))
+	// assert that we now have a policy per framework and one frameworkmap to tie them together
+	require.Equal(t, 1, len(bundle.Policies))
 	require.Equal(t, 1, len(bundle.FrameworkMaps))
 	require.Equal(t, 2, len(bundle.FrameworkMaps[0].Controls))
-	require.Equal(t, 4, len(bundle.FrameworkMaps[0].PolicyDependencies))
+	require.Equal(t, 1, len(bundle.FrameworkMaps[0].PolicyDependencies))
 	require.Equal(t, 1, len(bundle.Frameworks))
 }
 

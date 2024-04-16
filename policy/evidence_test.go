@@ -29,49 +29,12 @@ func TestEvidenceFillUidIfEmpty(t *testing.T) {
 	})
 }
 
-func TestGenerateFrameworkMap(t *testing.T) {
-	c := &Control{
-		Uid: "control-uid",
-		Evidence: []*Evidence{
-			{
-				Uid:   "evidence-uid",
-				Title: "evidence-title",
-				Desc:  "evidence-desc",
-				Checks: []*explorer.Mquery{
-					{Uid: "check1"},
-					{Uid: "check2"},
-				},
-				Queries: []*explorer.Mquery{
-					{Uid: "query1"},
-					{Uid: "query2"},
-				},
-			},
-		},
-	}
-
-	cm := c.GenerateEvidenceControlMap()
-	owner := &Framework{
-		Uid: "soc-2",
-	}
-	policies := []*Policy{{Uid: "policy-uid"}}
-	fm := GenerateFrameworkMap([]*ControlMap{cm}, owner, policies)
-	expected := &FrameworkMap{
-		FrameworkOwner: &explorer.ObjectRef{Uid: "soc-2"},
-		Uid:            "soc-2-evidence-mapping",
-		Controls:       []*ControlMap{cm},
-		PolicyDependencies: []*explorer.ObjectRef{
-			{Uid: "policy-uid"},
-		},
-	}
-	require.Equal(t, expected, fm)
-}
-
 func TestGenerateEvidenceControlMap(t *testing.T) {
 	t.Run("generate control map with no evidence", func(t *testing.T) {
 		c := &Control{
 			Uid: "control-uid",
 		}
-		cm := c.GenerateEvidenceControlMap()
+		cm := c.generateEvidenceControlMap()
 		require.Nil(t, cm)
 	})
 	t.Run("generate control map with evidence", func(t *testing.T) {
@@ -94,7 +57,7 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 			},
 		}
 
-		cm := c.GenerateEvidenceControlMap()
+		cm := c.generateEvidenceControlMap()
 		expected := &ControlMap{
 			Uid: "control-uid",
 			Checks: []*ControlRef{
@@ -108,9 +71,403 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 		}
 		require.Equal(t, expected, cm)
 	})
+
+	t.Run("generate control map with multiple evidences", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+				{
+					Uid:   "evidence-uid-2",
+					Title: "evidence-title-2",
+					Desc:  "evidence-desc-2",
+					Checks: []*explorer.Mquery{
+						{Uid: "check3"},
+						{Uid: "check4"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query3"},
+						{Uid: "query4"},
+					},
+				},
+			},
+		}
+
+		cm := c.generateEvidenceControlMap()
+		expected := &ControlMap{
+			Uid: "control-uid",
+			Checks: []*ControlRef{
+				{Uid: "check1"},
+				{Uid: "check2"},
+				{Uid: "check3"},
+				{Uid: "check4"},
+			},
+			Queries: []*ControlRef{
+				{Uid: "query1"},
+				{Uid: "query2"},
+				{Uid: "query3"},
+				{Uid: "query4"},
+			},
+		}
+		require.Equal(t, expected, cm)
+	})
 }
 
-func TestEvidenceConvertToPolicy(t *testing.T) {
+func TestGenerateEvidenceFrameworkMap(t *testing.T) {
+	t.Run("generate framework map with no evidence", func(t *testing.T) {
+		f := &Framework{
+			Uid: "framework-uid",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						{
+							Uid: "control-uid",
+						},
+					},
+				},
+			},
+		}
+		evidenceFm := f.generateEvidenceFrameworkMap(nil)
+		require.Nil(t, evidenceFm)
+		f = &Framework{}
+		evidenceFm = f.generateEvidenceFrameworkMap(nil)
+		require.Nil(t, evidenceFm)
+	})
+	t.Run("generate framework map with evidence", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid: "framework-uid",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		fm := f.generateEvidenceFrameworkMap(&Policy{Uid: "policy-uid"})
+		expected := &FrameworkMap{
+			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			Uid:            "framework-uid-evidence-mapping",
+			Controls: []*ControlMap{
+				{
+					Uid: "control-uid",
+					Checks: []*ControlRef{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*ControlRef{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+			},
+			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
+		}
+		require.Equal(t, expected, fm)
+	})
+
+	t.Run("generate framework map with multiple evidences", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+				{
+					Uid:   "evidence-uid-2",
+					Title: "evidence-title-2",
+					Desc:  "evidence-desc-2",
+					Checks: []*explorer.Mquery{
+						{Uid: "check3"},
+						{Uid: "check4"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query3"},
+						{Uid: "query4"},
+					},
+				},
+			},
+		}
+		c1 := &Control{
+			Uid: "control-uid-2",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid-3",
+					Title: "evidence-title-3",
+					Desc:  "evidence-desc-3",
+					Checks: []*explorer.Mquery{
+						{Uid: "check5"},
+						{Uid: "check6"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query5"},
+						{Uid: "query6"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid: "framework-uid",
+			Groups: []*FrameworkGroup{
+				{
+					Uid:      "group-uid",
+					Controls: []*Control{c, c1},
+				},
+			},
+		}
+
+		fm := f.generateEvidenceFrameworkMap(&Policy{Uid: "policy-uid"})
+		expected := &FrameworkMap{
+			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			Uid:            "framework-uid-evidence-mapping",
+			Controls: []*ControlMap{
+				{
+					Uid: "control-uid",
+					Checks: []*ControlRef{
+						{Uid: "check1"},
+						{Uid: "check2"},
+						{Uid: "check3"},
+						{Uid: "check4"},
+					},
+					Queries: []*ControlRef{
+						{Uid: "query1"},
+						{Uid: "query2"},
+						{Uid: "query3"},
+						{Uid: "query4"},
+					},
+				},
+				{
+					Uid: "control-uid-2",
+					Checks: []*ControlRef{
+						{Uid: "check5"},
+						{Uid: "check6"},
+					},
+					Queries: []*ControlRef{
+						{Uid: "query5"},
+						{Uid: "query6"},
+					},
+				},
+			},
+			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
+		}
+		require.Equal(t, expected, fm)
+	})
+}
+
+func TestGenerateEvidencePolicy(t *testing.T) {
+	t.Run("generate policy with no evidence", func(t *testing.T) {
+		f := &Framework{
+			Uid: "framework-uid",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						{
+							Uid: "control-uid",
+						},
+					},
+				},
+			},
+		}
+		pol := f.generateEvidencePolicy()
+		require.Nil(t, pol)
+		f = &Framework{}
+		pol = f.generateEvidencePolicy()
+		require.Nil(t, pol)
+	})
+	t.Run("generate policy with evidence", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid:  "framework-uid",
+			Name: "soc2",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		pol := f.generateEvidencePolicy()
+		expected := &Policy{
+			Uid:  "framework-uid-evidence-policy",
+			Name: "soc2-evidence-policy",
+			Groups: []*PolicyGroup{
+				{
+					Uid:     "evidence-uid",
+					Title:   "evidence-title",
+					Type:    GroupType_CHAPTER,
+					Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
+					Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
+					Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+				},
+			},
+		}
+		require.Equal(t, expected, pol)
+	})
+	t.Run("generate policy with multiple evidences", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+				{
+					Uid:   "evidence-uid-2",
+					Title: "evidence-title-2",
+					Desc:  "evidence-desc-2",
+					Checks: []*explorer.Mquery{
+						{Uid: "check3"},
+						{Uid: "check4"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query3"},
+						{Uid: "query4"},
+					},
+				},
+			},
+		}
+		c1 := &Control{
+			Uid: "control-uid-2",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid-3",
+					Title: "evidence-title-3",
+					Desc:  "evidence-desc-3",
+					Checks: []*explorer.Mquery{
+						{Uid: "check5"},
+						{Uid: "check6"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query5"},
+						{Uid: "query6"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid:  "framework-uid",
+			Name: "soc2",
+			Groups: []*FrameworkGroup{
+				{
+					Uid:      "group-uid",
+					Controls: []*Control{c, c1},
+				},
+			},
+		}
+
+		pol := f.generateEvidencePolicy()
+		expected := &Policy{
+			Uid:  "framework-uid-evidence-policy",
+			Name: "soc2-evidence-policy",
+			Groups: []*PolicyGroup{
+				{
+					Uid:     "evidence-uid",
+					Title:   "evidence-title",
+					Type:    GroupType_CHAPTER,
+					Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
+					Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
+					Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+				},
+				{
+					Uid:     "evidence-uid-2",
+					Title:   "evidence-title-2",
+					Type:    GroupType_CHAPTER,
+					Docs:    &PolicyGroupDocs{Desc: "evidence-desc-2"},
+					Queries: []*explorer.Mquery{{Uid: "query3"}, {Uid: "query4"}},
+					Checks:  []*explorer.Mquery{{Uid: "check3"}, {Uid: "check4"}},
+				},
+				{
+					Uid:     "evidence-uid-3",
+					Title:   "evidence-title-3",
+					Type:    GroupType_CHAPTER,
+					Docs:    &PolicyGroupDocs{Desc: "evidence-desc-3"},
+					Queries: []*explorer.Mquery{{Uid: "query5"}, {Uid: "query6"}},
+					Checks:  []*explorer.Mquery{{Uid: "check5"}, {Uid: "check6"}},
+				},
+			},
+		}
+		require.Equal(t, expected, pol)
+	})
+}
+
+func TestEvidenceConvertToPolicyGroup(t *testing.T) {
 	e := &Evidence{
 		Uid:   "evidence-uid",
 		Title: "evidence-title",
@@ -124,72 +481,112 @@ func TestEvidenceConvertToPolicy(t *testing.T) {
 			{Uid: "query2"},
 		},
 	}
-	pol := e.convertToPolicy()
-	expected := &Policy{
-		Uid:  "evidence-uid-policy",
-		Name: "evidence-title-policy",
-		Docs: &PolicyDocs{Desc: "evidence-desc"},
-		Groups: []*PolicyGroup{
-			{
-				Uid:     "evidence-queries",
-				Type:    GroupType_CHAPTER,
-				Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
-			},
-			{
-				Uid:    "evidence-checks",
-				Type:   GroupType_CHAPTER,
-				Checks: []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
-			},
-		},
+	polGroup := e.convertToPolicyGroup()
+	expected := &PolicyGroup{
+		Uid:     "evidence-uid",
+		Title:   "evidence-title",
+		Type:    GroupType_CHAPTER,
+		Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
+		Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
+		Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
 	}
-	require.Equal(t, expected, pol)
+	require.Equal(t, expected, polGroup)
 }
 
-func TestGenerateEvidencePolicies(t *testing.T) {
-	e1 := &Evidence{
-		Uid:   "evidence-uid",
-		Title: "evidence-title",
-		Checks: []*explorer.Mquery{
-			{Uid: "check1"},
-			{Uid: "check2"},
-		},
-	}
-	e2 := &Evidence{
-		Uid:   "evidence-uid-2",
-		Title: "evidence-title-2",
-		Queries: []*explorer.Mquery{
-			{Uid: "query1"},
-			{Uid: "query2"},
-		},
-	}
-	control := &Control{
-		Uid:      "control-uid",
-		Evidence: []*Evidence{e1, e2},
-	}
-	policies := control.GenerateEvidencePolicies("framework-uid")
-	expected := []*Policy{
-		{
-			Uid:  "evidence-uid-policy",
-			Name: "evidence-title-policy",
-			Groups: []*PolicyGroup{
+func TestGenerateEvidenceObjects(t *testing.T) {
+	t.Run("generate evidence objects with no evidence", func(t *testing.T) {
+		f := &Framework{
+			Uid:  "framework-uid",
+			Name: "soc2",
+			Groups: []*FrameworkGroup{
 				{
-					Uid:    "evidence-checks",
-					Type:   GroupType_CHAPTER,
-					Checks: []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+					Uid: "group-uid",
+					Controls: []*Control{
+						{
+							Uid: "control-uid",
+						},
+					},
 				},
 			},
-		},
-		{
-			Uid:  "evidence-uid-2-policy",
-			Name: "evidence-title-2-policy",
+		}
+		pol, fm := f.GenerateEvidenceObjects()
+		require.Nil(t, pol)
+		require.Nil(t, fm)
+		f = &Framework{}
+		pol, fm = f.GenerateEvidenceObjects()
+		require.Nil(t, pol)
+		require.Nil(t, fm)
+	})
+
+	t.Run("generate evidence objects with evidence", func(t *testing.T) {
+		c := &Control{
+			Uid: "control-uid",
+			Evidence: []*Evidence{
+				{
+					Uid:   "evidence-uid",
+					Title: "evidence-title",
+					Desc:  "evidence-desc",
+					Checks: []*explorer.Mquery{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*explorer.Mquery{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+			},
+		}
+
+		f := &Framework{
+			Uid:  "framework-uid",
+			Name: "soc2",
+			Groups: []*FrameworkGroup{
+				{
+					Uid: "group-uid",
+					Controls: []*Control{
+						c,
+					},
+				},
+			},
+		}
+
+		pol, fm := f.GenerateEvidenceObjects()
+		expectedPol := &Policy{
+			Uid:  "framework-uid-evidence-policy",
+			Name: "soc2-evidence-policy",
 			Groups: []*PolicyGroup{
 				{
-					Uid:     "evidence-queries",
+					Uid:     "evidence-uid",
+					Title:   "evidence-title",
 					Type:    GroupType_CHAPTER,
+					Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
 					Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
+					Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
 				},
 			},
-		},
-	}
-	require.Equal(t, expected, policies)
+		}
+		expectedFm := &FrameworkMap{
+			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			Uid:            "framework-uid-evidence-mapping",
+			Controls: []*ControlMap{
+				{
+					Uid: "control-uid",
+					Checks: []*ControlRef{
+						{Uid: "check1"},
+						{Uid: "check2"},
+					},
+					Queries: []*ControlRef{
+						{Uid: "query1"},
+						{Uid: "query2"},
+					},
+				},
+			},
+			PolicyDependencies: []*explorer.ObjectRef{{Uid: "framework-uid-evidence-policy"}},
+		}
+		require.Equal(t, expectedPol, pol)
+		require.Equal(t, expectedFm, fm)
+		// check that the original framework's evidence is cleared.
+		require.Nil(t, f.Groups[0].Controls[0].Evidence)
+	})
 }
