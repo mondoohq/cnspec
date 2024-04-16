@@ -33,7 +33,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.9.0
-	go.mondoo.com/cnquery/v10 v10.11.2-0.20240415171324-5136576b9e88
+	go.mondoo.com/cnquery/v10 v10.12.0
 	go.mondoo.com/mondoo-go v0.0.0-20240410071618-4acf10b559af
 	go.mondoo.com/ranger-rpc v0.6.0
 	go.opentelemetry.io/otel v1.25.0
