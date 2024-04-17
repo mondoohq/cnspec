@@ -1525,7 +1525,7 @@ func (x *Remediation) addFileContext(node *yaml.Node) {
 }
 
 type ResourceSelector struct {
-	Selector    string      `protobuf:"bytes,1,opt,name=selector,proto3" json:"selector,omitempty" yaml:"selector,omitempty"`
+	Name        string      `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
 	Comments    Comments    `json:"-" yaml:"-"`
 }

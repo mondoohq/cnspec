@@ -92,7 +92,7 @@ func (r *RiskFactor) ExecutionChecksum(ctx context.Context, conf mqlc.CompilerCo
 
 	for i := range r.Resources {
 		rc := r.Resources[i]
-		c = c.Add(rc.Selector)
+		c = c.Add(rc.Name)
 	}
 
 	return c, nil

@@ -54,7 +54,7 @@ func genRiskFactor1() RiskFactor {
 			Version: "1.2.3",
 		}},
 		Resources: []*ResourceSelector{{
-			Selector: "mondoo",
+			Name: "mondoo",
 		}},
 	}
 }
@@ -128,7 +128,7 @@ func TestRiskFactor_Checksums(t *testing.T) {
 		},
 		// 2
 		func(rf RiskFactor) RiskFactor {
-			rf.Resources[0].Selector = "asset"
+			rf.Resources[0].Name = "asset"
 			return rf
 		},
 		// 3
