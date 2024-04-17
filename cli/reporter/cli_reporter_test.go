@@ -42,11 +42,11 @@ func TestCompactReporter(t *testing.T) {
 	}
 	rr.print()
 
-	assert.Contains(t, buf.String(), "✕ Fail:         Ensure")
-	assert.Contains(t, buf.String(), ". Skipped:      Set")
-	assert.Contains(t, buf.String(), "! Error:        Set")
-	assert.Contains(t, buf.String(), "✓ Pass:  A 100  Ensure")
-	assert.Contains(t, buf.String(), "✕ Fail:  F   0  Ensure")
+	assert.Contains(t, buf.String(), "✕ Fail:       Ensure")
+	assert.Contains(t, buf.String(), ". Skipped:    Set")
+	assert.Contains(t, buf.String(), "! Error:      Set")
+	assert.Contains(t, buf.String(), "✓ Pass:  100  Ensure")
+	assert.Contains(t, buf.String(), "✕ Fail:    0  Ensure")
 }
 
 func TestVulnReporter(t *testing.T) {
