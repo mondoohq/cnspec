@@ -7,9 +7,9 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	cnquery_app "go.mondoo.com/cnquery/v10/apps/cnquery/cmd"
-	"go.mondoo.com/cnquery/v10/providers"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/plugin"
+	cnquery_app "go.mondoo.com/cnquery/v11/apps/cnquery/cmd"
+	"go.mondoo.com/cnquery/v11/providers"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/plugin"
 )
 
 func init() {

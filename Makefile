@@ -18,8 +18,8 @@ ifndef VERSION
 VERSION=${LATEST_VERSION_TAG}+$(shell git rev-list --count HEAD)
 endif
 
-LDFLAGS=-ldflags "-s -w -X go.mondoo.com/cnspec/v10.Version=${VERSION} -X go.mondoo.com/cnspec/v10.Build=${TAG}" # -linkmode external -extldflags=-static
-LDFLAGSDIST=-tags production -ldflags "-s -w -X go.mondoo.com/cnquery/v10.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnquery/v10.Build=${TAG} -X go.mondoo.com/cnspec/v10.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v10.Build=${TAG} -s -w"
+LDFLAGS=-ldflags "-s -w -X go.mondoo.com/cnspec/v11.Version=${VERSION} -X go.mondoo.com/cnspec/v11.Build=${TAG}" # -linkmode external -extldflags=-static
+LDFLAGSDIST=-tags production -ldflags "-s -w -X go.mondoo.com/cnquery/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnquery/v11.Build=${TAG} -X go.mondoo.com/cnspec/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v11.Build=${TAG} -s -w"
 
 .PHONY: info/ldflags
 info/ldflags:
@@ -117,7 +117,7 @@ test/lint: test/lint/golangci-lint/run
 test: test/go test/lint
 
 benchmark/go:
-	go test -bench=. -benchmem go.mondoo.com/cnspec/v10/policy/scan/benchmark
+	go test -bench=. -benchmem go.mondoo.com/cnspec/v11/policy/scan/benchmark
 
 test/go: cnspec/generate test/go/plain
 

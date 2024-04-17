@@ -3,8 +3,8 @@
 
 package fmt
 
-import "go.mondoo.com/cnspec/v10/policy"
-import bundlefmt "go.mondoo.com/cnspec/v10/internal/bundle"
+import "go.mondoo.com/cnspec/v11/policy"
+import bundlefmt "go.mondoo.com/cnspec/v11/internal/bundle"
 
 func ToFormattedYAML(p *policy.Bundle) ([]byte, error) {
 	data, err := p.ToYAML()

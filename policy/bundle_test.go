@@ -15,10 +15,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/providers"
-	"go.mondoo.com/cnspec/v10/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/providers"
+	"go.mondoo.com/cnspec/v11/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v11/policy"
 )
 
 type s3Fake struct {

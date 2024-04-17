@@ -12,12 +12,12 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v10/checksums"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/mrn"
-	"go.mondoo.com/cnquery/v10/types"
-	"go.mondoo.com/cnquery/v10/utils/sortx"
+	"go.mondoo.com/cnquery/v11/checksums"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/mrn"
+	"go.mondoo.com/cnquery/v11/types"
+	"go.mondoo.com/cnquery/v11/utils/sortx"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -8,9 +8,9 @@ import (
 	"sort"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v10/cli/printer"
-	"go.mondoo.com/cnspec/v10/cli/components"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/cli/printer"
+	"go.mondoo.com/cnspec/v11/cli/components"
+	"go.mondoo.com/cnspec/v11/policy"
 )
 
 var colorProfile func(string) termenv.Color = termenv.ColorProfile().Color

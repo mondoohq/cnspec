@@ -8,7 +8,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/pflag"
-	"go.mondoo.com/cnspec/v10/apps/cnspec/cmd"
+	"go.mondoo.com/cnspec/v11/apps/cnspec/cmd"
 )
 
 func main() {

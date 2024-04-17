@@ -7,10 +7,10 @@ import (
 	"sort"
 
 	"github.com/pkg/errors"
-	"go.mondoo.com/cnquery/v10/checksums"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/mrn"
+	"go.mondoo.com/cnquery/v11/checksums"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/mrn"
 )
 
 func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string) (string, error) {

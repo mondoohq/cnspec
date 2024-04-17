@@ -8,9 +8,9 @@ import (
 	"net/http"
 
 	"github.com/pkg/errors"
-	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )

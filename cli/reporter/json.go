@@ -8,11 +8,11 @@ import (
 	"errors"
 	"strconv"
 
-	cr "go.mondoo.com/cnquery/v10/cli/reporter"
-	"go.mondoo.com/cnquery/v10/llx"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/shared"
-	"go.mondoo.com/cnspec/v10/policy"
+	cr "go.mondoo.com/cnquery/v11/cli/reporter"
+	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnspec/v11/policy"
 )
 
 func printScore(score *policy.Score, mrn string, out shared.OutputHelper, prefix string) bool {

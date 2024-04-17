@@ -6,8 +6,8 @@ package upstream
 import (
 	"context"
 
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/gql"
-	policy "go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
+	policy "go.mondoo.com/cnspec/v11/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
 )
 

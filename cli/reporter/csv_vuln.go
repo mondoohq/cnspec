@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"strings"
 
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v10/shared"
-	"go.mondoo.com/cnspec/v10/cli/components"
-	"go.mondoo.com/cnspec/v10/cli/components/advisories"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnspec/v11/cli/components"
+	"go.mondoo.com/cnspec/v11/cli/components/advisories"
 )
 
 type csvStruct struct {

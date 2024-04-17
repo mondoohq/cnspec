@@ -5,8 +5,8 @@ package components
 
 import (
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v10/cli/theme/colors"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/cli/theme/colors"
+	"go.mondoo.com/cnspec/v11/policy"
 )
 
 var DefaultRatingColors = NewRating(colors.DefaultColorTheme)
