@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnspec/v11/policy"
 )
 
 func TestFileHandler(t *testing.T) {

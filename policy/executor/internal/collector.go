@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v10/llx"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnspec/v11/policy"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -7,10 +7,10 @@ import (
 	"bytes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/shared"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnspec/v11/policy"
 	"testing"
 )
 

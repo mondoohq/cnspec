@@ -8,8 +8,8 @@ package bundle
 import (
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnspec/v11/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1394,30 +1394,28 @@ func (d QueryGroup) MarshalYAML() (interface{}, error) {
 }
 
 type QueryPack struct {
-	LocalContentChecksum   string             `protobuf:"bytes,23,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
-	LocalExecutionChecksum string             `protobuf:"bytes,24,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
-	Uid                    string             `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	OwnerMrn               string             `protobuf:"bytes,4,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
-	Mrn                    string             `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Name                   string             `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
-	Version                string             `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
-	License                string             `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
-	Filters                *Filters           `protobuf:"bytes,48,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
-	Props                  []*Property        `protobuf:"bytes,35,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
-	Tags                   map[string]string  `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
-	Queries                []*Mquery          `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
-	Authors                []*Author          `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
-	Docs                   *QueryPackDocs     `protobuf:"bytes,22,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
-	Groups                 []*QueryGroup      `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
-	AssetFilters           map[string]*Mquery `protobuf:"bytes,7,rep,name=asset_filters,json=assetFilters,proto3" json:"asset_filters,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"asset_filters,omitempty"`
-	DeprecatedFilters      []string           `protobuf:"bytes,43,rep,name=deprecated_filters,json=deprecatedFilters,proto3" json:"deprecated_filters,omitempty" yaml:"deprecated_filters,omitempty"`
-	Context                string             `protobuf:"bytes,8,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
-	ComputedFilters        *Filters           `protobuf:"bytes,47,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
-	Summary                string             `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
-	Created                int64              `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
-	Modified               int64              `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
-	FileContext            FileContext        `json:"-" yaml:"-"`
-	Comments               Comments           `json:"-" yaml:"-"`
+	Context                string            `protobuf:"bytes,8,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
+	ComputedFilters        *Filters          `protobuf:"bytes,47,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
+	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
+	Created                int64             `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
+	Modified               int64             `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	LocalContentChecksum   string            `protobuf:"bytes,23,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
+	LocalExecutionChecksum string            `protobuf:"bytes,24,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
+	Uid                    string            `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	OwnerMrn               string            `protobuf:"bytes,4,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
+	Mrn                    string            `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Name                   string            `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Version                string            `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
+	License                string            `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
+	Filters                *Filters          `protobuf:"bytes,48,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
+	Props                  []*Property       `protobuf:"bytes,35,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
+	Tags                   map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Queries                []*Mquery         `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	Authors                []*Author         `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
+	Docs                   *QueryPackDocs    `protobuf:"bytes,22,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	Groups                 []*QueryGroup     `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
+	FileContext            FileContext       `json:"-" yaml:"-"`
+	Comments               Comments          `json:"-" yaml:"-"`
 }
 
 func (x *QueryPack) UnmarshalYAML(node *yaml.Node) error {

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnspec/v11/policy"
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
 )

@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
 )
 
 func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {

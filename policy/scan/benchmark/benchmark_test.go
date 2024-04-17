@@ -11,13 +11,13 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/providers"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v10/policy"
-	"go.mondoo.com/cnspec/v10/policy/scan"
+	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/providers"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v11/policy/scan"
 )
 
 func init() {

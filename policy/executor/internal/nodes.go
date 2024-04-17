@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v10/cli/progress"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/llx"
-	"go.mondoo.com/cnquery/v10/types"
-	"go.mondoo.com/cnquery/v10/utils/multierr"
-	"go.mondoo.com/cnspec/v10/policy"
+	"go.mondoo.com/cnquery/v11/cli/progress"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/types"
+	"go.mondoo.com/cnquery/v11/utils/multierr"
+	"go.mondoo.com/cnspec/v11/policy"
 	"google.golang.org/protobuf/proto"
 )
 

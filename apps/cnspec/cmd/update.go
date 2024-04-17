@@ -14,7 +14,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnquery/v10/cli/config"
+	"go.mondoo.com/cnquery/v11/cli/config"
 )
 
 func init() {

@@ -13,15 +13,15 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/checksums"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/llx"
-	"go.mondoo.com/cnquery/v10/logger"
-	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/mrn"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v10/utils/multierr"
+	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/checksums"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/logger"
+	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/mrn"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
+	"go.mondoo.com/cnquery/v11/utils/multierr"
 	"sigs.k8s.io/yaml"
 )
 
@@ -154,10 +154,6 @@ func (b *Bundle) Prepare() {
 func (p *Bundle) ConvertQuerypacks() {
 	for i := range p.Packs {
 		pack := p.Packs[i]
-
-		// Remove this once we reach v10 vv
-		pack.DeprecatedV9_ensureUIDs()
-		// ^^
 
 		policy := Policy{
 			Mrn:      pack.Mrn,

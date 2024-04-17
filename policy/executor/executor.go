@@ -11,14 +11,14 @@ import (
 
 	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/llx"
-	"go.mondoo.com/cnquery/v10/logger"
-	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v10/types"
-	"go.mondoo.com/cnspec/v10"
-	"go.mondoo.com/cnspec/v10/policy/executor/internal"
+	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/logger"
+	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
+	"go.mondoo.com/cnquery/v11/types"
+	"go.mondoo.com/cnspec/v11"
+	"go.mondoo.com/cnspec/v11/policy/executor/internal"
 )
 
 // Executor helps you run multiple pieces of mondoo code and process results

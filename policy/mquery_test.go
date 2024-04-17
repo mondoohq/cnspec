@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.mondoo.com/cnquery/v10"
-	"go.mondoo.com/cnquery/v10/explorer"
-	"go.mondoo.com/cnquery/v10/mqlc"
-	"go.mondoo.com/cnquery/v10/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/testutils"
 )
 
 func TestMquery_Whitespaces(t *testing.T) {
