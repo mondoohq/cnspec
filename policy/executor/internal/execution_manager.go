@@ -5,12 +5,22 @@ package internal
 
 import (
 	"errors"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/llx"
 )
+
+const MEM_DEBUG_ENV = "MEM_DEBUG"
+
+var memDebug = false
+
+func init() {
+	memDebug = os.Getenv(MEM_DEBUG_ENV) == "1"
+}
 
 type executionManager struct {
 	runtime llx.Runtime
@@ -168,6 +178,13 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 		x.Run()
 	}
 
+	if memDebug {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		log.Warn().Uint64("allocated", bToMb(m.Alloc)).Str("qrid", codeID).Msg("memory allocated after query")
+	}
+
 	if err != nil {
 		return err
 	}
@@ -195,6 +212,10 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	}
 
 	return errOut
+}
+
+func bToMb(b uint64) uint64 {
+	return b / 1024 / 1024
 }
 
 var errQueryTimeout = errors.New("query execution timed out")
