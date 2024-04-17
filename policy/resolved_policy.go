@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/types"
 )
 
 // WithDataQueries cycles through all data queries of the resolved policy and calls the given function
@@ -77,4 +78,44 @@ func (x *ResolvedPolicy) RootBundlePolicies(bundle *PolicyBundleMap, assetMrn st
 	}
 
 	return res, nil
+}
+
+// EnumerateQueryResources lists all resources used in a query
+func (x *ResolvedPolicy) EnumerateQueryResources() map[string][]string {
+	if x == nil || x.ExecutionJob == nil || x.CollectorJob == nil {
+		return nil
+	}
+
+	res := map[string][]string{}
+
+	for csum, query := range x.ExecutionJob.Queries {
+		names := map[string]struct{}{}
+		if query.Code == nil || query.Code.CodeV2 == nil {
+			continue
+		}
+
+		for bi := range query.Code.CodeV2.Blocks {
+			block := query.Code.CodeV2.Blocks[bi]
+			for ci := range block.Chunks {
+				chunk := block.Chunks[ci]
+				if chunk.Call != llx.Chunk_FUNCTION {
+					continue
+				}
+				if chunk.Function == nil || chunk.Function.Binding == 0 {
+					names[chunk.Id] = struct{}{}
+					continue
+				}
+				rt := types.Type(chunk.Function.Type)
+				if rt != "" && rt.IsResource() {
+					names[rt.ResourceName()] = struct{}{}
+				}
+			}
+		}
+
+		for name := range names {
+			res[name] = append(res[name], csum)
+		}
+	}
+
+	return res
 }

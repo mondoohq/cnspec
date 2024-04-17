@@ -236,25 +236,37 @@ func (c *PolicyServiceCollector) toResult(rr *llx.RawResult) *llx.Result {
 	return v
 }
 
-func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.ResolvedPolicy, scores []*policy.Score, risks []*policy.ScoredRiskFactor) {
+func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.ResolvedPolicy, scores []*policy.Score, scoredRisks []*policy.ScoredRiskFactor) {
 	assetRisks := []policy.ScoredRiskInfo{}
+	resourceRisks := map[string][]policy.ScoredRiskInfo{}
 
-	for i := range risks {
-		cur := risks[i]
-		risk, ok := resolvedPolicy.CollectorJob.RiskFactors[cur.Mrn]
+	for i := range scoredRisks {
+		scoredRisk := scoredRisks[i]
+		risk, ok := resolvedPolicy.CollectorJob.RiskFactors[scoredRisk.Mrn]
 		if !ok {
-			log.Debug().Str("riskMrn", cur.Mrn).Msg("failed to find risk factor in collector")
+			log.Debug().Str("riskMrn", scoredRisk.Mrn).Msg("failed to find risk factor in collector")
 			continue
 		}
-		risk.Mrn = cur.Mrn
+		risk.Mrn = scoredRisk.Mrn
 
 		if risk.Scope == policy.ScopeType_ASSET {
 			assetRisks = append(assetRisks, policy.ScoredRiskInfo{
 				RiskFactor:       risk,
-				ScoredRiskFactor: cur,
+				ScoredRiskFactor: scoredRisk,
 			})
+		} else if risk.Scope == policy.ScopeType_RESOURCE || risk.Scope == policy.ScopeType_SOFTWARE_AND_RESOURCE {
+			for ri := range risk.Resources {
+				name := risk.Resources[ri].Name
+				if name == "" {
+					log.Warn().Str("mrn", scoredRisk.Mrn).Msg("ignoring resource-level risk factor with empty resource name")
+					continue
+				}
+				resourceRisks[name] = append(resourceRisks[name], policy.ScoredRiskInfo{
+					RiskFactor:       risk,
+					ScoredRiskFactor: scoredRisk,
+				})
+			}
 		}
-		// TODO: resource-scoped risks
 	}
 
 	for i := range scores {
@@ -263,6 +275,30 @@ func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.Resolve
 
 		for i := range assetRisks {
 			cur := assetRisks[i]
+			cur.RiskFactor.AdjustRiskScore(score, cur.ScoredRiskFactor.IsDetected)
+		}
+	}
+
+	if len(resourceRisks) == 0 {
+		return
+	}
+	names := resolvedPolicy.EnumerateQueryResources()
+	csumsIdx := map[string][]policy.ScoredRiskInfo{}
+	for name, risks := range resourceRisks {
+		csums := names[name]
+		for _, csum := range csums {
+			csumsIdx[csum] = risks
+		}
+	}
+
+	for i := range scores {
+		score := scores[i]
+		risks, ok := csumsIdx[score.QrId]
+		if !ok {
+			continue
+		}
+		for i := range risks {
+			cur := risks[i]
 			cur.RiskFactor.AdjustRiskScore(score, cur.ScoredRiskFactor.IsDetected)
 		}
 	}
