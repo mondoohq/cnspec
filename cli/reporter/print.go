@@ -40,7 +40,7 @@ var Formats = map[string]Format{
 	"yml":     FormatYAMLv2,
 	"json-v1": FormatJSONv1,
 	"json-v2": FormatJSONv2,
-	"json":    FormatJSONv1,
+	"json":    FormatJSONv2,
 	"junit":   FormatJUnit,
 	"csv":     FormatCSV,
 }
