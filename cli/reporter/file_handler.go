@@ -13,8 +13,8 @@ import (
 )
 
 type localFileHandler struct {
-	file   string
-	format Format
+	file string
+	conf *PrintConfig
 }
 
 // we reuse the already implemented Reporter's WriteReport method by simply pointing the writer
@@ -26,7 +26,7 @@ func (h *localFileHandler) WriteReport(ctx context.Context, report *policy.Repor
 		return err
 	}
 	defer f.Close() //nolint: errcheck
-	reporter := NewReporter(h.format, false)
+	reporter := NewReporter(h.conf, false)
 	reporter.out = f
 	err = reporter.WriteReport(ctx, report)
 	if err != nil {

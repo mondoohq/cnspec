@@ -32,10 +32,8 @@ type assetMrnName struct {
 
 type defaultReporter struct {
 	*Reporter
-	isCompact bool
-	isSummary bool
-	output    io.Writer
-	data      *policy.ReportCollection
+	output io.Writer
+	data   *policy.ReportCollection
 
 	// indicates if the StoreResourcesData cnquery feature is enabled
 	isStoreResourcesEnabled bool
@@ -74,7 +72,7 @@ func (r *defaultReporter) print() error {
 		return orderedAssets[i].Name < orderedAssets[j].Name
 	})
 
-	if !r.isSummary {
+	if r.Conf.printContents() {
 		r.printAssetSections(orderedAssets)
 	}
 
@@ -171,7 +169,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		}
 	}
 
-	if r.isCompact {
+	if r.Conf.isCompact {
 		r.out(NewLineCharacter)
 		if !r.IsIncognito && assetUrl != "" {
 			url := ""
@@ -363,12 +361,23 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			continue
 		}
 
-		r.printAssetControls(resolved, report, controls, assetMrn, asset)
-		r.printAssetQueries(resolved, report, queries, assetMrn, asset)
-		r.printAssetRisks(resolved, report, assetMrn, asset)
+		if r.Conf.printControls {
+			r.printAssetControls(resolved, report, controls, assetMrn, asset)
+		}
+
+		if r.Conf.printData || r.Conf.printChecks {
+			r.printAssetQueries(resolved, report, queries, assetMrn, asset)
+		}
+
+		if r.Conf.printRisks {
+			r.printAssetRisks(resolved, report, assetMrn, asset)
+		}
 		r.out(NewLineCharacter)
-		// TODO: we should re-use the report results
-		r.printVulns(report, assetMrn)
+
+		if r.Conf.printVulnerabilities {
+			// TODO: we should re-use the report results
+			r.printVulns(report, assetMrn)
+		}
 
 	}
 	r.out(NewLineCharacter)
@@ -429,7 +438,7 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 		r.out(termenv.String("! Error:      ").Foreground(r.Colors.Error).String())
 		r.out(title)
 		r.out(NewLineCharacter)
-		if !r.isCompact {
+		if !r.Conf.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
 			r.out(termenv.String("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
 			r.out(NewLineCharacter)
@@ -462,43 +471,47 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
-	dataQueriesOutput := ""
-	resolved.WithDataQueries(func(id string, query *policy.ExecutionQuery) {
-		data := query.Code.FilterResults(results)
-		result := r.Reporter.Printer.Results(query.Code, data)
-		if result == "" {
-			return
-		}
-		if r.isCompact {
-			result = stringx.MaxLines(10, result)
-		}
-		dataQueriesOutput += result + NewLineCharacter
-	})
+	if r.Conf.printData {
+		dataQueriesOutput := ""
+		resolved.WithDataQueries(func(id string, query *policy.ExecutionQuery) {
+			data := query.Code.FilterResults(results)
+			result := r.Reporter.Printer.Results(query.Code, data)
+			if result == "" {
+				return
+			}
+			if r.Conf.isCompact {
+				result = stringx.MaxLines(10, result)
+			}
+			dataQueriesOutput += result + NewLineCharacter
+		})
 
-	if len(dataQueriesOutput) > 0 {
-		r.out("Data queries:" + NewLineCharacter)
-		r.out(dataQueriesOutput)
-		r.out(NewLineCharacter)
+		if len(dataQueriesOutput) > 0 {
+			r.out("Data queries:" + NewLineCharacter)
+			r.out(dataQueriesOutput)
+			r.out(NewLineCharacter)
+		}
 	}
 
-	foundChecks := map[string]*policy.Score{}
-	for id, score := range report.Scores {
-		_, ok := resolved.CollectorJob.ReportingQueries[id]
-		if !ok {
-			continue
-		}
-		foundChecks[id] = score
-	}
-	if len(foundChecks) > 0 {
-		r.out("Checks:" + NewLineCharacter)
-		for id, score := range foundChecks {
-			query, ok := queries[id]
+	if r.Conf.printChecks {
+		foundChecks := map[string]*policy.Score{}
+		for id, score := range report.Scores {
+			_, ok := resolved.CollectorJob.ReportingQueries[id]
 			if !ok {
-				r.out("Couldn't find any queries for incoming value for " + id)
 				continue
 			}
+			foundChecks[id] = score
+		}
+		if len(foundChecks) > 0 {
+			r.out("Checks:" + NewLineCharacter)
+			for id, score := range foundChecks {
+				query, ok := queries[id]
+				if !ok {
+					r.out("Couldn't find any queries for incoming value for " + id)
+					continue
+				}
 
-			r.printCheck(score, query, resolved, report, results)
+				r.printCheck(score, query, resolved, report, results)
+			}
 		}
 	}
 }
@@ -587,7 +600,7 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 		r.out(termenv.String("! Error:      ").Foreground(r.Colors.Error).String())
 		r.out(title)
 		r.out(NewLineCharacter)
-		if !r.isCompact {
+		if !r.Conf.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
 			r.out(termenv.String("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
 			r.out(NewLineCharacter)
@@ -606,7 +619,7 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 		r.out(r.printScore(title, score, query))
 
 		// additional information about the failed query
-		if !r.isCompact && score.Value != 100 {
+		if !r.Conf.isCompact && score.Value != 100 {
 			queryString := strings.ReplaceAll(stringx.Indent(4, query.Query), "\n", NewLineCharacter)
 			r.out("  Query:" + NewLineCharacter + queryString)
 			r.out(NewLineCharacter)

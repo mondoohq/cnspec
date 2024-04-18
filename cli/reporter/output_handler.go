@@ -6,8 +6,6 @@ package reporter
 import (
 	"bytes"
 	"context"
-	"errors"
-	"strings"
 
 	"go.mondoo.com/cnquery/v11/shared"
 	"go.mondoo.com/cnspec/v11/policy"
@@ -36,22 +34,23 @@ type OutputHandler interface {
 }
 
 func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
-	format, ok := Formats[strings.ToLower(config.Format)]
-	if !ok {
-		return nil, errors.New("unknown output format '" + config.Format + "'. Available: " + AllFormats())
+	conf, err := ParseConfig(config.Format)
+	if err != nil {
+		return nil, err
 	}
+
 	typ := determineOutputType(config.OutputTarget)
 	switch typ {
 	case LOCAL_FILE:
-		return &localFileHandler{file: config.OutputTarget, format: format}, nil
+		return &localFileHandler{file: config.OutputTarget, conf: conf}, nil
 	case AWS_SQS:
-		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: format}, nil
+		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: conf.format}, nil
 	case AZURE_SBUS:
-		return &azureSbusHandler{url: config.OutputTarget, format: format}, nil
+		return &azureSbusHandler{url: config.OutputTarget, format: conf.format}, nil
 	case CLI:
 		fallthrough
 	default:
-		return NewReporter(format, config.Incognito), nil
+		return NewReporter(conf, config.Incognito), nil
 	}
 }
 
