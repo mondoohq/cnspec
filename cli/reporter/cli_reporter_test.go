@@ -30,15 +30,14 @@ func TestCompactReporter(t *testing.T) {
 	writer := shared.IOWriter{Writer: &buf}
 
 	r := &Reporter{
-		Format:  FormatCompact,
+		Conf:    defaultPrintConfig(),
 		Printer: &printer.DefaultPrinter,
 		Colors:  &colors.DefaultColorTheme,
 	}
 	rr := &defaultReporter{
-		Reporter:  r,
-		isCompact: true,
-		output:    &writer,
-		data:      yr,
+		Reporter: r,
+		output:   &writer,
+		data:     yr,
 	}
 	rr.print()
 
@@ -59,42 +58,48 @@ func TestVulnReporter(t *testing.T) {
 
 	buf := bytes.Buffer{}
 	writer := shared.IOWriter{Writer: &buf}
-
-	r := NewReporter(FormatSummary, false)
-	r.out = &writer
-	require.NoError(t, err)
-
 	target := "index.docker.io/library/ubuntu@669e010b58ba"
-	err = r.PrintVulns(report, target)
-	require.NoError(t, err)
 
-	r = NewReporter(FormatCompact, false)
-	r.out = &writer
-	err = r.PrintVulns(report, target)
-	require.NoError(t, err)
+	t.Run("format=summary", func(t *testing.T) {
+		conf := defaultPrintConfig().setFormat(FormatSummary)
+		r := NewReporter(conf, false)
+		r.out = &writer
+		require.NoError(t, err)
+		err = r.PrintVulns(report, target)
+		require.NoError(t, err)
+	})
 
-	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
-	assert.NotContains(t, buf.String(), "USN-5279-1")
+	t.Run("format=compact", func(t *testing.T) {
+		conf := defaultPrintConfig().setFormat(FormatCompact)
+		r := NewReporter(conf, false)
+		r.out = &writer
+		err = r.PrintVulns(report, target)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
+		assert.NotContains(t, buf.String(), "USN-5279-1")
+	})
 
-	r = NewReporter(FormatFull, false)
-	r.out = &writer
-	require.NoError(t, err)
+	t.Run("format=full", func(t *testing.T) {
+		conf := defaultPrintConfig().setFormat(FormatFull)
+		r := NewReporter(conf, false)
+		r.out = &writer
+		require.NoError(t, err)
+		err = r.PrintVulns(report, target)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
+		assert.Contains(t, buf.String(), "USN-5279-1")
+	})
 
-	err = r.PrintVulns(report, target)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
-	assert.Contains(t, buf.String(), "USN-5279-1")
-
-	r = NewReporter(FormatYAMLv1, false)
-	r.out = &writer
-	require.NoError(t, err)
-
-	err = r.PrintVulns(report, target)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "score: 5.5")
-	assert.Contains(t, buf.String(), "package: libblkid1")
-	assert.Contains(t, buf.String(), "installed: 2.34-0.1ubuntu9.1")
-	assert.Contains(t, buf.String(), "advisory: USN-5279-1")
+	t.Run("format=yaml", func(t *testing.T) {
+		conf := defaultPrintConfig().setFormat(FormatYAMLv1)
+		r := NewReporter(conf, false)
+		r.out = &writer
+		require.NoError(t, err)
+		err = r.PrintVulns(report, target)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "score: 5.5")
+		assert.Contains(t, buf.String(), "package: libblkid1")
+		assert.Contains(t, buf.String(), "installed: 2.34-0.1ubuntu9.1")
+		assert.Contains(t, buf.String(), "advisory: USN-5279-1")
+	})
 }

@@ -4,6 +4,7 @@
 package reporter
 
 import (
+	"errors"
 	"sort"
 	"strings"
 
@@ -13,6 +14,118 @@ import (
 )
 
 type Format byte
+
+type PrintConfig struct {
+	format               Format
+	isCompact            bool
+	printControls        bool
+	printChecks          bool
+	printData            bool
+	printRisks           bool
+	printVulnerabilities bool
+}
+
+func defaultPrintConfig() *PrintConfig {
+	return &PrintConfig{
+		format:               FormatCompact,
+		isCompact:            true,
+		printControls:        true,
+		printChecks:          true,
+		printData:            true,
+		printRisks:           true,
+		printVulnerabilities: true,
+	}
+}
+
+const (
+	OptionPrintChecks   = "checks"
+	OptionPrintControls = "controls"
+	OptionPrintData     = "data"
+	OptionPrintRisks    = "risks"
+	OptionPrintVulns    = "vulns"
+)
+
+func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
+	res := defaultPrintConfig()
+	if string(raw) == "" {
+		return res, nil
+	}
+
+	parts := strings.Split(string(raw), ",")
+	var unknown []string
+	for _, cmd := range parts {
+		cur := strings.ToLower(cmd)
+
+		format, ok := Formats[cur]
+		if ok {
+			res.setFormat(format)
+			continue
+		}
+
+		switch cur {
+		case OptionPrintControls:
+			res.printControls = true
+		case OptionPrintChecks:
+			res.printChecks = true
+		case OptionPrintData:
+			res.printData = true
+		case OptionPrintRisks, "risk":
+			res.printRisks = true
+		case OptionPrintVulns, "vuln":
+			res.printVulnerabilities = true
+		case "no" + OptionPrintControls:
+			res.printControls = false
+		case "no" + OptionPrintChecks:
+			res.printChecks = false
+		case "no" + OptionPrintData:
+			res.printData = false
+		case "no" + OptionPrintRisks, "norisk":
+			res.printRisks = false
+		case "no" + OptionPrintVulns, "novuln":
+			res.printVulnerabilities = false
+		default:
+			unknown = append(unknown, cur)
+		}
+	}
+
+	if len(unknown) != 0 {
+		return res, errors.New("unknown terms entered: " + strings.Join(unknown, ", ") + ". " + AllAvailableOptions())
+	}
+	return res, nil
+}
+
+func AllAvailableOptions() string {
+	return "Available output formats: " + AllFormats() + ".\n" +
+		"Available options: " + AllOptions() + ".\n" +
+		"Combine with commas, example: compact,nodata,nocontrols"
+}
+
+func (p *PrintConfig) setFormat(f Format) *PrintConfig {
+	p.format = f
+	switch f {
+	case FormatCompact:
+		p.isCompact = true
+	case FormatSummary:
+		p.isCompact = true
+		p.printChecks = false
+		p.printControls = false
+		p.printData = false
+		p.printRisks = false
+		p.printVulnerabilities = false
+	case FormatFull:
+		p.isCompact = false
+		p.printChecks = true
+		p.printControls = true
+		p.printData = true
+		p.printRisks = true
+		p.printVulnerabilities = true
+	}
+	return p
+}
+
+func (p *PrintConfig) printContents() bool {
+	return p.printControls || p.printChecks || p.printData || p.printVulnerabilities || p.printRisks
+}
 
 const (
 	FormatCompact Format = iota + 1
@@ -55,6 +168,14 @@ func AllFormats() string {
 	}
 	sort.Strings(res)
 	return strings.Join(res, ", ")
+}
+
+func AllOptions() string {
+	return "[no]" + OptionPrintChecks + ", " +
+		"[no]" + OptionPrintControls + ", " +
+		"[no]" + OptionPrintData + ", " +
+		"[no]" + OptionPrintRisks + ", " +
+		"[no]" + OptionPrintVulns
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {

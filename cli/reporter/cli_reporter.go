@@ -84,16 +84,16 @@ func defaultChecksum(code mqlCode, schema resources.ResourcesSchema) (string, er
 
 // note: implements the OutputHandler interface
 type Reporter struct {
-	Format      Format
+	Conf        *PrintConfig
 	Printer     *printer.Printer
 	Colors      *colors.Theme
 	IsIncognito bool
 	out         io.Writer
 }
 
-func NewReporter(format Format, incognito bool) *Reporter {
+func NewReporter(conf *PrintConfig, incognito bool) *Reporter {
 	return &Reporter{
-		Format:      format,
+		Conf:        conf,
 		Printer:     &printer.DefaultPrinter,
 		Colors:      &colors.DefaultColorTheme,
 		IsIncognito: incognito,
@@ -109,30 +109,10 @@ func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
 	features := cnquery.GetFeatures(ctx)
-	switch r.Format {
-	case FormatCompact:
+	switch r.Conf.format {
+	case FormatCompact, FormatSummary, FormatFull:
 		rr := &defaultReporter{
 			Reporter:                r,
-			isCompact:               true,
-			output:                  r.out,
-			data:                    data,
-			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
-		}
-		return rr.print()
-	case FormatSummary:
-		rr := &defaultReporter{
-			Reporter:                r,
-			isCompact:               true,
-			isSummary:               true,
-			output:                  r.out,
-			data:                    data,
-			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
-		}
-		return rr.print()
-	case FormatFull:
-		rr := &defaultReporter{
-			Reporter:                r,
-			isCompact:               false,
 			output:                  r.out,
 			data:                    data,
 			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
@@ -186,30 +166,16 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 }
 
 func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
-	switch r.Format {
-	case FormatCompact:
+	if !r.Conf.printVulnerabilities {
+		return nil
+	}
+
+	switch r.Conf.format {
+	case FormatCompact, FormatSummary, FormatFull:
 		rr := &defaultVulnReporter{
 			Reporter:  r,
-			isCompact: true,
-			out:       r.out,
-			data:      data,
-			target:    target,
-		}
-		return rr.print()
-	case FormatSummary:
-		rr := &defaultVulnReporter{
-			Reporter:  r,
-			isCompact: true,
-			isSummary: true,
-			out:       r.out,
-			data:      data,
-			target:    target,
-		}
-		return rr.print()
-	case FormatFull:
-		rr := &defaultVulnReporter{
-			Reporter:  r,
-			isCompact: false,
+			isCompact: r.Conf.isCompact,
+			isSummary: !r.Conf.printContents(),
 			out:       r.out,
 			data:      data,
 			target:    target,

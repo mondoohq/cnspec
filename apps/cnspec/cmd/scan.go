@@ -96,7 +96,7 @@ To manually configure a policy, use this:
 		// don't have a target connection or provider.
 		output, _ := cmd.Flags().GetString("output")
 		if output == "help" {
-			fmt.Println("Available output formats: " + reporter.AllFormats())
+			fmt.Println(reporter.AllAvailableOptions())
 			os.Exit(0)
 		}
 
@@ -284,7 +284,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	// print them before executing the scan
 	output, _ := cmd.Flags().GetString("output")
 	if output == "help" {
-		fmt.Println("Available output formats: " + reporter.AllFormats())
+		fmt.Println(reporter.AllAvailableOptions())
 		os.Exit(0)
 	}
 

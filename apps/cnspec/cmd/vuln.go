@@ -4,8 +4,6 @@
 package cmd
 
 import (
-	"strings"
-
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -58,6 +56,11 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	conf.PolicyPaths = nil
 	conf.Bundle = policy.FromQueryPackBundle(pb)
 	conf.IsIncognito = true
+
+	printConf, err := reporter.ParseConfig(conf.OutputFormat)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse config for reporter")
+	}
 
 	report, err := RunScan(conf)
 	if err != nil {
@@ -131,7 +134,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	// print the output using the specified output format
-	r := reporter.NewReporter(reporter.Formats[strings.ToLower(conf.OutputFormat)], false)
+	r := reporter.NewReporter(printConf, false)
 	logger.DebugDumpJSON("vulnReport", report)
 	if err := r.PrintVulns(vulnReport, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
