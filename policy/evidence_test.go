@@ -53,6 +53,10 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Uid: "control2"},
+					},
 				},
 			},
 		}
@@ -67,6 +71,10 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 			Queries: []*ControlRef{
 				{Uid: "query1"},
 				{Uid: "query2"},
+			},
+			Controls: []*ControlRef{
+				{Uid: "control1"},
+				{Uid: "control2"},
 			},
 		}
 		require.Equal(t, expected, cm)
@@ -88,6 +96,10 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 						{Mrn: "query1"},
 						{Mrn: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Mrn: "control1"},
+						{Mrn: "control2"},
+					},
 				},
 			},
 		}
@@ -102,6 +114,10 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 			Queries: []*ControlRef{
 				{Mrn: "query1"},
 				{Mrn: "query2"},
+			},
+			Controls: []*ControlRef{
+				{Mrn: "control1"},
+				{Mrn: "control2"},
 			},
 		}
 		require.Equal(t, expected, cm)
@@ -123,6 +139,10 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Uid: "control2"},
+					},
 				},
 				{
 					Uid:   "evidence-uid-2",
@@ -135,6 +155,10 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 					Queries: []*explorer.Mquery{
 						{Uid: "query3"},
 						{Uid: "query4"},
+					},
+					Controls: []*ControlRef{
+						{Uid: "control3"},
+						{Uid: "control4"},
 					},
 				},
 			},
@@ -154,6 +178,12 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 				{Uid: "query2"},
 				{Uid: "query3"},
 				{Uid: "query4"},
+			},
+			Controls: []*ControlRef{
+				{Uid: "control1"},
+				{Uid: "control2"},
+				{Uid: "control3"},
+				{Uid: "control4"},
 			},
 		}
 		require.Equal(t, expected, cm)
@@ -197,6 +227,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Uid: "control2"},
+					},
 				},
 			},
 		}
@@ -228,6 +262,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Uid: "control2"},
+					},
 				},
 			},
 			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
@@ -248,6 +286,9 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					},
 					Queries: []*explorer.Mquery{
 						{Mrn: "query2"},
+					},
+					Controls: []*ControlRef{
+						{Mrn: "control2"},
 					},
 				},
 			},
@@ -278,6 +319,9 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Queries: []*ControlRef{
 						{Mrn: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Mrn: "control2"},
+					},
 				},
 			},
 		}
@@ -299,6 +343,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Queries: []*explorer.Mquery{
 						{Uid: "query1"},
 						{Mrn: "query2"},
+					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Mrn: "control2"},
 					},
 				},
 			},
@@ -331,6 +379,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 						{Uid: "query1"},
 						{Mrn: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Mrn: "control2"},
+					},
 				},
 			},
 			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
@@ -354,6 +406,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Uid: "control2"},
+					},
 				},
 				{
 					Uid:   "evidence-uid-2",
@@ -366,6 +422,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Queries: []*explorer.Mquery{
 						{Uid: "query3"},
 						{Uid: "query4"},
+					},
+					Controls: []*ControlRef{
+						{Uid: "control3"},
+						{Uid: "control4"},
 					},
 				},
 			},
@@ -384,6 +444,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Queries: []*explorer.Mquery{
 						{Uid: "query5"},
 						{Uid: "query6"},
+					},
+					Controls: []*ControlRef{
+						{Uid: "control5"},
+						{Uid: "control6"},
 					},
 				},
 			},
@@ -418,6 +482,12 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 						{Uid: "query3"},
 						{Uid: "query4"},
 					},
+					Controls: []*ControlRef{
+						{Uid: "control1"},
+						{Uid: "control2"},
+						{Uid: "control3"},
+						{Uid: "control4"},
+					},
 				},
 				{
 					Uid: "control-uid-2",
@@ -428,6 +498,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Queries: []*ControlRef{
 						{Uid: "query5"},
 						{Uid: "query6"},
+					},
+					Controls: []*ControlRef{
+						{Uid: "control5"},
+						{Uid: "control6"},
 					},
 				},
 			},
@@ -775,6 +849,7 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
+					Controls: []*ControlRef{},
 				},
 			},
 			PolicyDependencies: []*explorer.ObjectRef{{Uid: "framework-uid-evidence-policy"}},
@@ -830,6 +905,7 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 					Queries: []*ControlRef{
 						{Mrn: "query1"},
 					},
+					Controls: []*ControlRef{},
 				},
 			},
 		}
