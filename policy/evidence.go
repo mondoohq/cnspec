@@ -131,6 +131,7 @@ func (ctrl *Control) generateEvidenceControlMap() *ControlMap {
 
 	checkRefs := []*ControlRef{}
 	queryRefs := []*ControlRef{}
+	controlRefs := []*ControlRef{}
 
 	for _, e := range ctrl.GetEvidence() {
 		for _, ch := range e.Checks {
@@ -147,11 +148,19 @@ func (ctrl *Control) generateEvidenceControlMap() *ControlMap {
 				queryRefs = append(queryRefs, &ControlRef{Uid: q.Uid})
 			}
 		}
+		for _, q := range e.Controls {
+			if q.Mrn != "" {
+				controlRefs = append(controlRefs, &ControlRef{Mrn: q.Mrn})
+			} else {
+				controlRefs = append(controlRefs, &ControlRef{Uid: q.Uid})
+			}
+		}
 	}
 
 	return &ControlMap{
-		Uid:     ctrl.Uid,
-		Checks:  checkRefs,
-		Queries: queryRefs,
+		Uid:      ctrl.Uid,
+		Checks:   checkRefs,
+		Queries:  queryRefs,
+		Controls: controlRefs,
 	}
 }
