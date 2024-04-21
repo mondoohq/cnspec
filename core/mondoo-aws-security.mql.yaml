@@ -4,7 +4,7 @@
 policies:
   - uid: mondoo-aws-security
     name: AWS Security
-    version: 2.1.0
+    version: 3.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -70,6 +70,7 @@ policies:
         If you have any suggestions for how to improve this policy or need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
     groups:
       - title: AWS IAM
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-access-keys-rotated
           - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access
@@ -79,31 +80,38 @@ policies:
           - uid: mondoo-aws-security-iam-users-only-one-access-key
           - uid: mondoo-aws-security-iam-group-has-users-check
           - uid: mondoo-aws-security-iam-user-no-inline-policies-check
-          - uid: mondoo-aws-security-iam-user-no-inline-policies-check-single-user
       - title: AWS Lambda Function
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-lambda-concurrency-check
       - title: AWS S3 Bucket
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited
           - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access
       - title: AWS Security Group
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-secgroup-restricted-ssh
       - title: AWS VPC
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-vpc-default-security-group-closed
           - uid: mondoo-aws-security-vpc-flow-logs-enabled
       - title: AWS DynamoDB Table
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
       - title: AWS RDS DBInstance
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-rds-instance-public-access-check
       - title: AWS Redshift Cluster
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-redshift-cluster-public-access-check
       - title: AWS EC2
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-ec2-ebs-encryption-by-default
           - uid: mondoo-aws-security-ec2-imdsv2-check
@@ -111,24 +119,31 @@ policies:
           - uid: mondoo-aws-security-ec2-volume-inuse-check
           - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
       - title: AWS EFS Filesystem
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-efs-encrypted-check
       - title: AWS CloudWatch LogGroup
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
       - title: AWS ELB LoadBalancer
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-elb-deletion-protection-enabled
       - title: AWS ES Domain
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
       - title: AWS KMS Key
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
       - title: AWS SageMaker NotebookInstance
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
       - title: AWS CloudTrail Trail
+        filters: asset.runtime == "aws"
         checks:
           - uid: mondoo-aws-security-cloud-trail-encryption-enabled
     scoring_system: 2
@@ -136,8 +151,9 @@ queries:
   - uid: mondoo-aws-security-iam-root-access-key-check
     title: Ensure no root user account access key exists
     impact: 85
-    filters: asset.platform == "aws"
-    mql: aws.iam.credentialReport.where(properties["user"] == "<root_account>").all(accessKey1Active == false && accessKey2Active == false)
+    mql: |
+      aws.iam.credentialReport.where(properties.user == "<root_account>").all(accessKey1Active == false)
+      aws.iam.credentialReport.where(properties.user == "<root_account>").all(accessKey2Active == false)
     docs:
       desc: |
         AWS strongly recommends that you not use the root user for your everyday tasks, even administrative ones. Instead, adhere to the best practice of using the root user only to create your first IAM user. Then securely lock away the root user credentials and use them to perform only a few account and service management tasks. Anyone with root user credentials for your AWS account has unrestricted access to all the resources in your account, including billing information.
@@ -170,8 +186,7 @@ queries:
   - uid: mondoo-aws-security-root-account-mfa-enabled
     title: Ensure MFA is enabled for the "root user" account
     impact: 95
-    filters: asset.platform == "aws"
-    mql: aws.iam.credentialReport.where(properties["user"] == "<root_account>").all( mfaActive == true)
+    mql: aws.iam.credentialReport.where(properties.user == "<root_account>").all(mfaActive == true)
     docs:
       desc: |
         AWS highly recommends that you follow the security best practice to enable multi-factor authentication (MFA) for your root account. Because your root user can perform sensitive operations in your account, adding an additional layer of authentication helps you to better secure your account. Multiple types of MFA are available.
@@ -249,7 +264,6 @@ queries:
   - uid: mondoo-aws-security-iam-password-policy
     title: Ensure strong account password policy requirements are used
     impact: 60
-    filters: asset.platform == "aws"
     props:
       - uid: iamPasswordPolicyMaxPasswordAge
         title: Define the maximum number of days a password is allowed to exist before being rotated
@@ -273,13 +287,22 @@ queries:
         title: Denotes whether uppercase characters are required for passwords
         mql: "true"
     mql: |
-      aws.iam.accountPasswordPolicy['RequireUppercaseCharacters'] == props.iamPasswordPolicyRequireUppercaseCharacters
-      aws.iam.accountPasswordPolicy['RequireLowercaseCharacters'] == props.iamPasswordPolicyRequireLowercaseCharacters
-      aws.iam.accountPasswordPolicy['RequireSymbols'] == props.iamPasswordPolicyRequireSymbols
-      aws.iam.accountPasswordPolicy['RequireNumbers'] == props.iamPasswordPolicyRequireNumbers
-      aws.iam.accountPasswordPolicy['MinimumPasswordLength'] >= props.iamPasswordPolicyMinimumPasswordLength
-      aws.iam.accountPasswordPolicy['PasswordReusePrevention'] >= props.iamPasswordPolicyPasswordReusePrevention
-      aws.iam.accountPasswordPolicy['MaxPasswordAge'] <= props.iamPasswordPolicyMaxPasswordAge
+      // Ensure properties do exist.
+      aws.iam.accountPasswordPolicy.RequireUppercaseCharacters != empty
+      aws.iam.accountPasswordPolicy.RequireLowercaseCharacters != empty
+      aws.iam.accountPasswordPolicy.RequireSymbols != empty
+      aws.iam.accountPasswordPolicy.RequireNumbers != empty
+      aws.iam.accountPasswordPolicy.MinimumPasswordLength != empty
+      aws.iam.accountPasswordPolicy.PasswordReusePrevention != empty
+      aws.iam.accountPasswordPolicy.MaxPasswordAge != empty
+      // Validate each policy setting against props
+      aws.iam.accountPasswordPolicy.where(RequireUppercaseCharacters != empty).all(RequireUppercaseCharacters == props.iamPasswordPolicyRequireUppercaseCharacters)
+      aws.iam.accountPasswordPolicy.where(RequireLowercaseCharacters != empty).all(RequireLowercaseCharacters == props.iamPasswordPolicyRequireLowercaseCharacters)
+      aws.iam.accountPasswordPolicy.where(RequireSymbols != empty).all(RequireSymbols == props.iamPasswordPolicyRequireSymbols)
+      aws.iam.accountPasswordPolicy.where(RequireNumbers != empty).all(RequireNumbers == props.iamPasswordPolicyRequireNumbers)
+      aws.iam.accountPasswordPolicy.where(MinimumPasswordLength != empty).all(MinimumPasswordLength >= props.iamPasswordPolicyMinimumPasswordLength)
+      aws.iam.accountPasswordPolicy.where(PasswordReusePrevention != empty).all(PasswordReusePrevention >= props.iamPasswordPolicyPasswordReusePrevention)
+      aws.iam.accountPasswordPolicy.where(MaxPasswordAge != empty).all(MaxPasswordAge <= props.iamPasswordPolicyMaxPasswordAge)
     docs:
       desc: |
         AWS allows custom password policies on your AWS account to specify complexity requirements and mandatory rotation periods for your IAM users' passwords. IAM user passwords must meet the default AWS password policy if you don't set a custom password policy. AWS security best practices recommend these password complexity requirements:
@@ -372,15 +395,14 @@ queries:
         title: Setting an account password policy for IAM users
   - uid: mondoo-aws-security-access-keys-rotated
     title: Ensure active access keys are rotated
-    impact: 30
-    filters: asset.platform == "aws"
+    impact: 70
     props:
       - uid: maxAccessKeyAge
         title: Define the maximum number of days an IAM key is allowed to exist before rotation
         mql: "90"
     mql: |
-      aws.iam.credentialReport.where(accessKey1Active == true).all(time.now - accessKey1LastRotated < props.maxAccessKeyAge * time.day)
-      aws.iam.credentialReport.where(accessKey2Active == true).all(time.now - accessKey2LastRotated < props.maxAccessKeyAge * time.day)
+      aws.iam.credentialReport.where(accessKey1Active == true && time.now - userCreationTime > props.maxAccessKeyAge * time.day).all(time.now - accessKey1LastRotated < props.maxAccessKeyAge * time.day)
+      aws.iam.credentialReport.where(accessKey2Active == true && time.now - userCreationTime > props.maxAccessKeyAge * time.day).all(time.now - accessKey2LastRotated < props.maxAccessKeyAge * time.day)
     docs:
       desc: |
         It is highly recommended that you regularly rotate (change) IAM user access keys to reduce the risk of unwanted access to your account. Change the value enforced in this check by modifying the maxAccessKeyAge property.
@@ -435,10 +457,10 @@ queries:
       - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
         title: AWS Documentation - Managing access keys for IAM users
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access
-    title: Ensure AWS IAM users have multi-factor authentication (MFA) enabled
-    impact: 75
-    filters: asset.platform == "aws"
-    mql: aws.iam.credentialReport.all(mfaActive == true)
+    title: Ensure Multi-Factor Authentication is Enabled for All IAM users with console access
+    impact: 90
+    mql: |
+      aws.iam.credentialReport.where(passwordEnabled == true).all(mfaActive == true)
     docs:
       desc: |
         Multi-factor authentication (MFA) is a best practice that adds an extra layer of protection on top of user names and passwords. With MFA, when a user signs in to the AWS Management Console, they are required to provide a time-sensitive authentication code provided by a registered virtual or physical device.
@@ -698,7 +720,7 @@ queries:
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
         title: Terraform Documentation - AWS Provider
   - uid: mondoo-aws-security-iam-group-has-users-check
-    title: Ensure IAM groups have at least one IAM user
+    title: Ensure IAM Groups are utilized by Assigning at Least One user
     impact: 30
     docs:
       desc: |
@@ -737,15 +759,15 @@ queries:
       - uid: mondoo-aws-security-iam-group-has-users-check-single-group
   - uid: mondoo-aws-security-iam-group-has-users-check-account
     filters: asset.platform == "aws"
-    mql: aws.iam.groups.all(usernames.length > 0)
+    mql: aws.iam.groups.all(usernames != empty)
   - uid: mondoo-aws-security-iam-group-has-users-check-single-group
     filters: asset.platform == "aws-iam-group"
-    mql: aws.iam.group.usernames.length > 0
+    mql: aws.iam.group.usernames != empty
   - uid: mondoo-aws-security-iam-users-only-one-access-key
     title: Ensure there is only one active access key available for any single IAM user
-    impact: 30
-    filters: asset.platform == "aws"
-    mql: aws.iam.credentialReport.none(accessKey1Active == true && accessKey2Active == true)
+    impact: 70
+    mql: |
+      aws.iam.users.where(accessKeys.flat.where(Status == "Active")).all(accessKeys[0].length <= 1)
     docs:
       desc: |
         This check ensures for the existence of more than one access key for each user within an AWS account. Each AWS key within an account must be protected and rotated regularly. Because AWS access keys are long-term credentials, one of the best ways to protect your account is to not allow users to have multiple access keys, which reduces the overall number of keys and the risk of exposure.
@@ -796,7 +818,7 @@ queries:
         Repeat steps 1 - 3 for each IAM user in your AWS account.
   - uid: mondoo-aws-security-iam-user-no-inline-policies-check
     title: Ensure IAM users receive permissions only through groups
-    impact: 30
+    impact: 70
     docs:
       desc: |
         AWS recommends that IAM users must inherit permissions from IAM groups or roles. This policy checks that none of your IAM users have policies attached directly to the user. The rule is NONCOMPLIANT if there is at least one IAM user with policies attached.
@@ -851,13 +873,17 @@ queries:
       - uid: mondoo-aws-security-iam-user-no-inline-policies-check-single-user
   - uid: mondoo-aws-security-iam-user-no-inline-policies-check-account
     filters: asset.platform == "aws"
-    mql: aws.iam.users.all(attachedPolicies.length == 0)
+    mql: |
+      aws.iam.users.all(policies == empty)
+      aws.iam.users.all(attachedPolicies == empty)
   - uid: mondoo-aws-security-iam-user-no-inline-policies-check-single-user
     filters: asset.platform == "aws-iam-user"
-    mql: aws.iam.user.attachedPolicies.length == 0
+    mql: |
+      aws.iam.user.policies == empty
+      aws.iam.user.attachedPolicies == empty
   - uid: mondoo-aws-security-vpc-default-security-group-closed
     title: Ensure the default security group of every VPC restricts all traffic
-    impact: 60
+    impact: 80
     docs:
       desc: |
         The rules for a default security group allow all ingress and egress traffic. To keep users from using the default security group (which cannot be deleted) of a VPC, delete all ingress and egress rules to block all traffic.
@@ -1012,18 +1038,23 @@ queries:
       - uid: mondoo-aws-security-vpc-default-security-group-closed-secgroup
   - uid: mondoo-aws-security-vpc-default-security-group-closed-account
     title: Ensure the default security group of every VPC restricts all traffic
-    impact: 60
     filters: asset.platform == "aws"
-    mql: aws.ec2.securityGroups.where(name == "default").all(ipPermissions.length == 0 && ipPermissionsEgress.length == 0)
+    mql: |
+      aws.ec2.securityGroups.where(name == "default").all(
+        ipPermissions == empty
+      )
+      aws.ec2.securityGroups.where(name == "default").all(
+        ipPermissionsEgress == empty
+      )
   - uid: mondoo-aws-security-vpc-default-security-group-closed-secgroup
     title: Ensure the default security group of every VPC restricts all traffic
-    impact: 60
-    filters: asset.platform == "aws-security-group"
-    mql: aws.ec2.securitygroup.ipPermissions.length == 0 && aws.ec2.securitygroup.ipPermissionsEgress.length == 0
+    filters: asset.platform == "aws-security-group" && aws.ec2.securitygroup.name == "default"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions == empty
+      aws.ec2.securitygroup.ipPermissionsEgress == empty
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default
     title: Ensure EBS volume encryption is enabled by default
-    impact: 70
-    filters: asset.platform == "aws"
+    impact: 90
     mql: aws.ec2.ebsEncryptionByDefault.values.all(_ == true)
     docs:
       desc: |
@@ -1098,9 +1129,10 @@ queries:
         title: AWS Documentation - Encryption by default
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access
     title: Ensure public access to S3 buckets is blocked at the account level
-    impact: 30
-    filters: asset.platform == "aws"
-    mql: aws.s3control.accountPublicAccessBlock.values.all(_ == true)
+    impact: 95
+    mql: |
+      aws.s3control.accountPublicAccessBlock != empty
+      aws.s3control.accountPublicAccessBlock.values.all(_ == true)
     docs:
       desc: |
         Amazon S3 Block Public Access provides settings for access points, buckets, and accounts to help you manage public access to Amazon S3 resources. By default, new buckets, access points, and objects do not allow public access.
@@ -1157,7 +1189,7 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/configuring-block-public-access-account.html
         title: Configuring block public access settings for your account
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited
-    title: Checks if Amazon Simple Storage Service (S3) has bucket-level public access restrictions at the bucket level
+    title: Verify Bucket-Level Public Access restrictions for Amazon S3 Buckets
     impact: 100
     docs:
       desc: |
@@ -1231,16 +1263,20 @@ queries:
       - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-bucket
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-account
     filters: asset.platform == "aws"
-    mql: aws.s3.buckets.all(publicAccessBlock != null && publicAccessBlock.values.all(_ == true))
+    mql: |
+      aws.s3.buckets.all(publicAccessBlock != empty)
+      aws.s3.buckets.all(publicAccessBlock.BlockPublicAcls == true)
+      aws.s3.buckets.all(publicAccessBlock.BlockPublicPolicy == true)
+      aws.s3.buckets.all(publicAccessBlock.IgnorePublicAcls == true)
+      aws.s3.buckets.all(publicAccessBlock.RestrictPublicBuckets == true)
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-bucket
     filters: asset.platform == "aws-s3-bucket"
-    mql: aws.s3.bucket.publicAccessBlock != null && aws.s3.bucket.publicAccessBlock.values.all(_ == true)
-  - uid: mondoo-aws-security-ec2-instance-no-public-ip
-    title: Ensures no instances have a public IP
-    impact: 80
-    variants:
-      - uid: mondoo-aws-security-ec2-instance-no-public-ip-all
-      - uid: mondoo-aws-security-ec2-instance-no-public-ip-single
+    mql: |
+      aws.s3.bucket.publicAccessBlock != empty
+      aws.s3.bucket.publicAccessBlock.BlockPublicAcls == true
+      aws.s3.bucket.publicAccessBlock.BlockPublicPolicy == true
+      aws.s3.bucket.publicAccessBlock.IgnorePublicAcls == true
+      aws.s3.bucket.publicAccessBlock.RestrictPublicBuckets == true
   - uid: mondoo-aws-security-ec2-instance-no-public-ip-all
     filters: |
       asset.platform == "aws"
@@ -1251,6 +1287,12 @@ queries:
       asset.platform == "aws-ec2-instance"
     mql: |
       aws.ec2.instance.publicIp == empty
+  - uid: mondoo-aws-security-ec2-instance-no-public-ip
+    title: Ensure No Public IP associated with EC2 Instances
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-ec2-instance-no-public-ip-all
+      - uid: mondoo-aws-security-ec2-instance-no-public-ip-single
     docs:
       desc: EC2 instances with public IP addresses are at an increased risk of compromise. It is recommended that EC2 instances not be configured with a public IP address.
       audit: |
@@ -1318,22 +1360,23 @@ queries:
         title: AWS Documentation - IP addressing for your VPCs and subnets
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance
         title: Terraform Registry - aws_instance
-  - uid: mondoo-aws-security-ec2-imdsv2-check
-    title: Ensure EC2 instances use IMDSv2
-    impact: 80
-    variants:
-      - uid: mondoo-aws-security-ec2-imdsv2-check-all
-      - uid: mondoo-aws-security-ec2-imdsv2-check-single
   - uid: mondoo-aws-security-ec2-imdsv2-check-all
     filters: asset.platform == "aws"
     mql: |
-      aws.ec2.instances.where(httpEndpoint != "disabled").all(httpTokens == "required")
+      aws.ec2.instances.where(state != /terminated|shutting-down/ && httpEndpoint == "enabled").all(httpTokens == "required")
   - uid: mondoo-aws-security-ec2-imdsv2-check-single
     filters: |
       asset.platform == "aws-ec2-instance"
-      aws.ec2.instance.httpEndpoint != "disabled"
+      aws.ec2.instance.state != /terminated|shutting-down/
+      aws.ec2.instance.httpEndpoint == "enabled"
     mql: |
       aws.ec2.instance.httpTokens == "required"
+  - uid: mondoo-aws-security-ec2-imdsv2-check
+    title: Ensure EC2 instances use IMDSv2
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-ec2-imdsv2-check-all
+      - uid: mondoo-aws-security-ec2-imdsv2-check-single
     docs:
       desc: |
         EC2 instances should be configured to use IMDSv2 to prevent unauthorized access to instance metadata from application vulnerabilities such as Server Side Request Forgery (SSRF). IMDSv1 has been involved in security exploits.
@@ -1413,7 +1456,7 @@ queries:
         ```
   - uid: mondoo-aws-security-vpc-flow-logs-enabled
     title: Ensure VPC flow logging is enabled in all VPCs
-    impact: 50
+    impact: 70
     docs:
       desc: |
         This check ensures Amazon VPC Flow Logs are found and enabled for all VPCs. Default VPCs should always fail this check because they do not come with flow logs activated.
@@ -1744,16 +1787,28 @@ queries:
       - uid: mondoo-aws-security-vpc-flow-logs-enabled-single-vpc
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-account
     filters: asset.platform == "aws"
-    mql: aws.vpcs.all(flowLogs.any(status == "ACTIVE"))
+    mql: |
+      aws.vpcs.all(
+        flowLogs.any(
+          status == "ACTIVE" &&
+          destination != empty &&
+          destinationType == "cloud-watch-logs" &&
+          deliverLogsStatus == "SUCCESS" &&
+          trafficType == "REJECT" ||
+          trafficType == "ALL"
+          )
+      )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-single-vpc
     filters: asset.platform == "aws-vpc"
-    mql: aws.vpc.flowLogs.any(status == "ACTIVE")
-  - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
-    title: Ensure DynamoDB tables are encrypted with AWS Key Management Service (KMS)
-    impact: 30
-    variants:
-      - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-all
-      - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-single
+    mql: |
+      aws.vpc.flowLogs.any(
+        status == "ACTIVE" &&
+        destination != empty &&
+        destinationType == "cloud-watch-logs" &&
+        deliverLogsStatus == "SUCCESS" &&
+        trafficType == "REJECT" ||
+        trafficType == "ALL"
+        )
   - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-all
     filters: asset.platform == "aws"
     mql: |
@@ -1765,6 +1820,12 @@ queries:
     mql: |
       aws.dynamodb.table.sseDescription.SSEType == "KMS"
       aws.dynamodb.table.sseDescription.Status == "ENABLED"
+  - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
+    title: Ensure DynamoDB tables are encrypted with AWS Key Management Service (KMS)
+    impact: 30
+    variants:
+      - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-all
+      - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-single
     docs:
       desc: |
         Checks whether all DynamoDB tables are encrypted with a customer managed KMS key (non-default).
@@ -1867,27 +1928,42 @@ queries:
       asset.platform == "aws-lambda-function"
     mql: |
       aws.lambda.function.concurrency > 0
+      aws.lambda.function.concurrency <= 100
   - uid: mondoo-aws-security-lambda-concurrency-check-all
     filters: |
       asset.platform == "aws"
     mql: |
       aws.lambda.functions.all(concurrency > 0)
+      aws.lambda.functions.all(concurrency <= 100)
+  - uid: mondoo-aws-security-rds-instance-public-access-check-all
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.rds.dbInstances.all(publiclyAccessible == false)
+      aws.rds.dbInstances
+        .where(publiclyAccessible != false)
+        .none(securityGroups.where(
+          vpc.routeTables.where(
+            routes.any(GatewayId == /igw-/ && DestinationCidrBlock == "0.0.0.0/0")
+          )
+        )
+      )
+  - uid: mondoo-aws-security-rds-instance-public-access-check-single
+    filters: |
+      asset.platform == "aws-rds-dbinstance"
+    mql: |
+      aws.rds.dbinstance.publiclyAccessible == false
+      aws.rds.dbinstance.securityGroups.none(
+        vpc.routeTables.where(
+          routes.any(GatewayId == /igw-/ && DestinationCidrBlock == "0.0.0.0/0")
+        )
+      )
   - uid: mondoo-aws-security-rds-instance-public-access-check
     title: Ensure all RDS instances are not publicly accessible
     impact: 100
     variants:
       - uid: mondoo-aws-security-rds-instance-public-access-check-all
       - uid: mondoo-aws-security-rds-instance-public-access-check-single
-  - uid: mondoo-aws-security-rds-instance-public-access-check-all
-    filters: |
-      asset.platform == "aws"
-    mql: |
-      aws.rds.dbInstances.all(publiclyAccessible == false)
-  - uid: mondoo-aws-security-rds-instance-public-access-check-single
-    filters: |
-      asset.platform == "aws-rds-dbinstance"
-    mql: |
-      aws.rds.dbinstance.publiclyAccessible == false
     docs:
       desc: |
         Ensure the Amazon Relational Database Service instances are not publicly accessible. The rule is NON_COMPLIANT if the publiclyAccessible field is true in the instance configuration item.
@@ -1993,8 +2069,9 @@ queries:
   - uid: mondoo-aws-security-redshift-cluster-public-access-check
     title: Ensure Redshift clusters are not publicly accessible
     impact: 95
-    filters: asset.platform == "aws-redshift-cluster"
-    mql: aws.redshift.cluster.publiclyAccessible == false
+    variants:
+      - uid: mondoo-aws-security-redshift-cluster-public-access-check-all
+      - uid: mondoo-aws-security-redshift-cluster-public-access-check-single
     docs:
       desc: |
         The PubliclyAccessible attribute of the Amazon Redshift cluster configuration indicates whether the cluster is publicly accessible. When the cluster is configured with PubliclyAccessible set to true, it is an Internet-facing instance that has a publicly resolvable DNS name, which resolves to a public IP address.
@@ -2063,13 +2140,26 @@ queries:
         title: AWS Documentation - AWS CLI Command Reference - Redshift
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
         title: Terraform Documentation - AWS Provider
+  - uid: mondoo-aws-security-redshift-cluster-public-access-check-all
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.redshift.clusters.all(publiclyAccessible == false)
+  - uid: mondoo-aws-security-redshift-cluster-public-access-check-single
+    filters: |
+      asset.platform == "aws-redshift-cluster"
+    mql: |
+      aws.redshift.cluster.publiclyAccessible == false
   - uid: mondoo-aws-security-ec2-volume-inuse-check
     title: Ensure EBS volumes attached to EC2 instances are configured for deletion on instance termination
-    impact: 30
-    filters: |
-      asset.platform == "aws-ec2-volume"
-      aws.ec2.volume.attachments.length > 0
-    mql: aws.ec2.volume.attachments.all(DeleteOnTermination == true)
+    impact: 60
+    props:
+      - uid: ebsVolumeDeleteOnTermination
+        title: Defines whether instances should be configured to delete volumes on termination
+        mql: "true"
+    variants:
+      - uid: mondoo-aws-security-ec2-volume-inuse-check-all
+      - uid: mondoo-aws-security-ec2-volume-inuse-check-single
     docs:
       desc: |
         Identifying and removing unattached (unused) Elastic Block Store (EBS) volumes in your AWS account can lower the cost of your monthly AWS bill. Deleting unused EBS volumes also reduces the risk of confidential or sensitive data leaving your premises. This check ensures there are no EBS volumes that are not attached to an instance. Additionally, it checks whether archived EC2 instances are configured to delete volumes on termination.
@@ -2139,22 +2229,34 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-deleting-volume.html
         title: AWS Documentation - Delete an Amazon EBS volume
+  - uid: mondoo-aws-security-ec2-volume-inuse-check-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.volumes.where(attachments != empty).all(attachments.any(DeleteOnTermination == props.ebsVolumeDeleteOnTermination))
+  - uid: mondoo-aws-security-ec2-volume-inuse-check-single
+    filters: asset.platform == "aws-ec2-volume" && aws.ec2.volume.attachments != empty
+    mql: |
+      aws.ec2.volume.attachments.any(DeleteOnTermination == true)
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
     title: Ensure EBS snapshots are not publicly restorable
     impact: 80
-    filters: |
-      asset.platform == "aws-ec2-snapshot" || asset.platform == "aws-ebs-snapshot"
+    variants:
+      - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-all
+      - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-single
+  - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.snapshots.all(createVolumePermission.none(Group == "all"))
+  - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-single
+    filters: asset.platform == "aws-ec2-snapshot" || asset.platform == "aws-ebs-snapshot"
     mql: |
       aws.ec2.snapshot.createVolumePermission.none(Group == "all")
   - uid: mondoo-aws-security-efs-encrypted-check
     title: Ensure EFS is configured to encrypt file data using KMS
     impact: 75
-    filters: |
-      asset.platform == "aws-efs-filesystem"
-    mql: |
-      aws.efs.filesystems
-        .where(id == asset.name)
-        .all(encrypted == true && kmsKey != null)
+    variants:
+      - uid: mondoo-aws-security-efs-encrypted-check-all
+      - uid: mondoo-aws-security-efs-encrypted-check-single
     docs:
       desc: |
         Amazon EFS supports two forms of encryption for file systems, encryption of data in transit and encryption at rest. This check ensures that all EFS file systems are configured with encryption at rest across all enabled regions in the account.
@@ -2228,53 +2330,52 @@ queries:
         title: Terraform Registry - aws_efs_file_system resource
       - url: https://docs.aws.amazon.com/efs/latest/ug/creating-using-create-fs.html#creating-using-fs-part1-cli
         title: AWS Documentation - Creating a file system using the AWS CLI
-  - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
-    title: Ensure Amazon CloudWatch log groups are encrypted with KMS
-    impact: 40
+  - uid: mondoo-aws-security-efs-encrypted-check-all
     filters: |
-      asset.platform == "aws-cloudwatch-loggroup"
+      asset.platform == "aws"
     mql: |
-      aws.cloudwatch.loggroup.kmsKey != empty
+      aws.efs.filesystems.all(encrypted == true)
+      aws.efs.filesystems.all(kmsKey != empty)
+  - uid: mondoo-aws-security-efs-encrypted-check-single
+    filters: |
+      asset.platform == "aws-efs-filesystem"
+    mql: |
+      aws.efs.filesystem.encrypted == true
+      aws.efs.filesystems.kmsKey != empty
+  - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
+    title: Ensure CloudWatch logs are encrypted at rest using KMS CMKs
+    impact: 70
+    mql: |
+      aws.cloudwatch.logGroups.all(kmsKey != empty)
   - uid: mondoo-aws-security-elb-deletion-protection-enabled
-    title: Ensure ELBs have deletion protection enabled
-    impact: 50
-    filters: asset.platform == "aws-elb-loadbalancer"
+    title: Ensure Application Load Balancers are Configured with deletion protection enabled
+    impact: 70
     mql: |
-      aws.elb.loadBalancers
-        .where(name == asset.name)
-        .all(attributes.all(_['Key'] == "delete_protection.enabled" && _['Value'] == true))
+      aws.elb.loadBalancers.all(attributes.any(Key == "deletion_protection.enabled"))
+      aws.elb.loadBalancers.all(attributes.where(Key == "deletion_protection.enabled").all(Value == true))
   - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
-    title: Ensure ES domains have encryption at rest enabled
-    impact: 50
-    filters: asset.platform == "aws-es-domain"
+    title: Ensure Amazon OpenSearch Service Domains are Configured with Encryption-at-Rest
+    impact: 70
     mql: |
-      aws.es.domains
-        .where(name == asset.name)
-        .all(encryptionAtRestEnabled == true)
+      aws.es.domains.all(encryptionAtRestEnabled == true)
   - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
     title: Ensure rotation for customer created CMKs is enabled
-    impact: 60
-    filters: |
-      asset.platform == "aws-kms-key"
-      aws.kms.key.metadata.KeyState == "Enabled"
+    impact: 80
     mql: |
-      aws.kms.key.keyRotationEnabled == true
+      aws.kms.keys
+        .where(metadata.KeyState == "Enabled")
+        .where(metadata.KeySpec == "SYMMETRIC_DEFAULT")
+        .all(keyRotationEnabled == true)
   - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
     title: Ensure SageMaker notebook instances are configured to use KMS
     impact: 50
-    filters: |
-      asset.platform == "aws-sagemaker-notebookinstance"
     mql: |
-      aws.sagemaker.notebookInstances
-        .where(asset.name == name)
-        .all(details.kmsKey != empty)
+      aws.sagemaker.notebookInstances.all(details.kmsKey != empty)
   - uid: mondoo-aws-security-cloud-trail-encryption-enabled
     title: Ensure CloudTrail trails are configured to use the server-side encryption KMS
-    impact: 50
-    filters: |
-      asset.platform == "aws-cloudtrail-trail"
+    impact: 70
     mql: |
-      aws.cloudtrail.trail.kmsKey != empty
+      aws.cloudtrail.trails.all(kmsKey != empty)
     docs:
       desc: |
         This check ensures CloudTrail is configured to use the server-side encryption (SSE) AWS KMS key encryption. The check passes if the KmsKeyId is defined.
@@ -2323,10 +2424,9 @@ queries:
         7. Select **Save**.
   - uid: mondoo-aws-security-secgroup-restricted-ssh
     title: Ensure security groups restrict incoming SSH traffic
-    impact: 80
-    filters: |
-      asset.platform == "aws-security-group"
-      aws.ec2.securitygroup.ipPermissions.any( ipRanges.contains('0.0.0.0/0'))
-        || aws.ec2.securitygroup.ipPermissions.any( ipv6Ranges.contains('::/0'))
+    impact: 90
     mql: |
-      aws.ec2.securitygroup.ipPermissions.none( fromPort == 22 || toPort == 22 )
+      aws.ec2.securityGroups.where(ipPermissions.any(
+        ipRanges.contains('0.0.0.0/0'))).all(
+          ipPermissions.none(fromPort <= 22 && toPort >= 22 && toPort != 0)
+       )
