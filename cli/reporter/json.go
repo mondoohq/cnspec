@@ -11,11 +11,11 @@ import (
 	cr "go.mondoo.com/cnquery/v11/cli/reporter"
 	"go.mondoo.com/cnquery/v11/llx"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 )
 
-func printScore(score *policy.Score, mrn string, out shared.OutputHelper, prefix string) bool {
+func printScore(score *policy.Score, mrn string, out iox.OutputHelper, prefix string) bool {
 	if score == nil {
 		return false
 	}
@@ -59,7 +59,7 @@ func prepareAssetsForPrinting(assets map[string]*inventory.Asset) map[string]*as
 	return printableAssets
 }
 
-func ConvertToJSON(data *policy.ReportCollection, out shared.OutputHelper) error {
+func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 	if data == nil {
 		return nil
 	}

@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/cli/components"
 	"go.mondoo.com/cnspec/v11/cli/components/advisories"
 )
@@ -46,7 +46,7 @@ type packagePrintable struct {
 	Cves      []string `json:"cves"`
 }
 
-func VulnReportToJSON(target string, data *mvd.VulnReport, out shared.OutputHelper) error {
+func VulnReportToJSON(target string, data *mvd.VulnReport, out iox.OutputHelper) error {
 	if data == nil {
 		return nil
 	}

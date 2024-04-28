@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"context"
 
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	_ "gocloud.dev/pubsub/azuresb"
@@ -85,7 +85,7 @@ func reportToYamlV1(report *policy.ReportCollection) ([]byte, error) {
 
 func reportToJsonV1(report *policy.ReportCollection) ([]byte, error) {
 	raw := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &raw}
+	writer := iox.IOWriter{Writer: &raw}
 	err := ConvertToJSON(report, &writer)
 	if err != nil {
 		return nil, err

@@ -5,13 +5,14 @@ package reporter
 
 import (
 	"bytes"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
-	"testing"
 )
 
 func sampleReportCollection() *policy.ReportCollection {
@@ -93,7 +94,7 @@ func sampleReportCollection() *policy.ReportCollection {
 func TestJunitConverter(t *testing.T) {
 	yr := sampleReportCollection()
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 	err := ConvertToJunit(yr, &writer)
 	require.NoError(t, err)
 
@@ -108,7 +109,7 @@ func TestJunitNilReport(t *testing.T) {
 	var yr *policy.ReportCollection
 
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 	err := ConvertToJunit(yr, &writer)
 	require.NoError(t, err)
 

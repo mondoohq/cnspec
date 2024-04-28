@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v11/cli/printer"
 	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 )
 
@@ -27,7 +27,7 @@ func TestJsonOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 
 	conf := defaultPrintConfig()
 	conf.format = FormatJSONv1
@@ -56,7 +56,7 @@ func TestJsonOutputOnlyErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 
 	conf := defaultPrintConfig()
 	conf.format = FormatJSONv1

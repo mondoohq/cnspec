@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 )
 
 func TestCsvConverter(t *testing.T) {
@@ -24,7 +24,7 @@ func TestCsvConverter(t *testing.T) {
 	require.NoError(t, err)
 
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 	err = VulnReportToCSV(report, &writer)
 	require.NoError(t, err)
 
