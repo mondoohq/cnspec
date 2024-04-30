@@ -50,6 +50,10 @@ func ConvertToJunit(r *policy.ReportCollection, out shared.OutputHelper) error {
 			suites.Suites = append(suites.Suites, ts)
 		}
 
+		if r.Bundle == nil {
+			return fmt.Errorf("no policy bundle found")
+		}
+
 		bundle := r.Bundle.ToMap()
 		queries := bundle.QueryMap()
 
