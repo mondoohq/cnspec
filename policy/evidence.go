@@ -32,7 +32,7 @@ func (e *Evidence) convertToPolicyGroup() *PolicyGroup {
 		}
 	}
 
-	// no queries or checks, we dont need a policy group
+	// no queries or checks, we don't need a policy group
 	if len(queries) == 0 && len(checks) == 0 {
 		return nil
 	}
@@ -124,7 +124,7 @@ func (f *Framework) GenerateEvidenceObjects() (*Policy, *FrameworkMap) {
 
 // Generates a control map by extracting the control's evidence. If no evidence is present, this function returns nil.
 func (ctrl *Control) generateEvidenceControlMap() *ControlMap {
-	// if no evidence, we dont need a control map
+	// if no evidence, we don't need a control map
 	if len(ctrl.GetEvidence()) == 0 {
 		return nil
 	}
