@@ -24,7 +24,7 @@ func TestEvidenceFillUidIfEmpty(t *testing.T) {
 			Uid:   "uid",
 		}
 		e.fillUidIfEmpty("framework", "control", "fallback")
-		// uid doesnt change if already set
+		// uid doesn't change if already set
 		require.Equal(t, e.Uid, "uid")
 	})
 }
