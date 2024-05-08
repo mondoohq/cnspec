@@ -42,6 +42,8 @@ func init() {
 	_ = scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
 
 	_ = scanCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
+	_ = scanCmd.Flags().String("inventory-template", "", "Set the path to the inventory template.")
+	_ = scanCmd.Flags().MarkHidden("inventory-template")
 
 	_ = scanCmd.Flags().Bool("inventory-format-ansible", false, "Set the inventory format to Ansible.")
 	// "inventory-ansible" is deprecated, use "inventory-format-ansible" instead
@@ -103,6 +105,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		_ = viper.BindPFlag("inventory-template", cmd.Flags().Lookup("inventory-template"))
 		_ = viper.BindPFlag("inventory-format-ansible", cmd.Flags().Lookup("inventory-format-ansible"))
 		// inventory-ansible is deprecated
 		_ = viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
@@ -123,6 +126,8 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("policies", cmd.Flags().Lookup("policy"))
 		_ = viper.BindPFlag("sudo.active", cmd.Flags().Lookup("sudo"))
 		_ = viper.BindPFlag("record", cmd.Flags().Lookup("record"))
+		_ = viper.BindPFlag("annotations", cmd.Flags().Lookup("annotation"))
+		_ = viper.BindPFlag("props", cmd.Flags().Lookup("props"))
 
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		if err := viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target")); err != nil {
@@ -223,20 +228,12 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	config.DisplayUsedConfig()
 
-	props, err := cmd.Flags().GetStringToString("props")
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to parse props")
-	}
+	props := viper.GetStringMapString("props")
 
-	// annotations are user-added, editable labels for assets and are optional, therefore we do not need to check for err
-	annotations, _ := cmd.Flags().GetStringToString("annotation")
 	// merge the config and the user-provided annotations with the latter having precedence
 	optAnnotations := opts.Annotations
 	if optAnnotations == nil {
 		optAnnotations = map[string]string{}
-	}
-	for k, v := range annotations {
-		optAnnotations[k] = v
 	}
 
 	assetName, err := cmd.Flags().GetString("asset-name")
