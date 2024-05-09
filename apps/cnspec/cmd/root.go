@@ -101,7 +101,7 @@ func BuildRootCmd() (*cobra.Command, error) {
 			Command:             vulnCmd,
 			Run:                 vulnCmdRun,
 			Action:              "Check for vulnerabilities ",
-			SupportedConnectors: []string{"docker", "container", "filesystem", "local", "ssh", "vagrant", "winrm", "vsphere"},
+			SupportedConnectors: []string{"docker", "container", "filesystem", "local", "ssh", "vagrant", "winrm", "vsphere", "sbom"},
 		},
 	)
 	return rootCmd, err
