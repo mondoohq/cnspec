@@ -8,10 +8,10 @@ toolchain go1.22.0
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.5.2
-	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.7.0
+	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.7.1
 	github.com/Masterminds/semver v1.5.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.16
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.54.2
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.54.3
 	github.com/cockroachdb/errors v1.11.2
 	github.com/google/go-cmdtest v0.4.0
 	github.com/google/uuid v1.6.0
