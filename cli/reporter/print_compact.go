@@ -272,8 +272,9 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 				assetScore = "X"
 			}
 
+			paddedAssetScore := fmt.Sprintf("%-9s", assetScore)
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
-			output := fmt.Sprintf("    %s   %s", termenv.String(assetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
+			output := fmt.Sprintf("    %s   %s", termenv.String(paddedAssetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
 			r.out(output + NewLineCharacter)
 		}
 	}
