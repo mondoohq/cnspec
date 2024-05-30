@@ -18,7 +18,7 @@ import (
 	"go.mondoo.com/cnquery/v11/providers"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 	"sigs.k8s.io/yaml"
 )
@@ -156,7 +156,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		_, err = r.out.Write(data)
 		return err
 	case FormatJUnit:
-		writer := shared.IOWriter{Writer: r.out}
+		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToJunit(data, &writer)
 	// case FormatCSV:
 	// 	res, err = data.ToCsv()
@@ -186,11 +186,11 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 	case FormatJUnit:
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case FormatCSV:
-		writer := shared.IOWriter{Writer: r.out}
+		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)
 	case FormatYAMLv1, FormatYAMLv2:
 		raw := bytes.Buffer{}
-		writer := shared.IOWriter{Writer: &raw}
+		writer := iox.IOWriter{Writer: &raw}
 		err := VulnReportToJSON(target, data, &writer)
 		if err != nil {
 			return err
@@ -203,7 +203,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		_, err = r.out.Write(json)
 		return err
 	case FormatJSONv1, FormatJSONv2:
-		writer := shared.IOWriter{Writer: r.out}
+		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToJSON(target, data, &writer)
 	default:
 		return errors.New("unknown reporter type, don't recognize this Format")

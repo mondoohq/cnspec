@@ -11,7 +11,8 @@ import (
 	"go.mondoo.com/cnquery/v11/providers"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/sbom"
+	"go.mondoo.com/cnquery/v11/sbom/generator"
+	"go.mondoo.com/cnquery/v11/sbom/pack"
 	"go.mondoo.com/cnspec/v11/cli/reporter"
 	"go.mondoo.com/cnspec/v11/policy"
 )
@@ -42,7 +43,7 @@ var vulnCmd = &cobra.Command{
 }
 
 var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
-	pb, err := sbom.QueryPack()
+	pb, err := pack.QueryPack()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load sbom query pack")
 	}
@@ -74,7 +75,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		logger.DebugDumpJSON("mondoo-sbom-report", data)
 	}
 
-	boms, err := sbom.NewBom(cnspecReport.ToCnqueryReport())
+	boms, err := generator.NewBom(cnspecReport.ToCnqueryReport())
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse sbom data")
 	}
@@ -101,7 +102,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	var runningKernel string
 	if bom.Asset.Labels != nil {
-		runningKernel = bom.Asset.Labels[sbom.LABEL_KERNEL_RUNNING]
+		runningKernel = bom.Asset.Labels[generator.LABEL_KERNEL_RUNNING]
 	}
 
 	req := &mvd.AnalyseAssetRequest{

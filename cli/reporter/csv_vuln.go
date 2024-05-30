@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/cli/components"
 	"go.mondoo.com/cnspec/v11/cli/components/advisories"
 )
@@ -29,7 +29,7 @@ func (c csvStruct) toSlice() []string {
 }
 
 // ReportCollectionToCSV writes the given report collection to the given output directory
-func VulnReportToCSV(data *mvd.VulnReport, out shared.OutputHelper) error {
+func VulnReportToCSV(data *mvd.VulnReport, out iox.OutputHelper) error {
 	w := csv.NewWriter(out)
 
 	// write header

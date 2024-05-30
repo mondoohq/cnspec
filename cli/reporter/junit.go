@@ -13,12 +13,12 @@ import (
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 )
 
 // ConvertToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite
-func ConvertToJunit(r *policy.ReportCollection, out shared.OutputHelper) error {
+func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper) error {
 	noXMLHeader := false
 
 	suites := junit.Testsuites{}

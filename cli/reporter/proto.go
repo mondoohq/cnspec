@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	cr "go.mondoo.com/cnquery/v11/cli/reporter"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -85,7 +85,7 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			}
 
 			buf := &bytes.Buffer{}
-			w := shared.IOWriter{Writer: buf}
+			w := iox.IOWriter{Writer: buf}
 			err := cr.CodeBundleToJSON(query.Code, results, &w)
 			if err != nil {
 				return nil, err

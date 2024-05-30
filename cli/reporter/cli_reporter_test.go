@@ -14,7 +14,7 @@ import (
 	"go.mondoo.com/cnquery/v11/cli/printer"
 	"go.mondoo.com/cnquery/v11/cli/theme/colors"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/shared"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 )
 
@@ -27,7 +27,7 @@ func TestCompactReporter(t *testing.T) {
 	require.NoError(t, err)
 
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 
 	r := &Reporter{
 		Conf:    defaultPrintConfig(),
@@ -57,7 +57,7 @@ func TestVulnReporter(t *testing.T) {
 	require.NoError(t, err)
 
 	buf := bytes.Buffer{}
-	writer := shared.IOWriter{Writer: &buf}
+	writer := iox.IOWriter{Writer: &buf}
 	target := "index.docker.io/library/ubuntu@669e010b58ba"
 
 	t.Run("format=summary", func(t *testing.T) {
