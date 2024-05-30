@@ -1403,5 +1403,51 @@ queries:
 		qrIdToRj[rj.QrId] = rj
 	}
 	require.NotNil(t, qrIdToRj["root"])
+}
 
+func TestResolve_PoliciesMatchingFilters(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    checks:
+    - uid: check1
+    - uid: check2
+queries:
+- uid: check1
+  title: check1
+  filters:
+  - mql: asset.name == "asset1"
+  - mql: asset.name == "asset2"
+  mql: |
+    asset.version
+- uid: check2
+  title: check2
+  filters:
+  - mql: |
+      asset.name == "asset1"
+      asset.name == "asset2"
+  mql: |
+    asset.platform
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		require.Len(t, rp.ExecutionJob.Queries, 1)
+		for _, v := range rp.ExecutionJob.Queries {
+			require.Equal(t, "asset.version\n", v.Query)
+		}
+	})
 }
