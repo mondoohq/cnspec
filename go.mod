@@ -31,7 +31,7 @@ require (
 	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
-	github.com/spf13/viper v1.18.2
+	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.9.0
 	go.mondoo.com/cnquery/v11 v11.6.3
 	go.mondoo.com/mondoo-go v0.0.0-20240522040414-f14070ee37a8
