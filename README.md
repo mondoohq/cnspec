@@ -160,7 +160,7 @@ To exit, either hit CTRL + D or type `exit`.
 
 ## Scale cnspec across your fleet with Mondoo Platform
 
-The easiest way to scale cnspec across your fleet is to sign up for a free Mondoo Platform account. With Mondoo Platform, you can:
+The easiest way to scale cnspec across your fleet is to sign up for a Mondoo Platform account. With Mondoo Platform, you can:
 
 - Aggregate and share reports
 - Perform vulnerability scans
@@ -170,7 +170,7 @@ The easiest way to scale cnspec across your fleet is to sign up for a free Mondo
 
 Mondoo Platform's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, you can assess all your assets based on consistent policies and define custom policies and exceptions for your fleet.
 
-Sign up at [console.mondoo.com](https://console.mondoo.com/space/integrations/add/mondoo/setup).
+To get started, [contact us](https://mondoo.com/contact).
 
 To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home/) or visit [mondoo.com](https://mondoo.com).
 
