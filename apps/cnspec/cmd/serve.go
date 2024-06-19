@@ -39,6 +39,8 @@ func init() {
 	serveCmd.Flags().Int("splay", cnspec_config.DefaultScanIntervalSplay, "randomize the timer by up to this many minutes")
 	// set inventory
 	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
+	_ = serveCmd.Flags().String("inventory-template", "", "Set the path to the inventory template.")
+	_ = serveCmd.Flags().MarkHidden("inventory-template")
 }
 
 var serveCmd = &cobra.Command{
@@ -49,6 +51,7 @@ var serveCmd = &cobra.Command{
 		_ = viper.BindPFlag("scan_interval.timer", cmd.Flags().Lookup("timer"))
 		_ = viper.BindPFlag("scan_interval.splay", cmd.Flags().Lookup("splay"))
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		_ = viper.BindPFlag("inventory-template", cmd.Flags().Lookup("inventory-template"))
 		logger.StandardZerologLogger()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
