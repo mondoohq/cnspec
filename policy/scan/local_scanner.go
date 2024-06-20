@@ -352,7 +352,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				}
 				assetsToSync = append(assetsToSync, batch[i].Asset)
 			}
-
+			log.Debug().Int("assets", len(assetsToSync)).Msg("synchronizing assets upstream")
 			resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 				SpaceMrn: spaceMrn,
 				List:     assetsToSync,
