@@ -7,7 +7,7 @@
 
 cnspec assesses your entire infrastructure's security and compliance. It finds vulnerabilities and misconfigurations across public and private cloud environments, Kubernetes clusters, containers, container registries, servers, endpoints, SaaS products, infrastructure as code, APIs, and more.
 
-A powerful policy as code engine, cnspec is built upon [`cnquery`](https://github.com/mondoohq/cnquery). It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
+A powerful policy as code engine, cnspec is built upon Mondoo's security data fabric. It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
 ![cnspec scan example](docs/images/cnspec-scan.gif)
 
@@ -158,17 +158,9 @@ To clear the terminal, type `clear`.
 
 To exit, either hit CTRL + D or type `exit`.
 
-## Scale cnspec across your fleet with Mondoo Platform
+## Prioritize risks that matter with Mondoo Platform
 
-The easiest way to scale cnspec across your fleet is to sign up for a Mondoo Platform account. With Mondoo Platform, you can:
-
-- Aggregate and share reports
-- Perform vulnerability scans
-- Store and distribute policies from a central location
-- Set custom policy exceptions
-- Explore the relationships between the different assets in your infrastructure
-
-Mondoo Platform's web-based console allows you to navigate, search, and arrange all of your reports. The platform is designed for multi-tenancy and provides a secure, private environment that keeps data about your assets in your own account. With the platform, you can assess all your assets based on consistent policies and define custom policies and exceptions for your fleet.
+The Mondoo unified security platform finds and prioritizes vulnerabilities and misconfigurations that pose the highest risk to your business. Mondoo's security data fabric analyzes the threat and exposure of every finding within the unique context of your infrastructure. Instead of a flood of irrelevant security alerts, Mondoo shows you how you can make an immediate and significant impact on your security posture.
 
 To get started, [contact us](https://mondoo.com/contact).
 
@@ -210,42 +202,51 @@ If you're interested in writing your own policies or contributing policies back 
 
 ## Supported targets
 
-| Description                       | Provider                   | Example                                                                                                                                           |
-| --------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Arista EOS                        | `arista`                   | `cnspec scan arista`                                                                                                                              |
-| AWS accounts                      | `aws`                      | `cnspec scan aws`                                                                                                                                 |
-| AWS EC2 instances                 | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                       |
-| AWS EC2 Instance Connect          | `aws ec2 instance-connect` | `cnspec scan aws ec2 instance-connect ec2-user@INSTANCEID`                                                                                        |
-| AWS EC2 EBS snapshot              | `aws ec2 ebs snapshot`     | `cnspec scan aws ec2 ebs snapshot SNAPSHOTID`                                                                                                     |
-| AWS EC2 EBS volume                | `aws ec2 ebs volume`       | `cnspec scan aws ec2 ebs volume VOLUMEID`                                                                                                         |
-| Container images                  | `container`, `docker`      | `cnspec scan container ubuntu:latest`                                                                                                             |
-| Container registries              | `container registry`       | `cnspec scan container registry index.docker.io/library/rockylinux:8 `                                                                            |
-| DNS records                       | `host`                     | `cnspec scan host mondoo.com`                                                                                                                     |
-| GitHub organizations              | `github org`               | `cnspec scan github org mondoohq`                                                                                                                 |
-| GitHub repositories               | `github repo`              | `cnspec scan github repo mondoohq/cnspec`                                                                                                         |
-| GitLab groups                     | `gitlab`                   | `cnspec scan gitlab --group mondoohq`                                                                                                             |
-| Google Cloud projects             | `gcp`                      | `cnspec scan gcp`                                                                                                                                 |
-| Google Workspace                  | `google-workspace`         | `cnspec shell google-workspace --customer-id CUSTOMER_ID --impersonated-user-email EMAIL --credentials-path JSON_FILE`                            |
-| Kubernetes cluster nodes          | `local`, `ssh`             | `cnspec scan ssh user@host`                                                                                                                       |
-| Kubernetes clusters & workloads   | `k8s`                      | `cnspec scan k8s`                                                                                                                                 |
-| Kubernetes manifests              | `k8s`                      | `cnspec scan k8s manifest.yaml `                                                                                                                  |
-| Linux hosts                       | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@host`                                                                                        |
-| macOS hosts                       | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@IP_ADDRESS`                                                                                  |
-| Microsoft 365 accounts            | `ms365`                    | `cnspec scan ms365 --tenant-id TENANT_ID --client-id CLIENT_ID --certificate-path PFX_FILE`                                                       |
-| Microsoft Azure subscriptions     | `azure`                    | `cnspec scan azure --subscription SUBSCRIPTION_ID`                                                                                                |
-| Microsoft Azure virtual machines  | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                       |
-| Okta                              | `okta`                     | `cnspec scan okta --token TOKEN --organization ORGANIZATION`                                                                                      |
-| OPC UA                            | `opcua`                    | `cnspec scan opcua`                                                                                                                               |
-| Oracle Cloud Infrastructure (OCI) | `oci`                      | `cnspec scan oci`                                                                                                                                 |
-| Running containers                | `docker`                   | `cnspec scan docker CONTAINER_ID`                                                                                                                 |
-| Slack                             | `slack`                    | `cnspec scan slack --token TOKEN`                                                                                                                 |
-| SSL certificates on websites      | `host`                     | `cnspec scan host mondoo.com`                                                                                                                     |
-| Terraform HCL                     | `terraform`                | `cnspec scan terraform HCL_FILE_OR_PATH`                                                                                                          |
-| Terraform plan                    | `terraform plan`           | `cnspec scan terraform plan plan.json`                                                                                                            |
-| Terraform state                   | `terraform state`          | `cnspec scan terraform state state.json`                                                                                                          |
-| Vagrant virtual machines          | `vagrant`                  | `cnspec scan vagrant HOST`                                                                                                                        |
-| VMware vSphere                    | `vsphere`                  | `cnspec scan vsphere user@domain@host --ask-pass`                                                                                                 |
-| Windows hosts                     | `local`, `ssh`, `winrm`    | `cnspec scan local`<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass`<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
+| Target                        | Provider                   | Example                                                                                                                                               |
+| ----------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ansible playbooks             | `ansible`                      | `cnspec shell ansible YOUR_PLAYBOOK.yml`                                                          |
+| Arista network devices        | `arista`                      | `cnspec shell arista DEVICE_PUBLIC_IP --ask-pass`                                                          |
+| Atlassian organizations       | `atlassian`                      | `cnspec shell atlassian --host YOUR_HOST_URL --admin-token YOUR_TOKEN`                                                          |
+| AWS accounts                  | `aws`                      | `cnspec scan aws`                                                                                                                                     |
+| AWS CloudFormation templates  | `cloudformation`           | `cnspec scan cloudformation cloudformation_file.json`                                                                                                 |
+| AWS EC2 EBS snapshot          | `aws ec2 ebs snapshot`     | `cnspec scan aws ec2 ebs snapshot SNAPSHOTID`                                                                                                         |
+| AWS EC2 EBS volume            | `aws ec2 ebs volume`       | `cnspec scan aws ec2 ebs volume VOLUMEID`                                                                                                             |
+| AWS EC2 Instance Connect      | `aws ec2 instance-connect` | `cnspec scan aws ec2 instance-connect ec2-user@INSTANCEID`                                                                                            |
+| AWS EC2 instances             | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
+| Confluence users              | `atlassian`                | `cnspec shell atlassian --host YOUR_HOST_URL --admin-token YOUR_TOKEN`                                                                                            |
+| Container images              | `container`, `docker`      | `cnspec scan container ubuntu:latest`                                                                                                                 |
+| Container registries          | `container registry`       | `cnspec scan container registry index.docker.io/library/rockylinux:8 `                                                                                |
+| DNS records                   | `host`                     | `cnspec scan host mondoo.com`                                                                                                                         |
+| Dockerfiles                   | `docker`                     | `cnspec shell docker file FILENAME`                                                                                                                                 |
+| GitHub organizations          | `github org`               | `cnspec scan github org mondoohq`                                                                                                                     |
+| GitHub repositories           | `github repo`              | `cnspec scan github repo mondoohq/cnspec`                                                                                                             |
+| GitLab groups                 | `gitlab`                   | `cnspec scan gitlab --group mondoohq`                                                                                                                 |
+| Google Cloud projects         | `gcp`                      | `cnspec scan gcp`                                                                                                                                     |
+| Google Workspace              | `google-workspace`         | `cnspec shell google-workspace --customer-id CUSTOMER_ID --impersonated-user-email EMAIL --credentials-path JSON_FILE`                                |
+| IoT devices                   | `opcua`                    | `cnspec shell opcua`                                                                                                             |
+| Jira projects                 | `atlassian`                | `cnspec shell atlassian --host YOUR_HOST_URL --admin-token YOUR_TOKEN`                                                                                            |
+| Kubernetes cluster nodes      | `local`, `ssh`             | `cnspec scan ssh user@host`                                                                                                                           |
+| Kubernetes clusters           | `k8s`                      | `cnspec scan k8s`                                                                                                                                     |
+| Kubernetes manifests          | `k8s`                      | `cnspec scan k8s manifest.yaml `                                                                                                                      |
+| Kubernetes workloads          | `k8s`                      | `cnspec scan k8s --discover pods,deployments`                                                                                                         |
+| Linux hosts                   | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@host`                                                                                            |
+| macOS hosts                   | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@IP_ADDRESS`                                                                                      |
+| Microsoft 365 accounts        | `ms365`                    | `cnspec scan ms365 --tenant-id TENANT_ID --client-id CLIENT_ID --certificate-path PFX_FILE`                                                           |
+| Microsoft Azure instances     | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
+| Microsoft Azure subscriptions | `azure`                    | `cnspec scan azure --subscription SUBSCRIPTION_ID`                                                                                                    |
+| Okta org                      | `okta`                     | `cnspec shell okta --token TOKEN --organization ORGANIZATION`                                                                                         |
+| Oracle Cloud Interface (OCI)  | `oci`                      | `cnspec shell oci`                                                                                                                                    |
+| Running containers            | `docker`                   | `cnspec scan docker CONTAINER_ID`                                                                                                                     |
+| Shodan search engine          | `shodan`                   | `cnspec shell shodan`                                     |
+| Slack team                    | `slack`                    | `cnspec shell slack --token TOKEN`                                                                                                                    |
+| SSL certificates on websites  | `host`                     | `cnspec scan host mondoo.com`                                                                                                                         |
+| Terraform HCL                 | `terraform`                | `cnspec scan terraform HCL_FILE_OR_PATH`                                                                                                              |
+| Terraform plan                | `terraform plan`           | `cnspec scan terraform plan plan.json`                                                                                                                |
+| Terraform state               | `terraform state`          | `cnspec scan terraform state state.json`                                                                                                              |
+| Vagrant virtual machines      | `vagrant`                  | `cnspec scan vagrant HOST`                                                                                                                            |
+| VMware Cloud Director         | `vcd`                      | `cnspec shell vcd user@domain@host --ask-pass`                                                                                                         |
+| VMware vSphere                | `vsphere`                  | `cnspec scan vsphere user@domain@host --ask-pass`                                                                                                     |
+| Windows hosts                 | `local`, `ssh`, `winrm`    | `cnspec scan local`,<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass` or<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
 
 ## What's next?
 
