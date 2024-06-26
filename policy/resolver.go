@@ -357,11 +357,12 @@ type resolverCache struct {
 	riskInfos        map[string]*RiskFactor
 	propsCache       explorer.PropsCache
 
-	reportingJobsByUUID map[string]*ReportingJob
-	reportingJobsByMsum map[string][]*ReportingJob // Msum == Mquery.Checksum, i.e. only reporting jobs for mqueries
-	reportingJobsActive map[string]bool
-	errors              []*policyResolutionError
-	bundleMap           *PolicyBundleMap
+	reportingJobsByUUID   map[string]*ReportingJob
+	reportingJobsByMsum   map[string][]*ReportingJob // Msum == Mquery.Checksum, i.e. only reporting jobs for mqueries
+	reportingJobsByCodeId map[string][]*ReportingJob // CodeId == check.CodeId
+	reportingJobsActive   map[string]bool
+	errors                []*policyResolutionError
+	bundleMap             *PolicyBundleMap
 
 	compilerConfig mqlc.CompilerConfig
 }
@@ -513,21 +514,22 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Msg("resolver> phase 1: no cached result, resolve the bundle now")
 
 	cache := &resolverCache{
-		baseChecksum:         BundleExecutionChecksum(policyObj, frameworkObj),
-		assetFiltersChecksum: assetFiltersChecksum,
-		assetFilters:         assetFiltersMap,
-		executionQueries:     map[string]*ExecutionQuery{},
-		codeIdToMrn:          map[string][]string{},
-		dataQueries:          map[string]struct{}{},
-		propsCache:           explorer.NewPropsCache(),
-		queriesByMsum:        map[string]*explorer.Mquery{},
-		riskMrns:             map[string]*explorer.Mquery{},
-		riskInfos:            map[string]*RiskFactor{},
-		reportingJobsByUUID:  map[string]*ReportingJob{},
-		reportingJobsByMsum:  map[string][]*ReportingJob{},
-		reportingJobsActive:  map[string]bool{},
-		bundleMap:            bundleMap,
-		compilerConfig:       conf,
+		baseChecksum:          BundleExecutionChecksum(policyObj, frameworkObj),
+		assetFiltersChecksum:  assetFiltersChecksum,
+		assetFilters:          assetFiltersMap,
+		executionQueries:      map[string]*ExecutionQuery{},
+		codeIdToMrn:           map[string][]string{},
+		dataQueries:           map[string]struct{}{},
+		propsCache:            explorer.NewPropsCache(),
+		queriesByMsum:         map[string]*explorer.Mquery{},
+		riskMrns:              map[string]*explorer.Mquery{},
+		riskInfos:             map[string]*RiskFactor{},
+		reportingJobsByUUID:   map[string]*ReportingJob{},
+		reportingJobsByMsum:   map[string][]*ReportingJob{},
+		reportingJobsByCodeId: map[string][]*ReportingJob{},
+		reportingJobsActive:   map[string]bool{},
+		bundleMap:             bundleMap,
+		compilerConfig:        conf,
 	}
 
 	rjUUID := cache.relativeChecksum(policyObj.GraphExecutionChecksum)
@@ -1079,31 +1081,44 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 
 func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explorer.Mquery, impact *explorer.Impact, ownerJob *ReportingJob) {
 	uuid := cache.global.relativeChecksum(check.Checksum)
-	queryJob := cache.global.reportingJobsByUUID[uuid]
+	rj := cache.global.reportingJobsByUUID[uuid]
 
-	if queryJob == nil {
-		queryJob = &ReportingJob{
+	if rj == nil {
+		rj = &ReportingJob{
 			Uuid:       uuid,
 			QrId:       check.Mrn,
 			ChildJobs:  map[string]*explorer.Impact{},
 			Datapoints: map[string]bool{},
 			Type:       ReportingJob_CHECK,
+			Mrns:       []string{},
 		}
 		cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
-		cache.global.reportingJobsByUUID[uuid] = queryJob
-		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], queryJob)
-		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], queryJob)
+		cache.global.reportingJobsByUUID[uuid] = rj
+		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], rj)
+		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], rj)
 	}
 
-	if ownerJob.ChildJobs[queryJob.Uuid] == nil {
-		ownerJob.ChildJobs[queryJob.Uuid] = impact
+	if _, ok := cache.global.reportingJobsByCodeId[check.CodeId]; !ok {
+		cache.global.reportingJobsByCodeId[check.CodeId] = []*ReportingJob{}
+	}
+	cache.global.reportingJobsByCodeId[check.CodeId] = append(cache.global.reportingJobsByCodeId[check.CodeId], rj)
+
+	// Add the MRN to all the reporting jobs with the same codeID
+	// This is used to track all the MRNs
+	for _, job := range cache.global.reportingJobsByCodeId[check.CodeId] {
+		// Set the MRNs to all the MRNs we collected so far
+		job.Mrns = cache.global.codeIdToMrn[check.CodeId]
+	}
+
+	if ownerJob.ChildJobs[rj.Uuid] == nil {
+		ownerJob.ChildJobs[rj.Uuid] = impact
 	}
 
 	// local aspects for the resolved policy
-	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
+	rj.Notify = append(rj.Notify, ownerJob.Uuid)
 
 	if len(check.Variants) != 0 {
-		err := cache.addCheckJobVariants(ctx, check, queryJob)
+		err := cache.addCheckJobVariants(ctx, check, rj)
 		if err != nil {
 			log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")
 		}
@@ -1149,31 +1164,44 @@ func (cache *policyResolverCache) addCheckJobVariants(ctx context.Context, query
 
 func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *explorer.Mquery, ownerJob *ReportingJob) {
 	uuid := cache.global.relativeChecksum(query.Mrn)
-	queryJob := cache.global.reportingJobsByUUID[uuid]
+	rj := cache.global.reportingJobsByUUID[uuid]
 
-	if queryJob == nil {
-		queryJob = &ReportingJob{
+	if rj == nil {
+		rj = &ReportingJob{
 			Uuid:       uuid,
 			QrId:       query.Mrn,
 			ChildJobs:  map[string]*explorer.Impact{},
 			Datapoints: map[string]bool{},
 			Type:       ReportingJob_DATA_QUERY,
+			Mrns:       []string{},
 			// FIXME: DEPRECATED, remove in v10.0 vv
 			DeprecatedV8IsData: true,
 		}
 		cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
-		cache.global.reportingJobsByUUID[uuid] = queryJob
-		cache.global.reportingJobsByMsum[query.Checksum] = append(cache.global.reportingJobsByMsum[query.Checksum], queryJob)
-		cache.childJobsByMrn[query.Mrn] = append(cache.childJobsByMrn[query.Mrn], queryJob)
+		cache.global.reportingJobsByUUID[uuid] = rj
+		cache.global.reportingJobsByMsum[query.Checksum] = append(cache.global.reportingJobsByMsum[query.Checksum], rj)
+		cache.childJobsByMrn[query.Mrn] = append(cache.childJobsByMrn[query.Mrn], rj)
+	}
+
+	if _, ok := cache.global.reportingJobsByCodeId[query.CodeId]; !ok {
+		cache.global.reportingJobsByCodeId[query.CodeId] = []*ReportingJob{}
+	}
+	cache.global.reportingJobsByCodeId[query.CodeId] = append(cache.global.reportingJobsByCodeId[query.CodeId], rj)
+
+	// Add the MRN to all the reporting jobs with the same codeID
+	// This is used to track all the MRNs
+	for _, job := range cache.global.reportingJobsByCodeId[query.CodeId] {
+		// Set the MRNs to all the MRNs we collected so far
+		job.Mrns = cache.global.codeIdToMrn[query.CodeId]
 	}
 
 	// local aspects for the resolved policy
-	queryJob.Notify = append(queryJob.Notify, ownerJob.Uuid)
-	if ownerJob.ChildJobs[queryJob.Uuid] == nil {
-		ownerJob.ChildJobs[queryJob.Uuid] = query.Impact
+	rj.Notify = append(rj.Notify, ownerJob.Uuid)
+	if ownerJob.ChildJobs[rj.Uuid] == nil {
+		ownerJob.ChildJobs[rj.Uuid] = query.Impact
 	}
 	if len(query.Variants) != 0 {
-		err := cache.addDataQueryVariants(ctx, query, queryJob)
+		err := cache.addDataQueryVariants(ctx, query, rj)
 		if err != nil {
 			log.Error().Err(err).Str("queryMrn", query.Mrn).Msg("failed to add data query variants")
 		}

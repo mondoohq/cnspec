@@ -149,6 +149,8 @@ policies:
 		}
 		// scoring queries report by code id
 		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
+		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Mrns, 1)
+		require.Equal(t, queryMrn("check1"), qrIdToRj[b.Queries[1].CodeId].Mrns[0])
 		// data queries report by mrn
 		require.NotNil(t, qrIdToRj[queryMrn("query1")])
 
@@ -1509,5 +1511,56 @@ queries:
 		for _, v := range rp.ExecutionJob.Queries {
 			require.Equal(t, "asset.version\n", v.Query)
 		}
+	})
+}
+
+func TestResolve_TwoMrns(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+    - uid: check2
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve two MRNs to one codeID", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 3)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+		// scoring queries report by code id
+		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
+		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Mrns, 2)
+		require.Equal(t, queryMrn("check1"), qrIdToRj[b.Queries[1].CodeId].Mrns[0])
+		require.Equal(t, queryMrn("check2"), qrIdToRj[b.Queries[1].CodeId].Mrns[1])
+
+		require.Len(t, qrIdToRj[b.Queries[0].CodeId].Mrns, 2)
+		require.Equal(t, queryMrn("check1"), qrIdToRj[b.Queries[0].CodeId].Mrns[0])
+		require.Equal(t, queryMrn("check2"), qrIdToRj[b.Queries[0].CodeId].Mrns[1])
 	})
 }

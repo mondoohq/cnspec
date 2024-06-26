@@ -368,14 +368,15 @@ func (d ControlRef) MarshalYAML() (interface{}, error) {
 }
 
 type Evidence struct {
-	Uid         string      `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	Mrn         string      `protobuf:"bytes,4,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Desc        string      `protobuf:"bytes,2,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
-	Title       string      `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
-	Checks      []*Mquery   `protobuf:"bytes,21,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
-	Queries     []*Mquery   `protobuf:"bytes,22,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
-	FileContext FileContext `json:"-" yaml:"-"`
-	Comments    Comments    `json:"-" yaml:"-"`
+	Uid         string        `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn         string        `protobuf:"bytes,4,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Desc        string        `protobuf:"bytes,2,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
+	Title       string        `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Checks      []*Mquery     `protobuf:"bytes,21,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
+	Controls    []*ControlRef `protobuf:"bytes,23,rep,name=controls,proto3" json:"controls,omitempty" yaml:"controls,omitempty"`
+	Queries     []*Mquery     `protobuf:"bytes,22,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	FileContext FileContext   `json:"-" yaml:"-"`
+	Comments    Comments      `json:"-" yaml:"-"`
 }
 
 func (x *Evidence) UnmarshalYAML(node *yaml.Node) error {
