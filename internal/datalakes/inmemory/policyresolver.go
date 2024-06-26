@@ -205,12 +205,21 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]e
 
 func (db *Db) MutateAssignments(ctx context.Context, mutation *policy.AssetMutation, createIfMissing bool) error {
 	targetMRN := mutation.AssetMrn
-	frameworkw, changedFramework, err := db.mutateFramework(ctx, targetMRN, mutation.FrameworkActions, createIfMissing)
+	frameworkActions := map[string]explorer.Action{}
+	for _, v := range mutation.FrameworkMrns {
+		frameworkActions[v] = mutation.Action
+	}
+
+	frameworkw, changedFramework, err := db.mutateFramework(ctx, targetMRN, frameworkActions, createIfMissing)
 	if err != nil {
 		return err
 	}
 
-	policyw, changedPolicy, err := db.mutatePolicy(ctx, targetMRN, mutation.PolicyActions, createIfMissing)
+	policyActions := map[string]explorer.Action{}
+	for _, v := range mutation.PolicyMrns {
+		policyActions[v] = mutation.Action
+	}
+	policyw, changedPolicy, err := db.mutatePolicy(ctx, targetMRN, policyActions, createIfMissing)
 	if err != nil {
 		return err
 	}
