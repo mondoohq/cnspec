@@ -1520,8 +1520,8 @@ owner_mrn: //test.sth
 policies:
 - uid: policy1
   groups:
-  - type: chapter
-    filters: "true"
+  - filters:
+    - mql: asset.name == "asset1"
     checks:
     - uid: check1
       mql: asset.name == props.name
@@ -1539,10 +1539,10 @@ policies:
 		{asset: "asset1", policies: []string{policyMrn("policy1")}},
 	}, []*policy.Bundle{b})
 
-	t.Run("resolve two MRNs to one codeID", func(t *testing.T) {
+	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1562,5 +1562,159 @@ policies:
 		require.Len(t, qrIdToRj[b.Queries[0].CodeId].Mrns, 2)
 		require.Equal(t, queryMrn("check1"), qrIdToRj[b.Queries[0].CodeId].Mrns[0])
 		require.Equal(t, queryMrn("check2"), qrIdToRj[b.Queries[0].CodeId].Mrns[1])
+	})
+}
+
+func TestResolve_TwoMrns_FilterMismatch(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+      filters:
+      - mql: asset.name == "asset1"
+    - uid: check2
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+      filters:
+      - mql: asset.name == "asset2"
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 2)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 2)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+
+		require.Len(t, qrIdToRj[b.Queries[0].CodeId].Mrns, 1)
+		require.Equal(t, queryMrn("check1"), qrIdToRj[b.Queries[0].CodeId].Mrns[0])
+	})
+}
+
+func TestResolve_TwoMrns_DataQueries(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - filters:
+    - mql: asset.name == "asset1"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+  - queries:
+    - uid: active-query
+      title: users
+      mql: users
+    - uid: active-query-2
+      title: users length
+      mql: users
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 3)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+		// data queries or not added by their code ID but by their MRN
+		require.NotNil(t, qrIdToRj[b.Queries[1].Mrn])
+		require.Len(t, qrIdToRj[b.Queries[1].Mrn].Mrns, 2)
+		require.Equal(t, queryMrn("active-query"), qrIdToRj[b.Queries[1].Mrn].Mrns[0])
+		require.Equal(t, queryMrn("active-query-2"), qrIdToRj[b.Queries[1].Mrn].Mrns[1])
+
+		require.Len(t, qrIdToRj[b.Queries[2].Mrn].Mrns, 2)
+		require.Equal(t, queryMrn("active-query"), qrIdToRj[b.Queries[2].Mrn].Mrns[0])
+		require.Equal(t, queryMrn("active-query-2"), qrIdToRj[b.Queries[2].Mrn].Mrns[1])
+	})
+}
+
+func TestResolve_TwoMrns_Variants(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - checks:
+    - uid: check-variants
+queries:
+  - uid: check-variants
+    variants:
+      - uid: variant1
+      - uid: variant2
+  - uid: variant1
+    mql: asset.name == "test1"
+    filters: asset.family.contains("unix")
+  - uid: variant2
+    mql: asset.name == "test1"
+    filters: asset.name == "asset1"
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve two variants to different codeIDs matching filter", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn: policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{
+				{Mql: "asset.name == \"asset1\""},
+				{Mql: "asset.family.contains(\"unix\")"},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 1)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 4)
+
+		qrIdToRj := map[string]*policy.ReportingJob{}
+		for _, rj := range rp.CollectorJob.ReportingJobs {
+			qrIdToRj[rj.QrId] = rj
+		}
+		// scoring queries report by code id
+		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
+		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Mrns, 2)
+		require.Equal(t, queryMrn("variant1"), qrIdToRj[b.Queries[1].CodeId].Mrns[0])
+		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[1].CodeId].Mrns[1])
+
+		require.Len(t, qrIdToRj[b.Queries[2].CodeId].Mrns, 2)
+		require.Equal(t, queryMrn("variant1"), qrIdToRj[b.Queries[2].CodeId].Mrns[0])
+		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[2].CodeId].Mrns[1])
 	})
 }
