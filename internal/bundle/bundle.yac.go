@@ -1180,13 +1180,14 @@ func (d PolicyGroupDocs) MarshalYAML() (interface{}, error) {
 }
 
 type PolicyRef struct {
-	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
-	Checksum    string      `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
-	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Impact      *Impact     `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
-	FileContext FileContext `json:"-" yaml:"-"`
-	Comments    Comments    `json:"-" yaml:"-"`
+	Action        Action                 `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Checksum      string                 `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
+	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn           string                 `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Impact        *Impact                `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
+	ScoringSystem explorer.ScoringSystem `protobuf:"varint,42,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
+	FileContext   FileContext            `json:"-" yaml:"-"`
+	Comments      Comments               `json:"-" yaml:"-"`
 }
 
 func (x *PolicyRef) UnmarshalYAML(node *yaml.Node) error {

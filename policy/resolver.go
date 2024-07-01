@@ -359,7 +359,7 @@ type resolverCache struct {
 
 	reportingJobsByUUID   map[string]*ReportingJob
 	reportingJobsByMsum   map[string][]*ReportingJob // Msum == Mquery.Checksum, i.e. only reporting jobs for mqueries
-	reportingJobsByCodeId map[string][]*ReportingJob // CodeId == check.CodeId
+	reportingJobsByCodeId map[string][]*ReportingJob // CodeId == Mquery.CodeId
 	reportingJobsActive   map[string]bool
 	errors                []*policyResolutionError
 	bundleMap             *PolicyBundleMap
