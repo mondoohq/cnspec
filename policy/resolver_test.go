@@ -240,6 +240,66 @@ policies:
 	})
 }
 
+func TestResolve_PolicyActionScoringSystem(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy-active
+      scoring_system: 6
+    - uid: policy-ignored
+      action: 4
+- uid: policy-active
+  owner_mrn: //test.sth
+  scoring_system: 2
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset.arch
+- uid: policy-ignored
+  owner_mrn: //test.sth
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset.arch
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy-active"), policyMrn("policy-ignored")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with scoring system", func(t *testing.T) {
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
+		ignoreJob := rp.CollectorJob.ReportingJobs["WVDbd6CWW30="]
+		require.NotNil(t, ignoreJob)
+		childJob := ignoreJob.ChildJobs["7Q8ymKH8W5c="]
+		require.NotNil(t, childJob)
+		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
+		activeJob := rp.CollectorJob.ReportingJobs["/w4u/z6FEsI="]
+		require.NotNil(t, activeJob)
+		require.Equal(t, explorer.ScoringSystem_BANDED, activeJob.ScoringSystem)
+	})
+}
+
 func TestResolve_DisabledQuery(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth

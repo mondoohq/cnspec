@@ -31,9 +31,11 @@ const (
 )
 
 type AssetMutation struct {
-	AssetMrn         string
-	PolicyActions    map[string]explorer.Action
-	FrameworkActions map[string]explorer.Action
+	AssetMrn            string
+	PolicyMrns          []string
+	FrameworkMrns       []string
+	Action              explorer.Action
+	PolicyScoringSystem explorer.ScoringSystem
 }
 
 // Assign a policy to an asset
@@ -70,22 +72,12 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 		return nil, err
 	}
 
-	policyActions := map[string]explorer.Action{}
-	for i := range assignment.PolicyMrns {
-		policyMrn := assignment.PolicyMrns[i]
-		policyActions[policyMrn] = assignment.Action
-	}
-
-	frameworkActions := map[string]explorer.Action{}
-	for i := range assignment.FrameworkMrns {
-		frameworkMrn := assignment.FrameworkMrns[i]
-		frameworkActions[frameworkMrn] = assignment.Action
-	}
-
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
-		AssetMrn:         assignment.AssetMrn,
-		PolicyActions:    policyActions,
-		FrameworkActions: frameworkActions,
+		AssetMrn:            assignment.AssetMrn,
+		PolicyMrns:          assignment.PolicyMrns,
+		FrameworkMrns:       assignment.FrameworkMrns,
+		Action:              assignment.Action,
+		PolicyScoringSystem: assignment.ScoringSystem,
 	}, true)
 	return globalEmpty, err
 }
@@ -101,22 +93,11 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 		return s.Upstream.PolicyResolver.Unassign(ctx, assignment)
 	}
 
-	policyActions := map[string]explorer.Action{}
-	for i := range assignment.PolicyMrns {
-		policyMrn := assignment.PolicyMrns[i]
-		policyActions[policyMrn] = explorer.Action_DEACTIVATE
-	}
-
-	frameworkActions := map[string]explorer.Action{}
-	for i := range assignment.FrameworkMrns {
-		frameworkMrn := assignment.FrameworkMrns[i]
-		frameworkActions[frameworkMrn] = explorer.Action_DEACTIVATE
-	}
-
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
-		AssetMrn:         assignment.AssetMrn,
-		PolicyActions:    policyActions,
-		FrameworkActions: frameworkActions,
+		AssetMrn:      assignment.AssetMrn,
+		PolicyMrns:    assignment.PolicyMrns,
+		FrameworkMrns: assignment.FrameworkMrns,
+		Action:        explorer.Action_DEACTIVATE,
 	}, true)
 	return globalEmpty, err
 }
@@ -913,6 +894,11 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 				return errors.New("cannot find policy '" + policy.Mrn + "' while resolving")
 			}
 
+			scoringSystem := policyObj.ScoringSystem
+			if ss := policy.ScoringSystem; ss != explorer.ScoringSystem_SCORING_UNSPECIFIED {
+				scoringSystem = ss
+			}
+
 			// make sure this policy supports the selected filters, otherwise we
 			// don't need to include it
 			var found bool
@@ -945,7 +931,7 @@ func (s *LocalServices) policyGroupToJobs(ctx context.Context, group *PolicyGrou
 					Uuid:          cache.global.relativeChecksum(policy.Checksum),
 					ChildJobs:     map[string]*explorer.Impact{},
 					Datapoints:    map[string]bool{},
-					ScoringSystem: policyObj.ScoringSystem,
+					ScoringSystem: scoringSystem,
 					Type:          ReportingJob_POLICY,
 				}
 				cache.global.reportingJobsByUUID[policyJob.Uuid] = policyJob
