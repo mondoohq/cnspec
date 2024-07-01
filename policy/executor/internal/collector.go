@@ -44,6 +44,7 @@ type BufferedCollector struct {
 	collector      *PolicyServiceCollector
 	resolvedPolicy *policy.ResolvedPolicy
 	riskMRNs       map[string][]string
+	keepQrIds      map[string]bool
 	duration       time.Duration
 	stopChan       chan struct{}
 	wg             sync.WaitGroup
@@ -55,29 +56,34 @@ func WithResolvedPolicy(resolved *policy.ResolvedPolicy) (BufferedCollectorOpt, 
 	// TODO: need a more native way to integrate this part. We don't want to
 	// introduce a score type.
 	riskMRNs := map[string][]string{}
+	keepQrIds := map[string]bool{}
 	for _, rj := range resolved.CollectorJob.ReportingJobs {
-		if rj.Type != policy.ReportingJob_RISK_FACTOR {
-			continue
-		}
+		if rj.Type == policy.ReportingJob_RISK_FACTOR {
+			for k := range rj.ChildJobs {
+				cjob := resolved.CollectorJob.ReportingJobs[k]
+				if resolved.CollectorJob.RiskMrns == nil {
+					return nil, errors.New("missing query MRNs in resolved policy")
+				}
 
-		for k := range rj.ChildJobs {
-			cjob := resolved.CollectorJob.ReportingJobs[k]
-			if resolved.CollectorJob.RiskMrns == nil {
-				return nil, errors.New("missing query MRNs in resolved policy")
+				mrns := resolved.CollectorJob.RiskMrns[cjob.Uuid]
+				if mrns == nil {
+					return nil, errors.New("missing query MRNs for job uuid=" + cjob.Uuid + " checksum=" + cjob.Checksum)
+				}
+
+				riskMRNs[cjob.QrId] = append(riskMRNs[cjob.QrId], mrns.Items...)
 			}
-
-			mrns := resolved.CollectorJob.RiskMrns[cjob.Uuid]
-			if mrns == nil {
-				return nil, errors.New("missing query MRNs for job uuid=" + cjob.Uuid + " checksum=" + cjob.Checksum)
+		} else {
+			for k := range rj.ChildJobs {
+				cjob := resolved.CollectorJob.ReportingJobs[k]
+				keepQrIds[cjob.QrId] = true
 			}
-
-			riskMRNs[cjob.QrId] = append(riskMRNs[cjob.QrId], mrns.Items...)
 		}
 	}
 
 	return func(b *BufferedCollector) {
 		b.resolvedPolicy = resolved
 		b.riskMRNs = riskMRNs
+		b.keepQrIds = keepQrIds
 	}, nil
 }
 
@@ -132,10 +138,11 @@ func (c *BufferedCollector) run() {
 			}
 
 			for _, s := range c.scores {
-				if c.consumeRisk(s, risksIdx) {
-					continue
+				consumedRisk := c.consumeRisk(s, risksIdx)
+				shouldKeepIfConsumed := c.keepQrIds[s.QrId]
+				if !consumedRisk || shouldKeepIfConsumed {
+					scores = append(scores, s)
 				}
-				scores = append(scores, s)
 			}
 			for k := range c.scores {
 				delete(c.scores, k)
