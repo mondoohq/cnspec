@@ -71,6 +71,10 @@ func TestAverageScores(t *testing.T) {
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Disabled},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
+				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				nil, nil, nil, nil, nil, {Action: explorer.Action_IGNORE},
 			},
 			out: &Score{Value: 60, ScoreCompletion: 40, DataCompletion: 59, DataTotal: 10, Weight: 6, Type: ScoreType_Result},
 		},
@@ -114,6 +118,10 @@ func TestWeightedScores(t *testing.T) {
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Disabled},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
+				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				nil, nil, nil, nil, nil, {Action: explorer.Action_IGNORE},
 			},
 			out: &Score{Value: 68, ScoreCompletion: 40, DataCompletion: 59, Weight: 6, Type: ScoreType_Result},
 		},
@@ -157,6 +165,10 @@ func TestWorstScores(t *testing.T) {
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Disabled},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
+				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				nil, nil, nil, nil, nil, {Action: explorer.Action_IGNORE},
 			},
 			out: &Score{Value: 20, ScoreCompletion: 40, DataCompletion: 59, Weight: 6, Type: ScoreType_Result},
 		},
@@ -198,6 +210,7 @@ func TestBandedScores(t *testing.T) {
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 8, Type: ScoreType_Result},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Disabled},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
+				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
 			impacts: []*explorer.Impact{
 				// 2 critical checks
@@ -207,6 +220,7 @@ func TestBandedScores(t *testing.T) {
 				{Value: &explorer.ImpactValue{Value: 20}},
 				{Value: &explorer.ImpactValue{Value: 100}},
 				{Value: &explorer.ImpactValue{Value: 100}},
+				{Action: explorer.Action_IGNORE},
 			},
 			out: &Score{Value: 25, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
 		},
@@ -262,6 +276,7 @@ func TestDecayedScores(t *testing.T) {
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 8, Type: ScoreType_Result},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Disabled},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
+				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
 			impacts: []*explorer.Impact{
 				// 2 critical checks
@@ -271,6 +286,7 @@ func TestDecayedScores(t *testing.T) {
 				{Value: &explorer.ImpactValue{Value: 20}},
 				{Value: &explorer.ImpactValue{Value: 100}},
 				{Value: &explorer.ImpactValue{Value: 100}},
+				{Action: explorer.Action_IGNORE},
 			},
 			out: &Score{Value: 61, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
 		},
