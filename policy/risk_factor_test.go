@@ -5,6 +5,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"testing"
 
@@ -46,9 +47,11 @@ func genRiskFactor1() RiskFactor {
 				Mql: "2 == 2",
 			},
 		},
-		Scope:      ScopeType_SOFTWARE_AND_RESOURCE,
-		Magnitude:  0.5,
-		IsAbsolute: true,
+		Scope: ScopeType_SOFTWARE_AND_RESOURCE,
+		Magnitude: &RiskMagnitude{
+			Value:   0.5,
+			IsToxic: true,
+		},
 		Software: []*SoftwareSelector{{
 			Name:    "mypackage",
 			Version: "1.2.3",
@@ -75,7 +78,7 @@ func TestRiskFactor_Checksums(t *testing.T) {
 			return rf
 		},
 		func(rf RiskFactor) RiskFactor {
-			rf.Magnitude = 0.5
+			rf.Magnitude.Value = 0.5
 			return rf
 		},
 	}
@@ -138,12 +141,12 @@ func TestRiskFactor_Checksums(t *testing.T) {
 		},
 		// 4
 		func(rf RiskFactor) RiskFactor {
-			rf.IsAbsolute = false
+			rf.Magnitude.IsToxic = false
 			return rf
 		},
 		// 5
 		func(rf RiskFactor) RiskFactor {
-			rf.Magnitude = 0.7
+			rf.Magnitude.Value = 0.7
 			return rf
 		},
 	}
@@ -162,9 +165,9 @@ func TestRiskFactor_Checksums(t *testing.T) {
 
 func TestRiskFactor_AdjustRiskScoreMultiple(t *testing.T) {
 	rfs := []*RiskFactor{
-		{Magnitude: 0.2},
-		{Magnitude: 0.3},
-		{Magnitude: 0.4},
+		{Magnitude: &RiskMagnitude{Value: 0.2}},
+		{Magnitude: &RiskMagnitude{Value: 0.3}},
+		{Magnitude: &RiskMagnitude{Value: 0.4}},
 	}
 	a := &Score{RiskScore: 30}
 	rfs[0].AdjustRiskScore(a, false)
@@ -191,78 +194,78 @@ func TestRiskFactor_AdjustRiskScore(t *testing.T) {
 	}{
 		// Relative, increase risk
 		{
-			risk:     RiskFactor{Magnitude: 0.4},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: 0.4}},
 			score:    Score{RiskScore: 40},
 			onDetect: Score{RiskScore: 40, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.4, IsDetected: true})},
 			onFail:   Score{RiskScore: 64, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 		},
 		{
-			risk:     RiskFactor{Mrn: "internet-facing", Magnitude: 0.4},
+			risk:     RiskFactor{Mrn: "internet-facing", Magnitude: &RiskMagnitude{Value: 0.4}},
 			score:    Score{RiskScore: 10},
 			onDetect: Score{RiskScore: 10, RiskFactors: risks(&ScoredRiskFactor{Mrn: "internet-facing", Risk: 0.4, IsDetected: true})},
 			onFail:   Score{RiskScore: 45, RiskFactors: risks(&ScoredRiskFactor{Mrn: "internet-facing", Risk: -0.4})},
 		},
 		{
-			risk:     RiskFactor{Magnitude: 0.4},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: 0.4}},
 			score:    Score{RiskScore: 90},
 			onDetect: Score{RiskScore: 90, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.4, IsDetected: true})},
 			onFail:   Score{RiskScore: 94, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4})},
 		},
 		// Absolute, decrease risk
 		{
-			risk:     RiskFactor{Magnitude: -0.4},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: -0.4}},
 			score:    Score{RiskScore: 40},
 			onDetect: Score{RiskScore: 64, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4, IsDetected: true})},
 			onFail:   Score{RiskScore: 40},
 		},
 		{
-			risk:     RiskFactor{Magnitude: -0.4},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: -0.4}},
 			score:    Score{RiskScore: 10},
 			onDetect: Score{RiskScore: 45, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4, IsDetected: true})},
 			onFail:   Score{RiskScore: 10},
 		},
 		{
-			risk:     RiskFactor{Magnitude: -0.4},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: -0.4}},
 			score:    Score{RiskScore: 90},
 			onDetect: Score{RiskScore: 94, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.4, IsDetected: true})},
 			onFail:   Score{RiskScore: 90},
 		},
 		// Absolute, increase risk
 		{
-			risk:     RiskFactor{Magnitude: 0.2, IsAbsolute: true},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: 0.2, IsToxic: true}},
 			score:    Score{RiskScore: 40},
-			onDetect: Score{RiskScore: 20, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsAbsolute: true, IsDetected: true})},
+			onDetect: Score{RiskScore: 20, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsToxic: true, IsDetected: true})},
 			onFail:   Score{RiskScore: 40},
 		},
 		{
-			risk:     RiskFactor{Magnitude: 0.2, IsAbsolute: true},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: 0.2, IsToxic: true}},
 			score:    Score{RiskScore: 10},
-			onDetect: Score{RiskScore: 0, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsAbsolute: true, IsDetected: true})},
+			onDetect: Score{RiskScore: 0, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsToxic: true, IsDetected: true})},
 			onFail:   Score{RiskScore: 10},
 		},
 		{
-			risk:     RiskFactor{Magnitude: 0.2, IsAbsolute: true},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: 0.2, IsToxic: true}},
 			score:    Score{RiskScore: 90},
-			onDetect: Score{RiskScore: 70, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsAbsolute: true, IsDetected: true})},
+			onDetect: Score{RiskScore: 70, RiskFactors: risks(&ScoredRiskFactor{Risk: 0.2, IsToxic: true, IsDetected: true})},
 			onFail:   Score{RiskScore: 90},
 		},
 		// Absolute, decrease risk
 		{
-			risk:     RiskFactor{Magnitude: -0.2, IsAbsolute: true},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: -0.2, IsToxic: true}},
 			score:    Score{RiskScore: 40},
-			onDetect: Score{RiskScore: 60, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsAbsolute: true, IsDetected: true})},
+			onDetect: Score{RiskScore: 60, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsToxic: true, IsDetected: true})},
 			onFail:   Score{RiskScore: 40},
 		},
 		{
-			risk:     RiskFactor{Magnitude: -0.2, IsAbsolute: true},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: -0.2, IsToxic: true}},
 			score:    Score{RiskScore: 10},
-			onDetect: Score{RiskScore: 30, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsAbsolute: true, IsDetected: true})},
+			onDetect: Score{RiskScore: 30, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsToxic: true, IsDetected: true})},
 			onFail:   Score{RiskScore: 10},
 		},
 		{
-			risk:     RiskFactor{Magnitude: -0.2, IsAbsolute: true},
+			risk:     RiskFactor{Magnitude: &RiskMagnitude{Value: -0.2, IsToxic: true}},
 			score:    Score{RiskScore: 90},
-			onDetect: Score{RiskScore: 100, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsAbsolute: true, IsDetected: true})},
+			onDetect: Score{RiskScore: 100, RiskFactors: risks(&ScoredRiskFactor{Risk: -0.2, IsToxic: true, IsDetected: true})},
 			onFail:   Score{RiskScore: 90},
 		},
 	}
@@ -302,4 +305,45 @@ func TestScoredRiskFactors_Add(t *testing.T) {
 		{Mrn: "//mrn2", Risk: -0.4},
 		{Mrn: "//mrn3", Risk: -0.9},
 	}, risks.Items)
+}
+
+func TestUnmarshal(t *testing.T) {
+	testCases := []struct {
+		json string
+		risk RiskFactor
+	}{
+		{
+			json: `{"magnitude": 0.5}`,
+			risk: RiskFactor{Magnitude: &RiskMagnitude{Value: 0.5}},
+		},
+		{
+			json: `{"magnitude": 0.5, "is_absolute": true}`,
+			risk: RiskFactor{Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: true}},
+		},
+		{
+			json: `{"magnitude": 0.5, "is_absolute": false}`,
+			risk: RiskFactor{Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: false}},
+		},
+		{
+			json: `{"magnitude": {"value": 0.5, "is_toxic": true}}`,
+			risk: RiskFactor{Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: true}},
+		},
+		{
+			json: `{"magnitude": {"value": 0.5, "is_toxic": false}}`,
+			risk: RiskFactor{Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: false}},
+		},
+		{
+			json: `{"magnitude": {"value": 0.5}, "is_absolute": true}`,
+			risk: RiskFactor{Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: true}},
+		},
+	}
+
+	for i := range testCases {
+		t.Run("test#"+strconv.Itoa(i), func(t *testing.T) {
+			var risk RiskFactor
+			err := json.Unmarshal([]byte(testCases[i].json), &risk)
+			require.NoError(t, err)
+			assert.Equal(t, &testCases[i].risk, &risk)
+		})
+	}
 }

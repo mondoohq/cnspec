@@ -17,7 +17,7 @@ import (
 func main() {
 	res := yacit.New(yacit.YacItConfig{
 		SkipUnmarshal: []string{
-			"Impact", "ImpactValue", "Filters", "Remediation",
+			"Impact", "ImpactValue", "Filters", "Remediation", "RiskMagnitude",
 		},
 		Package: "bundle",
 		// field names with sort weight
