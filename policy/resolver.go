@@ -348,7 +348,7 @@ type resolverCache struct {
 	assetFiltersChecksum string
 	assetFilters         map[string]struct{}
 	codeIdToMrn          map[string][]string
-
+	riskFactors          map[string]*RiskFactor
 	// assigned queries, listed by their UUID (i.e. policy context)
 	executionQueries map[string]*ExecutionQuery
 	dataQueries      map[string]struct{}
@@ -528,6 +528,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		reportingJobsByMsum:   map[string][]*ReportingJob{},
 		reportingJobsByCodeId: map[string][]*ReportingJob{},
 		reportingJobsActive:   map[string]bool{},
+		riskFactors:           map[string]*RiskFactor{},
 		bundleMap:             bundleMap,
 		compilerConfig:        conf,
 	}
@@ -543,6 +544,14 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 
 	cache.reportingJobsByUUID[reportingJob.Uuid] = reportingJob
+
+	if err := s.collectRisks(ctx, cache, bundleMrn); err != nil {
+		logCtx.Error().
+			Err(err).
+			Str("bundle", bundleMrn).
+			Msg("resolver> internal error, trying to collect risk modifications")
+		return nil, err
+	}
 
 	// phase 2: optimizations for assets
 	// assets are always connected to a space, so figure out if a space policy exists
@@ -710,6 +719,37 @@ func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJo
 	}
 }
 
+func (s *LocalServices) collectRisks(ctx context.Context, cache *resolverCache, policyMrn string) error {
+	policyObj, ok := cache.bundleMap.Policies[policyMrn]
+	if !ok || policyObj == nil {
+		return errors.New("cannot find policy '" + policyMrn + "' while resolving")
+	}
+
+	for _, g := range policyObj.Groups {
+		for _, p := range g.Policies {
+			if err := s.collectRisks(ctx, cache, p.Mrn); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, rf := range policyObj.RiskFactors {
+		s.mergeRisk(cache, rf)
+	}
+
+	return nil
+}
+
+func (s *LocalServices) mergeRisk(cache *resolverCache, riskFactor *RiskFactor) {
+	if existing, ok := cache.riskFactors[riskFactor.Mrn]; ok {
+		if riskFactor.Magnitude != nil {
+			existing.Magnitude = riskFactor.Magnitude
+		}
+	} else {
+		cache.riskFactors[riskFactor.Mrn] = riskFactor
+	}
+}
+
 func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, ownerJob *ReportingJob,
 	parentCache *policyResolverCache, now time.Time,
 ) error {
@@ -803,8 +843,11 @@ func (s *LocalServices) policyToJobs(ctx context.Context, policyMrn string, owne
 
 func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJob *ReportingJob, cache *policyResolverCache) error {
 	matchingRisks := map[string]*RiskFactor{}
-	for i := range policy.RiskFactors {
-		rf := policy.RiskFactors[i]
+	for _, policyRf := range policy.RiskFactors {
+		rf := cache.global.riskFactors[policyRf.Mrn]
+		if rf == nil {
+			return errors.New("cannot find risk factor '" + policyRf.Mrn + "' while resolving")
+		}
 		if rf.Filters != nil {
 			for j := range rf.Filters.Items {
 				filter := rf.Filters.Items[j]
@@ -820,21 +863,35 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 	}
 
 	for _, risk := range matchingRisks {
+		magnitude := risk.Magnitude
+
 		cache.global.riskInfos[risk.Mrn] = &RiskFactor{
 			Scope:                   risk.Scope,
-			Magnitude:               risk.Magnitude,
+			Magnitude:               magnitude,
 			Resources:               risk.Resources,
-			DeprecatedV11Magnitude:  risk.GetMagnitude().GetValue(),
-			DeprecatedV11IsAbsolute: risk.GetMagnitude().GetIsToxic(),
+			DeprecatedV11Magnitude:  magnitude.GetValue(),
+			DeprecatedV11IsAbsolute: magnitude.GetIsToxic(),
+		}
+
+		rjUuid := cache.global.relativeChecksum(risk.Mrn)
+
+		if riskJob := cache.global.reportingJobsByUUID[rjUuid]; riskJob != nil {
+			ownerJob.ChildJobs[riskJob.Uuid] = &explorer.Impact{
+				Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+			}
+
+			riskJob.Notify = append(riskJob.Notify, ownerJob.Uuid)
+			continue
 		}
 
 		riskJob := &ReportingJob{
 			QrId:      risk.Mrn,
-			Uuid:      cache.global.relativeChecksum(risk.Mrn),
+			Uuid:      rjUuid,
 			ChildJobs: map[string]*explorer.Impact{},
 			Type:      ReportingJob_RISK_FACTOR,
 			Notify:    []string{ownerJob.Uuid},
 		}
+
 		cache.global.reportingJobsByUUID[riskJob.Uuid] = riskJob
 		ownerJob.ChildJobs[riskJob.Uuid] = &explorer.Impact{
 			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
