@@ -1601,21 +1601,22 @@ func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type RiskFactor struct {
-	Checksum    string              `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
-	Scope       ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty" yaml:"scope,omitempty"`
-	Magnitude   float32             `protobuf:"fixed32,71,opt,name=magnitude,proto3" json:"magnitude,omitempty" yaml:"magnitude,omitempty"`
-	IsAbsolute  bool                `protobuf:"varint,72,opt,name=is_absolute,json=isAbsolute,proto3" json:"is_absolute,omitempty" yaml:"is_absolute,omitempty"`
-	Software    []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
-	Resources   []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
-	Indicator   string              `protobuf:"bytes,75,opt,name=indicator,proto3" json:"indicator,omitempty" yaml:"indicator,omitempty"`
-	Uid         string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	Mrn         string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Title       string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
-	Filters     *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
-	Checks      []*Mquery           `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
-	Docs        *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
-	FileContext FileContext         `json:"-" yaml:"-"`
-	Comments    Comments            `json:"-" yaml:"-"`
+	Checksum                string              `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
+	Scope                   ScopeType           `protobuf:"varint,70,opt,name=scope,proto3,enum=cnspec.policy.v1.ScopeType" json:"scope,omitempty" yaml:"scope,omitempty"`
+	DeprecatedV11Magnitude  float32             `protobuf:"fixed32,71,opt,name=deprecated_v11_magnitude,json=deprecatedV11Magnitude,proto3" json:"deprecated_v11_magnitude,omitempty" yaml:"deprecated_v11_magnitude,omitempty"`
+	DeprecatedV11IsAbsolute bool                `protobuf:"varint,72,opt,name=deprecated_v11_is_absolute,json=deprecatedV11IsAbsolute,proto3" json:"deprecated_v11_is_absolute,omitempty" yaml:"deprecated_v11_is_absolute,omitempty"`
+	Magnitude               *RiskMagnitude      `protobuf:"bytes,76,opt,name=magnitude,proto3" json:"magnitude,omitempty" yaml:"magnitude,omitempty"`
+	Software                []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
+	Resources               []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
+	Indicator               string              `protobuf:"bytes,75,opt,name=indicator,proto3" json:"indicator,omitempty" yaml:"indicator,omitempty"`
+	Uid                     string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn                     string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Title                   string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Filters                 *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
+	Checks                  []*Mquery           `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
+	Docs                    *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	FileContext             FileContext         `json:"-" yaml:"-"`
+	Comments                Comments            `json:"-" yaml:"-"`
 }
 
 func (x *RiskFactor) UnmarshalYAML(node *yaml.Node) error {
@@ -1709,6 +1710,21 @@ func (d RiskFactorDocs) MarshalYAML() (interface{}, error) {
 	node.LineComment = d.Comments.LineComment
 	node.FootComment = d.Comments.FootComment
 	return node, nil
+}
+
+type RiskMagnitude struct {
+	Value       float32     `protobuf:"fixed32,1,opt,name=value,proto3" json:"value,omitempty" yaml:"value,omitempty"`
+	IsToxic     bool        `protobuf:"varint,2,opt,name=is_toxic,json=isToxic,proto3" json:"is_toxic,omitempty" yaml:"is_toxic,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *RiskMagnitude) addFileContext(node *yaml.Node) {
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 
 type ScopeType policy.ScopeType

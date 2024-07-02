@@ -539,8 +539,8 @@ func (db *Db) GetScoredRisks(ctx context.Context, assetMrn string) (*policy.Scor
 			return nil, errors.New("cannot find risk metadata for " + risk.Mrn)
 		}
 		riskInfo := raw.(*policy.RiskFactor)
-		srisk.IsAbsolute = riskInfo.IsAbsolute
-		srisk.Risk = riskInfo.Magnitude
+		srisk.IsToxic = riskInfo.GetMagnitude().GetIsToxic()
+		srisk.Risk = riskInfo.GetMagnitude().GetValue()
 		if !risk.IsDetected {
 			srisk.Risk *= -1
 		}
