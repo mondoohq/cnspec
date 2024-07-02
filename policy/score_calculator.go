@@ -113,13 +113,17 @@ func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
 
 func (c *averageScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
-	case ScoreType_Skip:
+	case ScoreType_Skip, ScoreType_Disabled, ScoreType_OutOfScope:
 		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
+		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+			return
+		}
+
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 		c.weight += score.Weight
@@ -226,13 +230,17 @@ func (c *weightedScoreCalculator) Init() {
 
 func (c *weightedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
-	case ScoreType_Skip:
+	case ScoreType_Skip, ScoreType_Disabled, ScoreType_OutOfScope:
 		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
+		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+			return
+		}
+
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 		c.weight += score.Weight
@@ -332,13 +340,17 @@ func (c *worstScoreCalculator) Init() {
 
 func (c *worstScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
-	case ScoreType_Skip:
+	case ScoreType_Skip, ScoreType_Disabled, ScoreType_OutOfScope:
 		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
+		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+			return
+		}
+
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 		c.weight += score.Weight
@@ -452,13 +464,17 @@ func (c *bandedScoreCalculator) Init() {
 
 func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
-	case ScoreType_Skip:
+	case ScoreType_Skip, ScoreType_OutOfScope, ScoreType_Disabled:
 		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
+		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+			return
+		}
+
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 		c.weight += score.Weight
@@ -623,13 +639,17 @@ func (c *decayedScoreCalculator) Init() {
 
 func (c *decayedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 	switch score.Type {
-	case ScoreType_Skip:
+	case ScoreType_Skip, ScoreType_OutOfScope, ScoreType_Disabled:
 		return
 	case ScoreType_Unscored:
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
+		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+			return
+		}
+
 		c.dataCompletion += score.DataCompletion * score.DataTotal
 		c.dataTotal += score.DataTotal
 		c.weight += score.Weight
