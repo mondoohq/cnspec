@@ -102,3 +102,30 @@ func GetSpace(ctx context.Context, c *gql.MondooClient, mrn string) (*Space, err
 	}
 	return &q.Space, nil
 }
+
+type Framework struct {
+	Authors []struct {
+		Name  string
+		Email string
+	} `graphql:"authors"`
+	Name    string
+	Mrn     string
+	State   mondoogql.ComplianceFrameworkState
+	Version string
+}
+
+func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string) ([]*Framework, error) {
+	var q struct {
+		Frameworks []*Framework `graphql:"complianceFrameworks(input: $input)"`
+	}
+	err := c.Query(ctx, &q, map[string]any{
+		"input": mondoogql.ComplianceFrameworksInput{
+			ScopeMrn: mondoogql.String(scopeMrn),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return q.Frameworks, nil
+}
