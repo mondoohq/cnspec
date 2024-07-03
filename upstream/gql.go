@@ -129,3 +129,14 @@ func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string) (
 
 	return q.Frameworks, nil
 }
+
+func MutateFrameworkState(ctx context.Context, c *gql.MondooClient, mrn, scopeMrn string, action mondoogql.ComplianceFrameworkMutationAction) error {
+	var q struct {
+		Mutation bool `graphql:"applyFrameworkMutation(input: $input)"`
+	}
+	return c.Mutate(ctx, &q, mondoogql.ComplianceFrameworkMutationInput{
+		FrameworkMrn: mondoogql.String(mrn),
+		ScopeMrn:     mondoogql.String(scopeMrn),
+		Action:       action,
+	}, nil)
+}
