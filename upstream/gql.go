@@ -140,3 +140,22 @@ func MutateFrameworkState(ctx context.Context, c *gql.MondooClient, mrn, scopeMr
 		Action:       action,
 	}, nil)
 }
+
+func DownloadFramework(ctx context.Context, c *gql.MondooClient, mrn, scopeMrn string) (string, error) {
+	var q struct {
+		Download struct {
+			Yaml string
+		} `graphql:"downloadFramework(input: $input)"`
+	}
+	err := c.Query(ctx, &q, map[string]any{
+		"input": mondoogql.DownloadFrameworkInput{
+			Mrn:      mondoogql.String(mrn),
+			ScopeMrn: mondoogql.String(scopeMrn),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return q.Download.Yaml, nil
+}

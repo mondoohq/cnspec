@@ -22,9 +22,15 @@ const (
 func init() {
 	rootCmd.AddCommand(frameworkCmd)
 
+	// list
 	frameworkCmd.AddCommand(frameworkListCmd)
+	// preview
 	frameworkCmd.AddCommand(frameworkPreviewCmd)
+	// active
 	frameworkCmd.AddCommand(frameworkActiveCmd)
+	// download
+	frameworkDownloadCmd.Flags().StringP("file", "f", "", "output file")
+	frameworkCmd.AddCommand(frameworkDownloadCmd)
 }
 
 var frameworkCmd = &cobra.Command{
@@ -67,6 +73,50 @@ var frameworkListCmd = &cobra.Command{
 
 			fmt.Println(termenv.String("  " + framework.Mrn).Foreground(theme.DefaultTheme.Colors.Disabled))
 		}
+		return nil
+	},
+}
+
+var frameworkDownloadCmd = &cobra.Command{
+	Use:   "download [mrn]",
+	Short: "Download a compliance framework",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		outputFile, _ := cmd.Flags().GetString("file")
+		if outputFile == "" {
+			log.Error().Msgf("output file is required")
+			os.Exit(1)
+		}
+
+		opts, err := config.Read()
+		if err != nil {
+			log.Error().Msgf("failed to get config: %s", err)
+			os.Exit(1)
+		}
+		config.DisplayUsedConfig()
+
+		mondooClient, err := getGqlClient(opts)
+		if err != nil {
+			return err
+		}
+
+		frameworkMrn := args[0]
+		if !strings.HasPrefix(frameworkMrn, PolicyMrnPrefix) {
+			frameworkMrn = FrameworkMrnPrefix + "/" + frameworkMrn
+		}
+
+		data, err := cnspec_upstream.DownloadFramework(context.Background(), mondooClient, frameworkMrn, opts.GetParentMrn())
+		if err != nil {
+			log.Error().Msgf("failed to download compliance framework: %s", err)
+			os.Exit(1)
+		}
+
+		if err := os.WriteFile(outputFile, []byte(data), 0o644); err != nil {
+			log.Error().Msgf("failed to store framework: %s", err)
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully downloaded to ", outputFile))
+
 		return nil
 	},
 }
