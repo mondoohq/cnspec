@@ -5,6 +5,8 @@ package upstream
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
 	policy "go.mondoo.com/cnspec/v11/policy"
@@ -130,15 +132,16 @@ func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string) (
 	return q.Frameworks, nil
 }
 
-func MutateFrameworkState(ctx context.Context, c *gql.MondooClient, mrn, scopeMrn string, action mondoogql.ComplianceFrameworkMutationAction) error {
+func MutateFrameworkState(ctx context.Context, c *gql.MondooClient, mrn, scopeMrn string, action mondoogql.ComplianceFrameworkMutationAction) (bool, error) {
 	var q struct {
 		Mutation bool `graphql:"applyFrameworkMutation(input: $input)"`
 	}
-	return c.Mutate(ctx, &q, mondoogql.ComplianceFrameworkMutationInput{
+	err := c.Mutate(ctx, &q, mondoogql.ComplianceFrameworkMutationInput{
 		FrameworkMrn: mondoogql.String(mrn),
 		ScopeMrn:     mondoogql.String(scopeMrn),
 		Action:       action,
 	}, nil)
+	return q.Mutation, err
 }
 
 func DownloadFramework(ctx context.Context, c *gql.MondooClient, mrn, scopeMrn string) (string, error) {
@@ -158,4 +161,17 @@ func DownloadFramework(ctx context.Context, c *gql.MondooClient, mrn, scopeMrn s
 	}
 
 	return q.Download.Yaml, nil
+}
+
+func UploadFramework(ctx context.Context, c *gql.MondooClient, yaml []byte, spaceMrn string) (bool, error) {
+	var q struct {
+		Result bool `graphql:"uploadFramework(input: $input)"`
+	}
+
+	data := base64.StdEncoding.EncodeToString(yaml)
+	err := c.Mutate(ctx, &q, mondoogql.UploadFrameworkInput{
+		SpaceMrn: mondoogql.String(spaceMrn),
+		Dataurl:  mondoogql.String(fmt.Sprintf("data:application/octet-stream;base64,%s", data)),
+	}, nil)
+	return q.Result, err
 }

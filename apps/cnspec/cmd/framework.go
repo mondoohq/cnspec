@@ -31,6 +31,9 @@ func init() {
 	// download
 	frameworkDownloadCmd.Flags().StringP("file", "f", "", "output file")
 	frameworkCmd.AddCommand(frameworkDownloadCmd)
+	// upload
+	frameworkUploadCmd.Flags().StringP("file", "f", "", "input file")
+	frameworkCmd.AddCommand(frameworkUploadCmd)
 }
 
 var frameworkCmd = &cobra.Command{
@@ -121,6 +124,49 @@ var frameworkDownloadCmd = &cobra.Command{
 	},
 }
 
+var frameworkUploadCmd = &cobra.Command{
+	Use:   "upload [file]",
+	Short: "Upload a compliance framework",
+	Args:  cobra.ExactArgs(0),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		inputFile, _ := cmd.Flags().GetString("file")
+		if inputFile == "" {
+			log.Error().Msgf("output file is required")
+			os.Exit(1)
+		}
+
+		opts, err := config.Read()
+		if err != nil {
+			log.Error().Msgf("failed to get config: %s", err)
+			os.Exit(1)
+		}
+		config.DisplayUsedConfig()
+
+		mondooClient, err := getGqlClient(opts)
+		if err != nil {
+			return err
+		}
+
+		data, err := os.ReadFile(inputFile)
+		if err != nil {
+			log.Error().Msgf("failed to read file: %s", err)
+			os.Exit(1)
+		}
+
+		ok, err := cnspec_upstream.UploadFramework(context.Background(), mondooClient, data, opts.GetParentMrn())
+		if err != nil {
+			log.Error().Msgf("failed to upload compliance framework: %s", err)
+			os.Exit(1)
+		}
+		if !ok {
+			log.Error().Msgf("failed to upload compliance framework")
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully uploaded compliance framework"))
+		return nil
+	},
+}
+
 var frameworkPreviewCmd = &cobra.Command{
 	Use:   "preview [mrn]",
 	Short: "Change a framework status to preview",
@@ -141,12 +187,16 @@ var frameworkPreviewCmd = &cobra.Command{
 		if !strings.HasPrefix(frameworkMrn, PolicyMrnPrefix) {
 			frameworkMrn = FrameworkMrnPrefix + "/" + frameworkMrn
 		}
-		err = cnspec_upstream.MutateFrameworkState(
+		ok, err := cnspec_upstream.MutateFrameworkState(
 			context.Background(), mondooClient, frameworkMrn,
 			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionPreview,
 		)
 		if err != nil {
 			log.Error().Msgf("failed to set compliance framework to preview state in space: %s", err)
+			os.Exit(1)
+		}
+		if !ok {
+			log.Error().Msgf("failed to set compliance framework to preview state in space")
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to preview state in space"))
@@ -176,12 +226,16 @@ var frameworkActiveCmd = &cobra.Command{
 			frameworkMrn = FrameworkMrnPrefix + "/" + frameworkMrn
 		}
 
-		err = cnspec_upstream.MutateFrameworkState(
+		ok, err := cnspec_upstream.MutateFrameworkState(
 			context.Background(), mondooClient, frameworkMrn,
 			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionPreview,
 		)
 		if err != nil {
 			log.Error().Msgf("failed to set compliance framework to active state in space: %s", err)
+			os.Exit(1)
+		}
+		if !ok {
+			log.Error().Msgf("failed to set compliance framework to preview state in space")
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to active state in space"))
