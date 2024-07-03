@@ -9,8 +9,10 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v11/cli/config"
 	"go.mondoo.com/cnquery/v11/cli/theme"
+	"go.mondoo.com/cnspec/v11/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v11/upstream"
 	mondoogql "go.mondoo.com/mondoo-go"
 )
@@ -23,7 +25,10 @@ func init() {
 	rootCmd.AddCommand(frameworkCmd)
 
 	// list
+	frameworkListCmd.Flags().StringP("file", "f", "", "a local bundle file")
+	frameworkListCmd.Flags().BoolP("all", "a", false, "list all frameworks, not only the active ones (applicable only for upstream)")
 	frameworkCmd.AddCommand(frameworkListCmd)
+
 	// preview
 	frameworkCmd.AddCommand(frameworkPreviewCmd)
 	// active
@@ -45,27 +50,51 @@ var frameworkListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available compliance frameworks",
 	Args:  cobra.MaximumNArgs(0),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
+			return err
+		}
+		if err := viper.BindPFlag("all", cmd.Flags().Lookup("all")); err != nil {
+			return err
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		opts, err := config.Read()
-		if err != nil {
-			return err
-		}
-		config.DisplayUsedConfig()
+		bundleFile := viper.GetString("file")
+		var frameworks []*cnspec_upstream.UpstreamFramework
 
-		mondooClient, err := getGqlClient(opts)
-		if err != nil {
-			return err
-		}
+		if bundleFile != "" {
+			policyBundle, err := policy.DefaultBundleLoader().BundleFromPaths(bundleFile)
+			if err != nil {
+				return err
+			}
+			for _, f := range policyBundle.Frameworks {
+				frameworks = append(frameworks, &cnspec_upstream.UpstreamFramework{Framework: *f})
+			}
+		} else {
+			opts, err := config.Read()
+			if err != nil {
+				return err
+			}
+			config.DisplayUsedConfig()
 
-		frameworks, err := cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn())
-		if err != nil {
-			return err
+			mondooClient, err := getGqlClient(opts)
+			if err != nil {
+				return err
+			}
+
+			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn())
+			if err != nil {
+				return err
+			}
 		}
 
 		for _, framework := range frameworks {
 			extraInfo := []string{}
 			if framework.State == mondoogql.ComplianceFrameworkStateActive {
 				extraInfo = append(extraInfo, theme.DefaultTheme.Success("active"))
+			} else if framework.State == mondoogql.ComplianceFrameworkState("") {
+				extraInfo = append(extraInfo, theme.DefaultTheme.Disabled("local"))
 			}
 
 			extraInfoStr := ""
@@ -73,8 +102,11 @@ var frameworkListCmd = &cobra.Command{
 				extraInfoStr = " (" + strings.Join(extraInfo, ", ") + ")"
 			}
 			fmt.Println(framework.Name + " " + framework.Version + extraInfoStr)
-
-			fmt.Println(termenv.String("  " + framework.Mrn).Foreground(theme.DefaultTheme.Colors.Disabled))
+			id := framework.Uid
+			if framework.Mrn != "" {
+				id = framework.Mrn
+			}
+			fmt.Println(termenv.String("  " + id).Foreground(theme.DefaultTheme.Colors.Disabled))
 		}
 		return nil
 	},
