@@ -116,8 +116,14 @@ var frameworkDownloadCmd = &cobra.Command{
 	Use:   "download [mrn]",
 	Short: "Download a compliance framework",
 	Args:  cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
+			return err
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		outputFile, _ := cmd.Flags().GetString("file")
+		outputFile := viper.GetString("file")
 		if outputFile == "" {
 			log.Error().Msgf("output file is required")
 			os.Exit(1)
@@ -160,8 +166,14 @@ var frameworkUploadCmd = &cobra.Command{
 	Use:   "upload [file]",
 	Short: "Upload a compliance framework",
 	Args:  cobra.ExactArgs(0),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
+			return err
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		inputFile, _ := cmd.Flags().GetString("file")
+		inputFile := viper.GetString("file")
 		if inputFile == "" {
 			log.Error().Msgf("output file is required")
 			os.Exit(1)
