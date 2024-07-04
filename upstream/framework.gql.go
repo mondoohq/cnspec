@@ -20,7 +20,7 @@ type UpstreamFramework struct {
 	State mondoogql.ComplianceFrameworkState
 }
 
-func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string) ([]*UpstreamFramework, error) {
+func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string, state *mondoogql.ComplianceFrameworkState) ([]*UpstreamFramework, error) {
 	var q struct {
 		Frameworks []struct {
 			Mrn     string
@@ -32,6 +32,7 @@ func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string) (
 	err := c.Query(ctx, &q, map[string]any{
 		"input": mondoogql.ComplianceFrameworksInput{
 			ScopeMrn: mondoogql.String(scopeMrn),
+			State:    state,
 		},
 	})
 	if err != nil {

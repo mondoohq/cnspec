@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnspec/v11/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v11/upstream"
 	mondoogql "go.mondoo.com/mondoo-go"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -86,7 +87,12 @@ var frameworkListCmd = &cobra.Command{
 				return err
 			}
 
-			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn())
+			state := ptr.To(mondoogql.ComplianceFrameworkStateActive)
+			if viper.GetBool("all") {
+				state = nil
+			}
+
+			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn(), state)
 			if err != nil {
 				return err
 			}
