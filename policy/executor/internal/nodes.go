@@ -150,7 +150,7 @@ func (nodeData *ExecutionQueryNodeData) recalculate() *envelope {
 		nodeData.run()
 	}
 
-	// An empty evelope notifies the parent. These nodes always point at
+	// An empty envelope notifies the parent. These nodes always point at
 	// Datapoint nodes. The datapoint nodes don't need this message, and
 	// it actually makes more work for the datapoint node. The reason to
 	// send it is to uphold the contract of if something changes, we push

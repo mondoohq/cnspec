@@ -35,7 +35,7 @@ func printScore(score *policy.Score, mrn string, out iox.OutputHelper, prefix st
 	return true
 }
 
-// asssetPrintable is a snapshot of the fields that get exported
+// assetPrintable is a snapshot of the fields that get exported
 // when doing things like JSON output
 type assetPrintable struct {
 	Mrn          string `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty"`

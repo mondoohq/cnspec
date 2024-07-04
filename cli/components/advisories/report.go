@@ -208,7 +208,7 @@ func findVulnerablePackageWithoutNamespace(advisory *mvd.Advisory, installedPkg 
 	for i := range advisory.Fixed {
 		if advisory.Fixed[i].Name == installedPkg.Name || advisory.Fixed[i].Name == installedPkg.Origin {
 			// This currently works under the assumption, that the highest version is the last one in the list
-			// To not re-apply all the version comparison here, we ensure the orderning in the upstream data
+			// To not re-apply all the version comparison here, we ensure the ordering in the upstream data
 			match = advisory.Fixed[i]
 		}
 	}
