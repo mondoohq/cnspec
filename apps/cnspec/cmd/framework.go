@@ -94,6 +94,8 @@ var frameworkListCmd = &cobra.Command{
 
 			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn(), state)
 			if err != nil {
+				log.Error().Msgf("failed to list compliance frameworks: %s", err)
+				os.Exit(1)
 				return err
 			}
 		}
