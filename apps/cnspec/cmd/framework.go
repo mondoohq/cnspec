@@ -47,7 +47,7 @@ func init() {
 
 var frameworkCmd = &cobra.Command{
 	Use:   "framework",
-	Short: "Manage local and upstream compliance frameworks",
+	Short: "Manage local and Mondoo Platform hosted compliance frameworks",
 }
 
 var frameworkListCmd = &cobra.Command{
