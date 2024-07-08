@@ -244,7 +244,7 @@ func TestExecutionQueryNode(t *testing.T) {
 			assert.Nil(t, data)
 			select {
 			case <-q:
-				assert.Fail(t, "not ready for exectuion")
+				assert.Fail(t, "not ready for execution")
 			default:
 			}
 		})
@@ -305,7 +305,7 @@ func TestExecutionQueryNode(t *testing.T) {
 
 			select {
 			case <-q:
-				assert.Fail(t, "not ready for exectuion")
+				assert.Fail(t, "not ready for execution")
 			default:
 			}
 		})

@@ -25,7 +25,7 @@ func TestJsonConverter(t *testing.T) {
 
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
-	err = VulnReportToJSON("index.docker.io/ubutnu:focal-20220113", report, &writer)
+	err = VulnReportToJSON("index.docker.io/ubuntu:focal-20220113", report, &writer)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "\"cves\":[\"CVE-2021-43618\"]")

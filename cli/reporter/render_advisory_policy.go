@@ -215,7 +215,7 @@ func RenderVulnerabilityStats(vulnReport *mvd.VulnReport) string {
 			(float64(stats.Advisories.None) / float64(total)),
 		}
 
-		// only add unknown if it really happend
+		// only add unknown if it really happened
 		if vulnReport.Stats.Advisories.Unknown > 0 {
 			colorMap = append(colorMap, colors.DefaultColorTheme.Unknown)
 			labels = append(labels, "Unknown")

@@ -1600,7 +1600,7 @@ func (s *LocalServices) jobsToFrameworksInner(cache *frameworkResolverCache, res
 
 			if _, exist := parent.ChildJobs[reportingJob.Uuid]; !exist {
 				// If we already have a child job, we don't need to do anything
-				// In the case that its a space or asset, we defiently don't want to
+				// In the case that its a space or asset, we definitely don't want to
 				// overwrite it as that would change the scoring system
 				impact := &explorer.Impact{}
 				if parent.Type == ReportingJob_FRAMEWORK {
@@ -1703,7 +1703,7 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 				continue
 			}
 			execQuery := cache.executionQueries[mquery.Checksum]
-			// the data query may be part of the bundle, but it may not match the curent asset,
+			// the data query may be part of the bundle, but it may not match the current asset,
 			// which means it will not be part of the execution
 			if execQuery == nil {
 				continue

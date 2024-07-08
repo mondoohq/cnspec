@@ -29,7 +29,7 @@ func SearchPolicy(
 	ctx context.Context,
 	c *gql.MondooClient,
 	scopeMrn string,
-	assingedOnly,
+	assignedOnly,
 	includePublic,
 	includePrivate *bool,
 ) ([]*UpstreamPolicy, error) {
@@ -56,8 +56,8 @@ func SearchPolicy(
 		ScopeMrn:    mondoogql.String(scopeMrn),
 		CatalogType: mondoogql.CatalogType("POLICY"),
 	}
-	if assingedOnly != nil {
-		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assingedOnly))
+	if assignedOnly != nil {
+		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
 	}
 	if includePublic != nil {
 		input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))

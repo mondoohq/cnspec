@@ -597,10 +597,10 @@ framework_maps:
   controls:
   - uid: control4
     controls:
-    - uid: control1  
+    - uid: control1
   - uid: control5
     controls:
-    - uid: control1  
+    - uid: control1
 `
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
@@ -695,7 +695,7 @@ framework_maps:
 
 	t.Run("test resolving with inactive data queries", func(t *testing.T) {
 		// test that creating a bundle with inactive data queries  (where the packs/policies are inactive)
-		// will still end up in a succesfully resolved policy for the asset
+		// will still end up in a successfully resolved policy for the asset
 		bundleStr := `
 owner_mrn: //test.sth
 policies:

@@ -136,7 +136,7 @@ func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters [
 	var err error
 
 	// we may use the cached parents if this policy already exists i.e. if it's
-	// alrady referenced by others
+	// already referenced by others
 	parents := map[string]struct{}{}
 
 	x, exists := db.cache.Get(dbIDPolicy + policyObj.Mrn)
