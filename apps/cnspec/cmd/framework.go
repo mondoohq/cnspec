@@ -291,7 +291,7 @@ var frameworkActiveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		if !ok {
-			log.Error().Msgf("failed to set compliance framework to preview state in space")
+			log.Error().Msgf("failed to set compliance framework to active state in space")
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to active state in space"))
