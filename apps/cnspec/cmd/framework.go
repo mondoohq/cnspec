@@ -262,9 +262,10 @@ var frameworkPreviewCmd = &cobra.Command{
 }
 
 var frameworkActiveCmd = &cobra.Command{
-	Use:   "active [mrn]",
-	Short: "Change a framework status to active",
-	Args:  cobra.ExactArgs(1),
+	Use:     "active [mrn]",
+	Aliases: []string{"enable", "activate"},
+	Short:   "Change a framework status to active",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts, err := config.Read()
 		if err != nil {
