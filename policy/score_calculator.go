@@ -67,6 +67,28 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 		return
 	}
 
+	// everything else is modify or activate
+
+	if impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+		calculator.Add(&Score{
+			// We override the type because:
+			// 1. If it is set to Result, its value will be added to the total
+			// calculation in most calculators despite its weight.
+			// 2. We don't want to set it to unscored, because technically we
+			// just ignore the score.
+			// Thus we set the score to unknown for the sake of the calculator,
+			// thus it knows it is handling a scored result, but also knows not
+			// to count it.
+			Type:            ScoreType_Unknown,
+			Value:           score.Value,
+			Weight:          0,
+			ScoreCompletion: score.ScoreCompletion,
+			DataCompletion:  score.DataCompletion,
+			DataTotal:       score.DataTotal,
+		}, nil)
+		return
+	}
+
 	if impact.Weight > 0 {
 		score.Weight = uint32(impact.Weight)
 	} else if score.Weight == 0 {
