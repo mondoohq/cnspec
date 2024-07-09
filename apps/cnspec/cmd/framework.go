@@ -284,7 +284,7 @@ var frameworkActiveCmd = &cobra.Command{
 
 		ok, err := cnspec_upstream.MutateFrameworkState(
 			context.Background(), mondooClient, frameworkMrn,
-			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionPreview,
+			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionEnable,
 		)
 		if err != nil {
 			log.Error().Msgf("failed to set compliance framework to active state in space: %s", err)
