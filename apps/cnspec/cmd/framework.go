@@ -37,6 +37,8 @@ func init() {
 	frameworkCmd.AddCommand(frameworkPreviewCmd)
 	// active
 	frameworkCmd.AddCommand(frameworkActiveCmd)
+	// disabled
+	frameworkCmd.AddCommand(frameworkDisabledCmd)
 	// download
 	frameworkDownloadCmd.Flags().StringP("file", "f", "", "output file")
 	frameworkCmd.AddCommand(frameworkDownloadCmd)
@@ -105,6 +107,8 @@ var frameworkListCmd = &cobra.Command{
 			extraInfo := []string{}
 			if framework.State == mondoogql.ComplianceFrameworkStateActive {
 				extraInfo = append(extraInfo, theme.DefaultTheme.Success("active"))
+			} else if framework.State == mondoogql.ComplianceFrameworkStatePreview {
+				extraInfo = append(extraInfo, theme.DefaultTheme.PolicyPrinter.Yellow("preview"))
 			} else if framework.State == mondoogql.ComplianceFrameworkState("") {
 				extraInfo = append(extraInfo, theme.DefaultTheme.Disabled("local"))
 			}
