@@ -300,3 +300,43 @@ var frameworkActiveCmd = &cobra.Command{
 		return nil
 	},
 }
+
+var frameworkDisabledCmd = &cobra.Command{
+	Use:     "disabled [mrn]",
+	Aliases: []string{"disable"},
+	Short:   "Change a framework status to disabled",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts, err := config.Read()
+		if err != nil {
+			return err
+		}
+		config.DisplayUsedConfig()
+
+		mondooClient, err := getGqlClient(opts)
+		if err != nil {
+			return err
+		}
+
+		frameworkMrn := args[0]
+		if !strings.HasPrefix(frameworkMrn, PolicyMrnPrefix) {
+			frameworkMrn = FrameworkMrnPrefix + "/" + frameworkMrn
+		}
+
+		ok, err := cnspec_upstream.MutateFrameworkState(
+			context.Background(), mondooClient, frameworkMrn,
+			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionDisable,
+		)
+		if err != nil {
+			log.Error().Msgf("failed to set compliance framework to disabled state in space: %s", err)
+			os.Exit(1)
+		}
+		if !ok {
+			log.Error().Msgf("failed to set compliance framework to disabled state in space")
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to disabled state in space"))
+
+		return nil
+	},
+}
