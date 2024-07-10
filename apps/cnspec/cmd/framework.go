@@ -109,6 +109,8 @@ var frameworkListCmd = &cobra.Command{
 				extraInfo = append(extraInfo, theme.DefaultTheme.Success("active"))
 			} else if framework.State == mondoogql.ComplianceFrameworkStatePreview {
 				extraInfo = append(extraInfo, theme.DefaultTheme.PolicyPrinter.Yellow("preview"))
+			} else if framework.State == mondoogql.ComplianceFrameworkStateDisabled {
+				extraInfo = append(extraInfo, theme.DefaultTheme.Disabled("disabled"))
 			} else if framework.State == mondoogql.ComplianceFrameworkState("") {
 				extraInfo = append(extraInfo, theme.DefaultTheme.Disabled("local"))
 			}
