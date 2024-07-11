@@ -97,3 +97,22 @@ func UploadFramework(ctx context.Context, c *gql.MondooClient, yaml []byte, spac
 	}, nil)
 	return q.Result, err
 }
+
+func ForkFramework(ctx context.Context, c *gql.MondooClient, frameworkMrn, spaceMrn string, allEvidence *bool) (bool, error) {
+	var q struct {
+		Result bool `graphql:"forkFramework(input: $input)"`
+	}
+
+	input := mondoogql.ForkFrameworkInput{
+		Mrn:      mondoogql.String(frameworkMrn),
+		SpaceMrn: mondoogql.String(spaceMrn),
+	}
+	if allEvidence != nil {
+		input.AllEvidence = mondoogql.NewBooleanPtr(
+			mondoogql.Boolean(*allEvidence),
+		)
+	}
+
+	err := c.Mutate(ctx, &q, input, nil)
+	return q.Result, err
+}

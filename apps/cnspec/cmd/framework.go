@@ -43,6 +43,9 @@ func init() {
 	// upload
 	frameworkUploadCmd.Flags().StringP("file", "f", "", "input file")
 	frameworkCmd.AddCommand(frameworkUploadCmd)
+	// fork
+	frameworkForkCmd.Flags().BoolP("all-evidence", "a", false, "include all evidence in the forked framework")
+	frameworkCmd.AddCommand(frameworkForkCmd)
 }
 
 var frameworkCmd = &cobra.Command{
@@ -294,6 +297,52 @@ var frameworkActiveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to active state in space"))
+
+		return nil
+	},
+}
+
+var frameworkForkCmd = &cobra.Command{
+	Use:   "fork [mrn]",
+	Short: "Fork a compliance framework",
+	Args:  cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := viper.BindPFlag("all-evidence", cmd.Flags().Lookup("all-evidence")); err != nil {
+			return err
+		}
+		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts, err := config.Read()
+		if err != nil {
+			return err
+		}
+		config.DisplayUsedConfig()
+
+		mondooClient, err := getGqlClient(opts)
+		if err != nil {
+			return err
+		}
+
+		frameworkMrn := args[0]
+		if !strings.HasPrefix(frameworkMrn, PolicyMrnPrefix) {
+			frameworkMrn = FrameworkMrnPrefix + "/" + frameworkMrn
+		}
+
+		allEvidence := ptr.To(viper.GetBool("all-evidence"))
+		ok, err := cnspec_upstream.ForkFramework(
+			context.Background(), mondooClient, frameworkMrn,
+			opts.GetParentMrn(), allEvidence,
+		)
+		if err != nil {
+			log.Error().Msgf("failed to fork compliance framework in space: %s", err)
+			os.Exit(1)
+		}
+		if !ok {
+			log.Error().Msgf("failed to fork compliance framework in space")
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully forked compliance framework in space"))
 
 		return nil
 	},
