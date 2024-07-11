@@ -745,6 +745,11 @@ func (s *LocalServices) mergeRisk(cache *resolverCache, riskFactor *RiskFactor) 
 		if riskFactor.Magnitude != nil {
 			existing.Magnitude = riskFactor.Magnitude
 		}
+
+		if riskFactor.Action != explorer.Action_UNSPECIFIED {
+			existing.Action = riskFactor.Action
+
+		}
 	} else {
 		cache.riskFactors[riskFactor.Mrn] = riskFactor
 	}
@@ -848,6 +853,11 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 		if rf == nil {
 			return errors.New("cannot find risk factor '" + policyRf.Mrn + "' while resolving")
 		}
+
+		switch rf.Action {
+		case explorer.Action_DEACTIVATE, explorer.Action_OUT_OF_SCOPE:
+			continue
+		}
 		if rf.Filters != nil {
 			for j := range rf.Filters.Items {
 				filter := rf.Filters.Items[j]
@@ -858,6 +868,7 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 			}
 		}
 	}
+
 	if len(matchingRisks) == 0 {
 		return nil
 	}

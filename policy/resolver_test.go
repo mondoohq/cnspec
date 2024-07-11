@@ -1735,6 +1735,8 @@ policies:
     risk_factors:
     - uid: sshd-service
       magnitude: 0.9
+    - uid: sshd-service-na
+      action: 2
     groups:
     - filters: asset.name == "asset1"
       checks:
@@ -1762,7 +1764,7 @@ policies:
         magnitude: 0.5
         filters:
           - mql: |
-              return false
+              asset.name == "asset1"
         checks:
           - uid: sshd-service-running-na
             mql: 1 == 2
