@@ -211,6 +211,14 @@ func TestPolicyChecksums(t *testing.T) {
 					// effective if the query is taking the mql bits from its base.
 					b.Queries[0].CodeId = "12345"
 				},
+				"query prop changed": func() {
+					b.Queries[0].Props = []*explorer.Property{
+						{
+							Mql:      "1 == 1",
+							Checksum: "1234",
+						},
+					}
+				},
 				"mrn changed": func() {
 					p.Mrn = "normal mrn"
 				},
