@@ -821,10 +821,11 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 
 	for _, risk := range matchingRisks {
 		cache.global.riskInfos[risk.Mrn] = &RiskFactor{
-			Scope:      risk.Scope,
-			IsAbsolute: risk.IsAbsolute,
-			Magnitude:  risk.Magnitude,
-			Resources:  risk.Resources,
+			Scope:                   risk.Scope,
+			Magnitude:               risk.Magnitude,
+			Resources:               risk.Resources,
+			DeprecatedV11Magnitude:  risk.GetMagnitude().GetValue(),
+			DeprecatedV11IsAbsolute: risk.GetMagnitude().GetIsToxic(),
 		}
 
 		riskJob := &ReportingJob{
