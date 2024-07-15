@@ -480,6 +480,10 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			if err != nil {
 				return err
 			}
+
+			for _, p := range check.Props {
+				executionChecksum = executionChecksum.Add(p.Checksum)
+			}
 		}
 
 		// DATA (must be sorted)
@@ -520,6 +524,10 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			executionChecksum, err = variantsExecutionChecksum(query, executionChecksum, false, getQuery)
 			if err != nil {
 				return err
+			}
+
+			for _, p := range query.Props {
+				executionChecksum = executionChecksum.Add(p.Checksum)
 			}
 		}
 
