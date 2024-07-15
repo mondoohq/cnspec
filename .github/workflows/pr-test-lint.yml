@@ -50,6 +50,9 @@ jobs:
 
   go-test:
     runs-on: ubuntu-latest
+    id: go-test
+    outputs:
+      outcome: ${{ steps.tests.outcome }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -79,11 +82,35 @@ jobs:
         run: echo $PROVIDERS_PATH
 
       - run: make test/go/plain-ci
+        id: tests
       - uses: actions/upload-artifact@v4  # upload test results
         if: success() || failure()        # run this step even if previous step failed
         with:                           
           name: test-results
           path: report.xml
+
+  go-auto-approve:
+    runs-on: ubuntu-latest
+    needs: go-test
+    if: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' && needs.go-test.outputs.outcome == 'success' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch PR infos
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Approve a PR
+        # For now, we only auto approve and merge go dep PRs because we have tests for this in place.
+        if: ${{ steps.dependabot-metadata.outputs.package-ecosystem == 'go' }}
+        # Settings the comment will auto merge the PR after all tests passed
+        # https://docs.github.com/en/enterprise-cloud@latest/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates#managing-dependabot-pull-requests-with-comment-commands
+        run: gh pr review --comment "@dependabot squash and merge" --approve "$PR_URL"
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
   event_file:
     name: "Store event file"
