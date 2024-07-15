@@ -150,3 +150,19 @@ func (x *Remediation) MarshalYAML() (interface{}, error) {
 
 	return x.Items, nil
 }
+
+func (x *RiskMagnitude) UnmarshalYAML(node *yaml.Node) error {
+	x.addFileContext(node)
+
+	var res float32
+	if err := node.Decode(&res); err == nil {
+		x.Value = res
+		return nil
+	}
+
+	type tmp RiskMagnitude
+	if err := node.Decode((*tmp)(x)); err != nil {
+		return errors.Wrap(err, "can't unmarshal risk magnitude")
+	}
+	return nil
+}

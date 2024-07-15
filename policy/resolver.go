@@ -84,8 +84,8 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 
 // Unassign a policy to an asset
 func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignment) (*Empty, error) {
-	if len(assignment.PolicyMrns) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "a policy mrn is required")
+	if len(assignment.PolicyMrns)+len(assignment.FrameworkMrns) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "a policy or framework mrn is required")
 	}
 
 	// all remote, call upstream
@@ -821,10 +821,11 @@ func (s *LocalServices) risksToJobs(ctx context.Context, policy *Policy, ownerJo
 
 	for _, risk := range matchingRisks {
 		cache.global.riskInfos[risk.Mrn] = &RiskFactor{
-			Scope:      risk.Scope,
-			IsAbsolute: risk.IsAbsolute,
-			Magnitude:  risk.Magnitude,
-			Resources:  risk.Resources,
+			Scope:                   risk.Scope,
+			Magnitude:               risk.Magnitude,
+			Resources:               risk.Resources,
+			DeprecatedV11Magnitude:  risk.GetMagnitude().GetValue(),
+			DeprecatedV11IsAbsolute: risk.GetMagnitude().GetIsToxic(),
 		}
 
 		riskJob := &ReportingJob{

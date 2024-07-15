@@ -5,6 +5,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -58,9 +59,9 @@ func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 func (r *RiskFactor) ExecutionChecksum(ctx context.Context, conf mqlc.CompilerConfig) (checksums.Fast, error) {
 	c := checksums.New.
 		AddUint(uint64(r.Scope)).
-		Add(strconv.FormatFloat(float64(r.Magnitude), 'f', -1, 64))
+		Add(strconv.FormatFloat(float64(r.GetMagnitude().GetValue()), 'f', -1, 64))
 
-	if r.IsAbsolute {
+	if r.GetMagnitude().GetIsToxic() {
 		c = c.AddUint(1)
 	} else {
 		c = c.AddUint(0)
@@ -122,9 +123,9 @@ func (r *RiskFactor) RefreshChecksum(ctx context.Context, conf mqlc.CompilerConf
 
 func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 	// Absolute risk factors only play a role when they are detected.
-	if r.IsAbsolute {
+	if r.GetMagnitude().GetIsToxic() {
 		if isDetected {
-			nu := int(score.RiskScore) - int(r.Magnitude*100)
+			nu := int(score.RiskScore) - int(r.GetMagnitude().GetValue()*100)
 			if nu < 0 {
 				score.RiskScore = 0
 			} else if nu > 100 {
@@ -138,8 +139,8 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 			}
 			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 				Mrn:        r.Mrn,
-				Risk:       r.Magnitude,
-				IsAbsolute: true,
+				Risk:       r.GetMagnitude().GetValue(),
+				IsToxic:    true,
 				IsDetected: isDetected,
 			})
 			return
@@ -148,15 +149,15 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 		return
 	}
 
-	if r.Magnitude < 0 {
+	if r.GetMagnitude().GetValue() < 0 {
 		if isDetected {
-			score.RiskScore = uint32(100 - float32(100-score.RiskScore)*(1+r.Magnitude))
+			score.RiskScore = uint32(100 - float32(100-score.RiskScore)*(1+r.GetMagnitude().GetValue()))
 			if score.RiskFactors == nil {
 				score.RiskFactors = &ScoredRiskFactors{}
 			}
 			score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 				Mrn:        r.Mrn,
-				Risk:       r.Magnitude,
+				Risk:       r.GetMagnitude().GetValue(),
 				IsDetected: isDetected,
 			})
 			return
@@ -176,19 +177,19 @@ func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 		}
 		score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 			Mrn:        r.Mrn,
-			Risk:       r.Magnitude,
+			Risk:       r.GetMagnitude().GetValue(),
 			IsDetected: isDetected,
 		})
 		return
 	}
 
-	score.RiskScore = uint32(100 - float32(100-score.RiskScore)*(1-r.Magnitude))
+	score.RiskScore = uint32(100 - float32(100-score.RiskScore)*(1-r.GetMagnitude().GetValue()))
 	if score.RiskFactors == nil {
 		score.RiskFactors = &ScoredRiskFactors{}
 	}
 	score.RiskFactors.Items = append(score.RiskFactors.Items, &ScoredRiskFactor{
 		Mrn:        r.Mrn,
-		Risk:       -r.Magnitude,
+		Risk:       -r.GetMagnitude().GetValue(),
 		IsDetected: isDetected,
 	})
 }
@@ -214,4 +215,49 @@ func (s *ScoredRiskFactors) Add(other *ScoredRiskFactors) {
 			s.Items = append(s.Items, nu)
 		}
 	}
+}
+
+func (s *RiskMagnitude) UnmarshalJSON(data []byte) error {
+	var f float32
+	if err := json.Unmarshal(data, &f); err == nil {
+		s.Value = f
+		return nil
+	}
+
+	type tmp RiskMagnitude
+	return json.Unmarshal(data, (*tmp)(s))
+}
+
+func (s *RiskFactor) UnmarshalJSON(data []byte) error {
+	type TmpRiskFactorType RiskFactor
+	type tmp struct {
+		*TmpRiskFactorType `json:",inline"`
+		IsAbsolute         *bool `json:"is_absolute"`
+	}
+
+	t := tmp{TmpRiskFactorType: (*TmpRiskFactorType)(s)}
+	if err := json.Unmarshal(data, &t); err != nil {
+		return err
+	}
+
+	if s.Magnitude == nil {
+		s.Magnitude = &RiskMagnitude{}
+	}
+
+	if t.IsAbsolute != nil {
+		s.Magnitude.IsToxic = *t.IsAbsolute
+	}
+
+	return nil
+}
+
+func (s *RiskFactor) Migrate() {
+	if s.Magnitude == nil {
+		s.Magnitude = &RiskMagnitude{
+			Value:   s.DeprecatedV11Magnitude,
+			IsToxic: s.DeprecatedV11IsAbsolute,
+		}
+	}
+	s.DeprecatedV11IsAbsolute = s.Magnitude.IsToxic
+	s.DeprecatedV11Magnitude = s.Magnitude.Value
 }
