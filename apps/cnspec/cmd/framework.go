@@ -37,6 +37,8 @@ func init() {
 	frameworkCmd.AddCommand(frameworkPreviewCmd)
 	// active
 	frameworkCmd.AddCommand(frameworkActiveCmd)
+	// disabled
+	frameworkCmd.AddCommand(frameworkDisabledCmd)
 	// download
 	frameworkDownloadCmd.Flags().StringP("file", "f", "", "output file")
 	frameworkCmd.AddCommand(frameworkDownloadCmd)
@@ -46,8 +48,9 @@ func init() {
 }
 
 var frameworkCmd = &cobra.Command{
-	Use:   "framework",
-	Short: "Manage local and Mondoo Platform hosted compliance frameworks",
+	Use:     "framework",
+	Short:   "Manage local and Mondoo Platform hosted compliance frameworks",
+	Aliases: []string{"frameworks"},
 }
 
 var frameworkListCmd = &cobra.Command{
@@ -104,6 +107,10 @@ var frameworkListCmd = &cobra.Command{
 			extraInfo := []string{}
 			if framework.State == mondoogql.ComplianceFrameworkStateActive {
 				extraInfo = append(extraInfo, theme.DefaultTheme.Success("active"))
+			} else if framework.State == mondoogql.ComplianceFrameworkStatePreview {
+				extraInfo = append(extraInfo, theme.DefaultTheme.PolicyPrinter.Yellow("preview"))
+			} else if framework.State == mondoogql.ComplianceFrameworkStateDisabled {
+				extraInfo = append(extraInfo, theme.DefaultTheme.Disabled("disabled"))
 			} else if framework.State == mondoogql.ComplianceFrameworkState("") {
 				extraInfo = append(extraInfo, theme.DefaultTheme.Disabled("local"))
 			}
@@ -261,9 +268,10 @@ var frameworkPreviewCmd = &cobra.Command{
 }
 
 var frameworkActiveCmd = &cobra.Command{
-	Use:   "active [mrn]",
-	Short: "Change a framework status to active",
-	Args:  cobra.ExactArgs(1),
+	Use:     "active [mrn]",
+	Aliases: []string{"enable", "activate"},
+	Short:   "Change a framework status to active",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts, err := config.Read()
 		if err != nil {
@@ -283,17 +291,57 @@ var frameworkActiveCmd = &cobra.Command{
 
 		ok, err := cnspec_upstream.MutateFrameworkState(
 			context.Background(), mondooClient, frameworkMrn,
-			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionPreview,
+			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionEnable,
 		)
 		if err != nil {
 			log.Error().Msgf("failed to set compliance framework to active state in space: %s", err)
 			os.Exit(1)
 		}
 		if !ok {
-			log.Error().Msgf("failed to set compliance framework to preview state in space")
+			log.Error().Msgf("failed to set compliance framework to active state in space")
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to active state in space"))
+
+		return nil
+	},
+}
+
+var frameworkDisabledCmd = &cobra.Command{
+	Use:     "disabled [mrn]",
+	Aliases: []string{"disable"},
+	Short:   "Change a framework status to disabled",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts, err := config.Read()
+		if err != nil {
+			return err
+		}
+		config.DisplayUsedConfig()
+
+		mondooClient, err := getGqlClient(opts)
+		if err != nil {
+			return err
+		}
+
+		frameworkMrn := args[0]
+		if !strings.HasPrefix(frameworkMrn, PolicyMrnPrefix) {
+			frameworkMrn = FrameworkMrnPrefix + "/" + frameworkMrn
+		}
+
+		ok, err := cnspec_upstream.MutateFrameworkState(
+			context.Background(), mondooClient, frameworkMrn,
+			opts.GetParentMrn(), mondoogql.ComplianceFrameworkMutationActionDisable,
+		)
+		if err != nil {
+			log.Error().Msgf("failed to set compliance framework to disabled state in space: %s", err)
+			os.Exit(1)
+		}
+		if !ok {
+			log.Error().Msgf("failed to set compliance framework to disabled state in space")
+			os.Exit(1)
+		}
+		log.Info().Msg(theme.DefaultTheme.Success("successfully set compliance framework to disabled state in space"))
 
 		return nil
 	},
