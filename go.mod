@@ -34,7 +34,7 @@ require (
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.9.0
 	go.mondoo.com/cnquery/v11 v11.12.2
-	go.mondoo.com/mondoo-go v0.0.0-20240709212130-c2418a0535d4
+	go.mondoo.com/mondoo-go v0.0.0-20240716062427-ec95d879cbe7
 	go.mondoo.com/ranger-rpc v0.6.2
 	go.opentelemetry.io/otel v1.28.0
 	gocloud.dev v0.37.0
