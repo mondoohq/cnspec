@@ -27,7 +27,7 @@ policies:
         checks:
           - uid: query1
     version: "1.0.0"
-    scoring_system: 2
+    scoring_system: highest impact
 queries:
   - uid: query1
     docs:
@@ -63,7 +63,7 @@ policies:
       - filters: asset.family.contains('unix')
         checks:
           - uid: query1
-    scoring_system: 2
+    scoring_system: highest impact
 queries:
   - uid: query1
     title: Ensure Secure Boot is enabled
@@ -100,7 +100,7 @@ policies:
               - uid: variant2
               - uid: variant1
     version: "1.0.0"
-    scoring_system: 2
+    scoring_system: highest impact
 queries:
   - uid: query2
     variants:
@@ -152,7 +152,7 @@ queries:
             variants:
               - uid: variant1
               - uid: variant2
-    scoring_system: 2
+    scoring_system: highest impact
 queries:
   - uid: query1
     title: Ensure Secure Boot is enabled
@@ -202,7 +202,7 @@ policies:
         checks:
           - uid: query1
     version: "1.0.0"
-    scoring_system: 2
+    scoring_system: highest impact
 queries:
   - uid: query1
     mql: |
@@ -239,7 +239,7 @@ policies:
       - filters: asset.family.contains('unix')
         checks:
           - uid: query1
-    scoring_system: 2
+    scoring_system: highest impact
 queries:
   - uid: query1
     title: Ensure Secure Boot is enabled
