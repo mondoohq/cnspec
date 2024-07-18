@@ -1718,3 +1718,90 @@ queries:
 		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[2].CodeId].Mrns[1])
 	})
 }
+
+func TestResolve_RiskFactors(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+queries:
+- uid: query-1
+  title: query-1
+  mql: 1 == 1
+- uid: query-2
+  title: query-2
+  mql: 1 == 2
+policies:
+  - name: testpolicy1
+    uid: testpolicy1
+    risk_factors:
+    - uid: sshd-service
+      magnitude: 0.9
+    - uid: sshd-service-na
+      action: 2
+    groups:
+    - filters: asset.name == "asset1"
+      checks:
+      - uid: query-1
+      - uid: query-2
+      policies:
+      - uid: risk-factors-security
+  - uid: risk-factors-security
+    name: Mondoo Risk Factors analysis
+    version: "1.0.0"
+    risk_factors:
+      - uid: sshd-service
+        title: SSHd Service running
+        indicator: asset-in-use
+        magnitude: 0.6
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: sshd-service-running
+            mql: 1 == 1
+      - uid: sshd-service-na
+        title: SSHd Service running
+        indicator: asset-in-use
+        magnitude: 0.5
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: sshd-service-running-na
+            mql: 1 == 2
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("testpolicy1")}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		PolicyMrn:    "asset1",
+		AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	qrIdToRj := map[string]*policy.ReportingJob{}
+	for _, rj := range rp.CollectorJob.ReportingJobs {
+		qrIdToRj[rj.QrId] = rj
+	}
+
+	require.Len(t, rp.CollectorJob.ReportingJobs, 7)
+	require.NotNil(t, qrIdToRj[policyMrn("testpolicy1")])
+	require.NotNil(t, qrIdToRj[policyMrn("risk-factors-security")])
+	rfRj := qrIdToRj["//test.sth/risks/sshd-service"]
+	require.NotNil(t, rfRj)
+	require.Nil(t, qrIdToRj["//test.sth/risks/sshd-service-na"])
+
+	var queryRjUuid string
+	for uuid := range rfRj.ChildJobs {
+		queryRjUuid = uuid
+	}
+	require.NotEmpty(t, queryRjUuid)
+	queryRj := rp.CollectorJob.ReportingJobs[queryRjUuid]
+	require.NotNil(t, queryRj)
+
+	require.Contains(t, rfRj.ChildJobs, queryRj.Uuid)
+
+	require.Equal(t, float32(0.9), rp.CollectorJob.RiskFactors["//test.sth/risks/sshd-service"].Magnitude.GetValue())
+}
