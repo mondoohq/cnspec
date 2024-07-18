@@ -17,6 +17,7 @@ type ScoreCalculator interface {
 	Add(score *Score, impact *explorer.Impact)
 	Calculate() *Score
 	Init()
+	String() string
 }
 
 type averageScoreCalculator struct {
@@ -30,6 +31,10 @@ type averageScoreCalculator struct {
 	hasResults            bool
 	hasErrors             bool
 	featureFlagFailErrors bool
+}
+
+func (c *averageScoreCalculator) String() string {
+	return "Average"
 }
 
 func (c *averageScoreCalculator) Init() {
@@ -216,6 +221,10 @@ type weightedScoreCalculator struct {
 	featureFlagFailErrors bool
 }
 
+func (c *weightedScoreCalculator) String() string {
+	return "Weighted Average"
+}
+
 func (c *weightedScoreCalculator) Init() {
 	c.value = 0
 	c.weight = 0
@@ -325,6 +334,10 @@ type worstScoreCalculator struct {
 	hasResults            bool
 	hasErrors             bool
 	featureFlagFailErrors bool
+}
+
+func (c *worstScoreCalculator) String() string {
+	return "Highest Impact"
 }
 
 func (c *worstScoreCalculator) Init() {
@@ -450,6 +463,10 @@ type bandedScoreCalculator struct {
 	featureFlagFailErrors bool
 }
 
+func (c *bandedScoreCalculator) String() string {
+	return "Banded"
+}
+
 func (c *bandedScoreCalculator) Init() {
 	c.minscore = 100
 	c.value = 100
@@ -570,21 +587,21 @@ func (c *bandedScoreCalculator) Calculate() *Score {
 
 		pcrLow := float64(1)
 		if c.lowMax != 0 {
-			pcrLow = float64(c.low) / float64(c.lowMax)
+			pcrLow = float64(c.lowMax-c.low) / float64(c.lowMax)
 		}
 		fMid := float64(1)
 		if c.midMax != 0 {
-			fMid = float64(c.mid) / float64(c.midMax)
+			fMid = float64(c.midMax-c.mid) / float64(c.midMax)
 		}
 		pcrMid := (3 + pcrLow) / 4 * fMid
 		fHigh := float64(1)
 		if c.highMax != 0 {
-			fHigh = float64(c.high) / float64(c.highMax)
+			fHigh = float64(c.highMax-c.high) / float64(c.highMax)
 		}
 		pcrHigh := (1 + pcrMid) / 2 * fHigh
 		fCrit := float64(1)
 		if c.critMax != 0 {
-			fCrit = float64(c.crit) / float64(c.critMax)
+			fCrit = float64(c.critMax-c.crit) / float64(c.critMax)
 		}
 		pcrCrit := (1 + 4*pcrHigh) / 5 * fCrit
 
@@ -620,6 +637,10 @@ type decayedScoreCalculator struct {
 	hasResults            bool
 	hasErrors             bool
 	featureFlagFailErrors bool
+}
+
+func (c *decayedScoreCalculator) String() string {
+	return "Decayed"
 }
 
 var gravity float64 = 10
