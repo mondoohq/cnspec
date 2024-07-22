@@ -34,6 +34,7 @@ const (
 	queryTitle                 = "query-name"
 	queryUidUnique             = "query-uid-unique"
 	queryUnassigned            = "query-unassigned"
+	queryUsedAsDifferentTypes  = "query-used-as-different-types"
 )
 
 type Rule struct {
@@ -229,6 +230,8 @@ func lintFile(file string) (*Results, error) {
 	// index global queries that are not embedded
 	globalQueriesUids := map[string]int{}
 	globalQueriesByUid := map[string]*Mquery{}
+	checks := map[string]struct{}{}
+	dataQueries := map[string]struct{}{}
 	// child to parent mapping
 	variantMapping := map[string]string{}
 	for i := range policyBundle.Queries {
@@ -419,6 +422,20 @@ func lintFile(file string) (*Results, error) {
 					// NOTE: embedded queries do not need a uid
 					lintQuery(check, file, globalQueriesUids, assignedQueries, variantMapping, false)
 				} else {
+					checks[uid] = struct{}{}
+					if _, ok := dataQueries[uid]; ok {
+						res.Entries = append(res.Entries, Entry{
+							RuleID:  queryUsedAsDifferentTypes,
+							Message: fmt.Sprintf("query %s is used as a check and data query", uid),
+							Level:   levelError,
+							Location: []Location{{
+								File:   file,
+								Line:   group.FileContext.Line,
+								Column: group.FileContext.Column,
+							}},
+						})
+					}
+
 					// if the query is not embedded, then it needs to be available globally
 					_, ok := globalQueriesUids[uid]
 					if !ok {
@@ -447,6 +464,20 @@ func lintFile(file string) (*Results, error) {
 					// NOTE: embedded queries do not need a uid
 					lintQuery(query, file, globalQueriesUids, assignedQueries, variantMapping, false)
 				} else {
+					dataQueries[uid] = struct{}{}
+					if _, ok := checks[uid]; ok {
+						res.Entries = append(res.Entries, Entry{
+							RuleID:  queryUsedAsDifferentTypes,
+							Message: fmt.Sprintf("query %s is used as a check and data query", uid),
+							Level:   levelError,
+							Location: []Location{{
+								File:   file,
+								Line:   group.FileContext.Line,
+								Column: group.FileContext.Column,
+							}},
+						})
+					}
+
 					// if the query is not embedded, then it needs to be available globally
 					_, ok := globalQueriesUids[uid]
 					if !ok {
