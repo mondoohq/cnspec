@@ -129,6 +129,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("annotations", cmd.Flags().Lookup("annotation"))
 		_ = viper.BindPFlag("props", cmd.Flags().Lookup("props"))
 
+		_ = viper.BindPFlag("json", cmd.Flags().Lookup("json"))
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		if err := viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target")); err != nil {
 			return err
@@ -279,14 +280,14 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	// if users want to get more information on available output options,
 	// print them before executing the scan
-	output, _ := cmd.Flags().GetString("output")
+	output := viper.GetString("output")
 	if output == "help" {
 		fmt.Println(reporter.AllAvailableOptions())
 		os.Exit(0)
 	}
 
 	// --json takes precedence
-	if ok, _ := cmd.Flags().GetBool("json"); ok {
+	if ok := viper.GetBool("json"); ok {
 		output = "json"
 	}
 	conf.OutputFormat = output
