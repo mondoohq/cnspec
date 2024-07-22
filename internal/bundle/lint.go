@@ -417,25 +417,25 @@ func lintFile(file string) (*Results, error) {
 				uid := check.Uid
 				updateAssignedQueries(check, assignedQueries, globalQueriesByUid)
 
+				checks[check.Uid] = struct{}{}
+				if _, ok := dataQueries[check.Uid]; ok {
+					res.Entries = append(res.Entries, Entry{
+						RuleID:  queryUsedAsDifferentTypes,
+						Message: fmt.Sprintf("query %s is used as a check and data query", uid),
+						Level:   levelError,
+						Location: []Location{{
+							File:   file,
+							Line:   group.FileContext.Line,
+							Column: group.FileContext.Column,
+						}},
+					})
+				}
+
 				// check if the query is embedded
 				if isEmbeddedQuery(check) {
 					// NOTE: embedded queries do not need a uid
 					lintQuery(check, file, globalQueriesUids, assignedQueries, variantMapping, false)
 				} else {
-					checks[uid] = struct{}{}
-					if _, ok := dataQueries[uid]; ok {
-						res.Entries = append(res.Entries, Entry{
-							RuleID:  queryUsedAsDifferentTypes,
-							Message: fmt.Sprintf("query %s is used as a check and data query", uid),
-							Level:   levelError,
-							Location: []Location{{
-								File:   file,
-								Line:   group.FileContext.Line,
-								Column: group.FileContext.Column,
-							}},
-						})
-					}
-
 					// if the query is not embedded, then it needs to be available globally
 					_, ok := globalQueriesUids[uid]
 					if !ok {
@@ -459,25 +459,25 @@ func lintFile(file string) (*Results, error) {
 				uid := query.Uid
 				updateAssignedQueries(query, assignedQueries, globalQueriesByUid)
 
+				dataQueries[query.Uid] = struct{}{}
+				if _, ok := checks[query.Uid]; ok {
+					res.Entries = append(res.Entries, Entry{
+						RuleID:  queryUsedAsDifferentTypes,
+						Message: fmt.Sprintf("query %s is used as a check and data query", uid),
+						Level:   levelError,
+						Location: []Location{{
+							File:   file,
+							Line:   group.FileContext.Line,
+							Column: group.FileContext.Column,
+						}},
+					})
+				}
+
 				// check if the query is embedded
 				if isEmbeddedQuery(query) {
 					// NOTE: embedded queries do not need a uid
 					lintQuery(query, file, globalQueriesUids, assignedQueries, variantMapping, false)
 				} else {
-					dataQueries[uid] = struct{}{}
-					if _, ok := checks[uid]; ok {
-						res.Entries = append(res.Entries, Entry{
-							RuleID:  queryUsedAsDifferentTypes,
-							Message: fmt.Sprintf("query %s is used as a check and data query", uid),
-							Level:   levelError,
-							Location: []Location{{
-								File:   file,
-								Line:   group.FileContext.Line,
-								Column: group.FileContext.Column,
-							}},
-						})
-					}
-
 					// if the query is not embedded, then it needs to be available globally
 					_, ok := globalQueriesUids[uid]
 					if !ok {
