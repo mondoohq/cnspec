@@ -119,6 +119,11 @@ var LinterRules = []Rule{
 		Name:        "Unassigned query",
 		Description: "The query is not assigned to any policy",
 	},
+	{
+		ID:          queryUsedAsDifferentTypes,
+		Name:        "Query used as a check and data query",
+		Description: "The query is used both as a check and a data query",
+	},
 }
 
 type Results struct {
