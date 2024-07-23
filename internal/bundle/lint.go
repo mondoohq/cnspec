@@ -34,6 +34,7 @@ const (
 	queryTitle                 = "query-name"
 	queryUidUnique             = "query-uid-unique"
 	queryUnassigned            = "query-unassigned"
+	queryUsedAsDifferentTypes  = "query-used-as-different-types"
 )
 
 type Rule struct {
@@ -117,6 +118,11 @@ var LinterRules = []Rule{
 		ID:          queryUnassigned,
 		Name:        "Unassigned query",
 		Description: "The query is not assigned to any policy",
+	},
+	{
+		ID:          queryUsedAsDifferentTypes,
+		Name:        "Query used as a check and data query",
+		Description: "The query is used both as a check and a data query",
 	},
 }
 
@@ -229,6 +235,8 @@ func lintFile(file string) (*Results, error) {
 	// index global queries that are not embedded
 	globalQueriesUids := map[string]int{}
 	globalQueriesByUid := map[string]*Mquery{}
+	checks := map[string]struct{}{}
+	dataQueries := map[string]struct{}{}
 	// child to parent mapping
 	variantMapping := map[string]string{}
 	for i := range policyBundle.Queries {
@@ -414,6 +422,20 @@ func lintFile(file string) (*Results, error) {
 				uid := check.Uid
 				updateAssignedQueries(check, assignedQueries, globalQueriesByUid)
 
+				checks[check.Uid] = struct{}{}
+				if _, ok := dataQueries[check.Uid]; ok {
+					res.Entries = append(res.Entries, Entry{
+						RuleID:  queryUsedAsDifferentTypes,
+						Message: fmt.Sprintf("query %s is used as a check and data query", uid),
+						Level:   levelError,
+						Location: []Location{{
+							File:   file,
+							Line:   group.FileContext.Line,
+							Column: group.FileContext.Column,
+						}},
+					})
+				}
+
 				// check if the query is embedded
 				if isEmbeddedQuery(check) {
 					// NOTE: embedded queries do not need a uid
@@ -441,6 +463,20 @@ func lintFile(file string) (*Results, error) {
 				query := group.Queries[iq]
 				uid := query.Uid
 				updateAssignedQueries(query, assignedQueries, globalQueriesByUid)
+
+				dataQueries[query.Uid] = struct{}{}
+				if _, ok := checks[query.Uid]; ok {
+					res.Entries = append(res.Entries, Entry{
+						RuleID:  queryUsedAsDifferentTypes,
+						Message: fmt.Sprintf("query %s is used as a check and data query", uid),
+						Level:   levelError,
+						Location: []Location{{
+							File:   file,
+							Line:   group.FileContext.Line,
+							Column: group.FileContext.Column,
+						}},
+					})
+				}
 
 				// check if the query is embedded
 				if isEmbeddedQuery(query) {
