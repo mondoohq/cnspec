@@ -179,9 +179,10 @@ func (r *Report) ToCnqueryReport() *cr.Report {
 
 	for id, asset := range r.Assets {
 		report.Assets[id] = &cr.Asset{
-			Mrn:     asset.Mrn,
-			Name:    asset.Name,
-			TraceId: asset.TraceId,
+			Mrn:     asset.GetMrn(),
+			Name:    asset.GetName(),
+			TraceId: asset.GetTraceId(),
+			Labels:  asset.GetLabels(),
 		}
 	}
 
