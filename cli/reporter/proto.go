@@ -51,10 +51,11 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			platformName = a.Platform.Name
 		}
 		pAsset := &cr.Asset{
-			Mrn:          a.Mrn,
-			Name:         a.Name,
+			Mrn:          a.GetMrn(),
+			Name:         a.GetName(),
 			PlatformName: platformName,
-			TraceId:      a.TraceId,
+			TraceId:      a.GetTraceId(),
+			Labels:       a.GetLabels(),
 		}
 		protoReport.Assets[assetMrn] = pAsset
 	}
