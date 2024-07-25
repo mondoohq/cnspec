@@ -4,6 +4,7 @@
 package policy
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -222,7 +223,7 @@ func TestBandedScores(t *testing.T) {
 				{Value: &explorer.ImpactValue{Value: 100}},
 				{Action: explorer.Action_IGNORE},
 			},
-			out: &Score{Value: 22, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
+			out: &Score{Value: 25, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
 		},
 		{
 			in: []*Score{
@@ -239,7 +240,7 @@ func TestBandedScores(t *testing.T) {
 				// 10 high checks
 				{Value: &explorer.ImpactValue{Value: 80}},
 			},
-			out: &Score{Value: 1, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
+			out: &Score{Value: 45, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
 		{
 			in: []*Score{
@@ -273,7 +274,7 @@ func TestBandedScores(t *testing.T) {
 				// 10 high checks
 				{Value: &explorer.ImpactValue{Value: 80}},
 			},
-			out: &Score{Value: 5, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
+			out: &Score{Value: 9, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
 	})
 }
@@ -403,4 +404,130 @@ func TestImpact(t *testing.T) {
 		s := calc.Calculate()
 		require.EqualValues(t, 80, int(s.Value))
 	})
+}
+
+func addMultipleScores(impact uint32, failed int, passed int, calculator ScoreCalculator) {
+	for i := 0; i < failed; i++ {
+		calculator.Add(&Score{
+			Value:           100 - impact,
+			ScoreCompletion: 100,
+			DataCompletion:  100,
+			DataTotal:       1,
+			Weight:          1,
+			Type:            ScoreType_Result,
+		}, &explorer.Impact{
+			Value: &explorer.ImpactValue{
+				Value: int32(impact),
+			},
+		})
+	}
+	for i := 0; i < passed; i++ {
+		calculator.Add(&Score{
+			Value:           100,
+			ScoreCompletion: 100,
+			DataCompletion:  100,
+			DataTotal:       1,
+			Weight:          1,
+			Type:            ScoreType_Result,
+		}, &explorer.Impact{
+			Value: &explorer.ImpactValue{
+				Value: int32(impact),
+			},
+		})
+	}
+}
+
+func addTestResults(critFail, critPass, highFail, highPass, midFail, midPass, lowFail, lowPass int, calculator ScoreCalculator) {
+	addMultipleScores(100, critFail, critPass, calculator)
+	addMultipleScores(80, highFail, highPass, calculator)
+	addMultipleScores(55, midFail, midPass, calculator)
+	addMultipleScores(20, lowFail, lowPass, calculator)
+}
+
+func testEachScoreCalculator(critFail, critCnt, highFail, highCnt, midFail, midCnt, lowFail, lowCnt int, t *testing.T) []*Score {
+	require.LessOrEqual(t, critFail, critCnt)
+	require.LessOrEqual(t, highFail, highCnt)
+	require.LessOrEqual(t, midFail, midCnt)
+	require.LessOrEqual(t, lowFail, lowCnt)
+
+	fmt.Printf("Results: %d/%d CRIT   %d/%d HIGH   %d/%d MID   %d/%d LOW   %d/%d Total\n",
+		critFail, critCnt,
+		highFail, highCnt,
+		midFail, midCnt,
+		lowFail, lowCnt,
+		critFail+highFail+midFail+lowFail, critCnt+highCnt+midCnt+lowCnt,
+	)
+	calculators := []ScoreCalculator{
+		&averageScoreCalculator{},
+		&bandedScoreCalculator{},
+		&decayedScoreCalculator{},
+		&worstScoreCalculator{},
+	}
+
+	var results []*Score
+	for i := range calculators {
+		calculator := calculators[i]
+		calculator.Init()
+
+		addTestResults(critFail, critCnt-critFail, highFail, highCnt-highFail, midFail, midCnt-midFail, lowFail, lowCnt-lowFail, calculator)
+
+		score := calculator.Calculate()
+		results = append(results, score)
+		require.NotNil(t, score)
+		fmt.Printf("    %20s: %3d  (%s)\n", calculator.String(), score.Value, score.Rating().FailureLabel())
+	}
+	fmt.Println("")
+
+	return results
+}
+
+func TestCalculatorBehavior_Banded(t *testing.T) {
+	var res []*Score
+	t.Run("critical band", func(t *testing.T) {
+		res = testEachScoreCalculator(1, 10, 0, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 45, int(res[1].Value))
+		res = testEachScoreCalculator(5, 10, 0, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 25, int(res[1].Value))
+		res = testEachScoreCalculator(10, 10, 0, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 0, int(res[1].Value))
+	})
+	t.Run("critical band with high band variation", func(t *testing.T) {
+		res = testEachScoreCalculator(1, 10, 1, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 41, int(res[1].Value))
+		res = testEachScoreCalculator(1, 10, 5, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 27, int(res[1].Value))
+		res = testEachScoreCalculator(1, 10, 10, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 9, int(res[1].Value))
+	})
+	t.Run("high band", func(t *testing.T) {
+		res = testEachScoreCalculator(0, 10, 1, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 55, int(res[1].Value))
+		res = testEachScoreCalculator(0, 10, 5, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 35, int(res[1].Value))
+		res = testEachScoreCalculator(0, 10, 10, 10, 0, 10, 0, 10, t)
+		assert.Equal(t, 10, int(res[1].Value))
+	})
+}
+
+// This is a toolchain that can be used to see what the scoring mechanism would produce under different scenarios
+func TestScoreMechanisms(t *testing.T) {
+	testEachScoreCalculator(1, 2, 1, 2, 2, 3, 1, 3, t)
+
+	testEachScoreCalculator(5, 10, 10, 15, 2, 30, 1, 45, t)
+
+	testEachScoreCalculator(5, 10, 5, 15, 2, 30, 1, 45, t)
+
+	testEachScoreCalculator(2, 10, 4, 15, 2, 30, 1, 45, t)
+
+	testEachScoreCalculator(1, 10, 4, 15, 2, 30, 1, 45, t)
+
+	testEachScoreCalculator(10, 10, 4, 15, 2, 30, 1, 45, t)
+
+	testEachScoreCalculator(0, 1, 1, 9, 0, 23, 0, 0, t)
+
+	testEachScoreCalculator(0, 1, 3, 9, 0, 23, 0, 0, t)
+
+	testEachScoreCalculator(0, 2, 1, 2, 2, 3, 1, 3, t)
+
+	// t.FailNow()
 }
