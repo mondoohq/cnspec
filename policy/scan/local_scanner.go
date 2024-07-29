@@ -992,7 +992,7 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()
-		data, ok := recording.GetAssetData("") // s.job.Asset.Mrn)
+		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
 		if !ok {
 			log.Debug().Msg("not storing resource data for this asset, nothing available")
 		} else {
