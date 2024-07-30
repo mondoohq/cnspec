@@ -37,7 +37,7 @@ require (
 	go.mondoo.com/mondoo-go v0.0.0-20240716062427-ec95d879cbe7
 	go.mondoo.com/ranger-rpc v0.6.2
 	go.opentelemetry.io/otel v1.28.0
-	gocloud.dev v0.37.0
+	gocloud.dev v0.38.0
 	golang.org/x/sys v0.22.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240725223205-93522f1f2a9f
 	google.golang.org/protobuf v1.34.2
@@ -95,8 +95,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.17.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.32.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sns v1.29.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.31.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sns v1.29.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.31.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.52.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.22.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.26.4 // indirect
