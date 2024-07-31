@@ -90,12 +90,12 @@ var frameworkListCmd = &cobra.Command{
 				return err
 			}
 
-			state := ptr.To(mondoogql.ComplianceFrameworkStateActive)
+			states := []mondoogql.ComplianceFrameworkState{mondoogql.ComplianceFrameworkStateActive}
 			if viper.GetBool("all") {
-				state = nil
+				states = []mondoogql.ComplianceFrameworkState{}
 			}
 
-			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn(), state)
+			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn(), ptr.To(states))
 			if err != nil {
 				log.Error().Msgf("failed to list compliance frameworks: %s", err)
 				os.Exit(1)
