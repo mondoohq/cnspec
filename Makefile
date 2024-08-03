@@ -51,7 +51,7 @@ prep/repos/update: prep/repos
 	cd cnquery; git checkout main && git pull; cd -;
 
 prep/tools/windows:
-	go get github.com/golang/protobuf/proto
+	go get google.golang.org/protobuf
 	go get -u gotest.tools/gotestsum
 
 prep/tools:
