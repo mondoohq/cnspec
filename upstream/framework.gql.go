@@ -10,6 +10,7 @@ import (
 
 	"go.mondoo.com/cnspec/v11/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
+	"k8s.io/utils/ptr"
 
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
 )
@@ -20,7 +21,7 @@ type UpstreamFramework struct {
 	State mondoogql.ComplianceFrameworkState
 }
 
-func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string, state *mondoogql.ComplianceFrameworkState) ([]*UpstreamFramework, error) {
+func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string, states []mondoogql.ComplianceFrameworkState) ([]*UpstreamFramework, error) {
 	var q struct {
 		Frameworks []struct {
 			Mrn     string
@@ -32,7 +33,7 @@ func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string, s
 	err := c.Query(ctx, &q, map[string]any{
 		"input": mondoogql.ComplianceFrameworksInput{
 			ScopeMrn: mondoogql.String(scopeMrn),
-			State:    state,
+			States:   ptr.To(states),
 		},
 	})
 	if err != nil {
