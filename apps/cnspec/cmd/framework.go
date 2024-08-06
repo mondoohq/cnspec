@@ -18,7 +18,6 @@ import (
 	"go.mondoo.com/cnspec/v11/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v11/upstream"
 	mondoogql "go.mondoo.com/mondoo-go"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -95,7 +94,7 @@ var frameworkListCmd = &cobra.Command{
 				states = []mondoogql.ComplianceFrameworkState{}
 			}
 
-			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn(), ptr.To(states))
+			frameworks, err = cnspec_upstream.ListFrameworks(context.Background(), mondooClient, opts.GetParentMrn(), states)
 			if err != nil {
 				log.Error().Msgf("failed to list compliance frameworks: %s", err)
 				os.Exit(1)
