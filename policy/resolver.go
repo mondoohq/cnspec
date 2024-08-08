@@ -1755,6 +1755,9 @@ func (s *LocalServices) jobsToControls(cache *frameworkResolverCache, framework 
 			queryMrns := cache.codeIdToMrn[rj.QrId]
 
 			for _, queryMrn := range queryMrns {
+				if queryMrn != mrn {
+					continue
+				}
 				uuid := cache.relativeChecksum(queryMrn)
 				queryJob := &ReportingJob{
 					Uuid:      uuid,
