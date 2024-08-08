@@ -1,0 +1,215 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-docker-security
+    name: Dockerfile Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+        mondoo.com/category: security
+        mondoo.com/platform: linux,docker
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+        desc: |-
+          ## Overview
+
+          The Dockerfile Security policy by Mondoo provides guidance for establishing secure Docker container configurations and deployments by securing Dockerfiles used to build container images.
+
+          If you have questions, comments, or ways to improve this policy, please write us at hello@mondoo.com, or reach out in GitHub Discussions.
+
+          ## Remote scan
+
+          Remote scans use cnspec providers to retrieve on-demand scan results without having to install any agents.
+
+          For a complete list of providers run:
+
+          ```bash
+          cnspec scan --help
+          ```
+
+          ## Scan a Dockerfile
+
+
+          ```bash
+          cnspec scan docker file DOCKERFILE_PATH
+          ```
+
+          ## Join the community!
+
+          Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+          If you have any suggestions for how to improve this policy, or if you need support, join the community in GitHub Discussions.
+
+    groups:
+        - title: Docker Container Security
+          filters: |
+              asset.platform == "dockerfile"
+          checks:
+              - uid: mondoo-docker-security-no-management-ports
+              - uid: mondoo-docker-security-no-insecure-certificate-validation-yum
+              - uid: mondoo-docker-security-no-insecure-certificate-validation-apt
+              - uid: mondoo-docker-security-no-insecure-certificate-validation-curl
+              - uid: mondoo-docker-security-no-insecure-certificate-validation-wget
+              - uid: mondoo-docker-security-no-sudo-commands
+              - uid: mondoo-docker-security-no-gpg-skip-yum
+              - uid: mondoo-docker-security-non-root-user
+              - uid: mondoo-docker-security-use-copy-instead-of-add
+              - uid: mondoo-docker-best-practice-no-latest-tag
+              - uid: mondoo-docker-best-practice-use-apt-get
+
+queries:
+  - uid: mondoo-docker-security-no-management-ports
+    title: Don’t expose management ports
+    impact: 100
+    mql: |
+      docker.file.stages.all(expose.all(port != 22))
+      docker.file.stages.all(expose.all(port != 2375))
+      docker.file.stages.all(expose.all(port != 8500))
+      docker.file.stages.all(expose.all(port != 6443))
+    docs:
+      desc: |
+        Management ports such as SSH (port 22), Docker Remote API (port 2375), Consul (port 8500), and Kubernetes API (port 6443) are commonly targeted by attackers. Exposing these ports in Docker containers increases the risk of unauthorized access and security vulnerabilities. This test ensures that these management ports are not exposed in Docker container configurations.
+      remediation: |
+        Review and update your Dockerfile to ensure that management ports (22 for SSH, 2375 for Docker Remote API, 8500 for Consul HTTP API, 6443 for Kubernetes API) are not exposed. 
+        - Remove or restrict the exposure of these ports using the `EXPOSE` instruction in your Dockerfile.
+        - Use Docker's port mapping options (`-p` or `--publish`) cautiously to avoid exposing these ports.
+        - Ensure that any required management access is secured and appropriately managed.
+  - uid: mondoo-docker-security-no-insecure-certificate-validation-yum
+    title: Ensure package manager certificate validation is enabled
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("--nogpgcheck")))
+      docker.file.stages.all(run.none(script.contains("--no-check-certificate")))
+      docker.file.stages.all(run.none(script.contains("--no-gpg-check")))
+    docs:
+      desc: |
+        Ensure that package managers like YUM, DNF, APT, and others in Dockerfiles do not disable SSL certificate validation.
+        Disabling certificate validation can expose the system to man-in-the-middle attacks and other security vulnerabilities.
+      remediation: |
+        - Review the Dockerfile and ensure that package managers are configured to use SSL certificate validation.
+        - Use secure practices for package installations to maintain system integrity: Remove any insecure options such as `--nogpgcheck`, `--no-check-certificate`, `--no-gpg-check`, and similar flags. 
+  - uid: mondoo-docker-security-no-insecure-certificate-validation-apt
+    title: Don’t disable certificate validation in APT
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("--allow-insecure-repositories")))
+    docs:
+      desc: |
+        Ensure that the `--allow-insecure-repositories` option is not used with the APT package manager in Dockerfile `RUN` instructions.
+        Disabling certificate validation can expose the container to security risks by allowing insecure repositories.
+      remediation: |
+        - Review the Dockerfile `RUN` instructions to ensure that APT commands do not use the `--allow-insecure-repositories` option.
+        - Configure APT to use secure repositories and avoid options that bypass certificate validation.
+  - uid: mondoo-docker-security-no-insecure-certificate-validation-curl
+    title: Don’t disable certificate validation in curl
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("--insecure")))
+      docker.file.stages.all(run.none(script.contains("-k")))
+    docs:
+      desc: |
+        Ensure that the `--insecure` or `-k` options are not used with `curl` in Docker containers.
+        Disabling certificate validation can expose the container to man-in-the-middle attacks and other security risks.
+      remediation: |
+        - Review the `CMD` or `ENTRYPOINT` commands in your Dockerfile and any scripts executed within the container.
+        - Avoid using `curl` with `--insecure` or `-k` options. 
+        - Ensure that proper SSL certificate validation is enabled for all `curl` operations.
+  - uid: mondoo-docker-security-no-insecure-certificate-validation-wget
+    title: Don’t disable certificate validation in Wget
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("--no-check-certificate")))
+    docs:
+      desc: |
+        Ensure that the `--no-check-certificate` option is not used with `wget` in Dockerfile `RUN` instructions.
+        Disabling certificate validation can expose the container to security risks by allowing insecure connections.
+      remediation: |
+        - Review the Dockerfile `RUN` instructions to ensure that `wget` commands do not use the `--no-check-certificate` option.
+        - Configure Wget to use certificate validation to enhance the security of your container configurations.
+  - uid: mondoo-docker-security-no-sudo-commands
+    title: Don’t run commands using sudo
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("sudo")))
+    docs:
+      desc: |
+        Ensure that Dockerfiles do not use `sudo` to run commands. The use of `sudo` within a Dockerfile can lead to privilege escalation risks,
+        as it grants elevated permissions that can be exploited if not handled properly.
+        By avoiding `sudo`, you ensure that all commands run with the default user privileges, which enhances the security of the container.
+      remediation: |
+        - Review the Dockerfile and remove any instances of `sudo`. 
+        - Ensure that all commands are executed with the least privileges required.
+        - Configure containers to operate with non-root users where possible, and avoid privilege escalation techniques.
+  - uid: mondoo-docker-security-no-gpg-skip-yum
+    title: Don’t skip GPG validation in YUM/DNF
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("--nogpgcheck")))
+    docs:
+      desc: |
+        Ensure that the `--nogpgcheck` option is not used with YUM or DNF in Dockerfile `RUN` instructions.
+        Skipping GPG validation can expose the container to risks by allowing packages with untrusted or missing GPG signatures.
+      remediation: |
+        - Review the Dockerfile `RUN` instructions to ensure that YUM or DNF commands do not use the `--nogpgcheck` option.
+        - Configure YUM or DNF to perform GPG validation to enhance the security of your container configurations.
+  - uid: mondoo-docker-security-non-root-user
+    title: Don't run containers as root user
+    impact: 100
+    mql: |
+      firstStageIdentifier = docker.file.stages[0].from.image
+      docker.file.stages.where(from.image != firstStageIdentifier).all(user != empty)
+      docker.file.stages.where(from.image != firstStageIdentifier).all(user.user != "root")
+    docs:
+      desc: |
+        Containers should not run as the root user for security reasons. This test ensures that all Dockerfile stages, except the first one, specify a non-root user for running container processes.
+        The first stage is typically used for building or installing dependencies and may require root privileges. However, subsequent stages should drop root privileges to minimize security risks.
+    remediation: |
+        Update your Dockerfile to use the `USER` directive in all stages after the initial build stage. Specify a non-root user to run container processes, which enhances the security posture of your containers.
+        For example, you can add the following directive in Dockerfile stages where it is appropriate:
+
+        ```dockerfile
+        USER appuser
+        ```
+        Make sure that `appuser` is created and has the necessary permissions for the processes in that stage.
+  - uid: mondoo-docker-security-use-copy-instead-of-add
+    title: Use COPY instead of ADD in Dockerfiles
+    impact: 100
+    mql: |
+      docker.file.stages.all(add == empty)
+    docs:
+      desc: |
+        Ensure that Dockerfiles use the `COPY` instruction instead of `ADD`, unless `ADD`'s specific features are needed.
+        The `COPY` instruction is simpler and more predictable, as it only copies files from the source to the destination.
+        `ADD` has additional functionalities such as remote URL fetching and automatic extraction of tar archives, which can introduce security risks if misused.
+        Using `COPY` minimizes these risks by limiting the operations to straightforward file copying.
+      remediation: |
+        Review the Dockerfile and replace `ADD` instructions with `COPY` where possible. Use `ADD` only when its additional functionalities (e.g., fetching files from a remote URL or extracting tar files) are specifically needed and cannot be achieved using `COPY`.
+        Consider the following actions:
+        - Replace `ADD` with `COPY` for file copying tasks.
+        - Use `ADD` only for remote file fetching or unpacking archives if absolutely necessary.
+        - Verify the necessity of each `ADD` instruction and ensure it is used correctly.
+        - Perform a security review to ensure that any use of `ADD` does not introduce vulnerabilities or expose sensitive information.
+  - uid: mondoo-docker-best-practice-no-latest-tag
+    title: Don’t build containers from latest tags
+    impact: 100
+    mql: |
+      docker.file.stages.all(from.tag != "latest")
+    docs:
+      desc: |
+        Ensure that Dockerfiles do not use the `latest` tag for base images in the `FROM` instructions.
+        Using the `latest` tag can lead to unpredictable builds and potential security issues, as the base image version may change over time.
+      remediation: |
+        Review the Dockerfile to ensure that explicit version tags are used for base images instead of `latest`.
+        For example, use `python:3.9` instead of `python:latest` to ensure consistent and predictable builds.
+  - uid: mondoo-docker-best-practice-use-apt-get
+    title: Use `apt-get` instead of `apt` for consistent package management
+    impact: 100
+    mql: |
+      docker.file.stages.all(run.none(script.contains("apt")))
+    docs:
+      desc: |
+        Ensure that Dockerfiles use the `apt-get` CLI instead of `apt`. The `apt-get` CLI provides more predictable behavior in scripting contexts and is generally preferred for use in Dockerfiles for its consistency and reliability.
+      remediation: |
+        Review the Dockerfile `RUN` instructions to replace any `apt` commands with `apt-get`. This ensures that package management operations are performed using the recommended and more stable CLI.
