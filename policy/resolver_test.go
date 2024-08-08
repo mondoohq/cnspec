@@ -1805,3 +1805,92 @@ policies:
 
 	require.Equal(t, float32(0.9), rp.CollectorJob.RiskFactors["//test.sth/risks/sshd-service"].Magnitude.GetValue())
 }
+
+func TestResolve_Variants(t *testing.T) {
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+  - uid: example2
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      # Additionally it defines some queries of its own
+      - type: chapter
+        title: Some uname infos
+        queries:
+          # In this case, we are using a shared query that is defined below
+          - uid: uname
+        checks:
+          - uid: check-os
+            variants:
+              - uid: check-os-unix
+              - uid: check-os-windows
+
+queries:
+  # This is a composed query which has two variants: one for unix type systems
+  # and one for windows, where we don't run the additional argument.
+  # If you run the "uname" query, it will pick matching sub-queries for you.
+  - uid: uname
+    title: Collect uname info
+    variants:
+      - uid: unix-uname
+      - uid: windows-uname
+  - uid: unix-uname
+    mql: command("uname -a").stdout
+    filters: asset.family.contains("unix")
+  - uid: windows-uname
+    mql: command("uname").stdout
+    filters: asset.family.contains("windows")
+
+  - uid: check-os-unix
+    filters: asset.family.contains("unix")
+    title: A check only run on Linux/macOS
+    mql: users.contains(name == "root")
+  - uid: check-os-windows
+    filters: asset.family.contains("windows")
+    title: A check only run on Windows
+    mql: users.contains(name == "Administrator")`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("example2")}},
+	}, []*policy.Bundle{b})
+
+	ctx := context.Background()
+	_, err := srv.SetBundle(ctx, b)
+	require.NoError(t, err)
+
+	_, err = b.Compile(context.Background(), conf.Schema, nil)
+	require.NoError(t, err)
+
+	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		PolicyMrn:    policyMrn("example2"),
+		AssetFilters: []*explorer.Mquery{{Mql: "asset.family.contains(\"windows\")"}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+	qrIdToRj := map[string]*policy.ReportingJob{}
+	for _, rj := range rp.CollectorJob.ReportingJobs {
+		qrIdToRj[rj.QrId] = rj
+	}
+
+	t.Run("resolve variant data queries", func(t *testing.T) {
+		rj := qrIdToRj["//test.sth/queries/uname"]
+		require.NotNil(t, rj)
+		assert.ElementsMatch(t, []string{"//test.sth/queries/uname"}, rj.Mrns)
+
+		rj = qrIdToRj["//test.sth/queries/windows-uname"]
+		require.NotNil(t, rj)
+		assert.ElementsMatch(t, []string{"//test.sth/queries/windows-uname"}, rj.Mrns)
+	})
+
+	t.Run("resolve variant checks", func(t *testing.T) {
+		rj := qrIdToRj["//test.sth/queries/check-os"]
+		require.NotNil(t, rj)
+		assert.ElementsMatch(t, []string{"//test.sth/queries/check-os"}, rj.Mrns)
+
+		rj = qrIdToRj["eUdVwVDNIGA="]
+		require.NotNil(t, rj)
+		assert.ElementsMatch(t, []string{"//test.sth/queries/check-os-windows"}, rj.Mrns)
+	})
+}

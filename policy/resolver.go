@@ -748,7 +748,6 @@ func (s *LocalServices) mergeRisk(cache *resolverCache, riskFactor *RiskFactor) 
 
 		if riskFactor.Action != explorer.Action_UNSPECIFIED {
 			existing.Action = riskFactor.Action
-
 		}
 	} else {
 		cache.riskFactors[riskFactor.Mrn] = riskFactor
@@ -1161,7 +1160,11 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 			Type:       ReportingJob_CHECK,
 			Mrns:       []string{},
 		}
-		cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
+		// We don't track the MRNs for variant queries through the cachem, since variant queries
+		// have no MQL, meaning they get the same code ID
+		if len(check.Variants) == 0 {
+			cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
+		}
 		cache.global.reportingJobsByUUID[uuid] = rj
 		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], rj)
 		cache.childJobsByMrn[check.Mrn] = append(cache.childJobsByMrn[check.Mrn], rj)
@@ -1171,13 +1174,6 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 		cache.global.reportingJobsByCodeId[check.CodeId] = []*ReportingJob{}
 	}
 	cache.global.reportingJobsByCodeId[check.CodeId] = append(cache.global.reportingJobsByCodeId[check.CodeId], rj)
-
-	// Add the MRN to all the reporting jobs with the same codeID
-	// This is used to track all the MRNs
-	for _, job := range cache.global.reportingJobsByCodeId[check.CodeId] {
-		// Set the MRNs to all the MRNs we collected so far
-		job.Mrns = cache.global.codeIdToMrn[check.CodeId]
-	}
 
 	if ownerJob.ChildJobs[rj.Uuid] == nil {
 		ownerJob.ChildJobs[rj.Uuid] = impact
@@ -1191,10 +1187,19 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 		if err != nil {
 			log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")
 		}
+		// If this is avariant query, its MRN is only the MRN of the check.
+		rj.Mrns = []string{check.Mrn}
 	} else {
 		// we set a placeholder for the execution query, just to indicate it will be added
 		cache.global.executionQueries[check.Checksum] = nil
 		cache.global.queriesByMsum[check.Checksum] = check
+
+		// Add the MRN to all the reporting jobs with the same codeID
+		// This is used to track all the MRNs
+		for _, job := range cache.global.reportingJobsByCodeId[check.CodeId] {
+			// Set the MRNs to all the MRNs we collected so far
+			job.Mrns = cache.global.codeIdToMrn[check.CodeId]
+		}
 	}
 }
 
@@ -1246,7 +1251,11 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 			// FIXME: DEPRECATED, remove in v10.0 vv
 			DeprecatedV8IsData: true,
 		}
-		cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
+		// We don't track the MRNs for variant queries through the cachem, since variant queries
+		// have no MQL, meaning they get the same code ID
+		if len(query.Variants) == 0 {
+			cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
+		}
 		cache.global.reportingJobsByUUID[uuid] = rj
 		cache.global.reportingJobsByMsum[query.Checksum] = append(cache.global.reportingJobsByMsum[query.Checksum], rj)
 		cache.childJobsByMrn[query.Mrn] = append(cache.childJobsByMrn[query.Mrn], rj)
@@ -1256,13 +1265,6 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 		cache.global.reportingJobsByCodeId[query.CodeId] = []*ReportingJob{}
 	}
 	cache.global.reportingJobsByCodeId[query.CodeId] = append(cache.global.reportingJobsByCodeId[query.CodeId], rj)
-
-	// Add the MRN to all the reporting jobs with the same codeID
-	// This is used to track all the MRNs
-	for _, job := range cache.global.reportingJobsByCodeId[query.CodeId] {
-		// Set the MRNs to all the MRNs we collected so far
-		job.Mrns = cache.global.codeIdToMrn[query.CodeId]
-	}
 
 	// local aspects for the resolved policy
 	rj.Notify = append(rj.Notify, ownerJob.Uuid)
@@ -1274,11 +1276,18 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 		if err != nil {
 			log.Error().Err(err).Str("queryMrn", query.Mrn).Msg("failed to add data query variants")
 		}
+		rj.Mrns = []string{query.Mrn}
 	} else {
 		// we set a placeholder for the execution query, just to indicate it will be added
 		cache.global.executionQueries[query.Checksum] = nil
 		cache.global.dataQueries[query.Checksum] = struct{}{}
 		cache.global.queriesByMsum[query.Checksum] = query
+		// Add the MRN to all the reporting jobs with the same codeID
+		// This is used to track all the MRNs
+		for _, job := range cache.global.reportingJobsByCodeId[query.CodeId] {
+			// Set the MRNs to all the MRNs we collected so far
+			job.Mrns = cache.global.codeIdToMrn[query.CodeId]
+		}
 	}
 }
 
