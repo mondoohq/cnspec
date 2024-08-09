@@ -1609,6 +1609,7 @@ type RiskFactor struct {
 	Software                []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
 	Resources               []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
 	Indicator               string              `protobuf:"bytes,75,opt,name=indicator,proto3" json:"indicator,omitempty" yaml:"indicator,omitempty"`
+	Action                  Action              `protobuf:"varint,77,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Uid                     string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn                     string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Title                   string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
