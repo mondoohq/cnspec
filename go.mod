@@ -38,7 +38,7 @@ require (
 	go.mondoo.com/ranger-rpc v0.6.2
 	go.opentelemetry.io/otel v1.28.0
 	gocloud.dev v0.38.0
-	golang.org/x/sys v0.23.0
+	golang.org/x/sys v0.24.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240730163845-b1a4ccb954bf
 	google.golang.org/protobuf v1.34.2
 	gopkg.in/yaml.v3 v3.0.1
