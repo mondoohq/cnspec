@@ -526,6 +526,9 @@ policies:
     - uid: active-query-2
       title: users length
       mql: users.length
+    - uid: check-overlap
+      title: overlaps with check
+      mql: 1 == 1
 - uid: policy-inactive
   groups:
   - filters: "false"
@@ -631,6 +634,11 @@ framework_maps:
 		// Check that there are no duplicates in the reporting job's notify list
 		for _, rj := range rp.CollectorJob.ReportingJobs {
 			requireUnique(t, rj.Notify)
+			for _, pRjUuid := range rj.Notify {
+				pRj := rp.CollectorJob.ReportingJobs[pRjUuid]
+				require.NotNil(t, pRj)
+				require.Contains(t, pRj.ChildJobs, rj.Uuid)
+			}
 		}
 
 		require.Len(t, rp.ExecutionJob.Queries, 5)
