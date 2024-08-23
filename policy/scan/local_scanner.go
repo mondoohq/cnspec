@@ -414,6 +414,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				asset := batch[i].Asset
 				runtime := batch[i].Runtime
 
+				if err := runtime.EnsureProvidersConnected(); err != nil {
+					log.Error().Err(err).Msg("could not connect to providers")
+				}
+
 				log.Debug().Interface("platform", asset.Platform).Str("name", asset.Name).Msg("start scan")
 
 				// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
