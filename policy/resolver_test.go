@@ -1709,13 +1709,15 @@ queries:
 		}
 		// scoring queries report by code id
 		require.NotNil(t, qrIdToRj[b.Queries[1].CodeId])
-		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Mrns, 2)
+		require.Len(t, qrIdToRj[b.Queries[1].CodeId].Mrns, 3)
 		require.Equal(t, queryMrn("variant1"), qrIdToRj[b.Queries[1].CodeId].Mrns[0])
-		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[1].CodeId].Mrns[1])
+		require.Equal(t, queryMrn("check-variants"), qrIdToRj[b.Queries[1].CodeId].Mrns[1])
+		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[1].CodeId].Mrns[2])
 
-		require.Len(t, qrIdToRj[b.Queries[2].CodeId].Mrns, 2)
+		require.Len(t, qrIdToRj[b.Queries[2].CodeId].Mrns, 3)
 		require.Equal(t, queryMrn("variant1"), qrIdToRj[b.Queries[2].CodeId].Mrns[0])
-		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[2].CodeId].Mrns[1])
+		require.Equal(t, queryMrn("check-variants"), qrIdToRj[b.Queries[2].CodeId].Mrns[1])
+		require.Equal(t, queryMrn("variant2"), qrIdToRj[b.Queries[2].CodeId].Mrns[2])
 	})
 }
 
@@ -1881,7 +1883,10 @@ queries:
 
 		rj = qrIdToRj["//test.sth/queries/windows-uname"]
 		require.NotNil(t, rj)
-		assert.ElementsMatch(t, []string{"//test.sth/queries/windows-uname"}, rj.Mrns)
+		assert.ElementsMatch(t, []string{
+			"//test.sth/queries/windows-uname",
+			"//test.sth/queries/uname",
+		}, rj.Mrns)
 	})
 
 	t.Run("resolve variant checks", func(t *testing.T) {
@@ -1891,6 +1896,9 @@ queries:
 
 		rj = qrIdToRj["eUdVwVDNIGA="]
 		require.NotNil(t, rj)
-		assert.ElementsMatch(t, []string{"//test.sth/queries/check-os-windows"}, rj.Mrns)
+		assert.ElementsMatch(t, []string{
+			"//test.sth/queries/check-os-windows",
+			"//test.sth/queries/check-os",
+		}, rj.Mrns)
 	})
 }
