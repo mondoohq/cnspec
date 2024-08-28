@@ -650,21 +650,30 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Str("bundle", bundleMrn).
 		Msg("resolver> phase 5: resolve controls [ok]")
 
-	// phase 6: refresh all checksums
-	s.refreshChecksums(executionJob, collectorJob)
-
 	// the final phases are done in the DataLake
 	for _, rj := range collectorJob.ReportingJobs {
 		rj.RefreshChecksum()
 	}
 
+	// phase 6: refresh all checksums
+	// This uses the ReportingJobs checksums, so calculate them first.
+	s.refreshChecksums(executionJob, collectorJob)
+
+	// resolvedPolicyExecutionChecksum is the GraphExceutionChecksum of the policy and the framework
+	// it does not change if any of the jobs changes, only if the policy or the framework changes
+	rpChecksumInclJobs := checksums.New
+	rpChecksumInclJobs.Add(resolvedPolicyExecutionChecksum) // nolint: staticcheck
+	rpChecksumInclJobs.Add(executionJob.Checksum)           // nolint: staticcheck
+	rpChecksumInclJobs.Add(collectorJob.Checksum)           // nolint: staticcheck
+
 	resolvedPolicy := ResolvedPolicy{
-		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
-		Filters:                matchingFilters,
-		FiltersChecksum:        assetFiltersChecksum,
-		ExecutionJob:           executionJob,
-		CollectorJob:           collectorJob,
-		ReportingJobUuid:       reportingJob.Uuid,
+		GraphExecutionChecksum: rpChecksumInclJobs.String(),
+		// GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
+		Filters:          matchingFilters,
+		FiltersChecksum:  assetFiltersChecksum,
+		ExecutionJob:     executionJob,
+		CollectorJob:     collectorJob,
+		ReportingJobUuid: reportingJob.Uuid,
 	}
 
 	err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, &resolvedPolicy, V2Code, false)
