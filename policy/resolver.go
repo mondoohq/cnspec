@@ -29,6 +29,10 @@ import (
 
 const (
 	POLICY_SERVICE_NAME = "policy.api.mondoo.com"
+	// This is used to change the checksum of the resolved policy when we want it to be recalculated
+	// This can be updated, e.g., when we change how the report jobs are generated
+	// A change of this string will force an update of all the stored resolved policies
+	RESOLVER_VERSION = "v2024-08-29"
 )
 
 type AssetMutation struct {
@@ -650,30 +654,28 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Str("bundle", bundleMrn).
 		Msg("resolver> phase 5: resolve controls [ok]")
 
+	// phase 6: refresh all checksums
+	s.refreshChecksums(executionJob, collectorJob)
+
 	// the final phases are done in the DataLake
 	for _, rj := range collectorJob.ReportingJobs {
 		rj.RefreshChecksum()
 	}
 
-	// phase 6: refresh all checksums
-	// This uses the ReportingJobs checksums, so calculate them first.
-	s.refreshChecksums(executionJob, collectorJob)
-
 	// resolvedPolicyExecutionChecksum is the GraphExceutionChecksum of the policy and the framework
 	// it does not change if any of the jobs changes, only if the policy or the framework changes
-	rpChecksumInclJobs := checksums.New
-	rpChecksumInclJobs.Add(resolvedPolicyExecutionChecksum) // nolint: staticcheck
-	rpChecksumInclJobs.Add(executionJob.Checksum)           // nolint: staticcheck
-	rpChecksumInclJobs.Add(collectorJob.Checksum)           // nolint: staticcheck
+	// To update the resolved policy, when we change how it is generated, change the incoporated version of the resolver
+	rpChecksumInclVersion := checksums.New
+	rpChecksumInclVersion = rpChecksumInclVersion.Add(resolvedPolicyExecutionChecksum)
+	rpChecksumInclVersion = rpChecksumInclVersion.Add(RESOLVER_VERSION)
 
 	resolvedPolicy := ResolvedPolicy{
-		GraphExecutionChecksum: rpChecksumInclJobs.String(),
-		// GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
-		Filters:          matchingFilters,
-		FiltersChecksum:  assetFiltersChecksum,
-		ExecutionJob:     executionJob,
-		CollectorJob:     collectorJob,
-		ReportingJobUuid: reportingJob.Uuid,
+		GraphExecutionChecksum: rpChecksumInclVersion.String(),
+		Filters:                matchingFilters,
+		FiltersChecksum:        assetFiltersChecksum,
+		ExecutionJob:           executionJob,
+		CollectorJob:           collectorJob,
+		ReportingJobUuid:       reportingJob.Uuid,
 	}
 
 	err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, &resolvedPolicy, V2Code, false)
