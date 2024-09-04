@@ -88,39 +88,30 @@ jobs:
           name: test-results
           path: report.xml
 
-  debug:
-    runs-on: ubuntu-latest
-    needs: go-test
-    steps:
-      - name: Dump GitHub context
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-        run: echo "$GITHUB_CONTEXT"
-
   go-auto-approve:
     runs-on: ubuntu-latest
     needs: go-test
-    if: ${{ github.actor == 'dependabot[bot]' && needs.go-test.outputs.outcome == 'success' }}
+    # For now, we only auto approve and merge go dep PRs because we have tests for this in place.
+    # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/evaluate-expressions-in-workflows-and-actions#startswith
+    if: ${{ startsWith(github.ref, 'refs/heads/dependabot/go_modules') && github.actor == 'dependabot[bot]' && needs.go-test.outputs.outcome == 'success' }}
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Fetch PR infos
-        id: metadata
-        uses: dependabot/fetch-metadata@v2
+      # figure out the PR for this commit
+      - uses: cloudposse-github-actions/get-pr@v1.0.1
+        id: pr
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-      - name: Debug metadata
-        run: echo "${{ steps.metadata.outputs }}"
-      # - name: Approve a PR
-      #   # For now, we only auto approve and merge go dep PRs because we have tests for this in place.
-      #   if: ${{ steps.dependabot-metadata.outputs.package-ecosystem == 'go' }}
-      #   # Settings the comment will auto merge the PR after all tests passed
-      #   # https://docs.github.com/en/enterprise-cloud@latest/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates#managing-dependabot-pull-requests-with-comment-commands
-      #   run: gh pr review --comment "@dependabot squash and merge" --approve "$PR_URL"
-      #   env:
-      #     PR_URL: ${{github.event.pull_request.html_url}}
-      #     GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          filterOutClosed: true
+          filterOutDraft: true
+      - name: Approve a PR
+        # Settings the comment will auto merge the PR after all tests passed
+        # https://docs.github.com/en/enterprise-cloud@latest/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates#managing-dependabot-pull-requests-with-comment-commands
+        run: gh pr review --comment "@dependabot squash and merge" --approve "$PR_URL"
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
   event_file:
     name: "Store event file"
