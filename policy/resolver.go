@@ -662,15 +662,8 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		rj.RefreshChecksum()
 	}
 
-	// resolvedPolicyExecutionChecksum is the GraphExceutionChecksum of the policy and the framework
-	// it does not change if any of the jobs changes, only if the policy or the framework changes
-	// To update the resolved policy, when we change how it is generated, change the incoporated version of the resolver
-	rpChecksumInclVersion := checksums.New
-	rpChecksumInclVersion = rpChecksumInclVersion.Add(resolvedPolicyExecutionChecksum)
-	rpChecksumInclVersion = rpChecksumInclVersion.Add(RESOLVER_VERSION)
-
 	resolvedPolicy := ResolvedPolicy{
-		GraphExecutionChecksum: rpChecksumInclVersion.String(),
+		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
 		Filters:                matchingFilters,
 		FiltersChecksum:        assetFiltersChecksum,
 		ExecutionJob:           executionJob,
