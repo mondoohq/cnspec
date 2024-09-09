@@ -37,5 +37,6 @@ func (r *ReportingJob) RefreshChecksum() {
 			checksum = checksum.Add(notify[i])
 		}
 	}
+
 	r.Checksum = checksum.String()
 }

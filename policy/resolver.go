@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"math/rand"
+	"slices"
 	"sort"
 	"time"
 
@@ -28,6 +29,10 @@ import (
 
 const (
 	POLICY_SERVICE_NAME = "policy.api.mondoo.com"
+	// This is used to change the checksum of the resolved policy when we want it to be recalculated
+	// This can be updated, e.g., when we change how the report jobs are generated
+	// A change of this string will force an update of all the stored resolved policies
+	RESOLVER_VERSION = "v2024-08-29"
 )
 
 type AssetMutation struct {
@@ -1160,10 +1165,21 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 			Type:       ReportingJob_CHECK,
 			Mrns:       []string{},
 		}
-		// We don't track the MRNs for variant queries through the cachem, since variant queries
+		// We don't track the MRNs for variant queries through the cache, since variant queries
 		// have no MQL, meaning they get the same code ID
 		if len(check.Variants) == 0 {
 			cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], check.Mrn)
+			// Because we have no variants, we might have to add the MRN of the parent job
+			if ownerJob != nil && ownerJob.Type == ReportingJob_CHECK && len(ownerJob.Mrns) > 0 {
+				// We might have variants, where multiple variant queries apply
+				// Don't save the same MRNs multiple times
+				for _, mrn := range ownerJob.Mrns {
+					if slices.Contains(cache.global.codeIdToMrn[check.CodeId], mrn) {
+						continue
+					}
+					cache.global.codeIdToMrn[check.CodeId] = append(cache.global.codeIdToMrn[check.CodeId], mrn)
+				}
+			}
 		}
 		cache.global.reportingJobsByUUID[uuid] = rj
 		cache.global.reportingJobsByMsum[check.Checksum] = append(cache.global.reportingJobsByMsum[check.Checksum], rj)
@@ -1183,12 +1199,14 @@ func (cache *policyResolverCache) addCheckJob(ctx context.Context, check *explor
 	rj.Notify = append(rj.Notify, ownerJob.Uuid)
 
 	if len(check.Variants) != 0 {
+		// Add parent MRN, so we can later also query the result by the variants parent MRN
+		// //.../queries/parent-check
+		// //.../queries/variant-1
+		rj.Mrns = []string{check.Mrn}
 		err := cache.addCheckJobVariants(ctx, check, rj)
 		if err != nil {
 			log.Error().Err(err).Str("checkMrn", check.Mrn).Msg("failed to add data query variants")
 		}
-		// If this is avariant query, its MRN is only the MRN of the check.
-		rj.Mrns = []string{check.Mrn}
 	} else {
 		// we set a placeholder for the execution query, just to indicate it will be added
 		cache.global.executionQueries[check.Checksum] = nil
@@ -1255,6 +1273,17 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 		// have no MQL, meaning they get the same code ID
 		if len(query.Variants) == 0 {
 			cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], query.Mrn)
+			// Because we have no variants, we might have to add the MRN of the parent job
+			if ownerJob != nil && ownerJob.Type == ReportingJob_DATA_QUERY && len(ownerJob.Mrns) > 0 {
+				// We might have variants, where multiple variant queries apply
+				// Don't save the same MRNs multiple times
+				for _, mrn := range ownerJob.Mrns {
+					if slices.Contains(cache.global.codeIdToMrn[query.CodeId], mrn) {
+						continue
+					}
+					cache.global.codeIdToMrn[query.CodeId] = append(cache.global.codeIdToMrn[query.CodeId], mrn)
+				}
+			}
 		}
 		cache.global.reportingJobsByUUID[uuid] = rj
 		cache.global.reportingJobsByMsum[query.Checksum] = append(cache.global.reportingJobsByMsum[query.Checksum], rj)
@@ -1272,11 +1301,14 @@ func (cache *policyResolverCache) addDataQueryJob(ctx context.Context, query *ex
 		ownerJob.ChildJobs[rj.Uuid] = query.Impact
 	}
 	if len(query.Variants) != 0 {
+		// Add parent MRN, so we can later also query the result by the variants parent MRN
+		// //.../queries/parent-check
+		// //.../queries/variant-1
+		rj.Mrns = []string{query.Mrn}
 		err := cache.addDataQueryVariants(ctx, query, rj)
 		if err != nil {
 			log.Error().Err(err).Str("queryMrn", query.Mrn).Msg("failed to add data query variants")
 		}
-		rj.Mrns = []string{query.Mrn}
 	} else {
 		// we set a placeholder for the execution query, just to indicate it will be added
 		cache.global.executionQueries[query.Checksum] = nil
