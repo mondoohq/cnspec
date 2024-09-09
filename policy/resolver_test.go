@@ -234,9 +234,9 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
-		ignoreJob := rp.CollectorJob.ReportingJobs["8Sis0SvMbtI="]
+		ignoreJob := rp.CollectorJob.ReportingJobs["q7gxFtwx4zg="]
 		require.NotNil(t, ignoreJob)
-		childJob := ignoreJob.ChildJobs["YCeU4NjbMe0="]
+		childJob := ignoreJob.ChildJobs["GhqR9OVIDVM="]
 		require.NotNil(t, childJob)
 		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
 	})
@@ -291,12 +291,12 @@ policies:
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
-		ignoreJob := rp.CollectorJob.ReportingJobs["WVDbd6CWW30="]
+		ignoreJob := rp.CollectorJob.ReportingJobs["gqNWe4GO+UA="]
 		require.NotNil(t, ignoreJob)
-		childJob := ignoreJob.ChildJobs["7Q8ymKH8W5c="]
+		childJob := ignoreJob.ChildJobs["LrvWHNnWZNQ="]
 		require.NotNil(t, childJob)
 		require.Equal(t, explorer.ScoringSystem_IGNORE_SCORE, childJob.Scoring)
-		activeJob := rp.CollectorJob.ReportingJobs["/w4u/z6FEsI="]
+		activeJob := rp.CollectorJob.ReportingJobs["+KeXN9zwDzA="]
 		require.NotNil(t, activeJob)
 		require.Equal(t, explorer.ScoringSystem_BANDED, activeJob.ScoringSystem)
 	})

@@ -38,13 +38,5 @@ func (r *ReportingJob) RefreshChecksum() {
 		}
 	}
 
-	{
-		mrns := make([]string, len(r.Mrns))
-		copy(mrns, r.Mrns)
-		sort.Strings(mrns)
-		for i := range mrns {
-			checksum = checksum.Add(mrns[i])
-		}
-	}
 	r.Checksum = checksum.String()
 }
