@@ -252,7 +252,7 @@ func updateProviders() error {
 	}
 	updatedProviders := []*providers.Provider{}
 	for _, provider := range allProviders {
-		if provider.Name == "mock" || provider.Name == "core" {
+		if provider.Name == "mock" || provider.Name == "core" || provider.Name == "sbom" {
 			continue
 		}
 		latestVersion, err := providers.LatestVersion(provider.Name)
