@@ -6,7 +6,7 @@ go 1.23.0
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.7.0
-	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.7.1
+	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.7.2
 	github.com/Masterminds/semver v1.5.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.33
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.61.2
@@ -34,7 +34,7 @@ require (
 	go.mondoo.com/cnquery/v11 v11.21.1
 	go.mondoo.com/mondoo-go v0.0.0-20240819110653-687d75eb1183
 	go.mondoo.com/ranger-rpc v0.6.3
-	go.opentelemetry.io/otel v1.29.0
+	go.opentelemetry.io/otel v1.30.0
 	gocloud.dev v0.39.0
 	golang.org/x/sys v0.25.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240827150818-7e3bb234dfed
@@ -60,7 +60,7 @@ require (
 	github.com/Azure/azure-amqp-common-go/v3 v3.2.3 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.14.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
-	github.com/Azure/go-amqp v1.0.5 // indirect
+	github.com/Azure/go-amqp v1.1.0 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.2.2 // indirect
 	github.com/BurntSushi/toml v1.4.0 // indirect
@@ -263,8 +263,8 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.54.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.54.0 // indirect
-	go.opentelemetry.io/otel/metric v1.29.0 // indirect
-	go.opentelemetry.io/otel/trace v1.29.0 // indirect
+	go.opentelemetry.io/otel/metric v1.30.0 // indirect
+	go.opentelemetry.io/otel/trace v1.30.0 // indirect
 	go.uber.org/mock v0.4.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.26.0 // indirect
