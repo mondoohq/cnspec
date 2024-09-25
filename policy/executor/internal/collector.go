@@ -11,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 	"google.golang.org/protobuf/proto"
 )
@@ -317,23 +318,49 @@ func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy
 		return
 	}
 
-	resultsToSend := make(map[string]*llx.Result, len(results))
-	for _, rr := range results {
-		resultsToSend[rr.CodeID] = c.toResult(rr)
+	if len(results) > 0 {
+		llxResults := make([]*llx.Result, len(results))
+		for i, rr := range results {
+			llxResults[i] = c.toResult(rr)
+		}
+		err := iox.ChunkMessages(func(chunk []*llx.Result) error {
+			log.Debug().Msg("Sending datapoints")
+			resultsToSend := make(map[string]*llx.Result, len(chunk))
+			for _, rr := range chunk {
+				resultsToSend[rr.CodeId] = rr
+			}
+			_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
+				AssetMrn:       c.assetMrn,
+				Data:           resultsToSend,
+				IsPreprocessed: true,
+				IsLastBatch:    isDone,
+			})
+			if err != nil {
+				log.Error().Err(err).Msg("failed to send datapoints")
+			}
+			return nil
+		}, func(item *llx.Result, msgSize int) {
+			log.Warn().Msgf("Data %s %d exceeds maximum message size", item.CodeId, msgSize)
+		}, llxResults...)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to send datapoints")
+		}
 	}
 
-	log.Debug().Msg("Sending datapoints and scores")
-	_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
-		AssetMrn:       c.assetMrn,
-		Data:           resultsToSend,
-		Scores:         scores,
-		Risks:          risks,
-		IsPreprocessed: true,
-		IsLastBatch:    isDone,
-	})
-	if err != nil {
-		log.Error().Err(err).Msg("failed to send datapoints and scores")
+	if len(scores) > 0 || len(risks) > 0 {
+		log.Debug().Msg("Sending scores")
+		_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
+			AssetMrn:       c.assetMrn,
+			Scores:         scores,
+			Risks:          risks,
+			IsPreprocessed: true,
+			IsLastBatch:    isDone,
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("failed to send datapoints and scores")
+		}
 	}
+
 }
 
 type FuncCollector struct {
