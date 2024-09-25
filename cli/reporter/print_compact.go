@@ -476,7 +476,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		dataQueriesOutput := ""
 		resolved.WithDataQueries(func(id string, query *policy.ExecutionQuery) {
 			data := query.Code.FilterResults(results)
-			result := r.Reporter.Printer.Results(query.Code, data)
+			result := r.Reporter.Printer.Datas(query.Code, data)
 			if result == "" {
 				return
 			}

@@ -101,7 +101,7 @@ func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report 
 			}
 		}
 
-		result := print.Results(codeBundle, filteredResults)
+		result := print.Datas(codeBundle, filteredResults)
 		result = strings.ReplaceAll(result, "\n", NewLineCharacter)
 		res.WriteString("  Result:")
 		writeQueryCompact(res, result)

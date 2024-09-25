@@ -90,7 +90,7 @@ func renderAssetOverview(print *printer.Printer, policyObj *policy.Policy, repor
 
 			// print data results
 			filteredResults := codeBundle.FilterResults(results)
-			value := print.Results(codeBundle, filteredResults)
+			value := print.Datas(codeBundle, filteredResults)
 
 			table = append(table, row{
 				Title: query.Title,
