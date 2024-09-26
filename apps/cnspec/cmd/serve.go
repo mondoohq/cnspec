@@ -13,12 +13,12 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/cli/config"
+	"go.mondoo.com/cnquery/v11/logger"
 
 	cli_errors "go.mondoo.com/cnquery/v11/cli/errors"
 	"go.mondoo.com/cnquery/v11/cli/execruntime"
 	"go.mondoo.com/cnquery/v11/cli/inventoryloader"
 	"go.mondoo.com/cnquery/v11/cli/prof"
-	"go.mondoo.com/cnquery/v11/logger"
 	"go.mondoo.com/cnquery/v11/providers"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"
@@ -53,6 +53,19 @@ var serveCmd = &cobra.Command{
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		_ = viper.BindPFlag("inventory-template", cmd.Flags().Lookup("inventory-template"))
 		logger.StandardZerologLogger()
+		// environment variables always over-write custom flags
+		envLevel, ok := logger.GetEnvLogLevel()
+		if ok {
+			logger.Set(envLevel)
+			return
+		}
+
+		// retrieve log-level from flags
+		level := viper.GetString("log-level")
+		if v := viper.GetBool("verbose"); v {
+			level = "debug"
+		}
+		logger.Set(level)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
