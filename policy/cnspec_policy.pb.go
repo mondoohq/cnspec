@@ -4128,8 +4128,7 @@ type Score struct {
 	FailureTime int64 `protobuf:"varint,11,opt,name=failure_time,json=failureTime,proto3" json:"failure_time,omitempty"`
 	// risk factors that were applied to this score
 	RiskFactors *ScoredRiskFactors `protobuf:"bytes,12,opt,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty"`
-	// Source of the score
-	// Currently, this only applies to vulnerability scores
+	// Optional. Source of the score.
 	Source *Source `protobuf:"bytes,13,opt,name=source,proto3" json:"source,omitempty"`
 }
 
