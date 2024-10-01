@@ -57,6 +57,8 @@ func (s *ScoreStats) Add(other *ScoreStats) {
 	s.Pass += other.Pass
 	s.Unknown += other.Unknown
 	s.Error += other.Error
+	s.Disabled += other.Disabled
+	s.Snoozed += other.Snoozed
 	s.FirstFailureTime += other.FirstFailureTime
 	s.OldestScanTime += other.OldestScanTime
 	s.NewestScanTime += other.NewestScanTime
