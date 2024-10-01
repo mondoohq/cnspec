@@ -31,7 +31,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.9.0
-	go.mondoo.com/cnquery/v11 v11.23.2
+	go.mondoo.com/cnquery/v11 v11.24.0
 	go.mondoo.com/mondoo-go v0.0.0-20240924071220-8972d78c3774
 	go.mondoo.com/ranger-rpc v0.6.4
 	go.opentelemetry.io/otel v1.30.0
@@ -84,18 +84,18 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.18 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.18 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.179.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.26.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.35.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.26.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.179.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.26.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.35.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.26.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.11.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.3.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.17.18 // indirect
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.33.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.33.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.31.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.34.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.54.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.54.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.23.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.27.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.31.3 // indirect
