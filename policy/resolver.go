@@ -662,6 +662,11 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		rj.RefreshChecksum()
 	}
 
+	disabledQueries := map[string]*Empty{}
+	for mrn := range policyToJobsCache.removedQueries {
+		disabledQueries[mrn] = globalEmpty
+	}
+
 	resolvedPolicy := ResolvedPolicy{
 		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
 		Filters:                matchingFilters,
@@ -669,6 +674,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		ExecutionJob:           executionJob,
 		CollectorJob:           collectorJob,
 		ReportingJobUuid:       reportingJob.Uuid,
+		DisabledQueries:        disabledQueries,
 	}
 
 	err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, &resolvedPolicy, V2Code, false)
