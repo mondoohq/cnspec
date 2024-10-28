@@ -710,6 +710,31 @@ func (s *GroupType) UnmarshalJSON(data []byte) error {
 	return errors.New("failed to unmarshal group type: " + str)
 }
 
+func (a *Migration_Action) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		*a = Migration_UNSPECIFIED
+		return nil
+	}
+
+	v := strings.ToUpper(strings.Trim(string(data), "\""))
+	switch v {
+	case "CREATE":
+		*a = Migration_CREATE
+	case "REMOVE":
+		*a = Migration_REMOVE
+	case "MODIFY":
+		*a = Migration_MODIFY
+	default:
+		type tmp Migration_Action
+		err := json.Unmarshal(data, (*tmp)(a))
+		if err != nil {
+			return errors.New("failed to unmarshal '" + string(data) + "' into migration action")
+		}
+	}
+
+	return nil
+}
+
 func variantsExecutionChecksum(q *explorer.Mquery, c checksums.Fast, includeImpact bool, getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (checksums.Fast, error) {
 	// This code assumes there are no cycles in the variant graph.
 	c = c.
