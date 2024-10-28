@@ -9,7 +9,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.7.3
 	github.com/Masterminds/semver v1.5.0
 	github.com/aws/aws-sdk-go-v2/config v1.28.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.66.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.66.1
 	github.com/cockroachdb/errors v1.11.3
 	github.com/google/go-cmdtest v0.4.0
 	github.com/google/uuid v1.6.0
@@ -32,7 +32,7 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.9.0
-	github.com/zclconf/go-cty v1.13.0
+	github.com/zclconf/go-cty v1.15.0
 	go.mondoo.com/cnquery/v11 v11.27.0
 	go.mondoo.com/mondoo-go v0.0.0-20241019084804-ed418047ea3a
 	go.mondoo.com/ranger-rpc v0.6.4
@@ -81,7 +81,6 @@ require (
 	github.com/alecthomas/participle v0.3.0 // indirect
 	github.com/alecthomas/participle/v2 v2.1.1 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
-	github.com/apparentlymart/go-textseg/v13 v13.0.0 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go v1.55.5 // indirect
