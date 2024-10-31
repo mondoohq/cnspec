@@ -477,6 +477,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	if err != nil {
 		return nil, err
 	}
+
 	bundleMap := bundle.ToMap()
 
 	frameworkObj := bundleMap.Frameworks[bundleMrn]
@@ -489,6 +490,10 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 	if len(matchingFilters) == 0 {
 		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+	}
+
+	if true {
+		return buildResolvedPolicy(bundleMrn, bundle, matchingFilters, time.Now(), conf)
 	}
 
 	assetFiltersMap := make(map[string]struct{}, len(matchingFilters))
@@ -655,7 +660,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Msg("resolver> phase 5: resolve controls [ok]")
 
 	// phase 6: refresh all checksums
-	s.refreshChecksums(executionJob, collectorJob)
+	refreshChecksums(executionJob, collectorJob)
 
 	// the final phases are done in the DataLake
 	for _, rj := range collectorJob.ReportingJobs {
@@ -679,7 +684,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	return &resolvedPolicy, nil
 }
 
-func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
+func refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
 	// execution job
 	{
 		queryKeys := sortx.Keys(executionJob.Queries)
