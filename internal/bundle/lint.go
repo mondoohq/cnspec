@@ -32,6 +32,7 @@ const (
 	policyWrongVersion         = "policy-wrong-version"
 	queryUid                   = "query-uid"
 	queryTitle                 = "query-name"
+	queryMqlMissing            = "query-missing-mql"
 	queryUidUnique             = "query-uid-unique"
 	queryUnassigned            = "query-unassigned"
 	queryUsedAsDifferentTypes  = "query-used-as-different-types"
@@ -108,6 +109,11 @@ var LinterRules = []Rule{
 		ID:          queryTitle,
 		Name:        "Missing query title",
 		Description: "Every query needs to have a `title: My Query Title` field",
+	},
+	{
+		ID:          queryMqlMissing,
+		Name:        "Missing query mql",
+		Description: "Every query that isn't a parent query needs to have a valid `mql:` field",
 	},
 	{
 		ID:          queryUidUnique,
@@ -573,6 +579,22 @@ func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, ass
 			res.Entries = append(res.Entries, Entry{
 				RuleID:  queryTitle,
 				Message: fmt.Sprintf("query %s does not define a title", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
+	}
+
+	if query.Mql == "// not implemented yet" || query.Mql == "" {
+		_, hasParent := variantMapping[query.Uid]
+		if hasParent {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryMqlMissing,
+				Message: fmt.Sprintf("query %s does not define a mql field ", uid),
 				Level:   levelError,
 				Location: []Location{{
 					File:   file,
