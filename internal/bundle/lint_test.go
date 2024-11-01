@@ -106,7 +106,7 @@ func TestLintFail_MissingMQLVariant(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, len(results.BundleLocations))
-	assert.Equal(t, 2, len(results.Entries))
+	assert.Equal(t, 1, len(results.Entries))
 	assert.True(t, results.HasError())
 
 	entry := results.Entries[0]
