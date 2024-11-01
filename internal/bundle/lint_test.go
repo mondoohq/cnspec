@@ -111,5 +111,5 @@ func TestLintFail_MissingMQL(t *testing.T) {
 
 	entry := results.Entries[0]
 	assert.Equal(t, "query-missing-mql", entry.RuleID)
-	assert.Equal(t, "query cis-apple-macos-15-benchmark--1.1 does not define a mql field", entry.Message)
+	assert.Equal(t, "query mql-missing--1.1 does not define a mql field", entry.Message)
 }
