@@ -114,6 +114,20 @@ func TestLintFail_MissingMQLVariant(t *testing.T) {
 	assert.Equal(t, "query mql-missing--foo does not define a mql field", entry.Message)
 }
 
+func TestLintPass_MissingMQLVariant(t *testing.T) {
+	file := "./testdata/missing-mql-variants-pass.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 0, len(results.Entries))
+	assert.False(t, results.HasError())
+
+	// entry := results.Entries[0]
+	// assert.Equal(t, "query-missing-mql", entry.RuleID)
+	// assert.Equal(t, "query mql-missing--foo does not define a mql field", entry.Message)
+}
+
 func TestLintFail_MissingMQL(t *testing.T) {
 	file := "./testdata/missing-mql.mql.yaml"
 	results, err := bundle.Lint(schema, file)
