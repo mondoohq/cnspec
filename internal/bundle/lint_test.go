@@ -111,7 +111,7 @@ func TestLintFail_MissingMQLVariant(t *testing.T) {
 
 	entry := results.Entries[0]
 	assert.Equal(t, "query-missing-mql", entry.RuleID)
-	assert.Equal(t, "query mql-missing--foo does not define a mql field", entry.Message)
+	assert.Equal(t, "query mql-missing--foo is '// not implemented yet'", entry.Message)
 }
 
 func TestLintPass_MissingMQLVariant(t *testing.T) {
@@ -122,10 +122,6 @@ func TestLintPass_MissingMQLVariant(t *testing.T) {
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 0, len(results.Entries))
 	assert.False(t, results.HasError())
-
-	// entry := results.Entries[0]
-	// assert.Equal(t, "query-missing-mql", entry.RuleID)
-	// assert.Equal(t, "query mql-missing--foo does not define a mql field", entry.Message)
 }
 
 func TestLintFail_MissingMQL(t *testing.T) {
@@ -139,5 +135,5 @@ func TestLintFail_MissingMQL(t *testing.T) {
 
 	entry := results.Entries[0]
 	assert.Equal(t, "query-missing-mql", entry.RuleID)
-	assert.Equal(t, "query mql-missing--1.1 does not define a mql field", entry.Message)
+	assert.Equal(t, "query mql-missing--1.1 is '// not implemented yet'", entry.Message)
 }

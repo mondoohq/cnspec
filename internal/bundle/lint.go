@@ -593,7 +593,7 @@ func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, ass
 	if reNotImplemented.MatchString(query.Mql) {
 		res.Entries = append(res.Entries, Entry{
 			RuleID:  queryMqlMissing,
-			Message: fmt.Sprintf("query %s does not define a mql field", uid),
+			Message: fmt.Sprintf("query %s is '// not implemented yet'", uid),
 			Level:   levelError,
 			Location: []Location{{
 				File:   file,
