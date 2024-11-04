@@ -5,15 +5,21 @@
 package tfgen
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 
+	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+type Attributes map[string]interface{}
+
+type Object interface {
+	ToBlock() (*hclwrite.Block, error)
+}
 
 type HclProvider struct {
 	// Required. Provider name.
@@ -137,16 +143,11 @@ func (m *HclOutput) ToBlock() (*hclwrite.Block, error) {
 		attributes["description"] = m.description
 	}
 
-	block, err := HclCreateGenericBlock(
+	return HclCreateGenericBlock(
 		"output",
 		[]string{m.name},
 		attributes,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	return block, nil
 }
 
 // NewOutput Create a provider statement in the HCL output.
@@ -261,14 +262,13 @@ func (m *HclModule) ToBlock() (*hclwrite.Block, error) {
 	return block, nil
 }
 
-// ToResourceBlock Create hclwrite.Block for resource.
-func (m *HclResource) ToResourceBlock() (*hclwrite.Block, error) {
+// ToBlock Create hclwrite.Block for resource or data-source.
+func (m *HclResource) ToBlock() (*hclwrite.Block, error) {
 	if m.attributes == nil {
 		m.attributes = make(map[string]interface{})
 	}
 
-	block, err := HclCreateGenericBlock(
-		"resource",
+	block, err := HclCreateGenericBlock(string(m.object),
 		[]string{m.rType, m.name},
 		m.attributes,
 	)
@@ -291,6 +291,13 @@ func (m *HclResource) ToResourceBlock() (*hclwrite.Block, error) {
 	return block, nil
 }
 
+type objectType string
+
+const (
+	Resource   objectType = "resource"
+	DataSource objectType = "data"
+)
+
 type HclResource struct {
 	// Required. Resource type.
 	rType string
@@ -310,17 +317,39 @@ type HclResource struct {
 
 	// Optional. Generic blocks
 	blocks []*hclwrite.Block
+
+	// Internal. The object type. Either Resource or Datasource.
+	object objectType
 }
 
 type HclResourceModifier func(p *HclResource)
 
 // NewResource Create a provider statement in the HCL output.
-func NewResource(rType string, name string, mods ...HclResourceModifier) *HclResource {
-	resource := &HclResource{rType: rType, name: name}
+func NewDataSource(rType string, name string, mods ...HclResourceModifier) *HclResource {
+	resource := &HclResource{rType: rType, name: name, object: DataSource}
 	for _, m := range mods {
 		m(resource)
 	}
 	return resource
+}
+
+// NewResource Create a provider statement in the HCL output.
+func NewResource(rType string, name string, mods ...HclResourceModifier) *HclResource {
+	data := &HclResource{rType: rType, name: name, object: Resource}
+	for _, m := range mods {
+		m(data)
+	}
+	return data
+}
+
+func (m *HclResource) TraverseRef(input ...string) hcl.Traversal {
+	ref := []string{}
+	if m.object == DataSource {
+		ref = append(ref, string(m.object))
+	}
+	ref = append(ref, m.rType, m.name)
+	ref = append(ref, input...)
+	return CreateSimpleTraversal(ref...)
 }
 
 // HclResourceWithAttributesAndProviderDetails Used to set parameters within the resource usage.
@@ -329,6 +358,13 @@ func HclResourceWithAttributesAndProviderDetails(attrs map[string]interface{},
 	return func(p *HclResource) {
 		p.attributes = attrs
 		p.providerDetails = providerDetails
+	}
+}
+
+// HclResourceWithAttributes Used to set attributes within the resource usage.
+func HclResourceWithAttributes(attrs Attributes) HclResourceModifier {
+	return func(p *HclResource) {
+		p.attributes = attrs
 	}
 }
 
@@ -409,7 +445,22 @@ func convertTypeToCty(value interface{}) (cty.Value, error) {
 		}
 		return cty.TupleVal(valueSlice), nil
 	default:
-		return cty.NilVal, errors.New("unknown attribute value type")
+		return cty.NilVal, fmt.Errorf("convertTypeToCty: unknown attribute value type: %T", value)
+	}
+}
+
+func convertValueToTokens(value interface{}) (hclwrite.Tokens, error) {
+	switch elem := value.(type) {
+	case hclwrite.Tokens:
+		return elem, nil
+	case hcl.Traversal:
+		return hclwrite.TokensForTraversal(elem), nil
+	default:
+		value, err := convertTypeToCty(elem)
+		if err != nil {
+			return nil, err
+		}
+		return hclwrite.TokensForValue(value), nil
 	}
 }
 
@@ -423,7 +474,7 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 		block.Body().SetAttributeTraversal(key, v)
 	case hclwrite.Tokens:
 		block.Body().SetAttributeRaw(key, v)
-	case string, int, bool, []string, []interface{}, map[string]string:
+	case string, int, bool, []string, map[string]string:
 		value, err := convertTypeToCty(v)
 		if err != nil {
 			return err
@@ -449,6 +500,22 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 			)
 		}
 		block.Body().SetAttributeValue(key, cty.ListVal(values))
+	case []interface{}:
+		elems := []hclwrite.Tokens{}
+		for _, e := range v {
+			elem, err := convertValueToTokens(e)
+			if err != nil {
+				return err
+			}
+			elems = append(elems, elem)
+		}
+		block.Body().SetAttributeRaw(key, hclwrite.TokensForTuple(elems))
+	case Attributes:
+		// cast the custom type and run set block attribute again, the compiler doesn't
+		// allow the same case statement to treat both types
+		if err := setBlockAttributeValue(block, key, map[string]interface{}(v)); err != nil {
+			return err
+		}
 	case map[string]interface{}:
 		var keys []string
 		for k := range v {
@@ -458,21 +525,19 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 		objects := []hclwrite.ObjectAttrTokens{}
 		for _, attrKey := range keys {
 			attrVal := v[attrKey]
-			t, ok := attrVal.(hclwrite.Tokens)
-			if !ok {
-				value, err := convertTypeToCty(attrVal)
-				if err != nil {
-					return err
-				}
-				t = hclwrite.TokensForValue(value)
+			tokens, err := convertValueToTokens(attrVal)
+			if err != nil {
+				return err
 			}
 			objects = append(objects, hclwrite.ObjectAttrTokens{
 				Name:  hclwrite.TokensForIdentifier(attrKey),
-				Value: t,
+				Value: tokens,
 			})
 		}
 
 		block.Body().SetAttributeRaw(key, hclwrite.TokensForObject(objects))
+	case *hclwrite.Block:
+		block.Body().AppendBlock(v)
 	default:
 		return fmt.Errorf("setBlockAttributeValue: unknown type for key: %s", key)
 	}
@@ -563,6 +628,21 @@ func createForEachKey() hclwrite.Tokens {
 	}
 }
 
+// ObjectsToBlocks Convert HCL objects to blocks.
+func ObjectsToBlocks(objects ...Object) ([]*hclwrite.Block, error) {
+	hclBlocks := make([]*hclwrite.Block, len(objects))
+
+	for i, object := range objects {
+		block, err := object.ToBlock()
+		if err != nil {
+			return nil, errors.Wrap(err, "unable to render HCL block")
+		}
+		hclBlocks[i] = block
+	}
+
+	return hclBlocks, nil
+}
+
 // CreateHclStringOutput Convert blocks to a string.
 func CreateHclStringOutput(blocks ...*hclwrite.Block) string {
 	file := hclwrite.NewEmptyFile()
@@ -625,7 +705,7 @@ func CreateRequiredProviders(providers ...*HclRequiredProvider) (*hclwrite.Block
 	return block, nil
 }
 
-// CreateRequiredProviders Create required providers block.
+// CreateRequiredProvidersWithCustomBlocks Create required providers block with additional custom blocks.
 func CreateRequiredProvidersWithCustomBlocks(
 	blocks []*hclwrite.Block,
 	providers ...*HclRequiredProvider,

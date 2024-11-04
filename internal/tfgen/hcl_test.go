@@ -59,14 +59,14 @@ resource "mondoo_integration_gcp" "production" {
 				"account_id":   "mondoo-integration",
 				"display_name": "Mondoo service account",
 			}, nil,
-		)).ToResourceBlock()
+		)).ToBlock()
 	assert.NoError(t, err)
 	googleServiceAccountKey, err := tfgen.NewResource("google_service_account_key",
 		"mondoo", tfgen.HclResourceWithAttributesAndProviderDetails(
 			map[string]interface{}{
 				"service_account_id": tfgen.CreateSimpleTraversal("google_service_account", "mondoo", "name"),
 			}, nil,
-		)).ToResourceBlock()
+		)).ToBlock()
 	assert.NoError(t, err)
 	mondooIntegrationGCP, err := tfgen.NewResource("mondoo_integration_gcp",
 		"production", tfgen.HclResourceWithAttributesAndProviderDetails(
@@ -78,7 +78,7 @@ resource "mondoo_integration_gcp" "production" {
 						"base64decode", tfgen.CreateSimpleTraversal("google_service_account_key", "mondoo", "private_key")),
 				},
 			}, nil,
-		)).ToResourceBlock()
+		)).ToBlock()
 	assert.NoError(t, err)
 
 	blocksOutput := tfgen.CreateHclStringOutput(
@@ -185,7 +185,7 @@ func TestHclResourceToBlock(t *testing.T) {
   provider = aws.foo
 }
 `
-	block, err := resource.ToResourceBlock()
+	block, err := resource.ToBlock()
 	assert.NoError(t, err)
 	assert.NotNil(t, block)
 	assert.Equal(t, "resource", string(block.Type()))
