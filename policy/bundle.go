@@ -124,6 +124,7 @@ func Merge(a *Bundle, b *Bundle) *Bundle {
 	res.Queries = append(res.Queries, a.Queries...)
 	res.Frameworks = append(res.Frameworks, a.Frameworks...)
 	res.FrameworkMaps = append(res.FrameworkMaps, a.FrameworkMaps...)
+	res.MigrationGroups = append(res.MigrationGroups, a.MigrationGroups...)
 
 	// merge in b
 	res.Policies = append(res.Policies, b.Policies...)
@@ -132,6 +133,7 @@ func Merge(a *Bundle, b *Bundle) *Bundle {
 	res.Queries = append(res.Queries, b.Queries...)
 	res.Frameworks = append(res.Frameworks, b.Frameworks...)
 	res.FrameworkMaps = append(res.FrameworkMaps, b.FrameworkMaps...)
+	res.MigrationGroups = append(res.MigrationGroups, b.MigrationGroups...)
 
 	return res
 }

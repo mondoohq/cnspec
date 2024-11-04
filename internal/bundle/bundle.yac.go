@@ -100,16 +100,17 @@ func (d Author) MarshalYAML() (interface{}, error) {
 }
 
 type Bundle struct {
-	Packs         []*QueryPack    `protobuf:"bytes,10,rep,name=packs,proto3" json:"packs,omitempty" yaml:"packs,omitempty"`
-	Frameworks    []*Framework    `protobuf:"bytes,8,rep,name=frameworks,proto3" json:"frameworks,omitempty" yaml:"frameworks,omitempty"`
-	FrameworkMaps []*FrameworkMap `protobuf:"bytes,9,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty" yaml:"framework_maps,omitempty"`
-	OwnerMrn      string          `protobuf:"bytes,1,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
-	Policies      []*Policy       `protobuf:"bytes,7,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
-	Props         []*Property     `protobuf:"bytes,3,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
-	Queries       []*Mquery       `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
-	Docs          *PolicyDocs     `protobuf:"bytes,5,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
-	FileContext   FileContext     `json:"-" yaml:"-"`
-	Comments      Comments        `json:"-" yaml:"-"`
+	Packs           []*QueryPack      `protobuf:"bytes,10,rep,name=packs,proto3" json:"packs,omitempty" yaml:"packs,omitempty"`
+	Frameworks      []*Framework      `protobuf:"bytes,8,rep,name=frameworks,proto3" json:"frameworks,omitempty" yaml:"frameworks,omitempty"`
+	FrameworkMaps   []*FrameworkMap   `protobuf:"bytes,9,rep,name=framework_maps,json=frameworkMaps,proto3" json:"framework_maps,omitempty" yaml:"framework_maps,omitempty"`
+	MigrationGroups []*MigrationGroup `protobuf:"bytes,11,rep,name=migration_groups,json=migrationGroups,proto3" json:"migration_groups,omitempty" yaml:"migration_groups,omitempty"`
+	OwnerMrn        string            `protobuf:"bytes,1,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
+	Policies        []*Policy         `protobuf:"bytes,7,rep,name=policies,proto3" json:"policies,omitempty" yaml:"policies,omitempty"`
+	Props           []*Property       `protobuf:"bytes,3,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
+	Queries         []*Mquery         `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
+	Docs            *PolicyDocs       `protobuf:"bytes,5,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	FileContext     FileContext       `json:"-" yaml:"-"`
+	Comments        Comments          `json:"-" yaml:"-"`
 }
 
 func (x *Bundle) UnmarshalYAML(node *yaml.Node) error {
@@ -726,6 +727,230 @@ func (x *ImpactValue) addFileContext(node *yaml.Node) {
 	x.Comments.HeadComment = node.HeadComment
 	x.Comments.LineComment = node.LineComment
 	x.Comments.FootComment = node.FootComment
+}
+
+type Migration struct {
+	Match       *MigrationMatch  `protobuf:"bytes,1,opt,name=match,proto3" json:"match,omitempty" yaml:"match,omitempty"`
+	Target      *MigrationDelta  `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty" yaml:"target,omitempty"`
+	Action      Migration_Action `protobuf:"varint,3,opt,name=action,proto3,enum=cnspec.policy.v1.Migration_Action" json:"action,omitempty" yaml:"action,omitempty"`
+	FileContext FileContext      `json:"-" yaml:"-"`
+	Comments    Comments         `json:"-" yaml:"-"`
+}
+
+func (x *Migration) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Migration
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d Migration) MarshalYAML() (interface{}, error) {
+	type alias Migration
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type MigrationDelta struct {
+	Uid         string      `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *MigrationDelta) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp MigrationDelta
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d MigrationDelta) MarshalYAML() (interface{}, error) {
+	type alias MigrationDelta
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type MigrationGroup struct {
+	Policy      *Policy      `protobuf:"bytes,1,opt,name=policy,proto3" json:"policy,omitempty" yaml:"policy,omitempty"`
+	Migrations  []*Migration `protobuf:"bytes,2,rep,name=migrations,proto3" json:"migrations,omitempty" yaml:"migrations,omitempty"`
+	FileContext FileContext  `json:"-" yaml:"-"`
+	Comments    Comments     `json:"-" yaml:"-"`
+}
+
+func (x *MigrationGroup) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp MigrationGroup
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d MigrationGroup) MarshalYAML() (interface{}, error) {
+	type alias MigrationGroup
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type MigrationMatch struct {
+	Uid         string      `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *MigrationMatch) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp MigrationMatch
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d MigrationMatch) MarshalYAML() (interface{}, error) {
+	type alias MigrationMatch
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type Migration_Action policy.Migration_Action
+
+func (s *Migration_Action) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded interface{}
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v policy.Migration_Action
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = Migration_Action(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal Migration_Action")
 }
 
 type Mquery struct {
