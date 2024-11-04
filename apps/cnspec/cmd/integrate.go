@@ -290,6 +290,7 @@ func GenerateAzureHCL(space, subscriptionID, integrationName string) (string, er
 					resourceADServicePrincipal.TraverseRef(),
 					resourceRMReaderRoleAssignment.TraverseRef(),
 					resourceADApplicationCertificate.TraverseRef(),
+					resourceADReadersRoleAssignment.TraverseRef(),
 				},
 				// TODO support inclusion and explusion parameters, though, we need to handle the reader
 				// role too, not only the argument here.
