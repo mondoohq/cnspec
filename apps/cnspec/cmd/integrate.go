@@ -69,11 +69,17 @@ var (
 		Aliases: []string{"az"},
 		Short:   "Onboard Microsoft Azure",
 		Long:    `Use this command to connect your Azure environment into the Mondoo platform.`,
-		PreRun: func(cmd *cobra.Command, _ []string) {
-			viper.BindPFlag("space", cmd.Flags().Lookup("space"))
-			viper.BindPFlag("output", cmd.Flags().Lookup("output"))
-			viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name"))
-			viper.BindPFlag("subscription-id", cmd.Flags().Lookup("subscription-id"))
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := viper.BindPFlag("space", cmd.Flags().Lookup("space")); err != nil {
+				return err
+			}
+			if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
+				return err
+			}
+			if err := viper.BindPFlag("subscription-id", cmd.Flags().Lookup("subscription-id")); err != nil {
+				return err
+			}
+			return viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name"))
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			space, err := cmd.Flags().GetString("space")
