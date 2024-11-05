@@ -104,12 +104,19 @@ var (
 			if err != nil {
 				return err
 			}
+			// TODO verify that the config is a service account
 			config.DisplayUsedConfig()
 			mondooClient, err := getGqlClient(opts)
 			if err != nil {
 				return err
 			}
-			spaceInfo, err := cnspec_upstream.GetSpace(context.Background(), mondooClient, spacePrefix+space)
+			// by default, use the MRN from the config
+			spaceMrn := opts.GetParentMrn()
+			if space != "" {
+				// unless it was specified via flag
+				spaceMrn = spacePrefix + space
+			}
+			spaceInfo, err := cnspec_upstream.GetSpace(context.Background(), mondooClient, spaceMrn)
 			if err != nil {
 				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
 			}
