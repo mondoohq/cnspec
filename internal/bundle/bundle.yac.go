@@ -1180,6 +1180,7 @@ type Policy struct {
 	GraphContentChecksum   string                 `protobuf:"bytes,38,opt,name=graph_content_checksum,json=graphContentChecksum,proto3" json:"graph_content_checksum,omitempty" yaml:"graph_content_checksum,omitempty"`
 	LocalExecutionChecksum string                 `protobuf:"bytes,39,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
 	GraphExecutionChecksum string                 `protobuf:"bytes,40,opt,name=graph_execution_checksum,json=graphExecutionChecksum,proto3" json:"graph_execution_checksum,omitempty" yaml:"graph_execution_checksum,omitempty"`
+	LastApplied            int64                  `protobuf:"varint,48,opt,name=last_applied,json=lastApplied,proto3" json:"last_applied,omitempty" yaml:"last_applied,omitempty"`
 	ComputedFilters        *Filters               `protobuf:"bytes,43,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
 	QueryCounts            *QueryCounts           `protobuf:"bytes,42,opt,name=query_counts,json=queryCounts,proto3" json:"query_counts,omitempty" yaml:"query_counts,omitempty"`
 	Uid                    string                 `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
@@ -1406,6 +1407,7 @@ func (d PolicyGroupDocs) MarshalYAML() (interface{}, error) {
 
 type PolicyRef struct {
 	Action        Action                 `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	LastApplied   int64                  `protobuf:"varint,43,opt,name=last_applied,json=lastApplied,proto3" json:"last_applied,omitempty" yaml:"last_applied,omitempty"`
 	Checksum      string                 `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
 	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn           string                 `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
