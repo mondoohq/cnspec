@@ -383,6 +383,91 @@ policies:
 	})
 }
 
+func TestResolveV2_PolicyWithImpacts(t *testing.T) {
+	// For impacts, we always find the worst impact specified for a query in a policy bundle.
+	// All instances of the query use that impact
+	ctx := contextResolverV2()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy1
+    - uid: policy2
+      action: 4
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+    - uid: check2
+      impact: 10
+    - uid: check3
+      impact: 60
+    queries:
+    - uid: query1
+- uid: policy2
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check2
+      impact: 5
+    - uid: check3
+      impact: 80
+queries:
+- uid: check1
+  mql: asset.name == props.name
+  props:
+  - uid: name
+    mql: return "definitely not the asset name"
+- uid: check2
+  mql: true == false
+  impact: 70
+- uid: check3
+  mql: true == true
+  impact: 9
+- uid: query1
+  mql: asset{*}
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1"), policyMrn("policy2")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("query1"))
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.ExecutesQuery(queryMrn("check2"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check2")).Notifies(queryMrn("check2")).WithImpact(&explorer.Impact{Value: &explorer.ImpactValue{Value: 70}})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check3")).Notifies(queryMrn("check3")).WithImpact(&explorer.Impact{Value: &explorer.ImpactValue{Value: 80}})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(queryMrn("check3")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy2"))
+		rpTester.ReportingJobByMrn(queryMrn("check3")).Notifies(policyMrn("policy2"))
+
+		rpTester.doTest(t, rp)
+	})
+
+}
+
 func TestResolveV2_PolicyActionIgnore(t *testing.T) {
 	ctx := contextResolverV2()
 	b := parseBundle(t, `
