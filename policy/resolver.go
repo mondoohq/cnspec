@@ -493,7 +493,17 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 
 	if true {
-		return buildResolvedPolicy(bundleMrn, bundle, matchingFilters, time.Now(), conf)
+		resolvedPolicy, err := buildResolvedPolicy(bundleMrn, bundle, matchingFilters, time.Now(), conf)
+		if err != nil {
+			return nil, err
+		}
+
+		err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, resolvedPolicy, V2Code, false)
+		if err != nil {
+			return nil, err
+		}
+
+		return resolvedPolicy, nil
 	}
 
 	assetFiltersMap := make(map[string]struct{}, len(matchingFilters))

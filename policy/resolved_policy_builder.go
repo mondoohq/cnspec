@@ -342,9 +342,7 @@ func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *explorer.Impact
 	if _, ok := b.reportsFromEdges[to]; !ok {
 		b.reportsFromEdges[to] = make([]edgeImpact, 0, 1)
 	}
-	if impact == nil {
-		impact = b.impactOverrides[from]
-	}
+
 	b.reportsFromEdges[to] = append(b.reportsFromEdges[to], edgeImpact{edge: from, impact: impact})
 }
 
@@ -389,7 +387,33 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 
 			if scoringSystem != explorer.ScoringSystem_SCORING_UNSPECIFIED {
 				scoringSystems[pRef.Mrn] = pRef.ScoringSystem
+			} else {
+				if p, ok := b.bundleMap.Policies[pRef.Mrn]; ok {
+					scoringSystems[pRef.Mrn] = p.ScoringSystem
+				}
 			}
+		}
+
+		getWorstImpact := func(impact1 *explorer.Impact, impact2 *explorer.Impact) *explorer.Impact {
+			if impact1 == nil {
+				return impact2
+			}
+			if impact2 == nil {
+				return impact1
+			}
+
+			if impact1.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+				return impact1
+			}
+
+			if impact2.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+				return impact2
+			}
+
+			if impact1.Value.GetValue() > impact2.Value.GetValue() {
+				return impact1
+			}
+			return impact2
 		}
 
 		for _, c := range g.Checks {
@@ -400,14 +424,15 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 				}
 			}
+			if qBundle, ok := b.bundleMap.Queries[c.Mrn]; ok {
+				impact = getWorstImpact(impact, qBundle.Impact)
+			}
 			if action != explorer.Action_UNSPECIFIED {
 				actions[c.Mrn] = action
 			}
-			if (action == explorer.Action_MODIFY || action == explorer.Action_IGNORE) && c.Impact != nil && c.Impact.Value != nil {
-				if existingImpact, ok := impacts[c.Mrn]; !ok || existingImpact.Value.GetValue() < impact.Value.GetValue() {
-					// If the impact is higher than the existing impact, we override it
-					impacts[c.Mrn] = c.Impact
-				}
+			impact = getWorstImpact(impact, impacts[c.Mrn])
+			if impact != nil {
+				impacts[c.Mrn] = impact
 			}
 		}
 
@@ -501,6 +526,8 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 					impact = &explorer.Impact{
 						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 					}
+				} else if i, ok := b.impactOverrides[pRef.Mrn]; ok {
+					impact = i
 				}
 				b.addEdge(pRef.Mrn, policy.Mrn, impact)
 			}
@@ -606,8 +633,11 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	// policies to them
 	// If the node already exists, its represented by the asset or space policy
 	// and is not a valid framework mrn
+	var impact *explorer.Impact
 	if _, ok := b.nodes[framework.Mrn]; !ok {
 		b.addNode(&rpBuilderFrameworkNode{frameworkMrn: framework.Mrn})
+	} else {
+		impact = &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE}
 	}
 
 	for _, fmap := range framework.FrameworkMaps {
@@ -625,7 +655,7 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 			continue
 		}
 		if b.addFramework(f) {
-			b.addEdge(fdep.Mrn, framework.Mrn, nil)
+			b.addEdge(fdep.Mrn, framework.Mrn, impact)
 		}
 	}
 
@@ -705,6 +735,7 @@ func (b *resolvedPolicyBuilder) addDataQuery(query *explorer.Mquery) bool {
 
 func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery bool) (string, bool) {
 	action := b.actionOverrides[query.Mrn]
+	impact := b.impactOverrides[query.Mrn]
 
 	if !canRun(action) {
 		return "", false
@@ -738,7 +769,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery boo
 		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedVariant: matchingVariant, selectedCodeId: selectedCodeId, isDataQuery: isDataQuery})
 
 		// Add edge from variant to query
-		b.addEdge(matchingVariant.Mrn, query.Mrn, nil)
+		b.addEdge(matchingVariant.Mrn, query.Mrn, impact)
 
 		return selectedCodeId, true
 	} else {
@@ -754,7 +785,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery boo
 		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedCodeId: query.CodeId, isDataQuery: isDataQuery})
 
 		// Add edge from execution query to query
-		b.addEdge(query.CodeId, query.Mrn, nil)
+		b.addEdge(query.CodeId, query.Mrn, impact)
 
 		return query.CodeId, true
 	}
