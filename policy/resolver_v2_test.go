@@ -465,7 +465,113 @@ queries:
 
 		rpTester.doTest(t, rp)
 	})
+}
 
+func TestResolveV2_PolicyWithScoringSystem(t *testing.T) {
+	ctx := contextResolverV2()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy1
+- uid: policy1
+  scoring_system: highest impact
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset{*}
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("query1"))
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(policyMrn("policy1")).WithScoringSystem(explorer.ScoringSystem_WORST).Notifies("root")
+
+		rpTester.doTest(t, rp)
+	})
+}
+
+func TestResolveV2_PolicyWithScoringSystemOverride(t *testing.T) {
+	ctx := contextResolverV2()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy1
+      scoring_system: banded
+- uid: policy1
+  scoring_system: highest impact
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset{*}
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("query1"))
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(policyMrn("policy1")).WithScoringSystem(explorer.ScoringSystem_BANDED).Notifies("root")
+
+		rpTester.doTest(t, rp)
+	})
 }
 
 func TestResolveV2_PolicyActionIgnore(t *testing.T) {
