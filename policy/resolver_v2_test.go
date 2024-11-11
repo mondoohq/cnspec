@@ -135,8 +135,10 @@ func findReportingJobByQrId(rp *policy.ResolvedPolicy, qrId string) *policy.Repo
 func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) testIt(t *testing.T, rp *policy.ResolvedPolicy) {
 	var qrId string
 	var extraInfo string
+	mrnsMatchesQrId := false
 	if r.childMrn != "" {
 		qrId = r.childMrn
+		mrnsMatchesQrId = true
 	} else {
 		q := r.rjTester.tester.bundleMap.Queries[r.childMrnForCodeId]
 		require.NotNilf(t, q, "query not found in bundle: %s", r.childMrnForCodeId)
@@ -147,6 +149,10 @@ func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) testIt(t *testing.T, r
 	childRj := findReportingJobByQrId(rp, qrId)
 	require.NotNilf(t, childRj, "child reporting job %s%s not found", qrId, extraInfo)
 
+	if mrnsMatchesQrId {
+		require.Equalf(t, []string{qrId}, childRj.Mrns, "child reporting job %s%s mrns mismatch", qrId, extraInfo)
+	}
+
 	parentRj := findReportingJobByQrId(rp, r.parent)
 	require.NotNilf(t, parentRj, "parent reporting job %s not found", r.parent)
 	require.Containsf(t, childRj.Notify, parentRj.Uuid, "child reporting job %s%s doesn't notify parent reporting job %s", qrId, extraInfo, r.parent)
@@ -155,6 +161,7 @@ func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) testIt(t *testing.T, r
 	if r.impactSet {
 		require.EqualExportedValuesf(t, r.impact, parentRj.ChildJobs[childRj.Uuid], "impact mismatch for child reporting job %s%s", qrId, extraInfo)
 	}
+
 }
 
 type resolvedPolicyTesterReportingJobBuilder struct {
