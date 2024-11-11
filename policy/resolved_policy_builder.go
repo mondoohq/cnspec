@@ -88,14 +88,14 @@ func (n *rpBuilderPolicyNode) isPrunable() bool {
 
 func (n *rpBuilderPolicyNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
 	if n.isRoot {
-		addReportingJob(n.policy.Mrn, data.relativeChecksum(n.policy.GraphExecutionChecksum), ReportingJob_POLICY, rp)
+		addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.GraphExecutionChecksum), ReportingJob_POLICY, rp)
 	} else {
 		// TODO: the uuid used to be a checksum of the policy mrn, impact, and action
 		// I don't think this can be correct in all cases as you could at some point
 		// have a policy report to multiple other policies with different impacts
 		// (we don't have that case right now)
 		// These checksum changes should be accounted for in the root
-		rj := addReportingJob(n.policy.Mrn, data.relativeChecksum(n.policy.Mrn), ReportingJob_POLICY, rp)
+		rj := addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.Mrn), ReportingJob_POLICY, rp)
 		rj.ScoringSystem = n.scoringSystem
 	}
 
@@ -119,7 +119,7 @@ func (n *rpBuilderControlNode) isPrunable() bool {
 }
 
 func (n *rpBuilderControlNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	addReportingJob(n.controlMrn, data.relativeChecksum(n.controlMrn), ReportingJob_CONTROL, rp)
+	addReportingJob(n.controlMrn, true, data.relativeChecksum(n.controlMrn), ReportingJob_CONTROL, rp)
 	return nil
 }
 
@@ -140,7 +140,7 @@ func (n *rpBuilderFrameworkNode) isPrunable() bool {
 }
 
 func (n *rpBuilderFrameworkNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	addReportingJob(n.frameworkMrn, data.relativeChecksum(n.frameworkMrn), ReportingJob_FRAMEWORK, rp)
+	addReportingJob(n.frameworkMrn, true, data.relativeChecksum(n.frameworkMrn), ReportingJob_FRAMEWORK, rp)
 	return nil
 }
 
@@ -173,11 +173,11 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 		DeprecatedV11Magnitude:  risk.Magnitude.GetValue(),
 		DeprecatedV11IsAbsolute: risk.Magnitude.GetIsToxic(),
 	}
-	addReportingJob(risk.Mrn, data.relativeChecksum(risk.Mrn), ReportingJob_RISK_FACTOR, rp)
+	addReportingJob(risk.Mrn, true, data.relativeChecksum(risk.Mrn), ReportingJob_RISK_FACTOR, rp)
 	return nil
 }
 
-func addReportingJob(qrId string, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy) *ReportingJob {
+func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy) *ReportingJob {
 	if _, ok := rp.CollectorJob.ReportingJobs[uuid]; !ok {
 		rp.CollectorJob.ReportingJobs[uuid] = &ReportingJob{
 			QrId:       qrId,
@@ -185,6 +185,9 @@ func addReportingJob(qrId string, uuid string, typ ReportingJob_Type, rp *Resolv
 			ChildJobs:  map[string]*explorer.Impact{},
 			Datapoints: map[string]bool{},
 			Type:       typ,
+		}
+		if qrIdIsMrn {
+			rp.CollectorJob.ReportingJobs[uuid].Mrns = []string{qrId}
 		}
 	}
 	return rp.CollectorJob.ReportingJobs[uuid]
@@ -224,7 +227,7 @@ func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderD
 	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
 
 	if _, ok := rp.CollectorJob.ReportingJobs[codeIdReportingJobUUID]; !ok {
-		codeIdReportingJob := addReportingJob(n.query.CodeId, codeIdReportingJobUUID, ReportingJob_CHECK, rp)
+		codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_CHECK, rp)
 		connectDatapointsToReportingJob(executionQuery, codeIdReportingJob, rp.CollectorJob.Datapoints)
 	}
 
@@ -293,7 +296,7 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 	reportingJobUUID := data.relativeChecksum(n.query.Mrn)
 
 	if _, ok := rp.CollectorJob.ReportingJobs[reportingJobUUID]; !ok {
-		addReportingJob(n.query.Mrn, reportingJobUUID, ReportingJob_CHECK, rp)
+		addReportingJob(n.query.Mrn, true, reportingJobUUID, ReportingJob_CHECK, rp)
 	}
 
 	return nil
