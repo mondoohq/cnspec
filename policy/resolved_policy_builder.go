@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -794,7 +795,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery boo
 	}
 }
 
-func buildResolvedPolicy(bundleMrn string, bundle *Bundle, assetFilters []*explorer.Mquery, now time.Time, compilerConf mqlc.CompilerConfig) (*ResolvedPolicy, error) {
+func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, assetFilters []*explorer.Mquery, now time.Time, compilerConf mqlc.CompilerConfig) (*ResolvedPolicy, error) {
 	bundleMap := bundle.ToMap()
 	assetFilterMap := make(map[string]struct{}, len(assetFilters))
 	for _, f := range assetFilters {
@@ -831,7 +832,7 @@ func buildResolvedPolicy(bundleMrn string, bundle *Bundle, assetFilters []*explo
 		builder.addFramework(frameworkObj)
 	}
 
-	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(policyObj, frameworkObj)
+	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(ctx, policyObj, frameworkObj)
 	assetFiltersChecksum, err := ChecksumAssetFilters(assetFilters, compilerConf)
 	if err != nil {
 		return nil, err

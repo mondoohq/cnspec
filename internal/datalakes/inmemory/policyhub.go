@@ -522,7 +522,7 @@ func (db *Db) entityGraphExecutionChecksum(ctx context.Context, mrn string) (str
 		}
 	}
 
-	return policy.BundleExecutionChecksum(policyObj, framework), nil
+	return policy.BundleExecutionChecksum(ctx, policyObj, framework), nil
 }
 
 // EntityGraphContentChecksum retrieves the content checksum for a given entity.

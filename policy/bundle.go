@@ -91,7 +91,7 @@ func (l *BundleLoader) BundleFromPaths(paths ...string) (*Bundle, error) {
 
 // BundleExecutionChecksum creates a combined execution checksum from a policy
 // and framework. Either may be nil.
-func BundleExecutionChecksum(policy *Policy, framework *Framework) string {
+func BundleExecutionChecksum(ctx context.Context, policy *Policy, framework *Framework) string {
 	res := checksums.New
 	if policy != nil {
 		res = res.Add(policy.GraphExecutionChecksum)
@@ -102,7 +102,11 @@ func BundleExecutionChecksum(policy *Policy, framework *Framework) string {
 	// So far the checksum only includes the policy and the framework
 	// It does not change if any of the jobs changes, only if the policy or the framework changes
 	// To update the resolved policy, when we change how it is generated, change the incoporated version of the resolver
-	res = res.Add(RESOLVER_VERSION)
+	if IsNextGenResolver(ctx) {
+		res = res.Add(RESOLVER_VERSION_NG)
+	} else {
+		res = res.Add(RESOLVER_VERSION)
+	}
 
 	return res.String()
 }

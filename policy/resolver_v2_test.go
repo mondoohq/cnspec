@@ -153,7 +153,7 @@ func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) testIt(t *testing.T, r
 
 	require.Containsf(t, parentRj.ChildJobs, childRj.Uuid, "parent reporting job %s doesn't have child reporting job %s%s", r.parent, qrId, extraInfo)
 	if r.impactSet {
-		require.Equalf(t, r.impact, parentRj.ChildJobs[childRj.Uuid], "impact mismatch for child reporting job %s%s", qrId, extraInfo)
+		require.EqualExportedValuesf(t, r.impact, parentRj.ChildJobs[childRj.Uuid], "impact mismatch for child reporting job %s%s", qrId, extraInfo)
 	}
 }
 
@@ -257,7 +257,7 @@ func (r *resolvedPolicyTesterReportingJobBuilder) testIt(t *testing.T, rp *polic
 }
 
 func contextResolverV2() context.Context {
-	return context.Background()
+	return policy.WithNextGenResolver(context.Background())
 }
 
 func TestResolveV2_EmptyPolicy(t *testing.T) {
@@ -300,6 +300,7 @@ policies:
 }
 
 func TestResolveV2_SimplePolicy(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -323,7 +324,7 @@ policies:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -347,7 +348,7 @@ policies:
 	})
 
 	t.Run("resolve with many filters (one is correct)", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{
 				{Mql: "asset.family.contains(\"linux\")"},
@@ -360,7 +361,7 @@ policies:
 	})
 
 	t.Run("resolve with incorrect filters", func(t *testing.T) {
-		_, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		_, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{
 				{Mql: "asset.family.contains(\"linux\")"},
@@ -376,6 +377,7 @@ policies:
 }
 
 func TestResolveV2_PolicyActionIgnore(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -415,7 +417,7 @@ policies:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve with ignored policy", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -439,6 +441,7 @@ policies:
 }
 
 func TestResolveV2_PolicyActionScoringSystem(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -480,7 +483,7 @@ policies:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve with scoring system", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -504,6 +507,7 @@ policies:
 }
 
 func TestResolveV2_IgnoredQuery(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -528,11 +532,10 @@ policies:
 	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	_, err = srv.SetBundle(ctx, b)
 	require.NoError(t, err)
 
-	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    "asset1",
 		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 	})
@@ -548,6 +551,7 @@ policies:
 }
 
 func TestResolveV2_Frameworks(t *testing.T) {
+	ctx := contextResolverV2()
 	bundleStr := `
 owner_mrn: //test.sth
 policies:
@@ -655,10 +659,10 @@ framework_maps:
 			{asset: "asset1", policies: []string{policyMrn("policy1"), policyMrn("policy-inactive")}, frameworks: []string{frameworkMrn("parent-framework")}},
 		}, []*policy.Bundle{b})
 
-		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		bundle, err := srv.GetBundle(ctx, &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
+		bundleMap, err := bundle.Compile(ctx, conf.Schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}
@@ -666,7 +670,7 @@ framework_maps:
 			mrnToQueryId[q.Mrn] = q.CodeId
 		}
 
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -775,10 +779,10 @@ framework_maps:
 			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
 		}, []*policy.Bundle{b})
 
-		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		bundle, err := srv.GetBundle(ctx, &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
+		bundleMap, err := bundle.Compile(ctx, conf.Schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}
@@ -786,7 +790,7 @@ framework_maps:
 			mrnToQueryId[q.Mrn] = q.CodeId
 		}
 
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -861,10 +865,10 @@ framework_maps:
 			{asset: "asset1", policies: []string{policyMrn("policy1"), policyMrn("policy2")}, frameworks: []string{frameworkMrn("parent-framework")}},
 		}, []*policy.Bundle{b})
 
-		bundle, err := srv.GetBundle(context.Background(), &policy.Mrn{Mrn: "asset1"})
+		bundle, err := srv.GetBundle(ctx, &policy.Mrn{Mrn: "asset1"})
 		require.NoError(t, err)
 
-		bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
+		bundleMap, err := bundle.Compile(ctx, conf.Schema, nil)
 		require.NoError(t, err)
 
 		mrnToQueryId := map[string]string{}
@@ -872,7 +876,7 @@ framework_maps:
 			mrnToQueryId[q.Mrn] = q.CodeId
 		}
 
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -904,7 +908,7 @@ framework_maps:
 			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
 		}, []*policy.Bundle{bInitial})
 
-		rpInitial, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rpInitial, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -918,7 +922,7 @@ framework_maps:
 			{asset: "asset1", policies: []string{policyMrn("policy1")}, frameworks: []string{frameworkMrn("parent-framework")}},
 		}, []*policy.Bundle{bFrameworkUpdate})
 
-		rpFrameworkUpdate, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rpFrameworkUpdate, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -936,6 +940,7 @@ framework_maps:
 // the groups or any of its queries filters matched. This tests to ensure that if the policies
 // group filtered it out, it doesn't show up in the reporting structure
 func TestResolveV2_PoliciesMatchingAgainstIncorrectPlatform(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -991,7 +996,7 @@ queries:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 		})
@@ -1008,6 +1013,7 @@ queries:
 }
 
 func TestResolveV2_NeverPruneRoot(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1031,7 +1037,7 @@ queries:
 		{asset: "asset1", policies: []string{policyMrn("policy1")}},
 	}, []*policy.Bundle{b})
 
-	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    "asset1",
 		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
 	})
@@ -1041,6 +1047,7 @@ queries:
 }
 
 func TestResolveV2_PoliciesMatchingFilters(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1073,7 +1080,7 @@ queries:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve with correct filters", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
 			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
@@ -1090,6 +1097,7 @@ queries:
 }
 
 func TestResolveV2_TwoMrns(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1115,7 +1123,7 @@ policies:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
@@ -1139,6 +1147,7 @@ policies:
 }
 
 func TestResolveV2_TwoMrns_FilterMismatch(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1166,7 +1175,7 @@ policies:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
@@ -1185,6 +1194,7 @@ policies:
 }
 
 func TestResolveV2_TwoMrns_DataQueries(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1212,7 +1222,7 @@ policies:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
@@ -1239,6 +1249,7 @@ policies:
 }
 
 func TestResolveV2_TwoMrns_Variants(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1264,7 +1275,7 @@ queries:
 	}, []*policy.Bundle{b})
 
 	t.Run("resolve two variants to different codeIDs matching filter", func(t *testing.T) {
-		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
 			AssetFilters: []*explorer.Mquery{
 				{Mql: "asset.name == \"asset1\""},
@@ -1286,6 +1297,7 @@ queries:
 }
 
 func TestResolveV2_Variants(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1334,14 +1346,13 @@ queries:
 		{asset: "asset1", policies: []string{policyMrn("example2")}},
 	}, []*policy.Bundle{b})
 
-	ctx := context.Background()
 	_, err := srv.SetBundle(ctx, b)
 	require.NoError(t, err)
 
-	_, err = b.Compile(context.Background(), conf.Schema, nil)
+	_, err = b.Compile(ctx, conf.Schema, nil)
 	require.NoError(t, err)
 
-	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    policyMrn("example2"),
 		AssetFilters: []*explorer.Mquery{{Mql: "asset.family.contains(\"windows\")"}},
 	})
@@ -1368,6 +1379,7 @@ queries:
 }
 
 func TestResolveV2_RiskFactors(t *testing.T) {
+	ctx := contextResolverV2()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 queries:
@@ -1432,7 +1444,7 @@ policies:
 		{asset: "asset1", policies: []string{policyMrn("testpolicy1")}},
 	}, []*policy.Bundle{b})
 
-	rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    "asset1",
 		AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
 	})
