@@ -29,6 +29,7 @@ type resolvedPolicyBuilder struct {
 	actionOverrides      map[string]explorer.Action
 	impactOverrides      map[string]*explorer.Impact
 	riskMagnitudes       map[string]*RiskMagnitude
+	queryTypes           map[string]queryType
 	propsCache           explorer.PropsCache
 	now                  time.Time
 }
@@ -248,7 +249,7 @@ func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderD
 type rpBuilderGenericQueryNode struct {
 	query           *explorer.Mquery
 	selectedVariant *explorer.Mquery
-	isDataQuery     bool
+	queryType       queryType
 	selectedCodeId  string
 }
 
@@ -310,7 +311,7 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 		addReportingJob(n.query.Mrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp)
 	}
 
-	if !n.isDataQuery {
+	if n.queryType == queryTypeScoring || n.queryType == queryTypeBoth {
 		if _, ok := rp.CollectorJob.ReportingQueries[n.query.CodeId]; !ok {
 			rp.CollectorJob.ReportingQueries[n.query.CodeId] = &StringArray{}
 		}
@@ -369,6 +370,64 @@ func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *explorer.Impact
 
 func (b *resolvedPolicyBuilder) addNode(node rpBuilderNode) {
 	b.nodes[node.getId()] = node
+}
+
+type queryType int
+
+const (
+	queryTypeScoring queryType = iota
+	queryTypeData
+	queryTypeBoth
+)
+
+func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[string]queryType) {
+	policy := b.bundleMap.Policies[policyMrn]
+	if policy == nil {
+		return
+	}
+
+	var accumulate func(queryMrn string, t queryType)
+	accumulate = func(queryMrn string, t queryType) {
+		if existing, ok := acc[queryMrn]; !ok {
+			acc[queryMrn] = t
+		} else {
+			if existing != t {
+				acc[queryMrn] = queryTypeBoth
+			}
+		}
+		q := b.bundleMap.Queries[queryMrn]
+		if q == nil {
+			return
+		}
+
+		for _, v := range q.Variants {
+			accumulate(v.Mrn, t)
+		}
+	}
+
+	for _, g := range policy.Groups {
+		if !b.isPolicyGroupMatching(g) {
+			continue
+		}
+
+		for _, c := range g.Checks {
+			accumulate(c.Mrn, queryTypeScoring)
+		}
+
+		for _, q := range g.Queries {
+			accumulate(q.Mrn, queryTypeData)
+		}
+
+		for _, pRef := range g.Policies {
+			b.collectQueryTypes(pRef.Mrn, acc)
+		}
+	}
+
+	for _, r := range policy.RiskFactors {
+		for _, c := range r.Checks {
+			accumulate(c.Mrn, queryTypeScoring)
+		}
+	}
 }
 
 func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[string]explorer.Action, map[string]*explorer.Impact, map[string]explorer.ScoringSystem, map[string]*RiskMagnitude) {
@@ -752,16 +811,20 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 }
 
 func (b *resolvedPolicyBuilder) addCheck(query *explorer.Mquery) (string, bool) {
-	return b.addQuery(query, false)
+	return b.addQuery(query)
 
 }
 func (b *resolvedPolicyBuilder) addDataQuery(query *explorer.Mquery) (string, bool) {
-	return b.addQuery(query, true)
+	return b.addQuery(query)
 }
 
-func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery bool) (string, bool) {
+func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) {
 	action := b.actionOverrides[query.Mrn]
 	impact := b.impactOverrides[query.Mrn]
+	queryType, queryTypeSet := b.queryTypes[query.Mrn]
+	if !queryTypeSet {
+		return "", false
+	}
 
 	if !canRun(action) {
 		return "", false
@@ -776,7 +839,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery boo
 				log.Warn().Str("mrn", v.Mrn).Msg("variant not found in bundle")
 				continue
 			}
-			if codeId, added := b.addQuery(q, isDataQuery); added {
+			if codeId, added := b.addQuery(q); added {
 				// The first matching variant is selected
 				matchingVariant = q
 				selectedCodeId = codeId
@@ -792,7 +855,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery boo
 		b.propsCache.Add(matchingVariant.Props...)
 
 		// Add node for query
-		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedVariant: matchingVariant, selectedCodeId: selectedCodeId, isDataQuery: isDataQuery})
+		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedVariant: matchingVariant, selectedCodeId: selectedCodeId, queryType: queryType})
 
 		// Add edge from variant to query
 		b.addEdge(matchingVariant.Mrn, query.Mrn, impact)
@@ -808,7 +871,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery boo
 		// Add node for execution query
 		b.addNode(&rpBuilderExecutionQueryNode{query: query})
 		// Add node for query
-		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedCodeId: query.CodeId, isDataQuery: isDataQuery})
+		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedCodeId: query.CodeId, queryType: queryType})
 
 		// Add edge from execution query to query
 		b.addEdge(query.CodeId, query.Mrn, impact)
@@ -843,6 +906,8 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 	}
 
 	actions, impacts, scoringSystems, riskMagnitudes := builder.gatherOverridesFromPolicy(policyObj)
+	builder.queryTypes = make(map[string]queryType)
+	builder.collectQueryTypes(bundleMrn, builder.queryTypes)
 	builder.actionOverrides = actions
 	builder.impactOverrides = impacts
 	builder.policyScoringSystems = scoringSystems
