@@ -146,8 +146,9 @@ func (n *rpBuilderFrameworkNode) build(rp *ResolvedPolicy, data *rpBuilderData) 
 }
 
 type rpBuilderRiskFactorNode struct {
-	riskFactor *RiskFactor
-	magnitude  *RiskMagnitude
+	riskFactor      *RiskFactor
+	magnitude       *RiskMagnitude
+	selectedCodeIds []string
 }
 
 func (n *rpBuilderRiskFactorNode) getType() rpBuilderNodeType {
@@ -175,6 +176,15 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 		DeprecatedV11IsAbsolute: risk.Magnitude.GetIsToxic(),
 	}
 	addReportingJob(risk.Mrn, true, data.relativeChecksum(risk.Mrn), ReportingJob_RISK_FACTOR, rp)
+
+	for _, codeId := range n.selectedCodeIds {
+		if _, ok := rp.CollectorJob.RiskMrns[codeId]; !ok {
+			rp.CollectorJob.RiskMrns[codeId] = &StringArray{
+				Items: []string{},
+			}
+		}
+		rp.CollectorJob.RiskMrns[codeId].Items = append(rp.CollectorJob.RiskMrns[codeId].Items, risk.Mrn)
+	}
 	return nil
 }
 
@@ -228,7 +238,7 @@ func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderD
 	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
 
 	if _, ok := rp.CollectorJob.ReportingJobs[codeIdReportingJobUUID]; !ok {
-		codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_CHECK, rp)
+		codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_UNSPECIFIED, rp)
 		connectDatapointsToReportingJob(executionQuery, codeIdReportingJob, rp.CollectorJob.Datapoints)
 	}
 
@@ -297,7 +307,14 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 	reportingJobUUID := data.relativeChecksum(n.query.Mrn)
 
 	if _, ok := rp.CollectorJob.ReportingJobs[reportingJobUUID]; !ok {
-		addReportingJob(n.query.Mrn, true, reportingJobUUID, ReportingJob_CHECK, rp)
+		addReportingJob(n.query.Mrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp)
+	}
+
+	if !n.isDataQuery {
+		if _, ok := rp.CollectorJob.ReportingQueries[n.query.CodeId]; !ok {
+			rp.CollectorJob.ReportingQueries[n.query.CodeId] = &StringArray{}
+		}
+		rp.CollectorJob.ReportingQueries[n.query.CodeId].Items = append(rp.CollectorJob.ReportingQueries[n.query.CodeId].Items, reportingJobUUID)
 	}
 
 	return nil
@@ -553,7 +570,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 				continue
 			}
 
-			if b.addCheck(c) {
+			if _, ok := b.addCheck(c); ok {
 				b.addEdge(c.Mrn, policy.Mrn, nil)
 			}
 		}
@@ -574,7 +591,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 				continue
 			}
 
-			if b.addDataQuery(q) {
+			if _, ok := b.addDataQuery(q); ok {
 				b.addEdge(q.Mrn, policy.Mrn, &explorer.Impact{
 					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 				})
@@ -607,13 +624,19 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) bool {
 		return false
 	}
 
+	selectedCodeIds := make([]string, 0, len(riskFactor.Checks))
 	for _, c := range riskFactor.Checks {
-		if b.addCheck(c) {
+		if selectedCodeId, ok := b.addCheck(c); ok {
+			selectedCodeIds = append(selectedCodeIds, selectedCodeId)
 			b.addEdge(c.Mrn, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 		}
 	}
 
-	b.addNode(&rpBuilderRiskFactorNode{riskFactor: riskFactor, magnitude: b.riskMagnitudes[riskFactor.Mrn]})
+	if len(selectedCodeIds) == 0 {
+		return false
+	}
+
+	b.addNode(&rpBuilderRiskFactorNode{riskFactor: riskFactor, magnitude: b.riskMagnitudes[riskFactor.Mrn], selectedCodeIds: selectedCodeIds})
 
 	return true
 }
@@ -728,13 +751,12 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 	return true
 }
 
-func (b *resolvedPolicyBuilder) addCheck(query *explorer.Mquery) bool {
-	_, added := b.addQuery(query, false)
-	return added
+func (b *resolvedPolicyBuilder) addCheck(query *explorer.Mquery) (string, bool) {
+	return b.addQuery(query, false)
+
 }
-func (b *resolvedPolicyBuilder) addDataQuery(query *explorer.Mquery) bool {
-	_, added := b.addQuery(query, true)
-	return added
+func (b *resolvedPolicyBuilder) addDataQuery(query *explorer.Mquery) (string, bool) {
+	return b.addQuery(query, true)
 }
 
 func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery, isDataQuery bool) (string, bool) {
