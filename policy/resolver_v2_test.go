@@ -6,6 +6,7 @@ package policy_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1678,4 +1679,222 @@ policies:
 	rpTester.doTest(t, rp)
 
 	require.Equal(t, float32(0.9), rp.CollectorJob.RiskFactors[riskFactorMrn("sshd-service")].Magnitude.GetValue())
+}
+
+func TestResolveV2_FrameworkExceptions(t *testing.T) {
+	ctx := contextResolverV2()
+	bundleString := `
+owner_mrn: //test.sth
+policies:
+- uid: ssh-policy
+  name: SSH Policy
+  groups:
+  - filters: "true"
+    checks:
+    - uid: sshd-ciphers-01
+      title: Prevent weaker CBC ciphers from being used
+      mql: sshd.config.ciphers.none( /cbc/ )
+      impact: 60
+    - uid: sshd-ciphers-02
+      title: Do not allow ciphers with few bits
+      mql: sshd.config.ciphers.none( /128/ )
+      impact: 60
+    - uid: sshd-config-permissions
+      title: SSH config editing should be limited to admins
+      mql: sshd.config.file.permissions.mode == 0644
+      impact: 100
+
+frameworks:
+- uid: mondoo-ucf
+  name: Unified Compliance Framework
+  groups:
+  - title: System hardening
+    controls:
+    - uid: mondoo-ucf-01
+      title: Only use strong ciphers
+    - uid: mondoo-ucf-02
+      title: Limit access to system configuration
+    - uid: mondoo-ucf-03
+      title: Only use ciphers with sufficient bits
+  - title: exception-1
+    type: 4
+    controls:
+    - uid: mondoo-ucf-02
+
+framework_maps:
+    - uid: compliance-to-ssh-policy
+      mrn: //test.sth/framework/compliance-to-ssh-policy
+      framework_owner:
+        uid: mondoo-ucf
+      policy_dependencies:
+      - uid: ssh-policy
+      controls:
+      - uid: mondoo-ucf-01
+        checks:
+        - uid: sshd-ciphers-01
+        - uid: sshd-ciphers-02
+      - uid: mondoo-ucf-02
+        checks:
+        - uid: sshd-config-permissions
+      - uid: mondoo-ucf-03
+        checks:
+        - uid: sshd-ciphers-02
+`
+
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
+	require.NoError(t, err)
+
+	t.Run("resolve with ignored control", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
+
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{frameworkMrn("mondoo-ucf")},
+			},
+		}, []*policy.Bundle{b})
+
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+
+		rpTester.doTest(t, rp)
+	})
+
+	t.Run("resolve with ignored control and validUntil", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
+		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(time.Hour).Unix()
+
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{frameworkMrn("mondoo-ucf")},
+			},
+		}, []*policy.Bundle{b})
+
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+
+		rpTester.doTest(t, rp)
+	})
+
+	t.Run("resolve with expired validUntil", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
+		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(-time.Hour).Unix()
+
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{frameworkMrn("mondoo-ucf")},
+			},
+		}, []*policy.Bundle{b})
+
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(nil)
+
+		rpTester.doTest(t, rp)
+	})
+
+	t.Run("resolve with expired validUntil", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
+		b.Frameworks[0].Groups[1].EndDate = time.Now().Add(time.Hour).Unix()
+		b.Frameworks[0].Groups[1].Type = policy.GroupType_DISABLE
+		b.Frameworks[0].Groups[1].ReviewStatus = policy.ReviewStatus_REJECTED
+
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{frameworkMrn("mondoo-ucf")},
+			},
+		}, []*policy.Bundle{b})
+
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(nil)
+
+		rpTester.doTest(t, rp)
+	})
+
+	t.Run("resolve with disabled control", func(t *testing.T) {
+		b := parseBundle(t, bundleString)
+		b.Frameworks = append(b.Frameworks, &policy.Framework{
+			Mrn: frameworkMrn("test"),
+			Dependencies: []*policy.FrameworkRef{
+				{
+					Mrn:    frameworkMrn("mondoo-ucf"),
+					Action: explorer.Action_ACTIVATE,
+				},
+			},
+			Groups: []*policy.FrameworkGroup{
+				{
+					Uid:  "test",
+					Type: policy.GroupType_DISABLE,
+					Controls: []*policy.Control{
+						{Uid: b.Frameworks[0].Groups[0].Controls[0].Uid},
+					},
+				},
+			},
+		})
+
+		srv = initResolver(t, []*testAsset{
+			{
+				asset:      "asset1",
+				policies:   []string{policyMrn("ssh-policy")},
+				frameworks: []string{frameworkMrn("mondoo-ucf"), frameworkMrn("test")},
+			},
+		}, []*policy.Bundle{b})
+
+		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
+			PolicyMrn:    "asset1",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-01")).DoesNotExist()
+
+		rpTester.doTest(t, rp)
+	})
 }

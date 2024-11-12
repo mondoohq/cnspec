@@ -39,11 +39,12 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		impactOverrides:      map[string]*explorer.Impact{},
 		riskMagnitudes:       map[string]*RiskMagnitude{},
 		propsCache:           explorer.NewPropsCache(),
+		queryTypes:           map[string]queryType{},
 		now:                  now,
 	}
 
 	actions, impacts, scoringSystems, riskMagnitudes := builder.gatherGlobalInfoFromPolicy(policyObj)
-	builder.queryTypes = make(map[string]queryType)
+	builder.gatherGlobalInfoFromFramework(frameworkObj, actions, impacts)
 	builder.collectQueryTypes(bundleMrn, builder.queryTypes)
 	builder.actionOverrides = actions
 	builder.impactOverrides = impacts
@@ -519,7 +520,7 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 	}
 
 	for _, g := range policy.Groups {
-		if !b.isPolicyGroupMatching(g) {
+		if !b.isGroupMatching(g) {
 			// skip groups that don't match
 			continue
 		}
@@ -546,6 +547,40 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 	}
 }
 
+func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framework, actions map[string]explorer.Action, impacts map[string]*explorer.Impact) {
+
+	for _, fRef := range framework.Dependencies {
+		f := b.bundleMap.Frameworks[fRef.Mrn]
+		if f == nil {
+			continue
+		}
+		b.gatherGlobalInfoFromFramework(f, actions, impacts)
+	}
+
+	for _, g := range framework.Groups {
+		if !b.isGroupMatching(g) {
+			continue
+		}
+
+		for _, c := range g.Controls {
+			action := normalizeAction(g.Type, c.Action, nil)
+			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+				actions[c.Mrn] = action
+			}
+
+			if action == explorer.Action_IGNORE {
+				// Since we traversed the children first, we overwrite the impact with ignore
+				// if the action is ignore. We do not merge in this case
+				impacts[c.Mrn] = &explorer.Impact{
+					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+				}
+			} else {
+				delete(impacts, c.Mrn)
+			}
+		}
+	}
+}
+
 // gatherGlobalInfoFromPolicy gathers the action, impact, scoring system, and risk magnitude overrides from the policy. We
 // apply this information in a second pass when building the nodes
 func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) (map[string]explorer.Action, map[string]*explorer.Impact, map[string]explorer.ScoringSystem, map[string]*RiskMagnitude) {
@@ -555,7 +590,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) (map[
 	riskMagnitudes := make(map[string]*RiskMagnitude)
 
 	for _, g := range policy.Groups {
-		if !b.isPolicyGroupMatching(g) {
+		if !b.isGroupMatching(g) {
 			continue
 		}
 		for _, pRef := range g.Policies {
@@ -666,29 +701,42 @@ func canRun(action explorer.Action) bool {
 	return !(action == explorer.Action_DEACTIVATE || action == explorer.Action_OUT_OF_SCOPE)
 }
 
-// isPolicyGroupMatching checks if the policy group is matching. A policy group is matching if it is not rejected,
+type group interface {
+	GetReviewStatus() ReviewStatus
+	GetEndDate() int64
+}
+
+type groupWithFilters interface {
+	GetFilters() *explorer.Filters
+}
+
+// isGroupMatching checks if the policy group is matching. A policy group is matching if it is not rejected,
 // and it is not expired. If it has filters, it must have at least one filter that matches the asset filters
-func (b *resolvedPolicyBuilder) isPolicyGroupMatching(group *PolicyGroup) bool {
-	if group.ReviewStatus == ReviewStatus_REJECTED {
+func (b *resolvedPolicyBuilder) isGroupMatching(group group) bool {
+	if group.GetReviewStatus() == ReviewStatus_REJECTED {
 		return false
 	}
 
-	if group.EndDate != 0 {
+	if group.GetEndDate() != 0 {
 		// TODO: we also need to check if the group is accepted or rejected
-		endDate := time.Unix(group.EndDate, 0)
+		endDate := time.Unix(group.GetEndDate(), 0)
 		if endDate.Before(b.now) {
 			return false
 		}
 	}
 
-	if group.Filters == nil || len(group.Filters.Items) == 0 {
-		return true
-	}
-
-	for _, filter := range group.Filters.Items {
-		if _, ok := b.assetFilters[filter.CodeId]; ok {
+	if groupWithFilters, ok := group.(groupWithFilters); ok {
+		if groupWithFilters.GetFilters() == nil || len(groupWithFilters.GetFilters().Items) == 0 {
 			return true
 		}
+
+		for _, filter := range groupWithFilters.GetFilters().Items {
+			if _, ok := b.assetFilters[filter.CodeId]; ok {
+				return true
+			}
+		}
+	} else {
+		return true
 	}
 
 	return false
@@ -714,7 +762,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 	b.addNode(&rpBuilderPolicyNode{policy: policy, scoringSystem: scoringSystem, isRoot: b.bundleMrn == policy.Mrn})
 	hasMatchingGroup := false
 	for _, g := range policy.Groups {
-		if !b.isPolicyGroupMatching(g) {
+		if !b.isGroupMatching(g) {
 			continue
 		}
 		hasMatchingGroup = true
@@ -915,7 +963,8 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	for _, fmap := range framework.FrameworkMaps {
 		for _, control := range fmap.Controls {
 			if b.addControl(control) {
-				b.addEdge(control.Mrn, fmap.FrameworkOwner.Mrn, nil)
+				impact := b.impactOverrides[control.Mrn]
+				b.addEdge(control.Mrn, fmap.FrameworkOwner.Mrn, impact)
 			}
 		}
 	}
@@ -951,7 +1000,11 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				b.addEdge(qNode.selectedCodeId, control.Mrn, nil)
+				impact := b.impactOverrides[q.Mrn]
+				if impact.GetScoring() != explorer.ScoringSystem_IGNORE_SCORE {
+					impact = nil
+				}
+				b.addEdge(qNode.selectedCodeId, control.Mrn, impact)
 				hasChild = true
 			}
 		}
@@ -965,7 +1018,11 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				b.addEdge(qNode.selectedCodeId, control.Mrn, nil)
+				impact := b.impactOverrides[q.Mrn]
+				if impact.GetScoring() != explorer.ScoringSystem_IGNORE_SCORE {
+					impact = nil
+				}
+				b.addEdge(qNode.selectedCodeId, control.Mrn, impact)
 				hasChild = true
 			}
 		}
@@ -973,19 +1030,24 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 
 	for _, p := range control.Policies {
 		if _, ok := b.nodes[p.Mrn]; ok {
+			impact := b.impactOverrides[p.Mrn]
+			if impact.GetScoring() != explorer.ScoringSystem_IGNORE_SCORE {
+				impact = nil
+			}
 			// Add the edge from the control to the policy
-			b.addEdge(p.Mrn, control.Mrn, nil)
+			b.addEdge(p.Mrn, control.Mrn, impact)
 			hasChild = true
 		}
 	}
 
 	for _, c := range control.Controls {
+		impact := b.impactOverrides[c.Mrn]
 		// We will just assume that the control is in the graph
 		// If its not, it will get filtered out later when we build
 		// the resolved policy
 		// Doing this so we don't need to topologically sort the dependency
 		// tree for the controls
-		b.addEdge(c.Mrn, control.Mrn, nil)
+		b.addEdge(c.Mrn, control.Mrn, impact)
 		hasChild = true
 	}
 
