@@ -13,71 +13,255 @@ import (
 	"go.mondoo.com/cnquery/v11/mrn"
 )
 
+// buildResolvedPolicy builds a resolved policy from a bundle
+func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, assetFilters []*explorer.Mquery, now time.Time, compilerConf mqlc.CompilerConfig) (*ResolvedPolicy, error) {
+	bundleMap := bundle.ToMap()
+	assetFilterMap := make(map[string]struct{}, len(assetFilters))
+	for _, f := range assetFilters {
+		assetFilterMap[f.CodeId] = struct{}{}
+	}
+
+	policyObj := bundleMap.Policies[bundleMrn]
+	frameworkObj := bundleMap.Frameworks[bundleMrn]
+
+	builder := &resolvedPolicyBuilder{
+		bundleMrn:            bundleMrn,
+		bundleMap:            bundleMap,
+		assetFilters:         assetFilterMap,
+		nodes:                map[string]rpBuilderNode{},
+		reportsToEdges:       map[string][]string{},
+		reportsFromEdges:     map[string][]edgeImpact{},
+		policyScoringSystems: map[string]explorer.ScoringSystem{},
+		actionOverrides:      map[string]explorer.Action{},
+		impactOverrides:      map[string]*explorer.Impact{},
+		riskMagnitudes:       map[string]*RiskMagnitude{},
+		propsCache:           explorer.NewPropsCache(),
+		now:                  now,
+	}
+
+	actions, impacts, scoringSystems, riskMagnitudes := builder.gatherGlobalInfoFromPolicy(policyObj)
+	builder.queryTypes = make(map[string]queryType)
+	builder.collectQueryTypes(bundleMrn, builder.queryTypes)
+	builder.actionOverrides = actions
+	builder.impactOverrides = impacts
+	builder.policyScoringSystems = scoringSystems
+	builder.riskMagnitudes = riskMagnitudes
+
+	builder.addPolicy(policyObj)
+
+	if frameworkObj != nil {
+		builder.addFramework(frameworkObj)
+	}
+
+	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(ctx, policyObj, frameworkObj)
+	assetFiltersChecksum, err := ChecksumAssetFilters(assetFilters, compilerConf)
+	if err != nil {
+		return nil, err
+	}
+
+	builderData := &rpBuilderData{
+		baseChecksum: checksumStrings(resolvedPolicyExecutionChecksum, assetFiltersChecksum, "v2"),
+		propsCache:   builder.propsCache,
+		compilerConf: compilerConf,
+	}
+
+	resolvedPolicy := &ResolvedPolicy{
+		ExecutionJob: &ExecutionJob{
+			Checksum: "",
+			Queries:  map[string]*ExecutionQuery{},
+		},
+		CollectorJob: &CollectorJob{
+			Checksum:         "",
+			ReportingJobs:    map[string]*ReportingJob{},
+			ReportingQueries: map[string]*StringArray{},
+			Datapoints:       map[string]*DataQueryInfo{},
+			RiskMrns:         map[string]*StringArray{},
+			RiskFactors:      map[string]*RiskFactor{},
+		},
+		Filters:                assetFilters,
+		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
+		FiltersChecksum:        assetFiltersChecksum,
+	}
+
+	// We will walk the graph from the non prunable nodes out. This means that if something is not connected
+	// to a non prunable node, it will not be included in the resolved policy
+	nonPrunables := make([]rpBuilderNode, 0, len(builder.nodes))
+
+	for _, n := range builder.nodes {
+		if !n.isPrunable() {
+			nonPrunables = append(nonPrunables, n)
+		}
+	}
+
+	visited := make(map[string]struct{}, len(builder.nodes))
+	var walk func(node rpBuilderNode) error
+	walk = func(node rpBuilderNode) error {
+		// Check if we've already visited this node
+		if _, ok := visited[node.getId()]; ok {
+			return nil
+		}
+		visited[node.getId()] = struct{}{}
+
+		// Build the necessary parts of the resolved policy for each node
+		if err := node.build(resolvedPolicy, builderData); err != nil {
+			log.Error().Err(err).Str("node", node.getId()).Msg("error building node")
+			return err
+		}
+		// Walk to each parent node and recurse
+		for _, edge := range builder.reportsToEdges[node.getId()] {
+			if edgeNode, ok := builder.nodes[edge]; ok {
+				if err := walk(edgeNode); err != nil {
+					return err
+				}
+
+			} else {
+				log.Debug().Str("from", node.getId()).Str("to", edge).Msg("edge not found")
+			}
+		}
+		return nil
+	}
+
+	for _, n := range nonPrunables {
+		if err := walk(n); err != nil {
+			return nil, err
+		}
+	}
+
+	// We need to connect the reporting jobs. We've stored them by uuid in the collector job. However,
+	// our graph uses the qr id to connect them.
+	reportingJobsByQrId := make(map[string]*ReportingJob, len(resolvedPolicy.CollectorJob.ReportingJobs))
+	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
+		if _, ok := reportingJobsByQrId[rj.QrId]; ok {
+			// We should never have multiple reporting jobs with the same qr id. Scores are stored
+			// by qr id, not by uuid. This would cause issues where scores would flop around
+			log.Error().Str("qr_id", rj.QrId).Msg("multipe reporting jobs with the same qr id")
+			return nil, errors.New("multiple reporting jobs with the same qr id")
+		}
+		reportingJobsByQrId[rj.QrId] = rj
+	}
+
+	// For each parent qr id, we need to connect the child reporting jobs with the impact.
+	// connectReportingJobNotifies will add the link from the child to the parent, and
+	// the parent to the child with the impact
+	for parentQrId, edges := range builder.reportsFromEdges {
+		for _, edge := range edges {
+			parent := reportingJobsByQrId[parentQrId]
+			if parent == nil {
+				// It's possible that the parent reporting job was not included in the resolved policy
+				// because it was not connected to a leaf node (e.g. a policy that was not connected to
+				// any check or data query). In this case, we can just skip it
+				log.Debug().Str("parent", parentQrId).Msg("reporting job not found")
+				continue
+			}
+
+			if child, ok := reportingJobsByQrId[edge.edge]; ok {
+				// Also possible a child was not included in the resolved policy
+				connectReportingJobNotifies(child, parent, edge.impact)
+			}
+		}
+	}
+
+	rootReportingJob := reportingJobsByQrId[bundleMrn]
+	if rootReportingJob == nil {
+		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+	}
+	rootReportingJob.QrId = "root"
+
+	resolvedPolicy.ReportingJobUuid = rootReportingJob.Uuid
+
+	refreshChecksums(resolvedPolicy.ExecutionJob, resolvedPolicy.CollectorJob)
+	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
+		rj.RefreshChecksum()
+	}
+
+	return resolvedPolicy, nil
+}
+
+// resolvedPolicyBuilder contains data that helps build the resolved policy. It maintains a graph of nodes.
+// These nodes are the policies, controls, frameworks, checks, data queries, and execution queries. They
+// get a chance to add themselves to the resolved policy in the way that they need to be added. They all
+// add reporting jobs. Some nodes do other things like add the compiled query to the resolved policy. These nodes
+// are connected by edges. These edges are the edges used to connect the reporting jobs in the resolved policy.
+// Edges are added using the addEdge method. This will take care of maintaining the notifies edge and the childJobs
+// edge from the reporting jobs simultaneously so that they are in sync.
+type resolvedPolicyBuilder struct {
+	// bundleMrn is the mrn of the bundle that is being resolved. It will be replaced by "root" in the
+	// resolved policy's reporting jobs so that it can be reused by other bundles that are identical in
+	// everything except the mrn of the root.
+	bundleMrn string
+	// bundleMap is the bundle that is being resolved converted into a PolicyBundleMap
+	bundleMap *PolicyBundleMap
+
+	// nodes is a map of all the nodes that are in the graph. These nodes will build the resolved
+	// policy. nodes is walked from the non prunable nodes out. This means that if something is not
+	// connected to a non prunable node, it will not be included in the resolved policy
+	nodes map[string]rpBuilderNode
+	// reportsToEdges maintains the notifies edges from the reporting jobs.
+	reportsToEdges map[string][]string
+	// reportsFromEdges maintains the childJobs edges from the reporting jobs. This is where the impact
+	// is stored.
+	reportsFromEdges map[string][]edgeImpact
+
+	// assetFilters is the asset filters that are used to select the policies and queries that are
+	// run
+	assetFilters map[string]struct{}
+	// policyScoringSystems is a map of the scoring systems for each policy
+	policyScoringSystems map[string]explorer.ScoringSystem
+	// actionOverrides is a map of the actions that are overridden by the policies
+	actionOverrides map[string]explorer.Action
+	// impactOverrides is a map of the impacts that are overridden by the policies. The worst impact
+	// is used
+	impactOverrides map[string]*explorer.Impact
+	// riskMagnitudes is a map of the risk magnitudes that are set for risk factors
+	riskMagnitudes map[string]*RiskMagnitude
+	// queryTypes is a map of the query types for each query. A query can be a scoring query, a data query,
+	// or both. We analyze all matching policies to determine the query type. If a query shows up in checks,
+	// it is a scoring query. If it shows up in data queries, it is a data query. If it shows up in both, it is
+	// set to both.
+	queryTypes map[string]queryType
+	// propsCache is a cache of the properties that are used in the queries
+	propsCache explorer.PropsCache
+	// now is the time that the resolved policy is being built
+	now time.Time
+}
+
 type edgeImpact struct {
 	edge   string
 	impact *explorer.Impact
 }
 
-type resolvedPolicyBuilder struct {
-	bundleMrn            string
-	bundleMap            *PolicyBundleMap
-	assetFilters         map[string]struct{}
-	nodes                map[string]rpBuilderNode
-	reportsToEdges       map[string][]string
-	reportsFromEdges     map[string][]edgeImpact
-	policyScoringSystems map[string]explorer.ScoringSystem
-	actionOverrides      map[string]explorer.Action
-	impactOverrides      map[string]*explorer.Impact
-	riskMagnitudes       map[string]*RiskMagnitude
-	queryTypes           map[string]queryType
-	propsCache           explorer.PropsCache
-	now                  time.Time
+// rpBuilderNode is a node in the graph. It represents a policy, control, framework, check, data query, or execution query.
+// Each node implementation decides how it needs to be added to the resolved policy. It is currently assumed that
+// each node will add a reporting job to the resolved policy, as the edges are used to automatically connect the reporting jobs.
+type rpBuilderNode interface {
+	// getId returns the id of the node. This is used to identify the node in the graph, a mrn or code id
+	getId() string
+	// isPrunable returns whether the node can be pruned from the graph. It will be pruned if it a non-prunable node
+	// doesn't have a path TO it. In context of building the resolved policy, this means that the node is not connected
+	// to an executable query, or is the root node.
+	isPrunable() bool
+	// build is responsible for updating the resolved policy. It will add things like reporting jobs, connect datapoints,
+	// adding the compiled query, etc.
+	build(*ResolvedPolicy, *rpBuilderData) error
 }
-
-type rpBuilderNodeType int
-
-const (
-	// rpBuilderNodeTypePolicy is a policy node. Checks and data queries report to this
-	rpBuilderNodeTypePolicy = iota
-	// rpBuilderNodeTypeFramework is a framework node. Controls report to this
-	rpBuilderNodeTypeFramework
-	// rpBuilderNodeTypeControl is a control node. Checks, data queries, and policies report to this
-	rpBuilderNodeTypeControl
-	// rpBuilderTypeRiskFactor is a risk factor node. This is the leaf node
-	rpBuilderNodeTypeRiskFactor
-	// rpBuilderNodeTypeQuery is a check and/or a data query. Execution queries report to this
-	rpBuilderNodeTypeQuery
-	// rpBuilderNodeTypeExecutionQuery is an execution query. This is the leaf node
-	rpBuilderNodeTypeExecutionQuery
-)
 
 // rpBuilderData is the data that is used to build the resolved policy
 type rpBuilderData struct {
-	baseChecksum    string
-	impactOverrides map[string]*explorer.Impact
-	propsCache      explorer.PropsCache
-	compilerConf    mqlc.CompilerConfig
+	baseChecksum string
+	propsCache   explorer.PropsCache
+	compilerConf mqlc.CompilerConfig
 }
 
 func (d *rpBuilderData) relativeChecksum(s string) string {
 	return checksumStrings(d.baseChecksum, s)
 }
 
-type rpBuilderNode interface {
-	getType() rpBuilderNodeType
-	getId() string
-	isPrunable() bool
-	build(*ResolvedPolicy, *rpBuilderData) error
-}
-
+// rpBuilderPolicyNode is a node that represents a policy in the graph. It will add a reporting job to the resolved policy
+// for the policy
 type rpBuilderPolicyNode struct {
 	policy        *Policy
 	scoringSystem explorer.ScoringSystem
 	isRoot        bool
-}
-
-func (n *rpBuilderPolicyNode) getType() rpBuilderNodeType {
-	return rpBuilderNodeTypePolicy
 }
 
 func (n *rpBuilderPolicyNode) getId() string {
@@ -85,14 +269,18 @@ func (n *rpBuilderPolicyNode) getId() string {
 }
 
 func (n *rpBuilderPolicyNode) isPrunable() bool {
-	return n.isRoot
+	// We do not allow pruning the root node. This covers cases where the policy matches the asset filters,
+	// but we have no active checks or queries. This will end up reporting a U for the score
+	return !n.isRoot
 }
 
 func (n *rpBuilderPolicyNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
 	if n.isRoot {
+		// If the policy is the root, we need a different checksum for the reporting job because we want it
+		// to be reusable by other bundles that are identical in everything except the root mrn
 		addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.GraphExecutionChecksum), ReportingJob_POLICY, rp)
 	} else {
-		// TODO: the uuid used to be a checksum of the policy mrn, impact, and action
+		// the uuid used to be a checksum of the policy mrn, impact, and action
 		// I don't think this can be correct in all cases as you could at some point
 		// have a policy report to multiple other policies with different impacts
 		// (we don't have that case right now)
@@ -104,33 +292,91 @@ func (n *rpBuilderPolicyNode) build(rp *ResolvedPolicy, data *rpBuilderData) err
 	return nil
 }
 
-type rpBuilderControlNode struct {
-	controlMrn string
+// rpBuilderGenericQueryNode is a node that represents a query by mrn in the graph. It will add a reporting job,
+// and fill out the reporting queries in the resolved policy
+type rpBuilderGenericQueryNode struct {
+	// queryMrn is the mrn of the query
+	queryMrn string
+	// queryType is the type of query. It can be a scoring query, a data query, or both
+	queryType queryType
+	// selectedCodeId is the code id that actually gets executed. It is the code id of the specific query
+	// that is run, traversed down the variants if necessary. We keep track of this because we need to connect
+	// controls to the specific query that is run so they are not influenced by impacts
+	selectedCodeId string
 }
 
-func (n *rpBuilderControlNode) getType() rpBuilderNodeType {
-	return rpBuilderNodeTypeControl
+func (n *rpBuilderGenericQueryNode) getId() string {
+	return n.queryMrn
 }
 
-func (n *rpBuilderControlNode) getId() string {
-	return n.controlMrn
+func (n *rpBuilderGenericQueryNode) isPrunable() bool {
+	return true
 }
 
-func (n *rpBuilderControlNode) isPrunable() bool {
-	return false
-}
+func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
+	reportingJobUUID := data.relativeChecksum(n.queryMrn)
 
-func (n *rpBuilderControlNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	addReportingJob(n.controlMrn, true, data.relativeChecksum(n.controlMrn), ReportingJob_CONTROL, rp)
+	// Because a query can be both a scoring query and a data query, UNSPECIFIED is used
+	// for the reporting job type. We need to get rid of the specific types for check and
+	// data query and have something that can be both
+	addReportingJob(n.queryMrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp)
+
+	// Add scoring queries to the reporting queries section
+	if n.queryType == queryTypeScoring || n.queryType == queryTypeBoth {
+		if _, ok := rp.CollectorJob.ReportingQueries[n.selectedCodeId]; !ok {
+			rp.CollectorJob.ReportingQueries[n.selectedCodeId] = &StringArray{}
+		}
+		rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items = append(rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items, reportingJobUUID)
+	}
+
 	return nil
 }
 
-type rpBuilderFrameworkNode struct {
-	frameworkMrn string
+// rpBuilderExecutionQueryNode is a node that represents a executable query in the graph. It will add a reporting job to the resolved policy,
+// and add the compiled query to the execution job, and connect the datapoints to the reporting job.
+// This node is a leaf. Anything connected to an executable query will not be pruned.
+// This node is represented by a code id in the reporting jobs. We do not apply impact at this point so
+// any scores will be either 0 or 100
+type rpBuilderExecutionQueryNode struct {
+	query *explorer.Mquery
 }
 
-func (n *rpBuilderFrameworkNode) getType() rpBuilderNodeType {
-	return rpBuilderNodeTypeFramework
+func (n *rpBuilderExecutionQueryNode) getId() string {
+	return n.query.CodeId
+}
+
+func (n *rpBuilderExecutionQueryNode) isPrunable() bool {
+	// Executable queries are leaf nodes in the graph. They cannot be pruned
+	// If something is connected to an executable query, we want to keep it around
+	return false
+}
+
+func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
+	// Compile the properties
+	propTypes, propToChecksums, err := compileProps(n.query, rp, data)
+	if err != nil {
+		return err
+	}
+	// Add the compiled query to the execution job. This also collects the datapoints into the collector job
+	executionQuery, _, err := mquery2executionQuery(n.query, propTypes, propToChecksums, rp.CollectorJob, false, data.compilerConf)
+	if err != nil {
+		return err
+	}
+	rp.ExecutionJob.Queries[n.query.CodeId] = executionQuery
+
+	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
+
+	// Create a reporting job for the code id
+	codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_UNSPECIFIED, rp)
+	// Connect the datapoints to the reporting job
+	connectDatapointsToReportingJob(executionQuery, codeIdReportingJob, rp.CollectorJob.Datapoints)
+
+	return nil
+}
+
+// rpBuilderFrameworkNode is a node that represents a framework in the graph. It will add a reporting job to the resolved policy
+type rpBuilderFrameworkNode struct {
+	frameworkMrn string
 }
 
 func (n *rpBuilderFrameworkNode) getId() string {
@@ -138,7 +384,7 @@ func (n *rpBuilderFrameworkNode) getId() string {
 }
 
 func (n *rpBuilderFrameworkNode) isPrunable() bool {
-	return false
+	return true
 }
 
 func (n *rpBuilderFrameworkNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
@@ -146,14 +392,30 @@ func (n *rpBuilderFrameworkNode) build(rp *ResolvedPolicy, data *rpBuilderData) 
 	return nil
 }
 
+// rpBuilderControlNode is a node that represents a control in the graph. It will add a reporting job to the resolved policy
+type rpBuilderControlNode struct {
+	controlMrn string
+}
+
+func (n *rpBuilderControlNode) getId() string {
+	return n.controlMrn
+}
+
+func (n *rpBuilderControlNode) isPrunable() bool {
+	return true
+}
+
+func (n *rpBuilderControlNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
+	addReportingJob(n.controlMrn, true, data.relativeChecksum(n.controlMrn), ReportingJob_CONTROL, rp)
+	return nil
+}
+
+// rpBuilderRiskFactorNode is a node that represents a risk factor in the graph. It will add a reporting job to the resolved policy,
+// and fill out the RiskFactors and RiskMrns sections in the collector job
 type rpBuilderRiskFactorNode struct {
 	riskFactor      *RiskFactor
 	magnitude       *RiskMagnitude
 	selectedCodeIds []string
-}
-
-func (n *rpBuilderRiskFactorNode) getType() rpBuilderNodeType {
-	return rpBuilderNodeTypeRiskFactor
 }
 
 func (n *rpBuilderRiskFactorNode) getId() string {
@@ -161,7 +423,7 @@ func (n *rpBuilderRiskFactorNode) getId() string {
 }
 
 func (n *rpBuilderRiskFactorNode) isPrunable() bool {
-	return false
+	return true
 }
 
 func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
@@ -187,166 +449,6 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 		rp.CollectorJob.RiskMrns[codeId].Items = append(rp.CollectorJob.RiskMrns[codeId].Items, risk.Mrn)
 	}
 	return nil
-}
-
-func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy) *ReportingJob {
-	if _, ok := rp.CollectorJob.ReportingJobs[uuid]; !ok {
-		rp.CollectorJob.ReportingJobs[uuid] = &ReportingJob{
-			QrId:       qrId,
-			Uuid:       uuid,
-			ChildJobs:  map[string]*explorer.Impact{},
-			Datapoints: map[string]bool{},
-			Type:       typ,
-		}
-		if qrIdIsMrn {
-			rp.CollectorJob.ReportingJobs[uuid].Mrns = []string{qrId}
-		}
-	}
-	return rp.CollectorJob.ReportingJobs[uuid]
-}
-
-type rpBuilderExecutionQueryNode struct {
-	query *explorer.Mquery
-}
-
-func (n *rpBuilderExecutionQueryNode) getType() rpBuilderNodeType {
-	return rpBuilderNodeTypeExecutionQuery
-}
-
-func (n *rpBuilderExecutionQueryNode) getId() string {
-	return n.query.CodeId
-}
-
-func (n *rpBuilderExecutionQueryNode) isPrunable() bool {
-	return true
-}
-
-func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	propTypes, propToChecksums, err := compileProps(n.query, rp, data)
-	if err != nil {
-		return err
-	}
-	if rp.ExecutionJob.Queries[n.query.CodeId] == nil {
-		eq, _, err := mquery2executionQuery(n.query, propTypes, propToChecksums, rp.CollectorJob, false, data.compilerConf)
-		if err != nil {
-			return err
-		}
-		rp.ExecutionJob.Queries[n.query.CodeId] = eq
-	}
-
-	executionQuery := rp.ExecutionJob.Queries[n.query.CodeId]
-
-	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
-
-	if _, ok := rp.CollectorJob.ReportingJobs[codeIdReportingJobUUID]; !ok {
-		codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_UNSPECIFIED, rp)
-		connectDatapointsToReportingJob(executionQuery, codeIdReportingJob, rp.CollectorJob.Datapoints)
-	}
-
-	return nil
-}
-
-type rpBuilderGenericQueryNode struct {
-	query           *explorer.Mquery
-	selectedVariant *explorer.Mquery
-	queryType       queryType
-	selectedCodeId  string
-}
-
-func (n *rpBuilderGenericQueryNode) getType() rpBuilderNodeType {
-	return rpBuilderNodeTypeQuery
-}
-
-func (n *rpBuilderGenericQueryNode) getId() string {
-	return n.query.Mrn
-}
-
-func (n *rpBuilderGenericQueryNode) isPrunable() bool {
-	return false
-}
-
-func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderData) (map[string]*llx.Primitive, map[string]string, error) {
-	var propTypes map[string]*llx.Primitive
-	var propToChecksums map[string]string
-	if len(query.Props) != 0 {
-		propTypes = make(map[string]*llx.Primitive, len(query.Props))
-		propToChecksums = make(map[string]string, len(query.Props))
-		for j := range query.Props {
-			prop := query.Props[j]
-
-			// we only get this if there is an override higher up in the policy
-			override, name, _ := data.propsCache.Get(prop.Mrn)
-			if override != nil {
-				prop = override
-			}
-			if name == "" {
-				var err error
-				name, err = mrn.GetResource(prop.Mrn, MRN_RESOURCE_QUERY)
-				if err != nil {
-					return nil, nil, errors.New("failed to get property name")
-				}
-			}
-
-			executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, rp.CollectorJob, false, data.compilerConf)
-			if err != nil {
-				return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
-			}
-			if dataChecksum == "" {
-				return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + prop.Mql + "'")
-			}
-			rp.ExecutionJob.Queries[prop.CodeId] = executionQuery
-
-			propTypes[name] = &llx.Primitive{Type: prop.Type}
-			propToChecksums[name] = dataChecksum
-		}
-	}
-	return propTypes, propToChecksums, nil
-}
-
-func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-
-	reportingJobUUID := data.relativeChecksum(n.query.Mrn)
-
-	if _, ok := rp.CollectorJob.ReportingJobs[reportingJobUUID]; !ok {
-		addReportingJob(n.query.Mrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp)
-	}
-
-	if n.queryType == queryTypeScoring || n.queryType == queryTypeBoth {
-		if _, ok := rp.CollectorJob.ReportingQueries[n.query.CodeId]; !ok {
-			rp.CollectorJob.ReportingQueries[n.query.CodeId] = &StringArray{}
-		}
-		rp.CollectorJob.ReportingQueries[n.query.CodeId].Items = append(rp.CollectorJob.ReportingQueries[n.query.CodeId].Items, reportingJobUUID)
-	}
-
-	return nil
-}
-
-func connectReportingJobNotifies(child *ReportingJob, parent *ReportingJob, impact *explorer.Impact) {
-	for _, n := range child.Notify {
-		if n == parent.Uuid {
-			fmt.Println("already connected")
-		}
-	}
-	child.Notify = append(child.Notify, parent.Uuid)
-	parent.ChildJobs[child.Uuid] = impact
-}
-
-// normalizeAction normalizes the action based on the group type and impact. We need to do this because
-// we've had different ways of representing actions in the past and we need to normalize them to the current
-func normalizeAction(groupType GroupType, action explorer.Action, impact *explorer.Impact) explorer.Action {
-	switch groupType {
-	case GroupType_DISABLE:
-		return explorer.Action_DEACTIVATE
-	case GroupType_OUT_OF_SCOPE:
-		return explorer.Action_OUT_OF_SCOPE
-	case GroupType_IGNORED:
-		return explorer.Action_IGNORE
-	default:
-		if impact != nil && impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
-			return explorer.Action_IGNORE
-		}
-		return action
-	}
 }
 
 func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *explorer.Impact) {
@@ -380,6 +482,9 @@ const (
 	queryTypeBoth
 )
 
+// collectQueryTypes collects the query types for each query in the policy. A query can be a scoring query, a data query,
+// or both. We analyze all matching policies to determine the query type. If a query shows up in checks, it is a scoring query.
+// If it shows up in data queries, it is a data query. If it shows up in both, it is set to both.
 func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[string]queryType) {
 	policy := b.bundleMap.Policies[policyMrn]
 	if policy == nil {
@@ -389,9 +494,11 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 	var accumulate func(queryMrn string, t queryType)
 	accumulate = func(queryMrn string, t queryType) {
 		if existing, ok := acc[queryMrn]; !ok {
+			// If it doesn't exist, add it
 			acc[queryMrn] = t
 		} else {
-			if existing != t {
+			if existing != t && existing != queryTypeBoth {
+				// If it exists, but is different, set it to both
 				acc[queryMrn] = queryTypeBoth
 			}
 		}
@@ -407,6 +514,7 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 
 	for _, g := range policy.Groups {
 		if !b.isPolicyGroupMatching(g) {
+			// skip groups that don't match
 			continue
 		}
 
@@ -419,10 +527,12 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 		}
 
 		for _, pRef := range g.Policies {
+			// recursively collect query types from referenced policies
 			b.collectQueryTypes(pRef.Mrn, acc)
 		}
 	}
 
+	// queries in risk factors are checks
 	for _, r := range policy.RiskFactors {
 		for _, c := range r.Checks {
 			accumulate(c.Mrn, queryTypeScoring)
@@ -430,7 +540,9 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 	}
 }
 
-func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[string]explorer.Action, map[string]*explorer.Impact, map[string]explorer.ScoringSystem, map[string]*RiskMagnitude) {
+// gatherGlobalInfoFromPolicy gathers the action, impact, scoring system, and risk magnitude overrides from the policy. We
+// apply this information in a second pass when building the nodes
+func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) (map[string]explorer.Action, map[string]*explorer.Impact, map[string]explorer.ScoringSystem, map[string]*RiskMagnitude) {
 	actions := make(map[string]explorer.Action)
 	impacts := make(map[string]*explorer.Impact)
 	scoringSystems := make(map[string]explorer.ScoringSystem)
@@ -443,7 +555,7 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 		for _, pRef := range g.Policies {
 			p := b.bundleMap.Policies[pRef.Mrn]
 
-			a, i, s, r := b.gatherOverridesFromPolicy(p)
+			a, i, s, r := b.gatherGlobalInfoFromPolicy(p)
 			for k, v := range a {
 				actions[k] = v
 			}
@@ -461,8 +573,13 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 			}
 
 			action := normalizeAction(g.Type, pRef.Action, pRef.Impact)
-			actions[pRef.Mrn] = action
-			impacts[pRef.Mrn] = pRef.Impact
+			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+				actions[pRef.Mrn] = action
+			}
+
+			if pRef.Impact != nil {
+				impacts[pRef.Mrn] = pRef.Impact
+			}
 			scoringSystem := pRef.ScoringSystem
 
 			if scoringSystem != explorer.ScoringSystem_SCORING_UNSPECIFIED {
@@ -474,20 +591,13 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 			}
 		}
 
+		// We always want to select the worst impact that we find
 		getWorstImpact := func(impact1 *explorer.Impact, impact2 *explorer.Impact) *explorer.Impact {
 			if impact1 == nil {
 				return impact2
 			}
 			if impact2 == nil {
 				return impact1
-			}
-
-			if impact1.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
-				return impact1
-			}
-
-			if impact2.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
-				return impact2
 			}
 
 			if impact1.Value.GetValue() > impact2.Value.GetValue() {
@@ -500,17 +610,24 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 			impact := c.Impact
 			action := normalizeAction(g.Type, c.Action, impact)
 			if action == explorer.Action_IGNORE {
+				// Since we traversed the children first, we overwrite the impact with ignore
+				// if the action is ignore. We do not merge in this case
 				impact = &explorer.Impact{
 					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 				}
+			} else {
+				if qBundle, ok := b.bundleMap.Queries[c.Mrn]; ok {
+					// Check the impact defined on the query
+					impact = getWorstImpact(impact, qBundle.Impact)
+				}
+
+				impact = getWorstImpact(impact, impacts[c.Mrn])
 			}
-			if qBundle, ok := b.bundleMap.Queries[c.Mrn]; ok {
-				impact = getWorstImpact(impact, qBundle.Impact)
-			}
-			if action != explorer.Action_UNSPECIFIED {
+
+			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
 				actions[c.Mrn] = action
 			}
-			impact = getWorstImpact(impact, impacts[c.Mrn])
+
 			if impact != nil {
 				impacts[c.Mrn] = impact
 			}
@@ -518,12 +635,9 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 
 		for _, q := range g.Queries {
 			if q.Action != explorer.Action_UNSPECIFIED {
-				a := normalizeAction(g.Type, q.Action, q.Impact)
-				switch a {
-				case explorer.Action_IGNORE, explorer.Action_OUT_OF_SCOPE, explorer.Action_DEACTIVATE:
-					actions[q.Mrn] = a
-				default:
-					log.Warn().Str("mrn", q.Mrn).Msg("Invalid action for data query")
+				action := normalizeAction(g.Type, q.Action, q.Impact)
+				if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+					actions[q.Mrn] = action
 				}
 			}
 		}
@@ -534,7 +648,7 @@ func (b *resolvedPolicyBuilder) gatherOverridesFromPolicy(policy *Policy) (map[s
 			riskMagnitudes[r.Mrn] = r.Magnitude
 		}
 
-		if r.Action != explorer.Action_UNSPECIFIED {
+		if r.Action != explorer.Action_UNSPECIFIED && r.Action != explorer.Action_MODIFY {
 			actions[r.Mrn] = r.Action
 		}
 	}
@@ -546,6 +660,8 @@ func canRun(action explorer.Action) bool {
 	return !(action == explorer.Action_DEACTIVATE || action == explorer.Action_OUT_OF_SCOPE)
 }
 
+// isPolicyGroupMatching checks if the policy group is matching. A policy group is matching if it is not rejected,
+// and it is not expired. If it has filters, it must have at least one filter that matches the asset filters
 func (b *resolvedPolicyBuilder) isPolicyGroupMatching(group *PolicyGroup) bool {
 	if group.ReviewStatus == ReviewStatus_REJECTED {
 		return false
@@ -572,13 +688,11 @@ func (b *resolvedPolicyBuilder) isPolicyGroupMatching(group *PolicyGroup) bool {
 	return false
 }
 
-func isOverride(action explorer.Action) bool {
-	return action != explorer.Action_UNSPECIFIED
-}
-
+// addPolicy recurses a policy and adds all the nodes and edges to the graph. It will add the policy, its dependent policies, checks, and queries
 func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 	action := b.actionOverrides[policy.Mrn]
 
+	// Check if we can run this policy. If not, then we do not add it to the graph
 	if !canRun(action) {
 		return false
 	}
@@ -629,7 +743,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 				continue
 			}
 
-			if _, ok := b.addCheck(c); ok {
+			if _, ok := b.addQuery(c); ok {
 				b.addEdge(c.Mrn, policy.Mrn, nil)
 			}
 		}
@@ -650,7 +764,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 				continue
 			}
 
-			if _, ok := b.addDataQuery(q); ok {
+			if _, ok := b.addQuery(q); ok {
 				b.addEdge(q.Mrn, policy.Mrn, &explorer.Impact{
 					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 				})
@@ -673,6 +787,70 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 	return hasMatchingGroup || hasMatchingRiskFactor
 }
 
+// addQuery adds a query to the graph. It will add the query, its variants, and connect the query to the variants
+func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) {
+	action := b.actionOverrides[query.Mrn]
+	impact := b.impactOverrides[query.Mrn]
+	queryType := b.queryTypes[query.Mrn]
+
+	if !canRun(action) {
+		return "", false
+	}
+
+	if len(query.Variants) != 0 {
+		// If we have variants, we need to find the first matching variant.
+		// We will also recursively find the code id of the query that will
+		// be run
+		var matchingVariant *explorer.Mquery
+		var selectedCodeId string
+		for _, v := range query.Variants {
+			q, ok := b.bundleMap.Queries[v.Mrn]
+			if !ok {
+				log.Warn().Str("mrn", v.Mrn).Msg("variant not found in bundle")
+				continue
+			}
+			if codeId, added := b.addQuery(q); added {
+				// The first matching variant is selected
+				matchingVariant = q
+				selectedCodeId = codeId
+				break
+			}
+		}
+
+		if matchingVariant == nil {
+			return "", false
+		}
+
+		b.propsCache.Add(query.Props...)
+		b.propsCache.Add(matchingVariant.Props...)
+
+		// Add node for query
+		b.addNode(&rpBuilderGenericQueryNode{queryMrn: query.Mrn, selectedCodeId: selectedCodeId, queryType: queryType})
+
+		// Add edge from variant to query
+		b.addEdge(matchingVariant.Mrn, query.Mrn, impact)
+
+		return selectedCodeId, true
+	} else {
+		if !b.anyFilterMatches(query.Filters) {
+			return "", false
+		}
+
+		b.propsCache.Add(query.Props...)
+
+		// Add node for execution query
+		b.addNode(&rpBuilderExecutionQueryNode{query: query})
+		// Add node for query
+		b.addNode(&rpBuilderGenericQueryNode{queryMrn: query.Mrn, selectedCodeId: query.CodeId, queryType: queryType})
+
+		// Add edge from execution query to query
+		b.addEdge(query.CodeId, query.Mrn, impact)
+
+		return query.CodeId, true
+	}
+}
+
+// addRiskFactor adds a risk factor to the graph. It will add the risk factor, its checks, and connect the checks to the risk factor
 func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) bool {
 	action := b.actionOverrides[riskFactor.Mrn]
 	if !canRun(action) {
@@ -685,7 +863,7 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) bool {
 
 	selectedCodeIds := make([]string, 0, len(riskFactor.Checks))
 	for _, c := range riskFactor.Checks {
-		if selectedCodeId, ok := b.addCheck(c); ok {
+		if selectedCodeId, ok := b.addQuery(c); ok {
 			selectedCodeIds = append(selectedCodeIds, selectedCodeId)
 			b.addEdge(c.Mrn, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 		}
@@ -704,6 +882,8 @@ func (b *resolvedPolicyBuilder) anyFilterMatches(f *explorer.Filters) bool {
 	return f.Supports(b.assetFilters)
 }
 
+// addFramework adds a framework to the graph. It will add the framework, its dependent frameworks, its controls, and connect
+// the controls to the framework
 func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	action := b.actionOverrides[framework.Mrn]
 	if !canRun(action) {
@@ -748,6 +928,7 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	return true
 }
 
+// addControl adds a control to the graph and connect policies, controls, checks, and queries to the control
 func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 	action := b.actionOverrides[control.Mrn]
 	if !canRun(action) {
@@ -810,236 +991,89 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 	return true
 }
 
-func (b *resolvedPolicyBuilder) addCheck(query *explorer.Mquery) (string, bool) {
-	return b.addQuery(query)
-
-}
-func (b *resolvedPolicyBuilder) addDataQuery(query *explorer.Mquery) (string, bool) {
-	return b.addQuery(query)
-}
-
-func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) {
-	action := b.actionOverrides[query.Mrn]
-	impact := b.impactOverrides[query.Mrn]
-	queryType, queryTypeSet := b.queryTypes[query.Mrn]
-	if !queryTypeSet {
-		return "", false
+func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy) *ReportingJob {
+	if _, ok := rp.CollectorJob.ReportingJobs[uuid]; !ok {
+		rp.CollectorJob.ReportingJobs[uuid] = &ReportingJob{
+			QrId:       qrId,
+			Uuid:       uuid,
+			ChildJobs:  map[string]*explorer.Impact{},
+			Datapoints: map[string]bool{},
+			Type:       typ,
+		}
+		if qrIdIsMrn {
+			rp.CollectorJob.ReportingJobs[uuid].Mrns = []string{qrId}
+		}
 	}
+	return rp.CollectorJob.ReportingJobs[uuid]
+}
 
-	if !canRun(action) {
-		return "", false
-	}
+func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderData) (map[string]*llx.Primitive, map[string]string, error) {
+	var propTypes map[string]*llx.Primitive
+	var propToChecksums map[string]string
+	if len(query.Props) != 0 {
+		propTypes = make(map[string]*llx.Primitive, len(query.Props))
+		propToChecksums = make(map[string]string, len(query.Props))
+		for j := range query.Props {
+			prop := query.Props[j]
 
-	if len(query.Variants) != 0 {
-		var matchingVariant *explorer.Mquery
-		var selectedCodeId string
-		for _, v := range query.Variants {
-			q, ok := b.bundleMap.Queries[v.Mrn]
-			if !ok {
-				log.Warn().Str("mrn", v.Mrn).Msg("variant not found in bundle")
-				continue
+			// we only get this if there is an override higher up in the policy
+			override, name, _ := data.propsCache.Get(prop.Mrn)
+			if override != nil {
+				prop = override
 			}
-			if codeId, added := b.addQuery(q); added {
-				// The first matching variant is selected
-				matchingVariant = q
-				selectedCodeId = codeId
-				break
-			}
-		}
-
-		if matchingVariant == nil {
-			return "", false
-		}
-
-		b.propsCache.Add(query.Props...)
-		b.propsCache.Add(matchingVariant.Props...)
-
-		// Add node for query
-		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedVariant: matchingVariant, selectedCodeId: selectedCodeId, queryType: queryType})
-
-		// Add edge from variant to query
-		b.addEdge(matchingVariant.Mrn, query.Mrn, impact)
-
-		return selectedCodeId, true
-	} else {
-		if !b.anyFilterMatches(query.Filters) {
-			return "", false
-		}
-
-		b.propsCache.Add(query.Props...)
-
-		// Add node for execution query
-		b.addNode(&rpBuilderExecutionQueryNode{query: query})
-		// Add node for query
-		b.addNode(&rpBuilderGenericQueryNode{query: query, selectedCodeId: query.CodeId, queryType: queryType})
-
-		// Add edge from execution query to query
-		b.addEdge(query.CodeId, query.Mrn, impact)
-
-		return query.CodeId, true
-	}
-}
-
-func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, assetFilters []*explorer.Mquery, now time.Time, compilerConf mqlc.CompilerConfig) (*ResolvedPolicy, error) {
-	bundleMap := bundle.ToMap()
-	assetFilterMap := make(map[string]struct{}, len(assetFilters))
-	for _, f := range assetFilters {
-		assetFilterMap[f.CodeId] = struct{}{}
-	}
-
-	policyObj := bundleMap.Policies[bundleMrn]
-	frameworkObj := bundleMap.Frameworks[bundleMrn]
-
-	builder := &resolvedPolicyBuilder{
-		bundleMrn:            bundleMrn,
-		bundleMap:            bundleMap,
-		assetFilters:         assetFilterMap,
-		nodes:                map[string]rpBuilderNode{},
-		reportsToEdges:       map[string][]string{},
-		reportsFromEdges:     map[string][]edgeImpact{},
-		policyScoringSystems: map[string]explorer.ScoringSystem{},
-		actionOverrides:      map[string]explorer.Action{},
-		impactOverrides:      map[string]*explorer.Impact{},
-		riskMagnitudes:       map[string]*RiskMagnitude{},
-		propsCache:           explorer.NewPropsCache(),
-		now:                  now,
-	}
-
-	actions, impacts, scoringSystems, riskMagnitudes := builder.gatherOverridesFromPolicy(policyObj)
-	builder.queryTypes = make(map[string]queryType)
-	builder.collectQueryTypes(bundleMrn, builder.queryTypes)
-	builder.actionOverrides = actions
-	builder.impactOverrides = impacts
-	builder.policyScoringSystems = scoringSystems
-	builder.riskMagnitudes = riskMagnitudes
-
-	builder.addPolicy(policyObj)
-
-	if frameworkObj != nil {
-		builder.addFramework(frameworkObj)
-	}
-
-	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(ctx, policyObj, frameworkObj)
-	assetFiltersChecksum, err := ChecksumAssetFilters(assetFilters, compilerConf)
-	if err != nil {
-		return nil, err
-	}
-
-	builderData := &rpBuilderData{
-		baseChecksum:    checksumStrings(resolvedPolicyExecutionChecksum, assetFiltersChecksum, "v2"),
-		impactOverrides: impacts,
-		propsCache:      builder.propsCache,
-		compilerConf:    compilerConf,
-	}
-
-	resolvedPolicy := &ResolvedPolicy{
-		ExecutionJob: &ExecutionJob{
-			Checksum: "",
-			Queries:  map[string]*ExecutionQuery{},
-		},
-		CollectorJob: &CollectorJob{
-			Checksum:         "",
-			ReportingJobs:    map[string]*ReportingJob{},
-			ReportingQueries: map[string]*StringArray{},
-			Datapoints:       map[string]*DataQueryInfo{},
-			RiskMrns:         map[string]*StringArray{},
-			RiskFactors:      map[string]*RiskFactor{},
-		},
-		Filters:                assetFilters,
-		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
-		FiltersChecksum:        assetFiltersChecksum,
-	}
-
-	// We will build from the leaf nodes out. This means that if something is not connected
-	// to a leaf node, it will not be included in the resolved policy
-	leafNodes := make([]rpBuilderNode, 0, len(builder.nodes))
-
-	for _, n := range builder.nodes {
-		if n.isPrunable() {
-			leafNodes = append(leafNodes, n)
-		}
-	}
-
-	visited := make(map[string]struct{}, len(builder.nodes))
-	var walk func(node rpBuilderNode) error
-	walk = func(node rpBuilderNode) error {
-		// Check if we've already visited this node
-		if _, ok := visited[node.getId()]; ok {
-			return nil
-		}
-		visited[node.getId()] = struct{}{}
-
-		// Build the necessary parts of the resolved policy for each node
-		if err := node.build(resolvedPolicy, builderData); err != nil {
-			log.Error().Err(err).Str("node", node.getId()).Msg("error building node")
-			return err
-		}
-		// Walk to each parent node and recurse
-		for _, edge := range builder.reportsToEdges[node.getId()] {
-			if edgeNode, ok := builder.nodes[edge]; ok {
-				if err := walk(edgeNode); err != nil {
-					return err
+			if name == "" {
+				var err error
+				name, err = mrn.GetResource(prop.Mrn, MRN_RESOURCE_QUERY)
+				if err != nil {
+					return nil, nil, errors.New("failed to get property name")
 				}
-
-			} else {
-				log.Debug().Str("from", node.getId()).Str("to", edge).Msg("edge not found")
-			}
-		}
-		return nil
-	}
-
-	for _, n := range leafNodes {
-		if err := walk(n); err != nil {
-			return nil, err
-		}
-	}
-
-	// We need to connect the reporting jobs. We've stored them by uuid in the collector job. However,
-	// our graph uses the qr id to connect them.
-	reportingJobsByQrId := make(map[string]*ReportingJob, len(resolvedPolicy.CollectorJob.ReportingJobs))
-	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
-		if _, ok := reportingJobsByQrId[rj.QrId]; ok {
-			// We should never have multiple reporting jobs with the same qr id. Scores are stored
-			// by qr id, not by uuid. This would cause issues where scores would flop around
-			log.Error().Str("qr_id", rj.QrId).Msg("multipe reporting jobs with the same qr id")
-			return nil, errors.New("multiple reporting jobs with the same qr id")
-		}
-		reportingJobsByQrId[rj.QrId] = rj
-	}
-
-	// For each parent qr id, we need to connect the child reporting jobs with the impact.
-	// connectReportingJobNotifies will add the link from the child to the parent, and
-	// the parent to the child with the impact
-	for parentQrId, edges := range builder.reportsFromEdges {
-		for _, edge := range edges {
-			parent := reportingJobsByQrId[parentQrId]
-			if parent == nil {
-				// It's possible that the parent reporting job was not included in the resolved policy
-				// because it was not connected to a leaf node (e.g. a policy that was not connected to
-				// any check or data query). In this case, we can just skip it
-				log.Debug().Str("parent", parentQrId).Msg("reporting job not found")
-				continue
 			}
 
-			if child, ok := reportingJobsByQrId[edge.edge]; ok {
-				// Also possible a child was not included in the resolved policy
-				connectReportingJobNotifies(child, parent, edge.impact)
+			executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, rp.CollectorJob, false, data.compilerConf)
+			if err != nil {
+				return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
 			}
+			if dataChecksum == "" {
+				return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + prop.Mql + "'")
+			}
+			rp.ExecutionJob.Queries[prop.CodeId] = executionQuery
+
+			propTypes[name] = &llx.Primitive{Type: prop.Type}
+			propToChecksums[name] = dataChecksum
 		}
 	}
+	return propTypes, propToChecksums, nil
+}
 
-	rootReportingJob := reportingJobsByQrId[bundleMrn]
-	if rootReportingJob == nil {
-		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+// connectReportingJobNotifies adds the notifies and child jobs links in the reporting jobs
+func connectReportingJobNotifies(child *ReportingJob, parent *ReportingJob, impact *explorer.Impact) {
+	for _, n := range child.Notify {
+		if n == parent.Uuid {
+			fmt.Println("already connected")
+		}
 	}
-	rootReportingJob.QrId = "root"
+	child.Notify = append(child.Notify, parent.Uuid)
+	parent.ChildJobs[child.Uuid] = impact
+}
 
-	resolvedPolicy.ReportingJobUuid = rootReportingJob.Uuid
-
-	refreshChecksums(resolvedPolicy.ExecutionJob, resolvedPolicy.CollectorJob)
-	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
-		rj.RefreshChecksum()
+// normalizeAction normalizes the action based on the group type and impact. We need to do this because
+// we've had different ways of representing actions in the past and we need to normalize them to the current
+func normalizeAction(groupType GroupType, action explorer.Action, impact *explorer.Impact) explorer.Action {
+	switch groupType {
+	case GroupType_DISABLE:
+		return explorer.Action_DEACTIVATE
+	case GroupType_OUT_OF_SCOPE:
+		return explorer.Action_OUT_OF_SCOPE
+	case GroupType_IGNORED:
+		return explorer.Action_IGNORE
+	default:
+		if impact != nil && impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+			return explorer.Action_IGNORE
+		}
+		return action
 	}
+}
 
-	return resolvedPolicy, nil
+func isOverride(action explorer.Action) bool {
+	return action != explorer.Action_UNSPECIFIED
 }
