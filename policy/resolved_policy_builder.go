@@ -43,13 +43,9 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		now:                  now,
 	}
 
-	actions, impacts, scoringSystems, riskMagnitudes := builder.gatherGlobalInfoFromPolicy(policyObj)
-	builder.gatherGlobalInfoFromFramework(frameworkObj, actions, impacts)
+	builder.gatherGlobalInfoFromPolicy(policyObj)
+	builder.gatherGlobalInfoFromFramework(frameworkObj)
 	builder.collectQueryTypes(bundleMrn, builder.queryTypes)
-	builder.actionOverrides = actions
-	builder.impactOverrides = impacts
-	builder.policyScoringSystems = scoringSystems
-	builder.riskMagnitudes = riskMagnitudes
 
 	builder.addPolicy(policyObj)
 
@@ -547,14 +543,20 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 	}
 }
 
-func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framework, actions map[string]explorer.Action, impacts map[string]*explorer.Impact) {
+func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framework) {
+	actions := b.actionOverrides
+	impacts := b.impactOverrides
+
+	if framework == nil {
+		return
+	}
 
 	for _, fRef := range framework.Dependencies {
 		f := b.bundleMap.Frameworks[fRef.Mrn]
 		if f == nil {
 			continue
 		}
-		b.gatherGlobalInfoFromFramework(f, actions, impacts)
+		b.gatherGlobalInfoFromFramework(f)
 	}
 
 	for _, g := range framework.Groups {
@@ -583,11 +585,11 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framewo
 
 // gatherGlobalInfoFromPolicy gathers the action, impact, scoring system, and risk magnitude overrides from the policy. We
 // apply this information in a second pass when building the nodes
-func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) (map[string]explorer.Action, map[string]*explorer.Impact, map[string]explorer.ScoringSystem, map[string]*RiskMagnitude) {
-	actions := make(map[string]explorer.Action)
-	impacts := make(map[string]*explorer.Impact)
-	scoringSystems := make(map[string]explorer.ScoringSystem)
-	riskMagnitudes := make(map[string]*RiskMagnitude)
+func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
+	actions := b.actionOverrides
+	impacts := b.impactOverrides
+	scoringSystems := b.policyScoringSystems
+	riskMagnitudes := b.riskMagnitudes
 
 	for _, g := range policy.Groups {
 		if !b.isGroupMatching(g) {
@@ -596,22 +598,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) (map[
 		for _, pRef := range g.Policies {
 			p := b.bundleMap.Policies[pRef.Mrn]
 
-			a, i, s, r := b.gatherGlobalInfoFromPolicy(p)
-			for k, v := range a {
-				actions[k] = v
-			}
-
-			for k, v := range i {
-				impacts[k] = v
-			}
-
-			for k, v := range s {
-				scoringSystems[k] = v
-			}
-
-			for k, v := range r {
-				riskMagnitudes[k] = v
-			}
+			b.gatherGlobalInfoFromPolicy(p)
 
 			action := normalizeAction(g.Type, pRef.Action, pRef.Impact)
 			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
@@ -693,8 +680,6 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) (map[
 			actions[r.Mrn] = r.Action
 		}
 	}
-
-	return actions, impacts, scoringSystems, riskMagnitudes
 }
 
 func canRun(action explorer.Action) bool {
