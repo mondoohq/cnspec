@@ -6,6 +6,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/pkg/errors"
@@ -323,10 +324,16 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 
 	// Add scoring queries to the reporting queries section
 	if n.queryType == queryTypeScoring || n.queryType == queryTypeBoth {
+		codeIdReportingJobUUID := data.relativeChecksum(n.selectedCodeId)
+
 		if _, ok := rp.CollectorJob.ReportingQueries[n.selectedCodeId]; !ok {
 			rp.CollectorJob.ReportingQueries[n.selectedCodeId] = &StringArray{}
 		}
-		rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items = append(rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items, reportingJobUUID)
+
+		// Add the reporting job to the reporting queries if it does not already exist
+		if !slices.Contains(rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items, codeIdReportingJobUUID) {
+			rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items = append(rp.CollectorJob.ReportingQueries[n.selectedCodeId].Items, codeIdReportingJobUUID)
+		}
 	}
 
 	return nil
@@ -338,7 +345,8 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 // This node is represented by a code id in the reporting jobs. We do not apply impact at this point so
 // any scores will be either 0 or 100
 type rpBuilderExecutionQueryNode struct {
-	query *explorer.Mquery
+	query     *explorer.Mquery
+	queryType queryType
 }
 
 func (n *rpBuilderExecutionQueryNode) getId() string {
@@ -441,15 +449,17 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 		DeprecatedV11Magnitude:  risk.Magnitude.GetValue(),
 		DeprecatedV11IsAbsolute: risk.Magnitude.GetIsToxic(),
 	}
-	addReportingJob(risk.Mrn, true, data.relativeChecksum(risk.Mrn), ReportingJob_RISK_FACTOR, rp)
+	reportingJobUUID := data.relativeChecksum(risk.Mrn)
+	addReportingJob(risk.Mrn, true, reportingJobUUID, ReportingJob_RISK_FACTOR, rp)
 
 	for _, codeId := range n.selectedCodeIds {
-		if _, ok := rp.CollectorJob.RiskMrns[codeId]; !ok {
-			rp.CollectorJob.RiskMrns[codeId] = &StringArray{
+		uuid := data.relativeChecksum(codeId)
+		if _, ok := rp.CollectorJob.RiskMrns[uuid]; !ok {
+			rp.CollectorJob.RiskMrns[uuid] = &StringArray{
 				Items: []string{},
 			}
 		}
-		rp.CollectorJob.RiskMrns[codeId].Items = append(rp.CollectorJob.RiskMrns[codeId].Items, risk.Mrn)
+		rp.CollectorJob.RiskMrns[uuid].Items = append(rp.CollectorJob.RiskMrns[uuid].Items, risk.Mrn)
 	}
 	return nil
 }
