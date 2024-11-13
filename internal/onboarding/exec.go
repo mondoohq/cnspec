@@ -83,58 +83,47 @@ func getOutputDirPath(location string, identifier string) (string, error) {
 	)), nil
 }
 
-// Execute a terraform plan & apply
-func TerraformPlanAndExecute(workingDir string) error {
+// Execute a terraform plan & apply.
+//
+// It returns a true which indicates that terraform apply was executed, this is useful
+// for callers to display a success message or not
+func TerraformPlanAndExecute(workingDir string) (applied bool, err error) {
 	// Ensure Terraform is installed
 	tf, err := LocateOrInstallTerraform(false, workingDir)
 	if err != nil {
-		return err
+		return
 	}
-
-	vw := terminal.NewVerboseWriter(10)
-	tf.SetStdout(vw)
-	tf.SetStderr(vw)
 
 	// Initialize tf project
-	if err := TerraformInit(tf); err != nil {
-		return err
+	if err = TerraformInit(tf); err != nil {
+		return
 	}
-	vw.Close()
-
-	vw = terminal.NewVerboseWriter(10)
-	tf.SetStdout(vw)
-	tf.SetStderr(vw)
 
 	// Write plan
 	changes, err := TerraformExecPlan(tf)
 	if err != nil {
-		return err
+		return
 	}
-	vw.Close()
 
 	// Display changes and determine if apply should proceed
 	proceed, err := DisplayTerraformPlanChanges(tf, *changes)
 	if err != nil {
-		return err
+		return
 	}
 
 	// If not proceed; display guidance on how to continue outside of this session
 	if !proceed {
 		fmt.Println(provideGuidanceAfterExit(true, tf.WorkingDir(), tf.ExecPath()))
-		return nil
+		return
 	}
-
-	vw = terminal.NewVerboseWriter(10)
-	tf.SetStdout(vw)
-	tf.SetStderr(vw)
 
 	// Apply plan
-	if err := TerraformExecApply(tf); err != nil {
-		return errors.New(provideGuidanceAfterFailure(err, tf.WorkingDir(), tf.ExecPath()))
+	applied = true
+	if err = TerraformExecApply(tf); err != nil {
+		err = errors.New(provideGuidanceAfterFailure(err, tf.WorkingDir(), tf.ExecPath()))
 	}
-	vw.Close()
 
-	return nil
+	return
 }
 
 type terraformVersion struct {
@@ -236,9 +225,14 @@ func newTf(workingDir string, execPath string) (*tfexec.Terraform, error) {
 }
 
 func TerraformInit(tf *tfexec.Terraform) error {
+
+	vw := terminal.NewVerboseWriter(10)
+	tf.SetStdout(vw)
+	tf.SetStderr(vw)
+	defer vw.Close()
+
 	log.Info().Msgf("initializing automation code %s", theme.DefaultTheme.Primary("(terraform init)"))
-	err := tf.Init(context.Background(), tfexec.Upgrade(true))
-	if err != nil {
+	if err := tf.Init(context.Background(), tfexec.Upgrade(true)); err != nil {
 		return errors.Wrap(err, "failed to execute terraform init")
 	}
 
@@ -250,13 +244,18 @@ func TerraformInit(tf *tfexec.Terraform) error {
 // - Run plan
 // - Get plan file details (returned)
 func TerraformExecPlan(tf *tfexec.Terraform) (*TfPlanChangesSummary, error) {
+	vw := terminal.NewVerboseWriter(10)
+	tf.SetStdout(vw)
+	tf.SetStderr(vw)
+
 	log.Info().Msgf("creating execution plan %s", theme.DefaultTheme.Primary("(terraform plan)"))
-	_, err := tf.Plan(context.Background(), tfexec.Out("tfplan.json"))
-	if err != nil {
+	if _, err := tf.Plan(context.Background(), tfexec.Out("tfplan.json")); err != nil {
+		vw.Close()
 		return nil, err
 	}
 
-	// disale virtual terminal output since the following command overloads the terminal
+	// disable virtual terminal output since the following command overloads the terminal
+	vw.Close()
 	tf.SetStdout(io.Discard)
 
 	return processTfPlanChangesSummary(tf)
@@ -306,13 +305,13 @@ func parseTfPlanOutput(plan *tfjson.Plan) *TfPlanChangesSummary {
 // - Run plan
 // - Get plan file details (returned)
 func TerraformExecApply(tf *tfexec.Terraform) error {
-	log.Info().Msgf("running automation %s", theme.DefaultTheme.Primary("(terraform apply)"))
-	err := tf.Apply(context.Background())
-	if err != nil {
-		return err
-	}
+	vw := terminal.NewVerboseWriter(10)
+	tf.SetStdout(vw)
+	tf.SetStderr(vw)
+	defer vw.Close()
 
-	return nil
+	log.Info().Msgf("running automation %s", theme.DefaultTheme.Primary("(terraform apply)"))
+	return tf.Apply(context.Background())
 }
 
 type TfPlanChangesSummary struct {
@@ -459,7 +458,7 @@ func promptForTerraformNextSteps(previewShown *bool, data TfPlanChangesSummary) 
 func provideGuidanceAfterExit(initRun bool, workingDir string, binaryLocation string) string {
 	out := new(strings.Builder)
 	fmt.Fprintf(out,
-		"Automation code and plan output saved in %s\n\n",
+		"\nAutomation code and plan output saved in %s\n\n",
 		theme.DefaultTheme.Secondary(workingDir),
 	)
 	fmt.Fprintf(out,

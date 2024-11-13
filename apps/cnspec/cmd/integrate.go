@@ -81,35 +81,16 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 			}
 			return errors.Join(errs...)
 		},
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			space, err := cmd.Flags().GetString("space")
-			if err != nil {
-				return err
-			}
-			subscriptionID, err := cmd.Flags().GetString("subscription-id")
-			if err != nil {
-				return err
-			}
-			output, err := cmd.Flags().GetString("output")
-			if err != nil {
-				return err
-			}
-			integrationName, err := cmd.Flags().GetString("integration-name")
-			if err != nil {
-				return err
-			}
-			allow, err := cmd.Flags().GetStringSlice("allow")
-			if err != nil {
-				return err
-			}
-			deny, err := cmd.Flags().GetStringSlice("deny")
-			if err != nil {
-				return err
-			}
-			scanVMs, err := cmd.Flags().GetBool("scan-vms")
-			if err != nil {
-				return err
-			}
+		RunE: func(_ *cobra.Command, _ []string) error {
+			var (
+				space           = viper.GetString("space")
+				subscriptionID  = viper.GetString("subscription-id")
+				output          = viper.GetString("output")
+				integrationName = viper.GetString("integration-name")
+				allow           = viper.GetStringSlice("allow")
+				deny            = viper.GetStringSlice("deny")
+				scanVMs         = viper.GetBool("scan-vms")
+			)
 
 			// Verify if space exists, which verifies we have access to the Mondoo platform
 			opts, err := config.Read()
@@ -192,15 +173,18 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 			log.Info().Msgf("code stored at %s", theme.DefaultTheme.Secondary(dirname))
 
 			// Run Terraform
-			if err := onboarding.TerraformPlanAndExecute(dirname); err != nil {
+			applied, err := onboarding.TerraformPlanAndExecute(dirname)
+			if err != nil {
 				return err
 			}
 
-			log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
-			log.Info().Msgf(
-				"To view integration status, visit https://console.mondoo.com/space/integrations/azure?spaceId=%s",
-				space,
-			)
+			if applied {
+				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
+				log.Info().Msgf(
+					"To view integration status, visit https://console.mondoo.com/space/integrations/azure?spaceId=%s",
+					space,
+				)
+			}
 			return nil
 		},
 	}
