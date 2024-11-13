@@ -1454,11 +1454,22 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+adjtimex(\s+\-S\s+|,)settimeofday(\s+\-S\s+|,)?(clock_settime)?\s+\-k\s+time-change(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+adjtimex(\s+\-S\s+|,)settimeofday(\s+\-S\s+|,)?(clock_settime)?(stime)?\s+\-k\s+time-change(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+clock\_settime\s+\-k\s+time-change(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+clock\_settime\s+\-k\s+time-change(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/localtime\s+\-p\s+wa\s+\-k\s+time-change(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /settimeofday/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /clock_settime/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /adjtimex/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /settimeofday|clock_settime|adjtimex/).all(
+        split("-").containsAll(["a always,exit ",])
+          && split("-").containsAll(["F arch=b64 "])
+            || split("-").containsAll(["F arch=b32 "])
+          && split(" ").containsAll(["-F", "key=time-change"])
+            || split(" ").containsAll(["-k", "time-change"])
+      )
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(/\/etc\/localtime/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(/\/etc\/localtime/).all(
+        split("-").containsAll(["w /etc/localtime ","p wa ",])
+          && split(" ").containsAll(["-F", "key=time-change"])
+            || split(" ").containsAll(["-k", "time-change"])
+      )
     docs:
       desc: |-
         Capture events where the system date and/or time has been modified. The parameters in this section are set to determine if the `adjtimex`
@@ -1579,11 +1590,24 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system-locale(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+sethostname\s+\-S\s+setdomainname\s+\-k\s+system-locale(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/issue\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/issue.net\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/hosts\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/sysconfig\/network\s+\-p\s+wa\s+\-k\s+system-locale(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /sethostname/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /setdomainname/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /sethostname|setdomainname/).all(
+        split("-").containsAll(["a always,exit ",])
+          && split("-").containsAll(["F arch=b64 "])
+            || split("-").containsAll(["F arch=b32 "])
+          && split(" ").containsAll(["-k","system-locale"])
+            || split(" ").containsAll(["-F","key=system-locale"])
+      )
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/issue/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/issue.net/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/hosts/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/sysconfig\/network/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/etc\/issue|\/etc\/issue.net|\/etc\/hosts|\/etc\/sysconfig\/network/).all(
+        split("-").contains(/p wa/)
+          && split(" ").containsAll(["-k","system-locale"])
+            || split(" ").containsAll(["-F","key=system-locale"])
+      )
     docs:
       desc: |-
         Record changes to network environment files or system calls. The below parameters monitor the sethostname (set the systems host name)
@@ -1672,12 +1696,30 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chmod(\s+\-S\s+|,)fchmod(\s+\-S\s+|,)fchmodat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-F\s+\-k\s+perm\_mod(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+chown(\s+\-S\s+|,)fchown(\s+\-S\s+|,)lchown(\s+\-S\s+|,)fchownat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-F\s+\-k\s+perm\_mod(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+chmod(\s+\-S\s+|,)fchmod(\s+\-S\s+|,)fchmodat\s+\-F+\s+auid\>\=1000\s+\-F\s+auid\!=(4294967295|unset|-1)\s+\-F\s+\-k\s+perm_mod$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+lchown(\s+\-S\s+|,)fchown(\s+\-S\s+|,)chown(\s+\-S\s+|,)fchownat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-F\s+\-k\s+perm\_mod(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+setxattr(\s+\-S\s+|,)lsetxattr(\s+\-S\s+|,)fsetxattr(\s+\-S\s+|,)removexattr(\s+\-S\s+|,)lremovexattr(\s+\-S\s+|,)fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-F\s+\-k\s+perm\_mod(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+setxattr(\s+\-S\s+|,)lsetxattr(\s+\-S\s+|,)fsetxattr(\s+\-S\s+|,)removexattr(\s+\-S\s+|,)lremovexattr(\s+\-S\s+|,)fremovexattr\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-F\s+\-k\s+perm\_mod(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /chmod/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchmod/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchmodat/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /chown/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchown/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchownat/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /lchown/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /setxattr/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /lsetxattr/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fsetxattr/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /removexattr/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /lremovexattr/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fremovexattr/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /chmod|fchmod|fchmodat|chown|fchown|fchownat|lchown|setxattr|lsetxattr|fsetxattr|removexattr|lremovexattr|fremovexattr/).all(
+        split("=").any(split(" ").any(_ == logindefs.params.UID_MIN))
+          && split("-").containsAll(["a always,exit ",])
+          && split("-").containsAll(["F auid!=","1 "])
+            || split("-").containsAll(["F auid!=unset "])
+            || split("-").containsAll(["F auid!=4294967295 "])
+          && split("-").containsAll(["F arch=b64 "])
+            || split("-").containsAll(["F arch=b32 "])
+          && split("-").containsAll(["F key=perm_mod"])
+            || split("-").containsAll(["k perm_mod"])
+      )
     docs:
       desc: |-
         Monitor changes to file permissions, attributes, ownership and group. The parameters in this section track changes for system calls that affect file permissions and attributes.
@@ -1753,8 +1795,26 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+access(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EACCES\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+access(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+access(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+creat\s+\-S\s+open\s+\-S\s+openat\s+\-S\s+truncate\s+\-S\s+ftruncate\s+\-F\s+exit\=\-EPERM\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+access(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / creat /)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / open /)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / openat /)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / truncate /)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / ftruncate /)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == / creat | open | openat | truncate | ftruncate /).all(
+        split("=").any(split(" ").any(_ == logindefs.params.UID_MIN))
+          && split("-").containsAll(["a always,exit ",])
+          && split("-").containsAll(["F auid!=","1 "])
+            || split("-").containsAll(["F auid!=unset "])
+            || split("-").containsAll(["F auid!=4294967295 "])
+          && split("-").containsAll(["F arch=b64 "])
+            || split("-").containsAll(["F arch=b32 "])
+          && split("-").containsAll(["F exit=","EPERM "])
+            || split("-").containsAll(["F exit=","EACCES "])
+          && split("-").containsAll(["F key=access"])
+            || split("-").containsAll(["k access"])
+            || split("-").containsAll(["F key=perm_mod"])
+            || split("-").containsAll(["k perm_mod"])
+      )
     docs:
       desc: |-
         Monitor for unsuccessful attempts to access files. The parameters below are associated with system calls that control creation ( `creat` ), opening ( `open`, `openat` ) and
@@ -1929,8 +1989,21 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+rename\,unlink\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=unset\s+\-F\s+key\=delete(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+delete(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+rename\,unlink\,unlinkat\,renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=unset\s+\-F\s+key\=delete(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+unlink\s+\-S\s+unlinkat\s+\-S\s+rename\s+\-S\s+renameat\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+delete(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /unlink/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /rename/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /unlinkat/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /renameat/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /unlink|rename|unlinkat|renameat/).all(
+        split("=").any(split(" ").any(_ == logindefs.params.UID_MIN))
+          && split("-").containsAll(["a always,exit ",])
+          && split("-").containsAll(["F auid!=","1 "])
+            || split("-").containsAll(["F auid!=unset "])
+            || split("-").containsAll(["F auid!=4294967295 "])
+          && split("-").containsAll(["F arch=b64 "])
+            || split("-").containsAll(["F arch=b32 "])
+          && split("-").containsAll(["F key=delete"])
+            || split("-").containsAll(["k delete"])
+      )
     docs:
       desc: |-
         Monitor the use of system calls associated with the deletion or renaming of files and file attributes. This configuration statement sets up monitoring for the `unlink`
