@@ -692,6 +692,7 @@ type group interface {
 }
 
 type groupWithFilters interface {
+	group
 	GetFilters() *explorer.Filters
 }
 
@@ -703,7 +704,6 @@ func (b *resolvedPolicyBuilder) isGroupMatching(group group) bool {
 	}
 
 	if group.GetEndDate() != 0 {
-		// TODO: we also need to check if the group is accepted or rejected
 		endDate := time.Unix(group.GetEndDate(), 0)
 		if endDate.Before(b.now) {
 			return false
@@ -931,11 +931,8 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 
 	// Create a node for the framework, but only if its a valid framework mrn
 	// Otherwise, we have the asset / space policies which we will connect
-	// to. We need to do this because we cannot have a space frame and space
+	// to. We need to do this because we cannot have a space framework and space
 	// policy reporting job because they would have the same qr id.
-	// TODO: we should create a new reporting job type for asset and space
-	// reporting jobs so its cleare that we can connect both frameworks and
-	// policies to them
 	// If the node already exists, its represented by the asset or space policy
 	// and is not a valid framework mrn
 	var impact *explorer.Impact
