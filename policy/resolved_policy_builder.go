@@ -827,7 +827,12 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			continue
 		}
 
-		if b.addRiskFactor(r) {
+		added, err := b.addRiskFactor(r)
+		if err != nil {
+			log.Error().Err(err).Str("mrn", r.Mrn).Msg("error adding risk factor")
+			continue
+		}
+		if added {
 			b.addEdge(r.Mrn, policy.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 			hasMatchingRiskFactor = true
 		}
@@ -900,31 +905,50 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) 
 }
 
 // addRiskFactor adds a risk factor to the graph. It will add the risk factor, its checks, and connect the checks to the risk factor
-func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) bool {
+func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, error) {
 	action := b.actionOverrides[riskFactor.Mrn]
 	if !canRun(action) {
-		return false
+		return false, nil
 	}
 
 	if !b.anyFilterMatches(riskFactor.Filters) {
-		return false
+		return false, nil
 	}
 
 	selectedCodeIds := make([]string, 0, len(riskFactor.Checks))
 	for _, c := range riskFactor.Checks {
-		if selectedCodeId, ok := b.addQuery(c); ok {
-			selectedCodeIds = append(selectedCodeIds, selectedCodeId)
-			b.addEdge(c.Mrn, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		if len(c.Variants) != 0 {
+			return false, fmt.Errorf("risk factor checks cannot have variants")
 		}
+		if !b.anyFilterMatches(c.Filters) {
+			continue
+		}
+
+		b.propsCache.Add(c.Props...)
+
+		// Add node for execution query
+		b.addNode(&rpBuilderExecutionQueryNode{query: c})
+		// TODO: we should just score the risk factor normally, I don't know why we ignore the score
+		b.addEdge(c.CodeId, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+
+		// TODO: we cannot use addQuery here because of the way cnspec tries to filter out
+		// sending scores for queries that are risk factors. This code, which is in collector.go
+		// needs to be refactored in such a way that it is natively integrated into the graph
+		// the does the processing of the scores. The current implementation has a problem if
+		// we have a child job on the risk factor that is mrn of the query.
+		// if selectedCodeId, ok := b.addQuery(c); ok {
+		// 	selectedCodeIds = append(selectedCodeIds, selectedCodeId)
+		// 	b.addEdge(c.Mrn, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		// }
 	}
 
 	if len(selectedCodeIds) == 0 {
-		return false
+		return false, nil
 	}
 
 	b.addNode(&rpBuilderRiskFactorNode{riskFactor: riskFactor, magnitude: b.riskMagnitudes[riskFactor.Mrn], selectedCodeIds: selectedCodeIds})
 
-	return true
+	return true, nil
 }
 
 func (b *resolvedPolicyBuilder) anyFilterMatches(f *explorer.Filters) bool {
