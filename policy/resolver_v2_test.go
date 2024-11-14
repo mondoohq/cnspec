@@ -1667,8 +1667,8 @@ policies:
 	rpTester.CodeIdReportingJobForMrn(queryMrn("query-1")).Notifies(queryMrn("query-1"))
 	rpTester.CodeIdReportingJobForMrn(queryMrn("query-2")).Notifies(queryMrn("query-2"))
 
-	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(queryMrn("sshd-service-running"))
-	rpTester.ReportingJobByMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+	// rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(queryMrn("sshd-service-running"))
+	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 	rpTester.ReportingJobByMrn(riskFactorMrn("sshd-service")).WithType(policy.ReportingJob_RISK_FACTOR).Notifies(policyMrn("risk-factors-security"))
 
 	rpTester.ReportingJobByMrn(queryMrn("query-1")).Notifies(policyMrn("testpolicy1"))
@@ -1894,6 +1894,116 @@ framework_maps:
 		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 
 		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-01")).DoesNotExist()
+
+		rpTester.doTest(t, rp)
+	})
+}
+
+func TestResolveV2_PolicyExceptionIgnored(t *testing.T) {
+	ctx := contextResolverV2()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset{*}
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy1
+  - type: ignored
+    uid: "exceptions-1"
+    checks:
+    - uid: check1
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("query1"))
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(policyMrn("policy1")).Notifies("root")
+
+		rpTester.doTest(t, rp)
+	})
+}
+
+func TestResolveV2_PolicyExceptionDisabled(t *testing.T) {
+	ctx := contextResolverV2()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+      props:
+      - uid: name
+        mql: return "definitely not the asset name"
+    queries:
+    - uid: query1
+      mql: asset{*}
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy1
+  - type: disable
+    uid: "exceptions-1"
+    checks:
+    - uid: query1
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    "//test.sth",
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.DoesNotExecutesQuery(queryMrn("query1"))
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
+		rpTester.ReportingJobByMrn(policyMrn("policy1")).Notifies("root")
 
 		rpTester.doTest(t, rp)
 	})

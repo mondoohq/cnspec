@@ -555,7 +555,6 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 
 func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framework) {
 	actions := b.actionOverrides
-	impacts := b.impactOverrides
 
 	if framework == nil {
 		return
@@ -578,16 +577,6 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framewo
 			action := normalizeAction(g.Type, c.Action, nil)
 			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
 				actions[c.Mrn] = action
-			}
-
-			if action == explorer.Action_IGNORE {
-				// Since we traversed the children first, we overwrite the impact with ignore
-				// if the action is ignore. We do not merge in this case
-				impacts[c.Mrn] = &explorer.Impact{
-					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-				}
-			} else {
-				delete(impacts, c.Mrn)
 			}
 		}
 	}
@@ -646,22 +635,14 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 
 		for _, c := range g.Checks {
 			impact := c.Impact
-			action := normalizeAction(g.Type, c.Action, impact)
-			if action == explorer.Action_IGNORE {
-				// Since we traversed the children first, we overwrite the impact with ignore
-				// if the action is ignore. We do not merge in this case
-				impact = &explorer.Impact{
-					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-				}
-			} else {
-				if qBundle, ok := b.bundleMap.Queries[c.Mrn]; ok {
-					// Check the impact defined on the query
-					impact = getWorstImpact(impact, qBundle.Impact)
-				}
-
-				impact = getWorstImpact(impact, impacts[c.Mrn])
+			if qBundle, ok := b.bundleMap.Queries[c.Mrn]; ok {
+				// Check the impact defined on the query
+				impact = getWorstImpact(impact, qBundle.Impact)
 			}
 
+			impact = getWorstImpact(impact, impacts[c.Mrn])
+
+			action := normalizeAction(g.Type, c.Action, impact)
 			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
 				actions[c.Mrn] = action
 			}
@@ -781,7 +762,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			// because it will get included in a policy that wants it run.
 			// This will prevent the check from being connected to the policy that
 			// overrides its action
-			if isOverride(c.Action) {
+			if isOverride(c.Action, g.Type) {
 				b.propsCache.Add(c.Props...)
 				continue
 			}
@@ -793,7 +774,14 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			}
 
 			if _, ok := b.addQuery(c); ok {
-				b.addEdge(c.Mrn, policy.Mrn, nil)
+				action := b.actionOverrides[c.Mrn]
+				var impact *explorer.Impact
+				if action == explorer.Action_IGNORE {
+					impact = &explorer.Impact{
+						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+					}
+				}
+				b.addEdge(c.Mrn, policy.Mrn, impact)
 			}
 		}
 
@@ -802,7 +790,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			// because it will get included in a policy that wants it run.
 			// This will prevent the query from being connected to the policy that
 			// overrides its action
-			if isOverride(q.Action) {
+			if isOverride(q.Action, g.Type) {
 				b.propsCache.Add(q.Props...)
 				continue
 			}
@@ -823,7 +811,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 
 	hasMatchingRiskFactor := false
 	for _, r := range policy.RiskFactors {
-		if len(r.Checks) == 0 || isOverride(r.Action) {
+		if len(r.Checks) == 0 || isOverride(r.Action, GroupType_UNCATEGORIZED) {
 			continue
 		}
 
@@ -931,6 +919,8 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 		// TODO: we should just score the risk factor normally, I don't know why we ignore the score
 		b.addEdge(c.CodeId, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 
+		selectedCodeIds = append(selectedCodeIds, c.CodeId)
+
 		// TODO: we cannot use addQuery here because of the way cnspec tries to filter out
 		// sending scores for queries that are risk factors. This code, which is in collector.go
 		// needs to be refactored in such a way that it is natively integrated into the graph
@@ -979,8 +969,7 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	for _, fmap := range framework.FrameworkMaps {
 		for _, control := range fmap.Controls {
 			if b.addControl(control) {
-				impact := b.impactOverrides[control.Mrn]
-				b.addEdge(control.Mrn, fmap.FrameworkOwner.Mrn, impact)
+				b.addEdge(control.Mrn, fmap.FrameworkOwner.Mrn, b.actionToImpact(control.Mrn))
 			}
 		}
 	}
@@ -1016,11 +1005,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				impact := b.impactOverrides[q.Mrn]
-				if impact.GetScoring() != explorer.ScoringSystem_IGNORE_SCORE {
-					impact = nil
-				}
-				b.addEdge(qNode.selectedCodeId, control.Mrn, impact)
+				b.addEdge(qNode.selectedCodeId, control.Mrn, b.actionToImpact(q.Mrn))
 				hasChild = true
 			}
 		}
@@ -1034,11 +1019,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				impact := b.impactOverrides[q.Mrn]
-				if impact.GetScoring() != explorer.ScoringSystem_IGNORE_SCORE {
-					impact = nil
-				}
-				b.addEdge(qNode.selectedCodeId, control.Mrn, impact)
+				b.addEdge(qNode.selectedCodeId, control.Mrn, nil)
 				hasChild = true
 			}
 		}
@@ -1046,24 +1027,19 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 
 	for _, p := range control.Policies {
 		if _, ok := b.nodes[p.Mrn]; ok {
-			impact := b.impactOverrides[p.Mrn]
-			if impact.GetScoring() != explorer.ScoringSystem_IGNORE_SCORE {
-				impact = nil
-			}
 			// Add the edge from the control to the policy
-			b.addEdge(p.Mrn, control.Mrn, impact)
+			b.addEdge(p.Mrn, control.Mrn, b.actionToImpact(p.Mrn))
 			hasChild = true
 		}
 	}
 
 	for _, c := range control.Controls {
-		impact := b.impactOverrides[c.Mrn]
 		// We will just assume that the control is in the graph
 		// If its not, it will get filtered out later when we build
 		// the resolved policy
 		// Doing this so we don't need to topologically sort the dependency
 		// tree for the controls
-		b.addEdge(c.Mrn, control.Mrn, impact)
+		b.addEdge(c.Mrn, control.Mrn, b.actionToImpact(c.Mrn))
 		hasChild = true
 	}
 
@@ -1073,6 +1049,16 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 	}
 
 	return true
+}
+
+func (b *resolvedPolicyBuilder) actionToImpact(mrn string) *explorer.Impact {
+	action := b.actionOverrides[mrn]
+	if action == explorer.Action_IGNORE {
+		return &explorer.Impact{
+			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+		}
+	}
+	return nil
 }
 
 func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy) *ReportingJob {
@@ -1158,6 +1144,9 @@ func normalizeAction(groupType GroupType, action explorer.Action, impact *explor
 	}
 }
 
-func isOverride(action explorer.Action) bool {
-	return action != explorer.Action_UNSPECIFIED
+func isOverride(action explorer.Action, groupType GroupType) bool {
+	return action != explorer.Action_UNSPECIFIED ||
+		groupType == GroupType_DISABLE ||
+		groupType == GroupType_OUT_OF_SCOPE ||
+		groupType == GroupType_IGNORED
 }
