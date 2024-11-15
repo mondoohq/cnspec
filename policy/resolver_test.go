@@ -71,6 +71,10 @@ func queryMrn(uid string) string {
 	return "//test.sth/queries/" + uid
 }
 
+func riskFactorMrn(uid string) string {
+	return "//test.sth/risks/" + uid
+}
+
 func TestResolve_EmptyPolicy(t *testing.T) {
 	b := parseBundle(t, `
 owner_mrn: //test.sth

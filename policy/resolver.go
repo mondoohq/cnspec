@@ -32,7 +32,8 @@ const (
 	// This is used to change the checksum of the resolved policy when we want it to be recalculated
 	// This can be updated, e.g., when we change how the report jobs are generated
 	// A change of this string will force an update of all the stored resolved policies
-	RESOLVER_VERSION = "v2024-08-29"
+	RESOLVER_VERSION    = "v2024-08-29"
+	RESOLVER_VERSION_NG = "v2024-11-11"
 )
 
 type AssetMutation struct {
@@ -451,6 +452,16 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 	return nil, errors.New("concurrent policy resolve")
 }
 
+type nextGenResolverFeature struct{}
+
+func WithNextGenResolver(context.Context) context.Context {
+	return context.WithValue(context.Background(), nextGenResolverFeature{}, true)
+}
+
+func IsNextGenResolver(ctx context.Context) bool {
+	return ctx.Value(nextGenResolverFeature{}) != nil
+}
+
 func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
 	now := time.Now()
@@ -477,11 +488,12 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	if err != nil {
 		return nil, err
 	}
+
 	bundleMap := bundle.ToMap()
 
 	frameworkObj := bundleMap.Frameworks[bundleMrn]
 	policyObj := bundleMap.Policies[bundleMrn]
-	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(policyObj, frameworkObj)
+	resolvedPolicyExecutionChecksum := BundleExecutionChecksum(ctx, policyObj, frameworkObj)
 
 	matchingFilters, err := MatchingAssetFilters(bundleMrn, assetFilters, policyObj)
 	if err != nil {
@@ -489,6 +501,20 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 	if len(matchingFilters) == 0 {
 		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+	}
+
+	if IsNextGenResolver(ctx) {
+		resolvedPolicy, err := buildResolvedPolicy(ctx, bundleMrn, bundle, matchingFilters, time.Now(), conf)
+		if err != nil {
+			return nil, err
+		}
+
+		err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, resolvedPolicy, V2Code, false)
+		if err != nil {
+			return nil, err
+		}
+
+		return resolvedPolicy, nil
 	}
 
 	assetFiltersMap := make(map[string]struct{}, len(matchingFilters))
@@ -519,7 +545,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Msg("resolver> phase 1: no cached result, resolve the bundle now")
 
 	cache := &resolverCache{
-		baseChecksum:          BundleExecutionChecksum(policyObj, frameworkObj),
+		baseChecksum:          BundleExecutionChecksum(ctx, policyObj, frameworkObj),
 		assetFiltersChecksum:  assetFiltersChecksum,
 		assetFilters:          assetFiltersMap,
 		executionQueries:      map[string]*ExecutionQuery{},
@@ -655,7 +681,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		Msg("resolver> phase 5: resolve controls [ok]")
 
 	// phase 6: refresh all checksums
-	s.refreshChecksums(executionJob, collectorJob)
+	refreshChecksums(executionJob, collectorJob)
 
 	// the final phases are done in the DataLake
 	for _, rj := range collectorJob.ReportingJobs {
@@ -679,7 +705,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	return &resolvedPolicy, nil
 }
 
-func (s *LocalServices) refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
+func refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
 	// execution job
 	{
 		queryKeys := sortx.Keys(executionJob.Queries)
