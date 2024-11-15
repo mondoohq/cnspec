@@ -345,8 +345,7 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 // This node is represented by a code id in the reporting jobs. We do not apply impact at this point so
 // any scores will be either 0 or 100
 type rpBuilderExecutionQueryNode struct {
-	query     *explorer.Mquery
-	queryType queryType
+	query *explorer.Mquery
 }
 
 func (n *rpBuilderExecutionQueryNode) getId() string {
