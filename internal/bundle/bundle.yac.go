@@ -1406,6 +1406,7 @@ func (d PolicyGroupDocs) MarshalYAML() (interface{}, error) {
 
 type PolicyRef struct {
 	Action        Action                 `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	LastApplied   int64                  `protobuf:"varint,43,opt,name=last_applied,json=lastApplied,proto3" json:"last_applied,omitempty" yaml:"last_applied,omitempty"`
 	Checksum      string                 `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
 	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn           string                 `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
