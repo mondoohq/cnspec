@@ -2033,10 +2033,14 @@ func (d SoftwareSelector) MarshalYAML() (interface{}, error) {
 }
 
 type TypedDoc struct {
-	Id          string      `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
-	Desc        string      `protobuf:"bytes,2,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
-	FileContext FileContext `json:"-" yaml:"-"`
-	Comments    Comments    `json:"-" yaml:"-"`
+	Tags        map[string]string `protobuf:"bytes,22,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Id          string            `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
+	Desc        string            `protobuf:"bytes,2,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
+	Language    string            `protobuf:"bytes,3,opt,name=language,proto3" json:"language,omitempty" yaml:"language,omitempty"`
+	Created     int64             `protobuf:"varint,20,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
+	Modified    int64             `protobuf:"varint,21,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	FileContext FileContext       `json:"-" yaml:"-"`
+	Comments    Comments          `json:"-" yaml:"-"`
 }
 
 func (x *TypedDoc) UnmarshalYAML(node *yaml.Node) error {
