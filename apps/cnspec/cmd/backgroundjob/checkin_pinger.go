@@ -43,7 +43,9 @@ func (c *checkinPinger) Start() {
 	}
 
 	// run check-in once on startup
-	runCheckIn()
+	go func() {
+		runCheckIn()
+	}()
 
 	jitter := time.Duration(rand.Int63n(int64(c.interval)))
 	ticker := time.NewTicker(c.interval + jitter)

@@ -28,7 +28,6 @@ func newCheckinHandler(
 	endpoint string,
 	agentMrn string,
 	config *upstream.UpstreamConfig,
-	sysInfo *sysinfo.SystemInfo,
 ) (*CheckinHandler, error) {
 	if agentMrn == "" {
 		return nil, errors.New("could not determine agent MRN")
@@ -38,7 +37,6 @@ func newCheckinHandler(
 		httpClient: httpClient,
 		mrn:        agentMrn,
 		creds:      config.Creds,
-		sysInfo:    sysInfo,
 	}, nil
 }
 
@@ -47,15 +45,17 @@ func NewCheckInHandlerWithInfo(httpClient *http.Client,
 	agentMrn string,
 	config *upstream.UpstreamConfig,
 ) (*CheckinHandler, error) {
-	sysInfo, err := sysinfo.Get()
-	if err != nil {
-		return nil, errors.Wrap(err, "could not determine system information")
-	}
-
-	return newCheckinHandler(httpClient, endpoint, agentMrn, config, sysInfo)
+	return newCheckinHandler(httpClient, endpoint, agentMrn, config)
 }
 
 func (c *CheckinHandler) CheckIn(ctx context.Context) error {
+	if c.sysInfo == nil {
+		sysInfo, err := sysinfo.Get()
+		if err != nil {
+			return errors.Wrap(err, "could not determine system information")
+		}
+		c.sysInfo = sysInfo
+	}
 	// gather service account
 	plugins := []ranger.ClientPlugin{}
 	plugins = append(plugins, sysInfoHeader(c.sysInfo, cnquery.DefaultFeatures))
