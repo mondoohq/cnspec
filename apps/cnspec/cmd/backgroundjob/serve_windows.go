@@ -17,12 +17,12 @@ import (
 )
 
 func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
-	isIntSess, err := svc.IsWindowsService()
+	isService, err := svc.IsWindowsService()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to determine if we are running in an interactive session")
 	}
 	// if it is an service ...
-	if !isIntSess {
+	if isService {
 		// set windows eventlogger
 		w, err := eventlog.NewEventlogWriter(SvcName)
 		if err != nil {
