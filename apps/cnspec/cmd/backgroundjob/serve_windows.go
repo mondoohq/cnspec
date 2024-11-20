@@ -17,7 +17,7 @@ import (
 )
 
 func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
-	isIntSess, err := svc.IsAnInteractiveSession()
+	isIntSess, err := svc.IsWindowsService()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to determine if we are running in an interactive session")
 	}
