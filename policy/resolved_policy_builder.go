@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -272,7 +273,12 @@ func (n *rpBuilderPolicyNode) getId() string {
 func (n *rpBuilderPolicyNode) isPrunable() bool {
 	// We do not allow pruning the root node. This covers cases where the policy matches the asset filters,
 	// but we have no active checks or queries. This will end up reporting a U for the score
-	return !n.isRoot
+
+	// The space policy is not prunable because its score is the one that is actually used to determine an
+	// asset score. This is because the asset score is dropped and recomputed to become a combination of
+	// the security and vulnerability scores
+	isSpace := strings.HasPrefix(n.policy.Mrn, "//captain.api.mondoo.app/spaces/")
+	return !n.isRoot && !isSpace
 }
 
 func (n *rpBuilderPolicyNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
