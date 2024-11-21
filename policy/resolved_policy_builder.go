@@ -1024,7 +1024,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				b.addEdge(qNode.selectedCodeId, control.Mrn, nil)
+				b.addEdge(qNode.selectedCodeId, control.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 				hasChild = true
 			}
 		}

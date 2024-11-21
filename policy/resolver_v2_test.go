@@ -903,11 +903,11 @@ framework_maps:
 		rpTester.ReportingJobByMrn(queryMrn("check-pass-2")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(queryMrn("active-query"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(controlMrn("control1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 		rpTester.ReportingJobByMrn(queryMrn("active-query")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(queryMrn("active-query-2"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(controlMrn("control1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
 		rpTester.ReportingJobByMrn(queryMrn("active-query-2")).Notifies(policyMrn("policy1"))
 
 		rpTester.ReportingJobByMrn(queryMrn("check-overlap")).Notifies(policyMrn("policy1"))
