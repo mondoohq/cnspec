@@ -279,14 +279,14 @@ func (n *rpBuilderPolicyNode) build(rp *ResolvedPolicy, data *rpBuilderData) err
 	if n.isRoot {
 		// If the policy is the root, we need a different checksum for the reporting job because we want it
 		// to be reusable by other bundles that are identical in everything except the root mrn
-		addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.GraphExecutionChecksum), ReportingJob_POLICY, rp)
+		addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.GraphExecutionChecksum), ReportingJob_POLICY, rp, false)
 	} else {
 		// the uuid used to be a checksum of the policy mrn, impact, and action
 		// I don't think this can be correct in all cases as you could at some point
 		// have a policy report to multiple other policies with different impacts
 		// (we don't have that case right now)
 		// These checksum changes should be accounted for in the root
-		rj := addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.Mrn), ReportingJob_POLICY, rp)
+		rj := addReportingJob(n.policy.Mrn, true, data.relativeChecksum(n.policy.Mrn), ReportingJob_POLICY, rp, true)
 		rj.ScoringSystem = n.scoringSystem
 	}
 
@@ -320,7 +320,7 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 	// Because a query can be both a scoring query and a data query, UNSPECIFIED is used
 	// for the reporting job type. We need to get rid of the specific types for check and
 	// data query and have something that can be both
-	addReportingJob(n.queryMrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp)
+	addReportingJob(n.queryMrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp, true)
 
 	// Add scoring queries to the reporting queries section
 	if n.queryType == queryTypeScoring || n.queryType == queryTypeBoth {
@@ -374,7 +374,7 @@ func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderD
 	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
 
 	// Create a reporting job for the code id
-	codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_UNSPECIFIED, rp)
+	codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_UNSPECIFIED, rp, false)
 	// Connect the datapoints to the reporting job
 	err = connectDatapointsToReportingJob(executionQuery, codeIdReportingJob, rp.CollectorJob.Datapoints)
 	if err != nil {
@@ -398,7 +398,7 @@ func (n *rpBuilderFrameworkNode) isPrunable() bool {
 }
 
 func (n *rpBuilderFrameworkNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	addReportingJob(n.frameworkMrn, true, data.relativeChecksum(n.frameworkMrn), ReportingJob_FRAMEWORK, rp)
+	addReportingJob(n.frameworkMrn, true, data.relativeChecksum(n.frameworkMrn), ReportingJob_FRAMEWORK, rp, true)
 	return nil
 }
 
@@ -416,7 +416,7 @@ func (n *rpBuilderControlNode) isPrunable() bool {
 }
 
 func (n *rpBuilderControlNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	addReportingJob(n.controlMrn, true, data.relativeChecksum(n.controlMrn), ReportingJob_CONTROL, rp)
+	addReportingJob(n.controlMrn, true, data.relativeChecksum(n.controlMrn), ReportingJob_CONTROL, rp, true)
 	return nil
 }
 
@@ -449,7 +449,7 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 		DeprecatedV11IsAbsolute: risk.Magnitude.GetIsToxic(),
 	}
 	reportingJobUUID := data.relativeChecksum(risk.Mrn)
-	addReportingJob(risk.Mrn, true, reportingJobUUID, ReportingJob_RISK_FACTOR, rp)
+	addReportingJob(risk.Mrn, true, reportingJobUUID, ReportingJob_RISK_FACTOR, rp, true)
 
 	for _, codeId := range n.selectedCodeIds {
 		uuid := data.relativeChecksum(codeId)
@@ -1060,7 +1060,7 @@ func (b *resolvedPolicyBuilder) actionToImpact(mrn string) *explorer.Impact {
 	return nil
 }
 
-func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy) *ReportingJob {
+func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_Type, rp *ResolvedPolicy, allowMrns bool) *ReportingJob {
 	if _, ok := rp.CollectorJob.ReportingJobs[uuid]; !ok {
 		rp.CollectorJob.ReportingJobs[uuid] = &ReportingJob{
 			QrId:       qrId,
@@ -1069,7 +1069,7 @@ func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_
 			Datapoints: map[string]bool{},
 			Type:       typ,
 		}
-		if qrIdIsMrn {
+		if qrIdIsMrn && allowMrns {
 			rp.CollectorJob.ReportingJobs[uuid].Mrns = []string{qrId}
 		}
 	}
