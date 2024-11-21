@@ -7,7 +7,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"google.golang.org/protobuf/proto"
 )

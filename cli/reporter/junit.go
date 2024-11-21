@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strconv"
 
+	mapstructure "github.com/go-viper/mapstructure/v2"
 	"github.com/jstemmer/go-junit-report/v2/junit"
-	"github.com/mitchellh/mapstructure"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"

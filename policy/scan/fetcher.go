@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v11/mqlc"
 	"go.mondoo.com/cnspec/v11"
 	"go.mondoo.com/cnspec/v11/policy"

@@ -7,7 +7,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/sysinfo"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"

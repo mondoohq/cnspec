@@ -12,7 +12,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/fasthash/fnv1a"
 	"go.mondoo.com/cnquery/v11/checksums"

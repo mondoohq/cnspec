@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/llx"
@@ -114,7 +114,6 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 				if err := walk(edgeNode); err != nil {
 					return err
 				}
-
 			} else {
 				log.Debug().Str("from", node.getId()).Str("to", edge).Msg("edge not found")
 			}

@@ -4,7 +4,7 @@
 package policy
 
 import (
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/llx"
 	"go.mondoo.com/cnquery/v11/types"
