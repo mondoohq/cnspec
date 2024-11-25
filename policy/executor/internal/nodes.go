@@ -418,7 +418,7 @@ type reportingJobResult struct {
 type ReportingJobNodeData struct {
 	queryID       string
 	scoringSystem explorer.ScoringSystem
-	isQuery       bool
+	forwardScore  bool
 	rjType        policy.ReportingJob_Type
 
 	childScores map[NodeID]*reportingJobResult
@@ -522,21 +522,42 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		}
 	}
 
-	if nodeData.isQuery {
-		// if this reporting job represents a reporting query, we want to add that
-		// datapoints calculation, but return the score as is
-
-		if nodeData.childScores[nodeData.queryID] == nil {
-			panic("invalid reporting job")
-		}
+	if nodeData.forwardScore {
 		var s *policy.Score
-		if v := nodeData.childScores[nodeData.queryID].score; v == nil {
+
+		if len(nodeData.childScores) == 0 {
 			s = &policy.Score{
-				QrId: nodeData.queryID,
-				Type: policy.ScoreType_Result,
+				QrId:            nodeData.queryID,
+				Type:            policy.ScoreType_Unscored,
+				ScoreCompletion: 100,
 			}
 		} else {
-			s = proto.Clone(v).(*policy.Score)
+			if len(nodeData.childScores) != 1 {
+				panic("invalid reporting job")
+			}
+			var child string
+			for k := range nodeData.childScores {
+				child = k
+			}
+			if c := nodeData.childScores[child]; c.score == nil {
+				s = &policy.Score{
+					QrId: nodeData.queryID,
+					Type: policy.ScoreType_Result,
+				}
+			} else {
+				s = proto.Clone(c.score).(*policy.Score)
+				s.QrId = nodeData.queryID
+				if s.Type == policy.ScoreType_Result {
+					// We cant just forward the score if impact is set and we have a result.
+					// We still need to apply impact to the score
+					if c.impact != nil && c.impact.Value != nil {
+						floor := 100 - uint32(c.impact.Value.Value)
+						if floor > s.Value {
+							s.Value = floor
+						}
+					}
+				}
+			}
 		}
 
 		// TODO: It's unclear if we should do this if the score is skipped or errored

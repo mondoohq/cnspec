@@ -33,7 +33,7 @@ const (
 	// This can be updated, e.g., when we change how the report jobs are generated
 	// A change of this string will force an update of all the stored resolved policies
 	RESOLVER_VERSION    = "v2024-08-29"
-	RESOLVER_VERSION_NG = "v2024-11-11"
+	RESOLVER_VERSION_NG = "v2024-11-25"
 )
 
 type AssetMutation struct {

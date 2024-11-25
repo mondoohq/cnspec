@@ -1034,7 +1034,7 @@ func TestReportingJobNode(t *testing.T) {
 				t.Run("when isQuery", func(t *testing.T) {
 					t.Run("when score", func(t *testing.T) {
 						nodeData := newNodeData()
-						nodeData.isQuery = true
+						nodeData.forwardScore = true
 						nodeData.childScores = map[NodeID]*reportingJobResult{
 							nodeData.queryID: {},
 						}
@@ -1059,7 +1059,7 @@ func TestReportingJobNode(t *testing.T) {
 					})
 					t.Run("when result", func(t *testing.T) {
 						nodeData := newNodeData()
-						nodeData.isQuery = true
+						nodeData.forwardScore = true
 						nodeData.childScores = map[NodeID]*reportingJobResult{
 							nodeData.queryID: {
 								score: &policy.Score{

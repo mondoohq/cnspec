@@ -87,7 +87,7 @@ func TestBuilder(t *testing.T) {
 				}},
 				Checksums: map[uint64]string{1: "checksum1", 2: "pqep"},
 			},
-		}, nil, nil)
+		}, nil, nil, nil)
 
 	b.AddQuery(
 		&llx.CodeBundle{
@@ -98,7 +98,7 @@ func TestBuilder(t *testing.T) {
 				}},
 				Checksums: map[uint64]string{1: "checksum2"},
 			},
-		}, map[string]string{"prop": "checksum1"}, nil)
+		}, map[string]string{"prop": "checksum1"}, nil, []string{"query1rj"})
 
 	b.AddQuery(
 		&llx.CodeBundle{
@@ -112,7 +112,7 @@ func TestBuilder(t *testing.T) {
 			},
 		}, nil, map[string]*llx.Primitive{
 			"resolvedprop": llx.StringPrimitive("hello"),
-		})
+		}, []string{"query2rj"})
 	b.AddDatapointType("checksum3", string(types.Bool))
 
 	b.AddQuery(
@@ -124,7 +124,7 @@ func TestBuilder(t *testing.T) {
 				}},
 				Checksums: map[uint64]string{1: "checksum5"},
 			},
-		}, nil, nil)
+		}, nil, nil, nil)
 	b.CollectDatapoint("checksum5")
 
 	b.AddQuery(
@@ -136,7 +136,7 @@ func TestBuilder(t *testing.T) {
 				}},
 				Checksums: map[uint64]string{1: "checksum6"},
 			},
-		}, nil, nil)
+		}, nil, nil, nil)
 
 	b.AddQuery(
 		&llx.CodeBundle{
@@ -148,7 +148,7 @@ func TestBuilder(t *testing.T) {
 				Checksums: map[uint64]string{1: "checksum5", 2: "checksum7"},
 			},
 			MinMondooVersion: "9999.9999.9999",
-		}, nil, nil)
+		}, nil, nil, nil)
 
 	b.AddReportingJob(&policy.ReportingJob{
 		QrId:   "query1",
