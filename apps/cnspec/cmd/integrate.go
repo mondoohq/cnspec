@@ -148,8 +148,11 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 				os.Exit(1)
 			}
 
-			// TODO ideally, we should verify that the user has the "Privileged Role Administrator" or "Global Administrator"
-			// => https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#privileged-role-administrator
+			// Verify that the user has the right role assignments to onboard an Azure environment
+			log.Info().Msg("verifying role assignments for the currently logged-in user")
+			if err := onboarding.VerifyUserRoleAssignments(); err != nil {
+				return errors.Wrap(err, "preflight verification failed")
+			}
 
 			// Generate HCL for azure deployment
 			log.Info().Msg("generating automation code")

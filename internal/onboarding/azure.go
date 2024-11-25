@@ -4,7 +4,9 @@
 package onboarding
 
 import (
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -280,4 +282,101 @@ func (az AzAccount) Display() string {
 func generateAzureIntegrationName(subscription string) string {
 	var subsSplit = strings.Split(subscription, "-")
 	return "subscription-" + subsSplit[len(subsSplit)-1]
+}
+
+// VerifyUserRoleAssignments checks that the user running onboarding has the right role
+// assignments to run the automation.
+//
+// We need one of "Privileged Role Administrator" or "Global Administrator"
+// => https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#privileged-role-administrator
+//
+// Note that we run Azure CLI commands so that cnspec doesn't have to import the entire
+// Azure SDK which will make the binary much bigger, which is unnecessary for the amount
+// of checks we are running today.
+func VerifyUserRoleAssignments() error {
+	var BuiltInRoles = map[string]string{
+		"Privileged Role Administrator": "e8611ab8-c189-46e8-94e1-60213ab1f814",
+		"Global Administrator":          "62e90394-69f5-4237-9190-012177145e10",
+	}
+
+	principalID, err := getCurrentUserServicePrincipal()
+	if err != nil {
+		return err
+	}
+	log.Info().Msgf("user service principal %s", theme.DefaultTheme.Primary(principalID))
+
+	var errs []error
+	theUserWillFail := true
+	for roleName, roleID := range BuiltInRoles {
+		assignments, err := getRoleAssignmentsForRole(roleID)
+		if err != nil {
+			errs = append(errs, errors.Wrapf(err, "- %s", roleName))
+			continue
+		}
+
+		if assignments.ContainsPrincipalID(principalID) {
+			// the user will succeed
+			log.Info().Msgf("role assignment %s found", theme.DefaultTheme.Success(roleName))
+			theUserWillFail = false
+			break
+		}
+
+		log.Info().Msgf("role assignment %s not found", theme.DefaultTheme.Secondary(roleName))
+		errs = append(errs, errors.Newf("- %s: not found", roleName))
+	}
+
+	if theUserWillFail {
+		return errors.Newf(
+			"one of the following role assignments are required:\n\n%s",
+			errors.Join(errs...),
+		)
+	}
+	return nil
+}
+
+func getCurrentUserServicePrincipal() (string, error) {
+	signedUserJSON, err := exec.Command("az", "ad", "signed-in-user", "show", "-o", "json").Output()
+	if err != nil {
+		return "", errors.Wrap(err, "unable to get details for the currently logged-in user")
+	}
+	var userSP struct {
+		ID string `json:"id"`
+	}
+	err = json.Unmarshal(signedUserJSON, &userSP)
+	return userSP.ID, errors.Wrap(err, "unable to parse user details")
+}
+
+type roleAssignmentResponse struct {
+	Value []roleAssignment
+}
+
+func (r roleAssignmentResponse) ContainsPrincipalID(id string) bool {
+	for _, assignment := range r.Value {
+		if assignment.PrincipalID == id {
+			return true
+		}
+	}
+	return false
+}
+
+type roleAssignment struct {
+	DirectoryScopeID string
+	ID               string
+	PrincipalID      string
+	RoleDefinitionID string
+}
+
+func getRoleAssignmentsForRole(roleID string) (roleAssignmentResponse, error) {
+	restURL := fmt.Sprintf(
+		"https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?$filter=roleDefinitionId eq '%s'",
+		roleID,
+	)
+	var roleAssignments roleAssignmentResponse
+	restResponse, err := exec.Command("az", "rest", "--method", "get", "--url", restURL, "-o", "json").Output()
+	if err != nil {
+		return roleAssignments, errors.Wrap(err, "unable to list role assignments via REST")
+	}
+
+	err = json.Unmarshal(restResponse, &roleAssignments)
+	return roleAssignments, errors.Wrap(err, "unable to parse role assignments")
 }
