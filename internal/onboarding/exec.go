@@ -16,12 +16,12 @@ import (
 
 	"github.com/Masterminds/semver"
 	"github.com/abiosoft/colima/util/terminal"
+	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hc-install/product"
 	"github.com/hashicorp/hc-install/releases"
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
-	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/cli/components"
 	"go.mondoo.com/cnquery/v11/cli/theme"
@@ -45,7 +45,7 @@ func WriteHCL(hcl string, location string, identifier string) (string, error) {
 	if os.IsNotExist(err) {
 		directory := filepath.FromSlash(dirname)
 		if _, err := os.Stat(directory); os.IsNotExist(err) {
-			err = os.MkdirAll(directory, 0700)
+			err = os.MkdirAll(directory, 0o700)
 			if err != nil {
 				return "", err
 			}
@@ -54,7 +54,7 @@ func WriteHCL(hcl string, location string, identifier string) (string, error) {
 
 	// Create HCL file
 	outputLocation := filepath.FromSlash(fmt.Sprintf("%s/main.tf", dirname))
-	err = os.WriteFile(filepath.FromSlash(outputLocation), []byte(hcl), 0700)
+	err = os.WriteFile(filepath.FromSlash(outputLocation), []byte(hcl), 0o700)
 	if err != nil {
 		return "", err
 	}
@@ -225,7 +225,6 @@ func newTf(workingDir string, execPath string) (*tfexec.Terraform, error) {
 }
 
 func TerraformInit(tf *tfexec.Terraform) error {
-
 	vw := terminal.NewVerboseWriter(10)
 	tf.SetStdout(vw)
 	tf.SetStderr(vw)
@@ -271,6 +270,7 @@ func processTfPlanChangesSummary(tf *tfexec.Terraform) (*TfPlanChangesSummary, e
 
 	return parseTfPlanOutput(plan), nil
 }
+
 func parseTfPlanOutput(plan *tfjson.Plan) *TfPlanChangesSummary {
 	// Build output of changes
 	resourceCreate := 0

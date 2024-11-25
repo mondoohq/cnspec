@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/checksums"

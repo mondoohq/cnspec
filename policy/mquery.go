@@ -6,7 +6,7 @@ package policy
 import (
 	"sort"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v11/checksums"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/mqlc"

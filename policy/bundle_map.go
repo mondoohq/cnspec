@@ -7,8 +7,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/go-version"
-	"github.com/pkg/errors"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/llx"
 	"go.mondoo.com/cnquery/v11/mqlc"

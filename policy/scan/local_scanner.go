@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery/v11"
