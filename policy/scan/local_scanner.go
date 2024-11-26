@@ -372,18 +372,23 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				cur := batch[i]
 				asset := cur.Asset
 				log.Debug().Str("asset", asset.Name).Strs("platform-ids", asset.PlatformIds).Msg("update asset")
-				platformMrn := asset.PlatformIds[0]
-				if details, ok := platformAssetMapping[platformMrn]; ok {
-					asset.Mrn = details.AssetMrn
-					asset.Url = details.Url
-					asset.Labels["mondoo.com/project-id"] = details.ProjectId
-					err = cur.Runtime.SetRecording(s.recording)
-					if err != nil {
-						// we do not want to stop the scan if we cannot set the recording
-						log.Error().Err(err).Msg("could not set recording")
+
+				for _, platformMrn := range asset.PlatformIds {
+					if details, ok := platformAssetMapping[platformMrn]; ok {
+						asset.Mrn = details.AssetMrn
+						asset.Url = details.Url
+						asset.Labels["mondoo.com/project-id"] = details.ProjectId
+						err = cur.Runtime.SetRecording(s.recording)
+						if err != nil {
+							// we do not want to stop the scan if we cannot set the recording
+							log.Error().Err(err).Msg("could not set recording")
+							break
+						}
+						cur.Runtime.AssetUpdated(asset)
+						break
 					}
-					cur.Runtime.AssetUpdated(asset)
 				}
+
 			}
 		} else {
 			// ensure we have non-empty asset MRNs
