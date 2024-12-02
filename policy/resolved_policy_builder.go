@@ -322,10 +322,16 @@ func (n *rpBuilderGenericQueryNode) isPrunable() bool {
 func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
 	reportingJobUUID := data.relativeChecksum(n.queryMrn)
 
-	// Because a query can be both a scoring query and a data query, UNSPECIFIED is used
-	// for the reporting job type. We need to get rid of the specific types for check and
-	// data query and have something that can be both
-	addReportingJob(n.queryMrn, true, reportingJobUUID, ReportingJob_UNSPECIFIED, rp, true)
+	rjType := ReportingJob_UNSPECIFIED
+	switch n.queryType {
+	case queryTypeScoring:
+		rjType = ReportingJob_CHECK
+	case queryTypeData:
+		rjType = ReportingJob_DATA_QUERY
+	case queryTypeBoth:
+		rjType = ReportingJob_CHECK_AND_DATA_QUERY
+	}
+	addReportingJob(n.queryMrn, true, reportingJobUUID, rjType, rp, true)
 
 	// Add scoring queries to the reporting queries section
 	if n.queryType == queryTypeScoring || n.queryType == queryTypeBoth {
@@ -379,7 +385,7 @@ func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderD
 	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
 
 	// Create a reporting job for the code id
-	codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_UNSPECIFIED, rp, false)
+	codeIdReportingJob := addReportingJob(n.query.CodeId, false, codeIdReportingJobUUID, ReportingJob_EXECUTION_QUERY, rp, false)
 	// Connect the datapoints to the reporting job
 	err = connectDatapointsToReportingJob(executionQuery, codeIdReportingJob, rp.CollectorJob.Datapoints)
 	if err != nil {

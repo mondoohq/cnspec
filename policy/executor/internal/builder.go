@@ -21,6 +21,7 @@ type query struct {
 	codeBundle         *llx.CodeBundle
 	requiredProps      map[string]string
 	resolvedProperties map[string]*llx.Primitive
+	notifies           []string
 }
 
 type GraphBuilder struct {
@@ -75,11 +76,12 @@ func NewBuilder() *GraphBuilder {
 }
 
 // AddQuery adds the provided code to be executed to the graph
-func (b *GraphBuilder) AddQuery(c *llx.CodeBundle, propertyChecksums map[string]string, resolvedProperties map[string]*llx.Primitive) {
+func (b *GraphBuilder) AddQuery(c *llx.CodeBundle, propertyChecksums map[string]string, resolvedProperties map[string]*llx.Primitive, notifies []string) {
 	b.queries = append(b.queries, query{
 		codeBundle:         c,
 		requiredProps:      propertyChecksums,
 		resolvedProperties: resolvedProperties,
+		notifies:           notifies,
 	})
 }
 
@@ -192,6 +194,8 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		}
 	}
 
+	reportingQueryForReportingJob := map[string]string{}
+	reportingQueryNodeByCodeId := map[string]string{}
 	for queryID, q := range queries {
 		canRun := checkVersion(q.codeBundle, mondooVersion)
 		if canRun {
@@ -199,7 +203,13 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		} else {
 			unrunnableQueries = append(unrunnableQueries, q)
 		}
-		ge.addReportingQueryNode(queryID, q)
+		n := ge.addReportingQueryNode(queryID, q)
+		reportingQueryNodeByCodeId[q.codeBundle.GetCodeV2().GetId()] = n.id
+		if len(q.notifies) > 0 {
+			for _, notify := range q.notifies {
+				reportingQueryForReportingJob[notify] = n.id
+			}
+		}
 	}
 
 	scoresToCollect := make([]string, len(b.collectScoreQrIDs))
@@ -208,12 +218,19 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 	copy(datapointsToCollect, b.collectDatapointChecksums)
 
 	for _, rj := range b.reportingJobs {
-		_, isQuery := queries[rj.QrId]
 		scoresToCollect = append(scoresToCollect, rj.Uuid)
 		for datapointChecksum := range rj.Datapoints {
 			datapointsToCollect = append(datapointsToCollect, datapointChecksum)
 		}
-		ge.addReportingJobNode(assetMrn, rj.Uuid, rj, isQuery)
+		rq := reportingQueryForReportingJob[rj.Uuid]
+		if rq == "" {
+			// If a reporting query didn't explicitly notify this reporting job, but
+			// we have a reporting job for it, we will add it.
+			// For example, when we have risk factors, this will happen
+			rq = reportingQueryNodeByCodeId[rj.QrId]
+		}
+
+		ge.addReportingJobNode(assetMrn, rj.Uuid, rj, rq)
 	}
 
 	for _, queryID := range scoresToCollect {
@@ -295,11 +312,6 @@ func (ge *GraphExecutor) createFinisherNode(r progress.Progress) {
 }
 
 func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolvedProperties map[string]*llx.Primitive, datapointTypeMap map[string]string) {
-	n, ok := ge.nodes[NodeID(queryID)]
-	if ok {
-		return
-	}
-
 	codeBundle := q.codeBundle
 
 	nodeData := &ExecutionQueryNodeData{
@@ -310,7 +322,7 @@ func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolved
 		runQueue:           ge.executionManager.runQueue,
 	}
 
-	n = &Node{
+	n := &Node{
 		id:       NodeID(string(ExecutionQueryNodeType) + "/" + queryID),
 		nodeType: ExecutionQueryNodeType,
 		data:     nodeData,
@@ -357,10 +369,10 @@ func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolved
 	ge.nodes[n.id] = n
 }
 
-func (ge *GraphExecutor) addReportingQueryNode(queryID string, q query) {
+func (ge *GraphExecutor) addReportingQueryNode(queryID string, q query) *Node {
 	n, ok := ge.nodes[NodeID(queryID)]
 	if ok {
-		return
+		return n
 	}
 
 	nodeData := &ReportingQueryNodeData{
@@ -387,14 +399,20 @@ func (ge *GraphExecutor) addReportingQueryNode(queryID string, q query) {
 	}
 
 	ge.nodes[n.id] = n
+
+	return n
 }
 
-func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID string, rj *policy.ReportingJob, isQuery bool) {
-	n, ok := ge.nodes[NodeID(reportingJobID)]
+func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID string, rj *policy.ReportingJob, reportingQueryForReportingJob string) {
+	_, ok := ge.nodes[NodeID(reportingJobID)]
 	if ok {
 		return
 	}
 
+	forwardScore := rj.Type == policy.ReportingJob_CHECK ||
+		rj.Type == policy.ReportingJob_DATA_QUERY ||
+		rj.Type == policy.ReportingJob_CHECK_AND_DATA_QUERY ||
+		rj.Type == policy.ReportingJob_EXECUTION_QUERY
 	queryID := rj.QrId
 	// TODO: This needs to be handled by the server so as not to
 	// break existing clients. The function that was doing the
@@ -406,13 +424,13 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 
 	nodeData := &ReportingJobNodeData{
 		queryID:               queryID,
-		isQuery:               isQuery,
+		forwardScore:          forwardScore,
 		rjType:                rj.Type,
 		childScores:           map[string]*reportingJobResult{},
 		datapoints:            map[string]*reportingJobDatapoint{},
 		featureFlagFailErrors: ge.featureFlagFailErrors,
 	}
-	n = &Node{
+	n := &Node{
 		id:       NodeID(reportingJobID),
 		nodeType: ReportingJobNodeType,
 		data:     nodeData,
@@ -427,16 +445,9 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 		ge.addEdge(n.id, NodeID(e))
 	}
 
-	if isQuery {
-		// The specs of the reporting job doesn't contain the query
-		// Not all rj.QrIds are represented in the graph, only those
-		// that correspond to actual queries. For example, a QrId that
-		// is a policy is not represented as a node directly in the graph.
-		// So, this is special handling to make sure the reporting job
-		// knows that a reporting query is going to send it information
-		// and that it needs to use that information to calculate its score
-		nodeData.childScores[rj.QrId] = &reportingJobResult{}
-		ge.addEdge(NodeID(rj.QrId), n.id)
+	if reportingQueryForReportingJob != "" {
+		nodeData.childScores[reportingQueryForReportingJob] = &reportingJobResult{}
+		ge.addEdge(NodeID(reportingQueryForReportingJob), n.id)
 	}
 
 	for childReportingJobID, ss := range rj.ChildJobs {
@@ -451,7 +462,7 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 }
 
 func (ge *GraphExecutor) addDatapointNode(datapointChecksum string, expectedType *string, res *llx.RawResult) {
-	n, ok := ge.nodes[NodeID(datapointChecksum)]
+	_, ok := ge.nodes[NodeID(datapointChecksum)]
 	if ok {
 		return
 	}
@@ -461,7 +472,7 @@ func (ge *GraphExecutor) addDatapointNode(datapointChecksum string, expectedType
 		isReported:   res != nil,
 		res:          res,
 	}
-	n = &Node{
+	n := &Node{
 		id:       NodeID(datapointChecksum),
 		nodeType: DatapointNodeType,
 		data:     nodeData,

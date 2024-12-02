@@ -71,7 +71,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 			log.Debug().Err(err).Str("mql", m.Mql).Msg("skipping filter query, not supported")
 			continue
 		}
-		builder.AddQuery(codeBundle, nil, nil)
+		builder.AddQuery(codeBundle, nil, nil, nil)
 
 		builder.CollectScore(codeBundle.CodeV2.Id)
 		queryMap[codeBundle.CodeV2.Id] = m
@@ -117,7 +117,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
 	builder := internal.NewBuilder()
 
-	builder.AddQuery(codeBundle, nil, props)
+	builder.AddQuery(codeBundle, nil, props, nil)
 	for _, checksum := range internal.CodepointChecksums(codeBundle) {
 		builder.CollectDatapoint(checksum)
 	}
@@ -160,8 +160,18 @@ func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[str
 func builderFromResolvedPolicy(resolvedPolicy *policy.ResolvedPolicy) *internal.GraphBuilder {
 	b := internal.NewBuilder()
 
+	rqs := resolvedPolicy.CollectorJob.ReportingQueries
+	if rqs == nil {
+		rqs = map[string]*policy.StringArray{}
+	}
 	for _, eq := range resolvedPolicy.ExecutionJob.Queries {
-		b.AddQuery(eq.Code, eq.Properties, nil)
+		var notifies []string
+		if sa := rqs[eq.Code.GetCodeV2().GetId()]; sa != nil {
+			if len(sa.Items) > 0 {
+				notifies = sa.Items
+			}
+		}
+		b.AddQuery(eq.Code, eq.Properties, nil, notifies)
 	}
 
 	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
