@@ -871,7 +871,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) 
 		// Add node for query
 		b.addNode(&rpBuilderGenericQueryNode{queryMrn: query.Mrn, selectedCodeId: b.disabledQuery.CodeId, queryType: queryType})
 		// Add edge from execution query to query
-		b.addEdge(b.disabledQuery.CodeId, query.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		b.addEdge(b.disabledQuery.CodeId, query.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_DISABLED})
 		return b.disabledQuery.CodeId, true
 	}
 
