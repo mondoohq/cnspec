@@ -547,13 +547,17 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 			} else {
 				s = proto.Clone(c.score).(*policy.Score)
 				s.QrId = nodeData.queryID
-				if s.Type == policy.ScoreType_Result {
+				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
+					s.Type = policy.ScoreType_Disabled
+				} else if s.Type == policy.ScoreType_Result {
 					// We cant just forward the score if impact is set and we have a result.
 					// We still need to apply impact to the score
-					if c.impact != nil && c.impact.Value != nil {
-						floor := 100 - uint32(c.impact.Value.Value)
-						if floor > s.Value {
-							s.Value = floor
+					if c.impact != nil {
+						if c.impact.Value != nil {
+							floor := 100 - uint32(c.impact.Value.Value)
+							if floor > s.Value {
+								s.Value = floor
+							}
 						}
 					}
 				}

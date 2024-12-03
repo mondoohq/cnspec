@@ -29,6 +29,17 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 	policyObj := bundleMap.Policies[bundleMrn]
 	frameworkObj := bundleMap.Frameworks[bundleMrn]
 
+	disabledQuery := &explorer.Mquery{
+		Mql: `// Disabled
+		if(false) { return false }`,
+		CodeId: "",
+	}
+	cb, err := disabledQuery.Compile(nil, compilerConf)
+	if err != nil {
+		return nil, err
+	}
+	disabledQuery.CodeId = cb.GetCodeV2().GetId()
+
 	builder := &resolvedPolicyBuilder{
 		bundleMrn:            bundleMrn,
 		bundleMap:            bundleMap,
@@ -43,6 +54,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		propsCache:           explorer.NewPropsCache(),
 		queryTypes:           map[string]queryType{},
 		now:                  now,
+		disabledQuery:        disabledQuery,
 	}
 
 	builder.gatherGlobalInfoFromPolicy(policyObj)
@@ -224,6 +236,11 @@ type resolvedPolicyBuilder struct {
 	propsCache explorer.PropsCache
 	// now is the time that the resolved policy is being built
 	now time.Time
+	// disabledQuery represents a query that is disabled. We need to inject this for disabled queries
+	// because we want to report a score of U for them. We cannot just insert a reporting job without
+	// a query because there is a bug in the clients that expects those reporting jobs to be connected
+	// to a query that runs
+	disabledQuery *explorer.Mquery
 }
 
 type edgeImpact struct {
@@ -846,7 +863,16 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) 
 	queryType := b.queryTypes[query.Mrn]
 
 	if !canRun(action) {
-		return "", false
+		if !b.anyFilterMatches(query.Filters) {
+			return "", false
+		}
+		// Add node for execution query
+		b.addNode(&rpBuilderExecutionQueryNode{query: b.disabledQuery})
+		// Add node for query
+		b.addNode(&rpBuilderGenericQueryNode{queryMrn: query.Mrn, selectedCodeId: b.disabledQuery.CodeId, queryType: queryType})
+		// Add edge from execution query to query
+		b.addEdge(b.disabledQuery.CodeId, query.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_DISABLED})
+		return b.disabledQuery.CodeId, true
 	}
 
 	if len(query.Variants) != 0 {
