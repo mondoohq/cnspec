@@ -92,7 +92,7 @@ To manually configure a policy, use this:
 		$ cnspec scan local -f bundle.mql.yaml --incognito
 
 `,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRun: func(cmd *cobra.Command, _ []string) {
 		// Special handling for users that want to see what output options are
 		// available. We have to do this before printing the help because we
 		// don't have a target connection or provider.
@@ -131,11 +131,7 @@ To manually configure a policy, use this:
 
 		_ = viper.BindPFlag("json", cmd.Flags().Lookup("json"))
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
-		if err := viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target")); err != nil {
-			return err
-		}
-
-		return nil
+		_ = viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -143,6 +139,8 @@ To manually configure a policy, use this:
 		}
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	},
+	// we have to initialize an empty run so it shows up as a runnable command in --help
+	Run: func(cmd *cobra.Command, args []string) {},
 }
 
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
