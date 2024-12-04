@@ -1360,9 +1360,42 @@ queries:
         mql: |
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
+    variants:
+      - uid: mondoo-linux-security-login-and-logout-events-are-collected-debian
+      - uid: mondoo-linux-security-login-and-logout-events-are-collected-rhel
+      - uid: mondoo-linux-security-login-and-logout-events-are-collected-other
+  - uid: mondoo-linux-security-login-and-logout-events-are-collected-debian
+    filters: asset.family.contains("debian")
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/run\/faillock\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/lastlog\s+\-p\s+wa\s+\-k\s+logins(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/lastlog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/faillog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/tallylog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/var\/log\/faillog|\/var\/log\/lastlog|\/var\/log\/tallylog/).all(
+        split("-").contains(/p wa/)
+          && split(" ").containsAll(["-k","logins"])
+            || split(" ").containsAll(["-F","key=logins"])
+      )
+  - uid: mondoo-linux-security-login-and-logout-events-are-collected-rhel
+    filters: asset.family.contains("redhat") || asset.platform == "amazonlinux"
+    mql: |
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/run\/faillock/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/lastlog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/tallylog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/var\/run\/faillock|\/var\/log\/lastlog|\/var\/log\/tallylog/).all(
+        split("-").contains(/p wa/)
+          && split(" ").containsAll(["-k","logins"])
+            || split(" ").containsAll(["-F","key=logins"])
+      )
+  - uid: mondoo-linux-security-login-and-logout-events-are-collected-other
+    filters: asset.family.contains(/redhat|debian/) == false && asset.platform != "amazonlinux"
+    mql: |
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/lastlog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/var\/log\/tallylog/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/var\/log\/lastlog|\/var\/log\/tallylog/).all(
+        split("-").contains(/p wa/)
+          && split(" ").containsAll(["-k","logins"])
+            || split(" ").containsAll(["-F","key=logins"])
+      )
     docs:
       desc: |-
         Monitor login and logout events. The parameters below track changes to files associated with login/logout events.
@@ -1580,6 +1613,11 @@ queries:
         mql: |
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$' , type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
+    variants:
+    - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-debian-rhel
+    - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-other
+  - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-debian-rhel
+    filters: asset.family.contains(/redhat|debian/) == true
     mql: |
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /sethostname/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /setdomainname/)
@@ -1594,7 +1632,29 @@ queries:
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/issue.net/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/hosts/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/sysconfig\/network/)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/etc\/issue|\/etc\/issue.net|\/etc\/hosts|\/etc\/sysconfig\/network/).all(
+        || props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/network/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/etc\/issue|\/etc\/issue.net|\/etc\/hosts|\/etc\/sysconfig\/network|\/etc\/network/).all(
+        split("-").contains(/p wa/)
+          && split(" ").containsAll(["-k","system-locale"])
+            || split(" ").containsAll(["-F","key=system-locale"])
+      )
+
+  - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-other
+    filters: asset.family.contains(/redhat|debian/) == false
+    mql: |
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /sethostname/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /setdomainname/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /sethostname|setdomainname/).all(
+        split("-").containsAll(["a always,exit ",])
+          && split("-").containsAll(["F arch=b64 "])
+            || split("-").containsAll(["F arch=b32 "])
+          && split(" ").containsAll(["-k","system-locale"])
+            || split(" ").containsAll(["-F","key=system-locale"])
+      )
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/issue/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/issue.net/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /\/etc\/hosts/)
+      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /\/etc\/issue|\/etc\/issue.net|\/etc\/hosts/).all(
         split("-").contains(/p wa/)
           && split(" ").containsAll(["-k","system-locale"])
             || split(" ").containsAll(["-F","key=system-locale"])
