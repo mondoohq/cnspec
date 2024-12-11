@@ -500,8 +500,8 @@ func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.scoreCompletion += score.ScoreCompletion
 
 		if score.ScoreCompletion != 0 && score.Weight != 0 {
-			category := score.Value
-			if impact != nil {
+			category := uint32(0)
+			if impact != nil && impact.Value != nil {
 				category = 100 - uint32(impact.Value.Value)
 			}
 

@@ -276,6 +276,23 @@ func TestBandedScores(t *testing.T) {
 			},
 			out: &Score{Value: 9, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
+		{
+			in: []*Score{
+				// 10 critical checks (9ok, 1not)
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 80, DataTotal: 5, Weight: 1, Type: ScoreType_Result},
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 9, Type: ScoreType_Result},
+				// 10 high checks (ok)
+				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
+			},
+			impacts: []*explorer.Impact{
+				// 10 critical checks
+				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: nil},
+				// 10 high checks
+				{Value: &explorer.ImpactValue{Value: 80}},
+			},
+			out: &Score{Value: 45, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
+		},
 	})
 }
 
