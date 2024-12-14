@@ -267,12 +267,8 @@ func (r *resolvedPolicyTesterReportingJobBuilder) testIt(t *testing.T, rp *polic
 	}
 }
 
-func contextResolverV2() context.Context {
-	return policy.WithNextGenResolver(context.Background())
-}
-
 func TestResolveV2_EmptyPolicy(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -311,7 +307,7 @@ policies:
 }
 
 func TestResolveV2_SimplePolicy(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -390,7 +386,7 @@ policies:
 func TestResolveV2_PolicyWithImpacts(t *testing.T) {
 	// For impacts, we always find the worst impact specified for a query in a policy bundle.
 	// All instances of the query use that impact
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -472,7 +468,7 @@ queries:
 }
 
 func TestResolveV2_PolicyWithScoringSystem(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -525,7 +521,7 @@ policies:
 }
 
 func TestResolveV2_PolicyWithScoringSystemOverride(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -579,7 +575,7 @@ policies:
 }
 
 func TestResolveV2_PolicyActionIgnore(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -643,7 +639,7 @@ policies:
 }
 
 func TestResolveV2_PolicyActionScoringSystem(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -709,7 +705,7 @@ policies:
 }
 
 func TestResolveV2_IgnoredQuery(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -753,7 +749,7 @@ policies:
 }
 
 func TestResolveV2_Frameworks(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	bundleStr := `
 owner_mrn: //test.sth
 policies:
@@ -1142,7 +1138,7 @@ framework_maps:
 // the groups or any of its queries filters matched. This tests to ensure that if the policies
 // group filtered it out, it doesn't show up in the reporting structure
 func TestResolveV2_PoliciesMatchingAgainstIncorrectPlatform(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1215,7 +1211,7 @@ queries:
 }
 
 func TestResolveV2_NeverPruneRoot(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1249,7 +1245,7 @@ queries:
 }
 
 func TestResolveV2_PoliciesMatchingFilters(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1299,7 +1295,7 @@ queries:
 }
 
 func TestResolveV2_TwoMrns(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1349,7 +1345,7 @@ policies:
 }
 
 func TestResolveV2_TwoMrns_FilterMismatch(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1396,7 +1392,7 @@ policies:
 }
 
 func TestResolveV2_TwoMrns_DataQueries(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1451,7 +1447,7 @@ policies:
 }
 
 func TestResolveV2_TwoMrns_Variants(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1499,7 +1495,7 @@ queries:
 }
 
 func TestResolveV2_Variants(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1581,7 +1577,7 @@ queries:
 }
 
 func TestResolveV2_RiskFactors(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 queries:
@@ -1682,7 +1678,7 @@ policies:
 }
 
 func TestResolveV2_FrameworkExceptions(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	bundleString := `
 owner_mrn: //test.sth
 policies:
@@ -1900,7 +1896,7 @@ framework_maps:
 }
 
 func TestResolveV2_PolicyExceptionIgnored(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
@@ -1956,7 +1952,7 @@ policies:
 }
 
 func TestResolveV2_PolicyExceptionDisabled(t *testing.T) {
-	ctx := contextResolverV2()
+	ctx := context.Background()
 	b := parseBundle(t, `
 owner_mrn: //test.sth
 policies:
