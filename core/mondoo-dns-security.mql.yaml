@@ -4,7 +4,7 @@
 policies:
   - uid: mondoo-dns-security
     name: Mondoo DNS Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -45,44 +45,136 @@ policies:
           - uid: mondoo-dns-security-no-cname-for-root-domain
           - uid: mondoo-dns-security-no-ip-for-ns-mx-records
           - uid: mondoo-dns-security-no-legacy-office-365-mx-records
+          - uid: mondoo-dns-security-dnssec-enabled
+          - uid: mondoo-dns-security-no-wildcard
 queries:
   - uid: mondoo-dns-security-no-cname-for-root-domain
     title: Ensure no CNAME is used for root domain
+    filters: domainName.fqdn == domainName.effectiveTLDPlusOne
+    impact: 60
     mql: |
-      if (domainName.fqdn == domainName.effectiveTLDPlusOne) {
-        dns.records.where(type == "CNAME").length == 0
-      }
+      dns.records.where(type == "CNAME") == empty
+    docs:
+      desc: |
+        This security check ensures that the root domain (often called the apex domain) does not have a CNAME (Canonical Name) record in its DNS settings. According to DNS standards, using CNAME records at the root domain is prohibited because it can lead to conflicts with other important DNS records, such as SOA (Start of Authority) and NS (Name Server) records.
+
+        Implementing a CNAME at the root domain poses several risks, including:
+
+        * DNS resolution issues: DNS servers can fail to resolve records properly, causing service interruptions.
+        * Compliance violations: Most DNS providers enforce rules against the use of CNAMEs on root domains. Using them can result in non-compliance.
+        * Service unavailability: Essential domain-related services, such as email or subdomains, can cease to function.
+      remediation: |
+        Use A or ALIAS records (if supported by your DNS provider) to point the root domain to the appropriate IP address or hostname while maintaining DNS compatibility and reducing the risk of resolution failures.
   - uid: mondoo-dns-security-no-ip-for-ns-mx-records
     title: Ensure NS and MX records are not pointing to IP addresses
+    impact: 75
     mql: |
-      # check that MX records are not using IP addresses
-      dns.mx {
-        domainName != regex.ipv4
-        domainName != regex.ipv6
-      }
-      # check that ns records are no ip
-      dns.records.where(type == "NS") {
-        rdata {
-          _ != regex.ipv4
-          _ != regex.ipv6
-        }
-      }
+      dns.mx != empty
+      dns.mx.all(domainName != regex.ipv4 && domainName != regex.ipv6)
+      dns.records.where(type == "NS") !=empty
+      dns.records.where(type == "NS").all( rdata != regex.ipv4 && rdata != regex.ipv6 )
+    docs:
+      desc: |
+        This security check ensures that DNS Name Server (NS) and Mail Exchange (MX) records do not point directly to IP addresses. According to DNS best practices and standards, NS and MX records should point to fully qualified domain names (FQDNs) rather than IP addresses.
+
+        Risks of using IP addresses in NS and MX records include:
+
+        * Lack of flexibility: Pointing to an IP address directly ties your DNS or mail configuration to a specific server. This makes it difficult to manage changes, such as server migrations or load balancing.
+        * Potential downtime: If the server IP address changes and DNS records are not updated promptly, services dependent on these records (e.g., email or domain resolution) can experience downtime.
+        * Non-compliance with DNS standards: DNS resolvers expect NS and MX records to point to hostnames. Using IPs can lead to unpredictable behavior or DNS resolution failures.
+        * Security risks: Directly exposing IP addresses can make your infrastructure more vulnerable to attacks, such as DDoS or reconnaissance efforts.
+      remediation: |
+        For NS records: Always configure them to point to the authoritative DNS server’s FQDN (e.g., ns1.example.com).
+
+        For MX records: Always point them to a valid mail server’s FQDN (e.g., mail.example.com).
   - uid: mondoo-dns-security-no-legacy-office-365-mx-records
     title: Ensure legacy MX records are not used with Office 365
+    impact: 80
     mql: |
       dns.mx.all( domainName.downcase != "mail.outlook.com." )
       dns.mx.all( domainName.downcase != "mail.messaging.microsoft.com." )
       dns.mx.all( domainName.downcase != "mail.global.frontbridge.com." )
       dns.mx.all( domainName.downcase != "mail.global.bigfish.com." )
+    docs:
+      desc: |
+        This security check verifies that legacy MX records, often associated with previous email hosting providers or outdated configurations, are not used in domains configured for Microsoft Office 365 email services.
+
+        Why this is important:
+
+        * Email delivery issues: Legacy MX records can cause email to be routed to incorrect or obsolete mail servers, resulting in failed or delayed email delivery.
+        * Security risks: Misconfigured MX records can expose your email infrastructure to spoofing, phishing, or man-in-the-middle attacks if email traffic is directed to untrusted servers.
+        * Incompatibility with Office 365: Microsoft Office 365 requires specific MX record configurations (e.g., *.mail.protection.outlook.com) to properly route and secure email traffic. Using legacy MX records can prevent Office 365 features, such as spam filtering or encryption, from functioning correctly.
+        * Administrative overhead: Retaining legacy MX records increases complexity and the potential for mismanagement during troubleshooting or migrations.
+      remediation: |
+        Replace all legacy MX records with the correct Office 365 MX records provided in the Microsoft 365 Admin Center. Regularly audit DNS settings to ensure all MX records align with Office 365 requirements.
     refs:
       - url: https://techcommunity.microsoft.com/t5/exchange-team-blog/best-practices-for-using-assigned-office-365-dns-records/ba-p/607907
         title: Best practices for using assigned Office 365 DNS records
   - uid: mondoo-dns-security-google-workspaces-mx-records
     title: Ensure the correct MX records are used with Google Workspaces
+    impact: 80
     mql: |-
       dns.mx.where(domainName == /l.google.com/).
         map(domainName.downcase).
         containsOnly(["aspmx.l.google.com.", "alt1.aspmx.l.google.com.", "alt2.aspmx.l.google.com.", "alt3.aspmx.l.google.com.", "alt4.aspmx.l.google.com."])
+    docs:
+      desc: |
+        This security check verifies that the domain’s MX (Mail Exchange) records are correctly configured to use the Google Workspace (formerly G Suite) email servers. Proper configuration ensures reliable email delivery and leverages Google’s advanced email security and management features.
+
+        Why this is important:
+
+        * Reliable email delivery: Incorrect or missing MX records can result in undelivered email.
+        * Security risks: Using incorrect MX records can route email through untrusted servers, exposing the organization to spoofing, phishing, or data interception attacks.
+        * Google Workspace functionality: Google Workspace requires specific MX records to activate its full suite of email features, including spam protection, encryption, and account-based email management.
+        * Compliance and best practices: Adhering to Google Workspace’s DNS configuration guidelines ensures compatibility and minimizes the risk of service disruptions.
+      remediation: |
+        Ensure the domain’s MX records point to Google’s designated email servers:
+          *	ASPMX.L.GOOGLE.COM
+          *	ALT1.ASPMX.L.GOOGLE.COM
+          *	ALT2.ASPMX.L.GOOGLE.COM
+          *	ALT3.ASPMX.L.GOOGLE.COM
+          *	ALT4.ASPMX.L.GOOGLE.COM
+
+        Verify that each record is configured with the correct priority as recommended by Google. Remove any legacy or non-Google MX records to prevent misrouting or security vulnerabilities.
     refs:
       - url: https://support.google.com/a/answer/140034?hl=en
         title: Set up MX records for Google Workspace email
+  - uid: mondoo-dns-security-dnssec-enabled
+    title: Ensure DNSSEC is enabled
+    impact: 75
+    mql: |-
+      dns.records.where(type == "DNSKEY") != empty
+      dns.records.where(type == "DNSKEY").all(name.contains(domainName.fqdn))
+    docs:
+      desc: |
+        This security check ensures that DNSSEC (Domain Name System Security Extensions) is enabled for your domain. DNSSEC is a critical security feature that provides authentication for DNS responses. It protects against common threats such as DNS spoofing, cache poisoning, and man-in-the-middle attacks.
+
+        Why this is important:
+
+        * Prevents DNS spoofing: Without DNSSEC, attackers can forge DNS responses. This lets them redirect users to malicious websites or intercept sensitive data.
+        * Protects data integrity: DNSSEC digitally signs DNS records to ensure the data returned in a DNS query has not been altered or tampered with during transit.
+        * Builds trust: By enabling DNSSEC, organizations can enhance trust in their domain by ensuring users reliably connect to legitimate services.
+        * Compliance and standards: Many security frameworks and compliance standards recommend or require DNSSEC implementation as a best practice for domain security.
+      remediation: |
+        * Enable DNSSEC for your domain through your DNS hosting provider or domain registrar.
+        * Regularly monitor DNSSEC configurations to ensure the validity of DNSSEC signatures and prevent expiration issues.
+        * Test DNSSEC implementation using tools or online validators to confirm proper configuration.
+  - uid: mondoo-dns-security-no-wildcard
+    title: Ensure no wildcard DNS records are configured
+    impact: 85
+    mql: |-
+      dns.records.none(name == /\*/)
+    docs:
+      desc: |
+        This security check verifies that no wildcard DNS records (e.g., *.example.com) are configured for your domain. Wildcard DNS records allow all subdomains, including those not explicitly defined, to resolve to a specified IP address or hostname.
+
+        Why this is important:
+
+        * Increased attack surface: Wildcard DNS records can unintentionally expose your domain to abuse. Attackers can create arbitrary subdomains (e.g., phishing.example.com) for malicious purposes.
+        * Phishing and malware risks: Cybercriminals can exploit wildcard DNS records to impersonate legitimate subdomains, host phishing websites, or distribute malware.
+        * Uncontrolled traffic routing: Wildcards can cause unexpected behavior by routing traffic for undefined subdomains to unintended or insecure locations.
+        * Compliance issues: Many security standards discourage the use of wildcard DNS records due to the difficulty in managing and securing them effectively.
+      remediation: |
+        * Remove wildcard DNS records (*.example.com) unless explicitly required for specific use cases.
+        * Use explicit DNS records for subdomains to maintain control over domain resolution.
+        * Regularly audit DNS configurations to identify and eliminate unintended wildcard records.
