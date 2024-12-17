@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 )
@@ -73,17 +74,37 @@ func sampleReportCollection() *policy.ReportCollection {
 				},
 				// add passed, failed and skipped test
 				Scores: map[string]*policy.Score{
-					"+u6doYoYG5E=": &policy.Score{
+					"+u6doYoYG5E=": {
 						Type:  2, // result
 						Value: 100,
 					},
-					"057itYF8s30=": &policy.Score{
+					"057itYF8s30=": {
 						Type:  4, // error
 						Value: 0,
 					},
 					"GyJVAziB/tU=": {
 						Type:  8, // skip
 						Value: 0,
+					},
+				},
+			},
+		},
+		VulnReports: map[string]*mvd.VulnReport{
+			"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": {
+				Packages: []*mvd.Package{
+					{
+						Name:      "libssl1.1",
+						Version:   "1.1.1f-3ubuntu2.19",
+						Affected:  true,
+						Score:     100,
+						Available: "1.1.1f-3ubuntu2.20",
+					},
+				},
+				Stats: &mvd.ReportStats{
+					Packages: &mvd.ReportStatsPackages{
+						Total:    1,
+						Critical: 1,
+						Affected: 1,
 					},
 				},
 			},
@@ -103,6 +124,11 @@ func TestJunitConverter(t *testing.T) {
 	assert.Contains(t, junitReport, "<testcase name=\"Ensure SNMP server is stopped and not enabled\" classname=\"score\"></testcase>")
 	assert.Contains(t, junitReport, "<testcase name=\"Configure kubelet to capture all event creation\" classname=\"score\">\n\t\t\t<failure message=\"\" type=\"error\"></failure>\n\t\t</testcase>")
 	assert.Contains(t, junitReport, "<testcase name=\"Set secure file permissions on the scheduler.conf file\" classname=\"score\">\n\t\t\t<skipped message=\"skipped\"></skipped>\n\t\t</testcase>")
+	assert.Contains(t, junitReport, "<testsuite name=\"Vulnerability Report for")
+	assert.Contains(t, junitReport, "<property name=\"report.packages.total\" value=\"1\"></property>")
+	assert.Contains(t, junitReport, "<property name=\"report.packages.critical\" value=\"1\"></property>")
+	assert.Contains(t, junitReport, "<testcase name=\"libssl1.1\" classname=\"vulnerability\">")
+	assert.Contains(t, junitReport, "<failure message=\"Update libssl1.1 to 1.1.1f-3ubuntu2.20\"><![CDATA[libssl1.1 with version1.1.1f-3ubuntu2.19 has known vulnerabilities (score 10)]]></failure>")
 }
 
 func TestJunitNilReport(t *testing.T) {
