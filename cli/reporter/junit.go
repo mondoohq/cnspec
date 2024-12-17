@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"strconv"
 
-	mapstructure "github.com/go-viper/mapstructure/v2"
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11/policy"
 )
@@ -164,14 +162,8 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inv
 // assetPolicyTests converts asset vulnerability results to Junit test cases
 func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset) *junit.Testsuite {
 	// check if we have a vulnerability report
-	results, ok := r.Reports[assetMrn]
+	vulnReport, ok := r.VulnReports[assetMrn]
 	if !ok {
-		return nil
-	}
-
-	rawResults := results.RawResults()
-	value, _ := getVulnReport(rawResults)
-	if value == nil || value.Data == nil {
 		return nil
 	}
 
@@ -181,36 +173,6 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 		Failures:  0,
 		Time:      "",
 		Testcases: []junit.Testcase{},
-	}
-
-	if value.Data.Error != nil {
-		ts.Errors++
-		ts.Testcases = append(ts.Testcases, junit.Testcase{
-			Failure: &junit.Result{
-				Message: "could not load the vulnerability report: " + value.Data.Error.Error(),
-				Type:    "fail",
-			},
-		})
-		return ts
-	}
-
-	// parse the vulnerability report
-	rawData := value.Data.Value
-	var vulnReport mvd.VulnReport
-	cfg := &mapstructure.DecoderConfig{
-		Metadata: nil,
-		Result:   &vulnReport,
-		TagName:  "json",
-	}
-	decoder, _ := mapstructure.NewDecoder(cfg)
-	if err := decoder.Decode(rawData); err != nil {
-		ts.Errors++
-		ts.Testcases = append(ts.Testcases, junit.Testcase{
-			Failure: &junit.Result{
-				Message: "could not decode advisory report",
-				Type:    "fail",
-			},
-		})
 	}
 
 	// packages advisories
@@ -252,7 +214,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 				ts.Failures++
 
 				var content string
-				content += pkg.Name + "with version" + pkg.Version + " has known vulnerabilities"
+				content += pkg.Name + " with version" + pkg.Version + " has known vulnerabilities"
 				if pkg.Score > 0 {
 					content += " (score " + fmt.Sprintf("%v", float32(pkg.Score)/10) + ")"
 				}
