@@ -1,0 +1,93 @@
+name: Create cnspec GitHub Release
+
+## Only trigger release when the VERSION file changed on main branch
+on:
+  push:
+    paths:
+      - "VERSION"
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  # C07QZDJFF89 == #release-coordination
+  SLACK_BOT_CHANNEL_ID: "C07QZDJFF89"
+
+jobs:
+  create-gh-release:
+    name: GH Release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      update-ts: ${{ steps.slack.outputs.ts }}
+    steps:
+      - id: slack
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: "${{ env.SLACK_BOT_CHANNEL_ID }}"
+            text: "GitHub Actions Run"
+            attachments:
+              - color: "#FFFF00"
+                blocks:
+                  - type: "section"
+                    fields:
+                      - type: "mrkdwn"
+                        text: "<${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}|${{ github.workflow }}>"
+                      - type: "mrkdwn"
+                        text: "*Status:*\n`In Progress`"
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set release version
+        run: echo "RELEASE_VERSION=$(cat VERSION)" >> $GITHUB_ENV
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          generate_release_notes: true
+          make_latest: true
+          token: ${{ secrets.GH_BUILDER_TOKEN }}
+
+  check-release:
+    name: Check whether the release actually started
+    runs-on: ubuntu-latest
+    needs: create-gh-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set release version
+        run: echo "RELEASE_VERSION=$(cat VERSION)" >> $GITHUB_ENV
+      - name: Release file present?
+        id: check_release_file
+        uses: nick-fields/retry@v3
+        with:
+          retry_wait_seconds: 10
+          timeout_seconds: 5
+          max_attempts: 60
+          retry_on: error
+          # error on HTTP code different to 302
+          command: curl -o /dev/null -s -w "%{http_code}\n" "https://github.com/mondoohq/cnspec/releases/download/${{ env.RELEASE_VERSION }}/cnspec_${{ env.RELEASE_VERSION }}_SHA256SUMS" | grep 302
+
+      - uses: slackapi/slack-github-action@v2.0.0
+        if : ${{ always() }}
+        with:
+          method: chat.update
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: "${{ env.SLACK_BOT_CHANNEL_ID }}"
+            ts: "${{ steps.slack.outputs.ts }}"
+            text: "GitHub Actions Run"
+            attachments:
+              - color: "${{ (steps.check_release_file.outputs.status == 'success') && '#00FF00' || (steps.check_release_file.outputs.status == 'failure') && '#FF0000' || '#FFA500' }}"
+                blocks:
+                  - type: "section"
+                    fields:
+                      - type: "mrkdwn"
+                        text: "<${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}|${{ github.workflow }}>"
+                      - type: "mrkdwn"
+                        text: " "
+                      - type: "mrkdwn"
+                        text: "*Status:*\n`${{ steps.check_release_file.outputs.status }}`"
