@@ -55,7 +55,7 @@ func TestScanFlags(t *testing.T) {
 		assert.NotNil(t, r.Stderr())
 
 		assert.Contains(t, string(r.Stderr()),
-			"app-private-key is required for GitHub App authentication", // expected! it means we loaded the flags
+			"could not parse private key", // expected! it means we loaded the flags
 		)
 	})
 	t.Run("github scan WITH all required flags for app auth", func(t *testing.T) {
