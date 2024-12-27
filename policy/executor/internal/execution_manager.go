@@ -12,6 +12,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnspec/v11"
 )
 
 const MEM_DEBUG_ENV = "MEM_DEBUG"
@@ -63,6 +65,7 @@ func (em *executionManager) Start() {
 	em.wg.Add(1)
 	go func() {
 		defer em.wg.Done()
+		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
 		for {
 			// Prioritize stopChan
 			select {
