@@ -504,7 +504,7 @@ func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 			if impact != nil {
 				// Store pointer to avoid panic
 				if impactV := impact.GetValue(); impactV != nil {
-					if value := impactV.GetValue(); value < 100 && value > 0 {
+					if value := impactV.GetValue(); value <= 100 && value >= 0 {
 						category = 100 - uint32(value)
 					}
 				}
