@@ -30,6 +30,7 @@ import (
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/recording"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/cnquery/v11/utils/multierr"
 	"go.mondoo.com/cnquery/v11/utils/slicesx"
 	"go.mondoo.com/cnspec/v11"
@@ -314,6 +315,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	scanGroups.Add(1)
 	go func() {
 		defer scanGroups.Done()
+		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
+
 		if err := multiprogress.Open(); err != nil {
 			log.Error().Err(err).Msg("failed to open progress bar")
 		}
@@ -415,6 +418,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
+
 			for i := range batch {
 				asset := batch[i].Asset
 				runtime := batch[i].Runtime

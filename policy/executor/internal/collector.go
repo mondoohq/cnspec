@@ -11,7 +11,9 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/llx"
+	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/cnquery/v11/utils/iox"
+	"go.mondoo.com/cnspec/v11"
 	"go.mondoo.com/cnspec/v11/policy"
 	"google.golang.org/protobuf/proto"
 )
@@ -122,6 +124,7 @@ func (c *BufferedCollector) run() {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
 
 		done := false
 		results := []*llx.RawResult{}
