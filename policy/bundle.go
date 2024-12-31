@@ -102,11 +102,7 @@ func BundleExecutionChecksum(ctx context.Context, policy *Policy, framework *Fra
 	// So far the checksum only includes the policy and the framework
 	// It does not change if any of the jobs changes, only if the policy or the framework changes
 	// To update the resolved policy, when we change how it is generated, change the incoporated version of the resolver
-	if IsNextGenResolver(ctx) {
-		res = res.Add(RESOLVER_VERSION_NG)
-	} else {
-		res = res.Add(RESOLVER_VERSION)
-	}
+	res = res.Add(RESOLVER_VERSION)
 
 	return res.String()
 }
@@ -624,7 +620,7 @@ func (c *bundleCache) removeFailing(res *Bundle) {
 			group := policy.Groups[j]
 			group.Queries = explorer.FilterQueryMRNs(c.removeQueries, group.Queries)
 			group.Checks = explorer.FilterQueryMRNs(c.removeQueries, group.Checks)
-			if len(group.Queries)+len(group.Checks) > 0 {
+			if len(group.Policies)+len(group.Queries)+len(group.Checks) > 0 {
 				groups = append(groups, group)
 			}
 		}

@@ -176,7 +176,6 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 
 	s.job.Bundle = bundle
 	s.job.PolicyFilters = []string{"asset-policy"}
-	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
 	scanner := NewLocalScanner(DisableProgressBar())
@@ -195,18 +194,6 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 
 		p := full.ResolvedPolicies[k]
 
-		// Get the code id for all the executed queries
-		executedQueries := []string{}
-		for qCodeId := range p.ExecutionJob.Queries {
-			executedQueries = append(executedQueries, qCodeId)
-		}
-
-		expectedQueries := []string{
-			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
-			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
-		}
-		s.ElementsMatch(expectedQueries, executedQueries)
-
 		queryIdToReportingJob := map[string]*policy.ReportingJob{}
 		for _, rj := range p.CollectorJob.ReportingJobs {
 			_, ok := queryIdToReportingJob[rj.QrId]
@@ -215,13 +202,26 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 		}
 
 		// Make sure the ignored query is ignored
-		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
-		s.Require().NotNil(queryRj)
+		{
+			queryRj := queryIdToReportingJob["//local.cnspec.io/run/local-execution/queries/ignored-query"]
+			s.Require().NotNil(queryRj)
 
-		parent := queryRj.Notify[0]
-		parentJob := p.CollectorJob.ReportingJobs[parent]
-		s.Require().NotNil(parentJob)
-		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+			parent := queryRj.Notify[0]
+			parentJob := p.CollectorJob.ReportingJobs[parent]
+			s.Require().NotNil(parentJob)
+			s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+		}
+		// Make sure the ignored query is reported as disabled
+		{
+			queryRj := queryIdToReportingJob["//local.cnspec.io/run/local-execution/queries/deactivate-query"]
+			s.Require().NotNil(queryRj)
+			var child string
+			for c := range queryRj.ChildJobs {
+				child = c
+				break
+			}
+			s.Equal(explorer.ScoringSystem_DISABLED, queryRj.ChildJobs[child].Scoring)
+		}
 	}
 }
 
@@ -230,8 +230,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	bundle, err := loader.BundleFromPaths("./testdata/exception-groups.mql.yaml")
 	s.Require().NoError(err)
 
-	bundle.Policies[1].Groups[0].ReviewStatus = policy.ReviewStatus_REJECTED
 	bundle.Policies[1].Groups[1].ReviewStatus = policy.ReviewStatus_REJECTED
+	bundle.Policies[1].Groups[2].ReviewStatus = policy.ReviewStatus_REJECTED
 
 	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
 		CompilerConfig: s.conf,
@@ -255,8 +255,8 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	s.Equal(1, len(full.Reports))
 
 	for k, r := range full.Reports {
-		// Verify the score is 16
-		s.Equal(uint32(16), r.GetScore().Value)
+		// Verify the score is 33
+		s.Equal(uint32(33), r.GetScore().Value)
 
 		p := full.ResolvedPolicies[k]
 
@@ -281,13 +281,15 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 		}
 
 		// Make sure the ignored query is ignored
-		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
+		queryRj := queryIdToReportingJob["//local.cnspec.io/run/local-execution/queries/ignored-query"]
 		s.Require().NotNil(queryRj)
 
 		parent := queryRj.Notify[0]
 		parentJob := p.CollectorJob.ReportingJobs[parent]
 		s.Require().NotNil(parentJob)
-		s.Equal(explorer.ScoringSystem_SCORING_UNSPECIFIED, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+		impact, ok := parentJob.ChildJobs[queryRj.Uuid]
+		s.Require().True(ok)
+		s.Require().Nil(impact)
 	}
 }
 
@@ -304,7 +306,6 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 
 	s.job.Bundle = bundle
 	s.job.PolicyFilters = []string{"asset-policy"}
-	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
 	scanner := NewLocalScanner(DisableProgressBar())
@@ -323,18 +324,6 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 
 		p := full.ResolvedPolicies[k]
 
-		// Get the code id for all the executed queries
-		executedQueries := []string{}
-		for qCodeId := range p.ExecutionJob.Queries {
-			executedQueries = append(executedQueries, qCodeId)
-		}
-
-		expectedQueries := []string{
-			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
-			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
-		}
-		s.ElementsMatch(expectedQueries, executedQueries)
-
 		queryIdToReportingJob := map[string]*policy.ReportingJob{}
 		for _, rj := range p.CollectorJob.ReportingJobs {
 			_, ok := queryIdToReportingJob[rj.QrId]
@@ -343,7 +332,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 		}
 
 		// Make sure the ignored query is ignored
-		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
+		queryRj := queryIdToReportingJob["//local.cnspec.io/run/local-execution/queries/ignored-query"]
 		s.Require().NotNil(queryRj)
 
 		parent := queryRj.Notify[0]
@@ -366,7 +355,6 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 
 	s.job.Bundle = bundle
 	s.job.PolicyFilters = []string{"asset-policy"}
-	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
 	scanner := NewLocalScanner(DisableProgressBar())
@@ -385,18 +373,6 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 
 		p := full.ResolvedPolicies[k]
 
-		// Get the code id for all the executed queries
-		executedQueries := []string{}
-		for qCodeId := range p.ExecutionJob.Queries {
-			executedQueries = append(executedQueries, qCodeId)
-		}
-
-		expectedQueries := []string{
-			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId,
-			bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/sshd-score-01"].CodeId,
-		}
-		s.ElementsMatch(expectedQueries, executedQueries)
-
 		queryIdToReportingJob := map[string]*policy.ReportingJob{}
 		for _, rj := range p.CollectorJob.ReportingJobs {
 			_, ok := queryIdToReportingJob[rj.QrId]
@@ -405,13 +381,26 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 		}
 
 		// Make sure the ignored query is ignored
-		queryRj := queryIdToReportingJob[bundleMap.Queries["//local.cnspec.io/run/local-execution/queries/ignored-query"].CodeId]
+		queryRj := queryIdToReportingJob["//local.cnspec.io/run/local-execution/queries/ignored-query"]
 		s.Require().NotNil(queryRj)
 
-		parent := queryRj.Notify[0]
-		parentJob := p.CollectorJob.ReportingJobs[parent]
-		s.Require().NotNil(parentJob)
-		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+		{
+			parent := queryRj.Notify[0]
+			parentJob := p.CollectorJob.ReportingJobs[parent]
+			s.Require().NotNil(parentJob)
+			s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+		}
+		// Make sure the ignored query is reported as disabled
+		{
+			queryRj := queryIdToReportingJob["//local.cnspec.io/run/local-execution/queries/deactivate-query"]
+			s.Require().NotNil(queryRj)
+			var child string
+			for c := range queryRj.ChildJobs {
+				child = c
+				break
+			}
+			s.Equal(explorer.ScoringSystem_DISABLED, queryRj.ChildJobs[child].Scoring)
+		}
 	}
 }
 
