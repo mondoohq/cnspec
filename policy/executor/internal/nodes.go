@@ -590,7 +590,8 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		if s == nil {
 			return nil, nil
 		}
-		policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.impact)
+		i := rjRes.impact
+		policy.AddSpecdScore(calculator, s, rjRes.score != nil, i)
 	}
 
 	policy.AddDataScore(calculator, len(nodeData.datapoints), finishedDatapoints)
