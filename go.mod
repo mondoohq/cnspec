@@ -10,14 +10,14 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/abiosoft/colima v0.8.1
 	github.com/aws/aws-sdk-go-v2/config v1.28.7
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.71.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.72.0
 	github.com/cockroachdb/errors v1.11.3
 	github.com/go-viper/mapstructure/v2 v2.2.1
 	github.com/google/go-cmdtest v0.4.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-version v1.7.0
-	github.com/hashicorp/hc-install v0.9.0
+	github.com/hashicorp/hc-install v0.9.1
 	github.com/hashicorp/hcl/v2 v2.23.0
 	github.com/hashicorp/terraform-exec v0.21.0
 	github.com/hashicorp/terraform-json v0.24.0
@@ -36,13 +36,13 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20201009195203-85dd5c8bc61c
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.10.0
-	github.com/zclconf/go-cty v1.15.1
+	github.com/zclconf/go-cty v1.16.0
 	go.mondoo.com/cnquery/v11 v11.35.0
 	go.mondoo.com/mondoo-go v0.0.0-20241204230241-b8e4fdb12bda
 	go.mondoo.com/ranger-rpc v0.6.5
 	go.opentelemetry.io/otel v1.33.0
 	gocloud.dev v0.40.0
-	golang.org/x/sys v0.28.0
+	golang.org/x/sys v0.29.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241206012308-a4fef0638583
 	google.golang.org/protobuf v1.36.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -160,7 +160,7 @@ require (
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.6.0 // indirect
-	github.com/go-git/go-git/v5 v5.12.0 // indirect
+	github.com/go-git/go-git/v5 v5.13.0 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.3 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
@@ -290,10 +290,10 @@ require (
 	go.opentelemetry.io/otel/trace v1.33.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.30.0 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20241204233417-43b7b7cde48d // indirect
 	golang.org/x/mod v0.22.0 // indirect
-	golang.org/x/net v0.32.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.24.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/term v0.27.0 // indirect
