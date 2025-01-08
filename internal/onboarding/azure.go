@@ -63,6 +63,7 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 				"Microsoft.Compute/virtualMachines/runCommands/read",
 				"Microsoft.Compute/virtualMachines/runCommands/write",
 				"Microsoft.Compute/virtualMachines/runCommands/delete",
+				"Microsoft.Compute/virtualMachines/runCommand/action",
 			},
 			// not_actions = []
 			// data_actions = []
