@@ -337,7 +337,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
-		r.out(r.Printer.H2("Asset: " + target))
+		r.out(r.Printer.H2("Asset: (" + getPlatformNameForAsset(asset) + ") " + target))
 
 		errorMsg, ok := r.data.Errors[assetMrn]
 		if ok {
