@@ -191,9 +191,9 @@ func (r *Report) ToCnqueryReport() *cr.Report {
 		report.Data[id] = &cr.DataValues{
 			Values: map[string]*cr.DataValue{},
 		}
-		for mid, value := range data.Values {
+		for mid, value := range data.GetValues() {
 			report.Data[id].Values[mid] = &cr.DataValue{
-				Content: value.Content,
+				Content: value.GetContent(),
 			}
 		}
 	}
