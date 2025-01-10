@@ -69,6 +69,11 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			return nil, errors.New("cannot find resolved pack for " + id + " in report")
 		}
 
+		reportingJobByQrId := map[string]*policy.ReportingJob{}
+		for _, job := range resolved.CollectorJob.ReportingJobs {
+			reportingJobByQrId[job.QrId] = job
+		}
+
 		results := report.RawResults()
 		if resolved.ExecutionJob == nil {
 			continue
@@ -81,8 +86,10 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 				continue
 			}
 			// checks
-			if _, ok := report.Scores[qid]; ok {
-				continue
+			if rj, ok := reportingJobByQrId[mrn]; ok {
+				if !(rj.Type == policy.ReportingJob_DATA_QUERY || rj.Type == policy.ReportingJob_CHECK_AND_DATA_QUERY) {
+					continue
+				}
 			}
 
 			buf := &bytes.Buffer{}

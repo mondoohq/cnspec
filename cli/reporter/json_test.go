@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 
@@ -19,7 +20,23 @@ import (
 )
 
 func TestJsonOutput(t *testing.T) {
-	reportCollectionRaw, err := os.ReadFile("./testdata/report-ubuntu.json")
+	// You can reproduce the report by running
+	// DEBUG=1 cnspec scan local -f bundle.mql.yaml
+	// where
+	// bundle.mql.yaml contains
+	// policies:
+	// - uid: custom-test-policy-1
+	//   name: Custom Test Policy 1
+	//   groups:
+	//   - filters: |
+	// 	  return true
+	// 	checks:
+	// 	- uid: custom-query-passing-1
+	// 	  title: Failing Query
+	// 	  mql: |
+	// 		true == true
+
+	reportCollectionRaw, err := os.ReadFile("./testdata/simple-report.json")
 	require.NoError(t, err)
 
 	yr := &policy.ReportCollection{}
@@ -41,9 +58,10 @@ func TestJsonOutput(t *testing.T) {
 	err = r.WriteReport(context.Background(), yr)
 	require.NoError(t, err)
 	valid := json.Valid(buf.Bytes())
+	fmt.Println(buf.String())
 	require.True(t, valid)
 
-	assert.Contains(t, buf.String(), "//policy.api.mondoo.app/queries/mondoo-linux-security-permissions-on-etcgshadow-are-configured\":{\"score\":100,\"status\":\"pass\"}")
+	assert.Contains(t, buf.String(), "//local.cnspec.io/run/local-execution/queries/custom-query-passing-1\":{\"score\":100,\"status\":\"pass\"}")
 	assert.Contains(t, buf.String(), "\"errors\":{}")
 }
 
