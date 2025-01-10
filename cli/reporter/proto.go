@@ -193,7 +193,7 @@ func (r *Report) ToCnqueryReport() *cr.Report {
 		}
 		for mid, value := range data.Values {
 			report.Data[id].Values[mid] = &cr.DataValue{
-				Content: value.Content,
+				Content: value.GetContent(),
 			}
 		}
 	}
