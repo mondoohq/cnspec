@@ -149,6 +149,11 @@ func TestRiskFactor_Checksums(t *testing.T) {
 			rf.Magnitude.Value = 0.7
 			return rf
 		},
+		// 6
+		func(rf RiskFactor) RiskFactor {
+			rf.Action = explorer.Action_DEACTIVATE
+			return rf
+		},
 	}
 
 	for i := range executionChanges {
