@@ -59,6 +59,7 @@ func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 func (r *RiskFactor) ExecutionChecksum(ctx context.Context, conf mqlc.CompilerConfig) (checksums.Fast, error) {
 	c := checksums.New.
 		AddUint(uint64(r.Scope)).
+		AddUint(uint64(r.Action)).
 		Add(strconv.FormatFloat(float64(r.GetMagnitude().GetValue()), 'f', -1, 64))
 
 	if r.GetMagnitude().GetIsToxic() {
