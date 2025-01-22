@@ -173,6 +173,10 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 			Str("qrid", codeID).
 			Dur("duration", time.Since(startTime)).
 			Msg("finished query execution")
+		if time.Since(startTime) > 5*time.Minute {
+			// if the query duration was more than 5 minutes, send an alert to platform
+			health.ReportSlowQuery("cnspec", cnspec.Version, cnspec.Build, health.SlowQueryInfo{Query: codeID, Duration: time.Since(startTime)})
+		}
 	}()
 	// TODO(jaym): sendResult may not be correct. We may need to fill in the
 	// checksum
