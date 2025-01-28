@@ -16,6 +16,7 @@ const (
 	ScoreType_Unscored
 	ScoreType_OutOfScope
 	ScoreType_Disabled
+	ScoreType_Snoozed
 )
 
 // TypeLabel prints the score's type in a human-readable way
