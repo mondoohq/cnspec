@@ -632,7 +632,7 @@ func (db *Db) SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy 
 		if _, err := db.getRiskFactor(ctx, rf.Mrn); err == nil {
 			continue
 		}
-		if err := db.SetRiskFactor(ctx, rf); err != nil {
+		if err := db.SetRiskFactor(ctx, "", rf); err != nil {
 			return err
 		}
 	}
