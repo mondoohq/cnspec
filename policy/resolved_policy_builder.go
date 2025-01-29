@@ -672,6 +672,15 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			action := normalizeAction(g.Type, c.Action, impact)
 			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
 				actions[c.Mrn] = action
+
+				// If the action is ignore, then the check is snoozed
+				if action == explorer.Action_IGNORE {
+					if impact == nil {
+						impact = &explorer.Impact{}
+					}
+					impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
+					impact.Action = explorer.Action_IGNORE
+				}
 			}
 
 			if impact != nil {
