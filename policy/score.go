@@ -36,6 +36,8 @@ func (s *Score) TypeLabel() string {
 		return "out of scope"
 	case ScoreType_Disabled:
 		return "disabled"
+	case ScoreType_Snoozed:
+		return "snoozed"
 	default:
 		return "unknown type"
 	}
