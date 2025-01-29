@@ -550,10 +550,6 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
 					s.Type = policy.ScoreType_Disabled
 				} else if s.Type == policy.ScoreType_Result {
-					// If the impact is ignore, then the score type should be Snoozed
-					if c.impact.GetScoring() == explorer.ScoringSystem_IGNORE_SCORE {
-						s.Type = policy.ScoreType_Snoozed
-					}
 					// We cant just forward the score if impact is set and we have a result.
 					// We still need to apply impact to the score
 					if c.impact != nil {
