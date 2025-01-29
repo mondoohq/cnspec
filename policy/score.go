@@ -16,6 +16,7 @@ const (
 	ScoreType_Unscored
 	ScoreType_OutOfScope
 	ScoreType_Disabled
+	ScoreType_Snoozed
 )
 
 // TypeLabel prints the score's type in a human-readable way
@@ -35,6 +36,8 @@ func (s *Score) TypeLabel() string {
 		return "out of scope"
 	case ScoreType_Disabled:
 		return "disabled"
+	case ScoreType_Snoozed:
+		return "snoozed"
 	default:
 		return "unknown type"
 	}
