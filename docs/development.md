@@ -6,20 +6,20 @@
 
 Before building from source, be sure to install:
 
-- [Go 1.19.0+](https://golang.org/dl/)
-- [Protocol Buffers v21+](https://github.com/protocolbuffers/protobuf/releases)
+- [Go 1.22.0+](https://go.dev/dl/)
+- [Protocol Buffers v29+](https://github.com/protocolbuffers/protobuf/releases)
 
-On macOS systems with Homebrew, run: `brew install go@1.19 protobuf`
+On macOS systems with Homebrew, run: `brew install go@1.22 protobuf`
 
 ## Install from source
 
-1. Verify that you have Go 1.19+ installed:
+1. Verify that you have Go 1.22+ installed:
 
     ```
     $ go version
     ```
 
-If `go` is not installed or an older version exists, follow instructions on [the Go website](https://golang.org/doc/install).
+If `go` is not installed or an older version exists, follow instructions on [the Go website](https://go.dev/doc/install).
 
 2. Clone this repository:
 
