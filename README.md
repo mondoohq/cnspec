@@ -272,6 +272,6 @@ See our [development docs](docs/development.md) for information on building and 
 
 ## Legal
 
-- **Copyright:** 2018-2024, Mondoo, Inc.
+- **Copyright:** 2018-2025, Mondoo, Inc.
 - **License:** BUSL 1.1
 - **Authors:** Christoph Hartmann, Dominik Richter
