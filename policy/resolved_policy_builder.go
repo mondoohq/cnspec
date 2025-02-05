@@ -847,7 +847,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 
 	hasMatchingRiskFactor := false
 	for _, r := range policy.RiskFactors {
-		if len(r.Checks) == 0 || isOverride(r.Action, GroupType_UNCATEGORIZED) {
+		if len(r.Checks) == 0 {
 			continue
 		}
 

@@ -61,7 +61,7 @@ type DataLake interface {
 	// SetPolicy stores a given policy in the data lake
 	SetPolicy(ctx context.Context, policy *Policy, filters []*explorer.Mquery) error
 	// SetRiskFactor creates and stores a risk factor
-	SetRiskFactor(ctx context.Context, riskFactor *RiskFactor) error
+	SetRiskFactor(ctx context.Context, ownerMrn string, riskFactor *RiskFactor) error
 
 	// List all policies for a given owner
 	// Note: Owner MRN is required

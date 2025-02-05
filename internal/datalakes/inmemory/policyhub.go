@@ -324,7 +324,7 @@ func (db *Db) getRiskFactor(ctx context.Context, mrn string) (*policy.RiskFactor
 	return found.(*policy.RiskFactor), nil
 }
 
-func (db *Db) SetRiskFactor(ctx context.Context, riskFactor *policy.RiskFactor) error {
+func (db *Db) SetRiskFactor(ctx context.Context, ownerMrn string, riskFactor *policy.RiskFactor) error {
 	db.cache.Set(dbIDRiskFactor+riskFactor.Mrn, riskFactor, 1)
 	return nil
 }
