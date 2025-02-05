@@ -201,7 +201,7 @@ func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundl
 	}
 
 	for _, risk := range bundleMap.RiskFactors {
-		if err := s.DataLake.SetRiskFactor(ctx, risk); err != nil {
+		if err := s.DataLake.SetRiskFactor(ctx, bundleMap.OwnerMrn, risk); err != nil {
 			return err
 		}
 	}
