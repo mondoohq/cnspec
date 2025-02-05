@@ -14,7 +14,6 @@ import (
 	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/cli/printer"
 	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/logger"
 	"go.mondoo.com/cnquery/v11/mqlc"
 	"go.mondoo.com/cnquery/v11/providers"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
@@ -109,8 +108,6 @@ func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 }
 
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
-	// write data to file for debugging
-	logger.DebugDumpJSON("report-collection", data)
 	features := cnquery.GetFeatures(ctx)
 	switch r.Conf.format {
 	case FormatCompact, FormatSummary, FormatFull:
