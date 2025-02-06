@@ -58,7 +58,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("inventory-domainlist")
 
 	// bundles, packs & incognito mode
-	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to  Mondoo Platform.")
+	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to Mondoo Platform.")
 	_ = scanCmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.")
 	_ = scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy file")
 	// flag completion command
