@@ -37,13 +37,13 @@ require (
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.10.0
 	github.com/zclconf/go-cty v1.16.2
-	go.mondoo.com/cnquery/v11 v11.40.0
-	go.mondoo.com/mondoo-go v0.0.0-20250129071639-c3de624e0c5a
+	go.mondoo.com/cnquery/v11 v11.40.1-0.20250210194124-e3c2a4674b14
+	go.mondoo.com/mondoo-go v0.0.0-20250205000345-690a9b35d697
 	go.mondoo.com/ranger-rpc v0.6.5
 	go.opentelemetry.io/otel v1.34.0
 	gocloud.dev v0.40.0
 	golang.org/x/sys v0.30.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250127172529-29210b9bc287
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250207221924-e9438ea467c6
 	google.golang.org/protobuf v1.36.5
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/utils v0.0.0-20241210054802-24370beab758
@@ -52,14 +52,14 @@ require (
 
 require (
 	cel.dev/expr v0.19.2 // indirect
-	cloud.google.com/go v0.118.1 // indirect
+	cloud.google.com/go v0.118.2 // indirect
 	cloud.google.com/go/auth v0.14.1 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.7 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	cloud.google.com/go/iam v1.3.1 // indirect
 	cloud.google.com/go/kms v1.20.5 // indirect
 	cloud.google.com/go/longrunning v0.6.4 // indirect
-	cloud.google.com/go/monitoring v1.23.0 // indirect
+	cloud.google.com/go/monitoring v1.24.0 // indirect
 	cloud.google.com/go/secretmanager v1.14.4 // indirect
 	cloud.google.com/go/storage v1.50.0 // indirect
 	dario.cat/mergo v1.0.1 // indirect
@@ -96,23 +96,23 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.32 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.2 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.32 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.202.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.27.14 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.40.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.31.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.202.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.27.15 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.41.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.31.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.5.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.34.16 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.34.18 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.31.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.34.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.56.10 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.56.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.24.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.14 // indirect
 	github.com/aws/smithy-go v1.22.2 // indirect
-	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20250127194757-14dfc70fe71c // indirect
+	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20250206222449-6540026091fe // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
@@ -123,12 +123,12 @@ require (
 	github.com/census-instrumentation/opencensus-proto v0.4.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/bubbles v0.20.0 // indirect
-	github.com/charmbracelet/bubbletea v1.2.4 // indirect
+	github.com/charmbracelet/bubbletea v1.3.0 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/charmbracelet/lipgloss v1.0.0 // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
-	github.com/cloudflare/circl v1.5.0 // indirect
+	github.com/cloudflare/circl v1.6.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20250121191232-2f005788dc42 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/redact v1.1.6 // indirect
@@ -292,20 +292,20 @@ require (
 	go.opentelemetry.io/otel/trace v1.34.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.32.0 // indirect
-	golang.org/x/exp v0.0.0-20250128182459-e0ece0dbea4c // indirect
-	golang.org/x/mod v0.22.0 // indirect
+	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/exp v0.0.0-20250207012021-f9890c6ad9f3 // indirect
+	golang.org/x/mod v0.23.0 // indirect
 	golang.org/x/net v0.34.0 // indirect
-	golang.org/x/oauth2 v0.25.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
-	golang.org/x/time v0.9.0 // indirect
+	golang.org/x/oauth2 v0.26.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.29.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
-	google.golang.org/api v0.219.0 // indirect
-	google.golang.org/genproto v0.0.0-20250127172529-29210b9bc287 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250127172529-29210b9bc287 // indirect
+	google.golang.org/api v0.220.0 // indirect
+	google.golang.org/genproto v0.0.0-20250207221924-e9438ea467c6 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250207221924-e9438ea467c6 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
@@ -318,7 +318,7 @@ require (
 	k8s.io/component-base v0.29.0 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/kubelet v0.29.0 // indirect
-	modernc.org/libc v1.61.11 // indirect
+	modernc.org/libc v1.61.12 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.8.2 // indirect
 	modernc.org/sqlite v1.34.5 // indirect
