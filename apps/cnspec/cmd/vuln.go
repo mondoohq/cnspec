@@ -75,10 +75,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		logger.DebugDumpJSON("mondoo-sbom-report", data)
 	}
 
-	boms, err := generator.NewBom(cnspecReport.ToCnqueryReport())
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to parse sbom data")
-	}
+	boms := generator.GenerateBom(cnspecReport.ToCnqueryReport())
 
 	if len(boms) != 1 {
 		log.Fatal().Msg("received data for more than one asset, this is not supported yet.")
