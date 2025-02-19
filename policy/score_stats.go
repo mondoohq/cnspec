@@ -54,6 +54,7 @@ func (s *ScoreStats) Add(other *ScoreStats) {
 	s.High += other.High
 	s.Medium += other.Medium
 	s.Low += other.Low
+	s.None += other.None
 	s.Pass += other.Pass
 	s.Unknown += other.Unknown
 	s.Error += other.Error
