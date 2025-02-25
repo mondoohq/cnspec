@@ -119,8 +119,10 @@ func (f *Framework) GenerateEvidenceObjects() (*Policy, *FrameworkMap) {
 			c.Evidence = nil
 		}
 	}
-	for _, dep := range f.Dependencies {
-		evidenceFm.FrameworkDependencies = append(evidenceFm.FrameworkDependencies, &explorer.ObjectRef{Mrn: dep.Mrn})
+	if evidenceFm != nil {
+		for _, dep := range f.Dependencies {
+			evidenceFm.FrameworkDependencies = append(evidenceFm.FrameworkDependencies, &explorer.ObjectRef{Mrn: dep.Mrn})
+		}
 	}
 	return evidencePolicy, evidenceFm
 }
