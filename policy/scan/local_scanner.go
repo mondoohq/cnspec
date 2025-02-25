@@ -482,7 +482,11 @@ func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime
 	}
 	asset = runtime.Provider.Connection.Asset
 	slices.Sort(asset.PlatformIds)
-	asset.KindString = asset.GetPlatform().Kind
+	p := asset.GetPlatform()
+	if p == nil {
+		return nil, errors.Newf("no platform detected for asset %s", asset.Name)
+	}
+	asset.KindString = p.Kind
 
 	if services != nil {
 		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
