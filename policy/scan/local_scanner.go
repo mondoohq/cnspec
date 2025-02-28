@@ -6,6 +6,7 @@ package scan
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/cli/config"
 	"go.mondoo.com/cnquery/v11/cli/execruntime"
 	"go.mondoo.com/cnquery/v11/cli/progress"
 	"go.mondoo.com/cnquery/v11/explorer"
@@ -37,6 +39,7 @@ import (
 	"go.mondoo.com/cnspec/v11/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v11/policy"
 	"go.mondoo.com/cnspec/v11/policy/executor"
+	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
@@ -418,7 +421,47 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
+			defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build, func(product, version, build string, r any, stacktrace []byte) {
+				// 1. read config
+				opts, err := config.Read()
+				if err != nil {
+					log.Error().Err(err).Msg("failed to read config")
+					return
+				}
+
+				serviceAccount := opts.GetServiceCredential()
+				if serviceAccount == nil {
+					log.Error().Msg("no service account configured")
+					return
+				}
+
+				tags := map[string]string{
+					"assetMrn":             batch[0].Asset.Mrn,
+					"assetName":            batch[0].Asset.Name,
+					"assetPlatform":        batch[0].Asset.Platform.Name,
+					"assetPlatformVersion": batch[0].Asset.Platform.Version,
+				}
+
+				// 2. create local support bundle
+				event := &health.SendErrorReq{
+					ServiceAccountMrn: opts.ServiceAccountMrn,
+					AgentMrn:          opts.AgentMrn,
+					Product: &health.ProductInfo{
+						Name:    product,
+						Version: version,
+						Build:   build,
+					},
+					Error: &health.ErrorInfo{
+						Message:    "panic: " + fmt.Sprintf("%v -- %v", r, tags),
+						Stacktrace: string(stacktrace),
+					},
+				}
+
+				// 3. send error to mondoo platform
+				sendErrorToMondooPlatform(serviceAccount, event)
+
+				log.Info().Msg("reported panic to Mondoo Platform")
+			})
 
 			for i := range batch {
 				asset := batch[i].Asset
@@ -1060,4 +1103,33 @@ func (s *localAssetScanner) UpdateFilters(filters *explorer.Mqueries, timeout ti
 	}
 
 	return queries, err
+}
+
+func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredentials, event *health.SendErrorReq) {
+	// 3. send error to mondoo platform
+	proxy, err := config.GetAPIProxy()
+	if err != nil {
+		log.Error().Err(err).Msg("failed to parse proxy setting")
+		return
+	}
+	httpClient := ranger.NewHttpClient(ranger.WithProxy(proxy))
+
+	plugins := []ranger.ClientPlugin{}
+	certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
+	if err != nil {
+		return
+	}
+	plugins = append(plugins, certAuth)
+
+	cl, err := health.NewErrorReportingClient(serviceAccount.ApiEndpoint, httpClient, plugins...)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to create error reporting client")
+		return
+	}
+
+	_, err = cl.SendError(context.Background(), event)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to send error to mondoo platform")
+		return
+	}
 }
