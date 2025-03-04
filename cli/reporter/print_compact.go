@@ -553,7 +553,7 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 	}
 	out := res.String()
 
-	r.out(NewLineCharacter + "Risks/Mitigations:" + NewLineCharacter)
+	r.out(NewLineCharacter + "Risks / Preventive Controls:" + NewLineCharacter)
 	if out != "" {
 		r.out(out)
 	} else {
