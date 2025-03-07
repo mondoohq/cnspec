@@ -436,10 +436,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				}
 
 				tags := map[string]string{
-					"assetMrn":             batch[0].Asset.Mrn,
-					"assetName":            batch[0].Asset.Name,
-					"assetPlatform":        batch[0].Asset.Platform.Name,
-					"assetPlatformVersion": batch[0].Asset.Platform.Version,
+					"spaceMrn": spaceMrn,
+				}
+				if len(batch) > 0 {
+					tags["assetMrn"] = batch[0].Asset.Mrn
+					tags["assetName"] = batch[0].Asset.Name
+					tags["platformIDs"] = strings.Join(batch[0].Asset.PlatformIds, ",")
+					tags["assetPlatform"] = batch[0].Asset.Platform.Name
+					tags["assetPlatformVersion"] = batch[0].Asset.Platform.Version
 				}
 
 				// 2. create local support bundle
