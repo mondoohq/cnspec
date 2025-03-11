@@ -20,14 +20,15 @@ import (
 func init() {
 	rootCmd.AddCommand(vulnCmd)
 	vulnCmd.Flags().StringP("output", "o", "full", "Set output format: "+reporter.AllFormats())
-	vulnCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
 	vulnCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
+
+	// we need ths for config parsing but it should not be exposed to the user
 	vulnCmd.Flags().String("asset-name", "", "User-override for the asset name")
+	vulnCmd.Flags().Lookup("asset-name").Hidden = true
 
 	vulnCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
 	vulnCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
 	vulnCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
-	vulnCmd.Flags().StringToString("props", nil, "Custom values for properties")
 }
 
 var vulnCmd = &cobra.Command{
@@ -35,6 +36,7 @@ var vulnCmd = &cobra.Command{
 	Short: "Scans a target for vulnerabilities",
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets
+		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
