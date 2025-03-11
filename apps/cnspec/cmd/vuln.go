@@ -36,11 +36,11 @@ var vulnCmd = &cobra.Command{
 	Short: "Scans a target for vulnerabilities",
 	PreRun: func(cmd *cobra.Command, args []string) {
 		// for all assets
-		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
-		viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
-		viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
-		viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
-		viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
+		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
+		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
+		_ = viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
+		_ = viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
 	},
 }
 
