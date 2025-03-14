@@ -378,8 +378,8 @@ func lintFile(file string) (*Results, error) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 
-			// issue warning if no filters are assigned, but do not show the warning if the policy has variants
-			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) && !hasFilters(group, globalQueriesByUid) {
+			// issue warning if no filters are assigned, but do not show the warning if the policy has variants or if all checks have filters set
+			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasFilters(group, globalQueriesByUid) || !hasVariants(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
 					Line:   group.FileContext.Line,
