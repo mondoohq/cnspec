@@ -378,8 +378,8 @@ func lintFile(file string) (*Results, error) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 
-			// issue warning if no filters are assigned, but do not show the warning if the policy has variants or if all checks have filters set
-			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasFilters(group, globalQueriesByUid) || !hasVariants(group, globalQueriesByUid) {
+			// issue warning if no filters are assigned, but do not show the warning if the policy has variants
+			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) || !hasFilters(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
 					Line:   group.FileContext.Line,
@@ -537,13 +537,13 @@ func hasVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
 func hasFilters(group *PolicyGroup, queryMap map[string]*Mquery) bool {
 	for _, check := range group.Checks {
 		// check embedded query
-		if check.Filters != nil {
+		if check.Filters != nil && len(check.Filters.Items) > 0 {
 			return true
 		}
 
 		// check referenced query
 		q, ok := queryMap[check.Uid]
-		if ok && q.Filters != nil {
+		if ok && q.Filters != nil && len(check.Filters.Items) > 0 {
 			return true
 		}
 	}
