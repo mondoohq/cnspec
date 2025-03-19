@@ -587,7 +587,6 @@ func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery
 
 		// check referenced query
 		q, ok := queryMap[check.Uid]
-		policy has variants
 
 		// 2. If: !checksHaveFilters(group, globalQueriesByUid) && !hasVariants(group, globalQueriesByUid) { false }
 		if ok && (q.Filters == nil && len(q.Filters.Items) < 1) && q.Variants == nil {
