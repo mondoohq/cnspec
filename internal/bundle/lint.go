@@ -582,7 +582,7 @@ func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery
 		//}
 
 		// 4. If: checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { true }
-		if (check.Filters != nil && len(check.Filters.Items) > 0) || check.Variants != nil {
+		if (check.Filters != nil && len(check.Filters.Items) > 0) && check.Variants != nil {
 			return true
 		}
 
@@ -605,7 +605,7 @@ func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery
 		//}
 
 		// 4. If: checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { true }
-		if ok && (q.Filters != nil && len(q.Filters.Items) > 0) || q.Variants != nil {
+		if ok && (q.Filters != nil && len(q.Filters.Items) > 0) {
 			return true
 		}
 
