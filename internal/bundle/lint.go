@@ -404,11 +404,7 @@ func lintFile(file string) (*Results, error) {
 			}
 			*/
 
-			// issue warning if no filters are assigned, but do not show the warning if the policy has variants
-			// 2. If: !checksHaveFilters(group, globalQueriesByUid) && !hasVariants(group, globalQueriesByUid) { false }
-			// 3. If: !checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { false }
-			// 1. If: checksHaveFilters(group, globalQueriesByUid) && !hasVariants(group, globalQueriesByUid) { true }
-			// 4. If: checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { true }
+			// issue warning if no filters are assigned, but do not show the warning if the
 			// OLD:
 			// if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) {
 			if checksHaveFiltersOrVariants(group, globalQueriesByUid) {
@@ -570,12 +566,12 @@ func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery
 	for _, check := range group.Checks {
 
 		// 2. If: !checksHaveFilters(group, globalQueriesByUid) && !hasVariants(group, globalQueriesByUid) { false }
-		if (check.Filters == nil || len(check.Filters.Items) == 0) && check.Variants != nil {
+		if (check.Filters == nil || len(check.Filters.Items) < 1) && check.Variants != nil {
 			return false
 		}
 
 		// 3. If: !checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { false }
-		if (check.Filters == nil || len(check.Filters.Items) == 0) && check.Variants == nil {
+		if (check.Filters == nil || len(check.Filters.Items) < 1) && check.Variants == nil {
 			return false
 		}
 
@@ -591,8 +587,25 @@ func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery
 
 		// check referenced query
 		q, ok := queryMap[check.Uid]
+		policy has variants
 
-		if ok && q.Variants != nil || (q.Filters != nil && len(q.Filters.Items) > 0) {
+		// 2. If: !checksHaveFilters(group, globalQueriesByUid) && !hasVariants(group, globalQueriesByUid) { false }
+		if ok && (q.Filters == nil && len(q.Filters.Items) < 1) && q.Variants == nil {
+			return false
+		}
+
+		// 3. If: !checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { false }
+		if ok && (q.Filters == nil && len(q.Filters.Items) < 1) && q.Variants != nil {
+			return false
+		}
+
+		// 1. If: checksHaveFilters(group, globalQueriesByUid) && !hasVariants(group, globalQueriesByUid) { true }
+		if ok && (q.Filters != nil && len(q.Filters.Items) > 0) && q.Variants == nil {
+			return true
+		}
+
+		// 4. If: checksHaveFilters(group, globalQueriesByUid) && hasVariants(group, globalQueriesByUid) { true }
+		if ok && (q.Filters != nil && len(q.Filters.Items) > 0) && q.Variants != nil {
 			return true
 		}
 
