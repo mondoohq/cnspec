@@ -106,12 +106,12 @@ func TestLintWarn_NoFilterGroupCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, len(results.BundleLocations))
-	assert.Equal(t, 1, len(results.Entries))
+	assert.Equal(t, 2, len(results.Entries))
 	assert.True(t, results.HasWarning())
 
 	entry := results.Entries[0]
-	assert.Equal(t, "query-used-as-different-types", entry.RuleID)
-	assert.Equal(t, "query sshd-sshd-01 is used as a check and data query", entry.Message)
+	assert.Equal(t, "policy-missing-asset-filter", entry.RuleID)
+	assert.Equal(t, "Policy mondoo-aws-security doesn't define an asset filter.", entry.Message)
 }
 
 func TestLint_NoFiltersWarnGroup(t *testing.T) {
