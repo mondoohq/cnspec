@@ -378,8 +378,11 @@ func lintFile(file string) (*Results, error) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 
-			// issue warning if no filters are assigned, but do not show the warning if the policy has variants or if the filters are set within the group
-			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !checksHaveFiltersOrVariants(group, globalQueriesByUid) {
+			// issue warning if no filters are assigned
+			if (group.Filters == nil || len(group.Filters.Items) == 0) &&
+				// but do not show the warning if the policy has variants or
+				// if the filters are set within the group
+				len(group.Policies) == 0 && !checksHaveFiltersOrVariants(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
 					Line:   group.FileContext.Line,
@@ -518,36 +521,37 @@ func isEmbeddedQuery(query *Mquery) bool {
 	return false
 }
 
-func hasVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
-	for _, check := range group.Checks {
-		// check embedded query
-		if check.Variants != nil {
-			return true
-		}
-
-		// check referenced query
-		q, ok := queryMap[check.Uid]
-		if ok && q.Variants != nil {
-			return true
-		}
+// hasVariantsOrFilters returns true if a check has either variants or filters.
+func hasVariantsOrFilters(check *Mquery) bool {
+	if check == nil {
+		return false
 	}
+
+	if check.Variants != nil {
+		return true
+	}
+
+	if check.Filters != nil && len(check.Filters.Items) > 0 {
+		return true
+	}
+
 	return false
 }
 
+// checksHaveFiltersOrVariants iterates over a policy group and returns true if at least one
+// check has variants of filters.
 func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
 	for _, check := range group.Checks {
-
-		if (check.Filters != nil && len(check.Filters.Items) > 0) && check.Variants != nil {
+		// check embedded query
+		if hasVariantsOrFilters(check) {
 			return true
 		}
 
 		// check referenced query
 		q, ok := queryMap[check.Uid]
-
-		if ok && (q.Filters != nil && len(q.Filters.Items) > 0) {
+		if ok && hasVariantsOrFilters(q) {
 			return true
 		}
-
 	}
 	return false
 }
