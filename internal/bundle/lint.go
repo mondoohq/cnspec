@@ -140,6 +140,15 @@ func (r *Results) HasError() bool {
 	return false
 }
 
+func (r *Results) HasWarning() bool {
+	for i := range r.Entries {
+		if r.Entries[i].Level == levelWarning {
+			return true
+		}
+	}
+	return false
+}
+
 type Entry struct {
 	RuleID   string
 	Level    string
