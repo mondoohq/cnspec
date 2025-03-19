@@ -378,35 +378,7 @@ func lintFile(file string) (*Results, error) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 
-			/* OLD
-			// issue warning if no filters are assigned, but do not show the warning if the policy has variants
-			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) {
-				location := Location{
-					File:   file,
-					Line:   group.FileContext.Line,
-					Column: group.FileContext.Column,
-				}
-
-				if group.Filters != nil {
-					location = Location{
-						File:   file,
-						Line:   group.Filters.FileContext.Line,
-						Column: group.Filters.FileContext.Column,
-					}
-				}
-
-				res.Entries = append(res.Entries, Entry{
-					RuleID:   policyMissingAssetFilter,
-					Message:  "Policy " + policy.Uid + " doesn't define an asset filter.",
-					Level:    levelWarning,
-					Location: []Location{location},
-				})
-			}
-			*/
-
-			// issue warning if no filters are assigned, but do not show the warning if the
-			// OLD:
-			// if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) {
+			// issue warning if no filters are assigned, but do not show the warning if the policy has variants or if the filters are set within the group
 			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !checksHaveFiltersOrVariants(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
