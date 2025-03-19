@@ -407,7 +407,7 @@ func lintFile(file string) (*Results, error) {
 			// issue warning if no filters are assigned, but do not show the warning if the
 			// OLD:
 			// if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !hasVariants(group, globalQueriesByUid) {
-			if checksHaveFiltersOrVariants(group, globalQueriesByUid) {
+			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 && !checksHaveFiltersOrVariants(group, globalQueriesByUid) {
 				location := Location{
 					File:   file,
 					Line:   group.FileContext.Line,
