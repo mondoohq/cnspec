@@ -387,9 +387,8 @@ func lintFile(file string) (*Results, error) {
 		for j := range policy.Groups {
 			group := policy.Groups[j]
 
-			// issue warning if no filters are assigned but do not show the warning if
-			// the group has policies
-			if (group.Filters == nil || len(group.Filters.Items) == 0) && len(group.Policies) == 0 {
+			// issue warning if no filters are assigned
+			if group.Filters == nil || len(group.Filters.Items) == 0 {
 				// verify that every check within the group has either a variant or a filter
 				for _, check := range group.Checks {
 					// check embedded query
