@@ -388,30 +388,42 @@ func lintFile(file string) (*Results, error) {
 			group := policy.Groups[j]
 
 			// issue warning if no filters are assigned
-			if (group.Filters == nil || len(group.Filters.Items) == 0) &&
-				// but do not show the warning if the policy has variants or
-				// if the filters are set within the group
-				len(group.Policies) == 0 && !checksHaveFiltersOrVariants(group, globalQueriesByUid) {
-				location := Location{
-					File:   file,
-					Line:   group.FileContext.Line,
-					Column: group.FileContext.Column,
-				}
-
-				if group.Filters != nil {
-					location = Location{
-						File:   file,
-						Line:   group.Filters.FileContext.Line,
-						Column: group.Filters.FileContext.Column,
+			if group.Filters == nil || len(group.Filters.Items) == 0 {
+				// verify that every check within the group has either a variant or a filter
+				for _, check := range group.Checks {
+					// check embedded query
+					if hasVariantsOrFilters(check) {
+						continue
 					}
-				}
 
-				res.Entries = append(res.Entries, Entry{
-					RuleID:   policyMissingAssetFilter,
-					Message:  "Policy " + policy.Uid + " doesn't define an asset filter.",
-					Level:    levelWarning,
-					Location: []Location{location},
-				})
+					// check referenced query
+					q, ok := globalQueriesByUid[check.Uid]
+					if ok && hasVariantsOrFilters(q) {
+						continue
+					}
+
+					// warning: this check does not have variants and filters
+					location := Location{
+						File:   file,
+						Line:   group.FileContext.Line,
+						Column: group.FileContext.Column,
+					}
+
+					if group.Filters != nil {
+						location = Location{
+							File:   file,
+							Line:   group.Filters.FileContext.Line,
+							Column: group.Filters.FileContext.Column,
+						}
+					}
+
+					res.Entries = append(res.Entries, Entry{
+						RuleID:   policyMissingAssetFilter,
+						Message:  "Policy " + policy.Uid + " doesn't define an asset filter.",
+						Level:    levelWarning,
+						Location: []Location{location},
+					})
+				}
 			}
 
 			// issue warning if no checks or data queries are assigned
@@ -544,24 +556,6 @@ func hasVariantsOrFilters(check *Mquery) bool {
 		return true
 	}
 
-	return false
-}
-
-// checksHaveFiltersOrVariants iterates over a policy group and returns true if at least one
-// check has variants of filters.
-func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
-	for _, check := range group.Checks {
-		// check embedded query
-		if hasVariantsOrFilters(check) {
-			return true
-		}
-
-		// check referenced query
-		q, ok := queryMap[check.Uid]
-		if ok && (q.Filters != nil && len(q.Filters.Items) > 0) {
-			return true
-		}
-	}
 	return false
 }
 

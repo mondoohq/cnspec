@@ -122,7 +122,6 @@ func TestLintWarn_NoFilterGroupAndCheckVariant(t *testing.T) {
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 2, len(results.Entries))
 	assert.True(t, results.HasWarning())
-
 	entry := results.Entries[0]
 	assert.Equal(t, "policy-missing-asset-filter", entry.RuleID)
 	assert.Equal(t, "Policy mondoo-aws-security doesn't define an asset filter.", entry.Message)
@@ -135,7 +134,7 @@ func TestLintNoWarn_FiltersGroupLevel(t *testing.T) {
 
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 1, len(results.Entries))
-	assert.True(t, results.HasWarning() == false)
+	assert.False(t, results.HasWarning())
 }
 
 func TestLintNoWarn_NoFiltersGroupLevelFiltersCheck(t *testing.T) {
@@ -145,7 +144,7 @@ func TestLintNoWarn_NoFiltersGroupLevelFiltersCheck(t *testing.T) {
 
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 1, len(results.Entries))
-	assert.True(t, results.HasWarning() == false)
+	assert.False(t, results.HasWarning())
 }
 
 func TestLintNoWarn_NoFilterGroupFiltersCheckVariant(t *testing.T) {
@@ -155,5 +154,15 @@ func TestLintNoWarn_NoFilterGroupFiltersCheckVariant(t *testing.T) {
 
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 1, len(results.Entries))
-	assert.True(t, results.HasWarning() == false)
+	assert.False(t, results.HasWarning())
+}
+
+func TestLintNoWarn_NoFilterGroupFiltersVariantOnly(t *testing.T) {
+	file := "./testdata/pass_noFilterGroupVariantsOnly.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 1, len(results.Entries))
+	assert.False(t, results.HasWarning())
 }
