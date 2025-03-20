@@ -99,3 +99,61 @@ func TestLintFail_MixQueries(t *testing.T) {
 	assert.Equal(t, "query-used-as-different-types", entry.RuleID)
 	assert.Equal(t, "query sshd-sshd-01 is used as a check and data query", entry.Message)
 }
+
+func TestLintWarn_NoFilterGroupCheck(t *testing.T) {
+	file := "./testdata/fail_noFiltersGroupAndCheck.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 2, len(results.Entries))
+	assert.True(t, results.HasWarning())
+
+	entry := results.Entries[0]
+	assert.Equal(t, "policy-missing-asset-filter", entry.RuleID)
+	assert.Equal(t, "Policy mondoo-aws-security doesn't define an asset filter.", entry.Message)
+}
+
+func TestLintWarn_NoFilterGroupAndCheckVariant(t *testing.T) {
+	file := "./testdata/fail_noFiltersGroupAndCheckVariant.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 2, len(results.Entries))
+	assert.True(t, results.HasWarning())
+
+	entry := results.Entries[0]
+	assert.Equal(t, "policy-missing-asset-filter", entry.RuleID)
+	assert.Equal(t, "Policy mondoo-aws-security doesn't define an asset filter.", entry.Message)
+}
+
+func TestLintNoWarn_FiltersGroupLevel(t *testing.T) {
+	file := "./testdata/pass_filtersGroupLevel.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 1, len(results.Entries))
+	assert.True(t, results.HasWarning() == false)
+}
+
+func TestLintNoWarn_NoFiltersGroupLevelFiltersCheck(t *testing.T) {
+	file := "./testdata/pass_noFilterGroupFiltersCheck.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 1, len(results.Entries))
+	assert.True(t, results.HasWarning() == false)
+}
+
+func TestLintNoWarn_NoFilterGroupFiltersCheckVariant(t *testing.T) {
+	file := "./testdata/pass_noFilterGroupFiltersCheckVariant.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 1, len(results.Entries))
+	assert.True(t, results.HasWarning() == false)
+}
