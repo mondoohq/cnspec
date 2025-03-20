@@ -157,3 +157,13 @@ func TestLintNoWarn_NoFilterGroupFiltersCheckVariant(t *testing.T) {
 	assert.Equal(t, 1, len(results.Entries))
 	assert.True(t, results.HasWarning() == false)
 }
+
+func TestLintNoWarn_NoFilterGroupFiltersVariantOnly(t *testing.T) {
+	file := "./testdata/pass_noFilterGroupVariantsOnly.mql.yaml"
+	results, err := bundle.Lint(schema, file)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(results.BundleLocations))
+	assert.Equal(t, 1, len(results.Entries))
+	assert.True(t, results.HasWarning() == false)
+}
