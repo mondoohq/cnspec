@@ -560,24 +560,6 @@ func hasVariantsOrFilters(check *Mquery) bool {
 	return false
 }
 
-// checksHaveFiltersOrVariants iterates over a policy group and returns true if at least one
-// check has variants of filters.
-func checksHaveFiltersOrVariants(group *PolicyGroup, queryMap map[string]*Mquery) bool {
-	for _, check := range group.Checks {
-		// check embedded query
-		if hasVariantsOrFilters(check) {
-			return true
-		}
-
-		// check referenced query
-		q, ok := queryMap[check.Uid]
-		if ok && hasVariantsOrFilters(q) {
-			return true
-		}
-	}
-	return false
-}
-
 func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, assignedQueries map[string]struct{}, variantMapping map[string]string, requiresUID bool) *Results {
 	res := &Results{}
 	uid := query.Uid
