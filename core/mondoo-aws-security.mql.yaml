@@ -765,7 +765,9 @@ queries:
         title: Terraform Documentation - AWS Provider
   - uid: mondoo-aws-security-iam-group-has-users-check
     title: Ensure IAM groups are utilized by assigning at least one user
+    filters: asset.platform == "aws-iam-group"
     impact: 30
+    mql: aws.iam.group.usernames != empty
     docs:
       desc: |
         This check ensures that IAM groups in AWS have at least one assigned user. IAM groups help manage permissions efficiently by allowing administrators to assign policies at the group level instead of managing permissions for individual IAM users. If IAM groups exist without any users, it indicates potential misconfigurations or unused access controls.
@@ -874,15 +876,6 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_groups_manage.html
         title: AWS Documentation - IAM user groups
-    variants:
-      - uid: mondoo-aws-security-iam-group-has-users-check-account
-      - uid: mondoo-aws-security-iam-group-has-users-check-single-group
-  - uid: mondoo-aws-security-iam-group-has-users-check-account
-    filters: asset.platform == "aws"
-    mql: aws.iam.groups.all(usernames != empty)
-  - uid: mondoo-aws-security-iam-group-has-users-check-single-group
-    filters: asset.platform == "aws-iam-group"
-    mql: aws.iam.group.usernames != empty
   - uid: mondoo-aws-security-iam-users-only-one-access-key
     title: Ensure there is only one active access key available for any single IAM user
     impact: 70
@@ -985,7 +978,11 @@ queries:
             ```
   - uid: mondoo-aws-security-iam-user-no-inline-policies-check
     title: Ensure IAM users receive permissions only through groups
+    filters: asset.platform == "aws-iam-user"
     impact: 70
+    mql: |
+      aws.iam.user.policies == empty
+      aws.iam.user.attachedPolicies == empty
     docs:
       desc: |
         This check ensures that AWS IAM users do not have directly attached policies and instead receive permissions exclusively through IAM groups. Assigning permissions via groups simplifies access management, enforces least privilege principles, and reduces the risk of misconfigured permissions at the individual user level.
@@ -1124,22 +1121,13 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-vs-inline.html
         title: Managed policies and inline policies
-    variants:
-      - uid: mondoo-aws-security-iam-user-no-inline-policies-check-account
-      - uid: mondoo-aws-security-iam-user-no-inline-policies-check-single-user
-  - uid: mondoo-aws-security-iam-user-no-inline-policies-check-account
-    filters: asset.platform == "aws"
-    mql: |
-      aws.iam.users.all(policies == empty)
-      aws.iam.users.all(attachedPolicies == empty)
-  - uid: mondoo-aws-security-iam-user-no-inline-policies-check-single-user
-    filters: asset.platform == "aws-iam-user"
-    mql: |
-      aws.iam.user.policies == empty
-      aws.iam.user.attachedPolicies == empty
   - uid: mondoo-aws-security-vpc-default-security-group-closed
     title: Ensure the default security group of every VPC restricts all traffic
+    filters: asset.platform == "aws-security-group" && aws.ec2.securitygroup.name == "default"
     impact: 80
+    mql: |
+      aws.ec2.securitygroup.ipPermissions == empty
+      aws.ec2.securitygroup.ipPermissionsEgress == empty
     docs:
       desc: |
         This check ensures that the default security group (SG) for every AWS Virtual Private Cloud (VPC) is configured to restrict all inbound and outbound traffic. By default, AWS creates a default security group for each VPC, which allows unrestricted communication between instances associated with the group. This can pose a significant security risk if not properly restricted.
@@ -1253,25 +1241,6 @@ queries:
         title: AWS Documentation - AWS CLI Reference - EC2
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
         title: Terraform Documentation - AWS Provider
-    variants:
-      - uid: mondoo-aws-security-vpc-default-security-group-closed-account
-      - uid: mondoo-aws-security-vpc-default-security-group-closed-secgroup
-  - uid: mondoo-aws-security-vpc-default-security-group-closed-account
-    title: Ensure the default security group of every VPC restricts all traffic
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.securityGroups.where(name == "default").all(
-        ipPermissions == empty
-      )
-      aws.ec2.securityGroups.where(name == "default").all(
-        ipPermissionsEgress == empty
-      )
-  - uid: mondoo-aws-security-vpc-default-security-group-closed-secgroup
-    title: Ensure the default security group of every VPC restricts all traffic
-    filters: asset.platform == "aws-security-group" && aws.ec2.securitygroup.name == "default"
-    mql: |
-      aws.ec2.securitygroup.ipPermissions == empty
-      aws.ec2.securitygroup.ipPermissionsEgress == empty
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default
     title: Ensure EBS volume encryption is enabled by default
     filters: asset.platform == "aws"
@@ -1641,19 +1610,10 @@ queries:
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block
         title: Terraform Documentation - AWS Provider - aws_s3_bucket_public_access_block
     variants:
-      - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-account
       - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-bucket
       - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-terraform-hcl
       - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-terraform-plan
       - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-terraform-state
-  - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-account
-    filters: asset.platform == "aws"
-    mql: |
-      aws.s3.buckets.all(publicAccessBlock != empty)
-      aws.s3.buckets.all(publicAccessBlock.BlockPublicAcls == true)
-      aws.s3.buckets.all(publicAccessBlock.BlockPublicPolicy == true)
-      aws.s3.buckets.all(publicAccessBlock.IgnorePublicAcls == true)
-      aws.s3.buckets.all(publicAccessBlock.RestrictPublicBuckets == true)
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-bucket
     filters: asset.platform == "aws-s3-bucket"
     mql: |
@@ -1991,7 +1951,17 @@ queries:
     mql: terraform.state.resources.where( type == "aws_instance" ).all( values.metadata_options[0].http_endpoint == "disabled" || values.metadata_options[0].http_tokens == "required" )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled
     title: Ensure VPC flow logging is enabled in all VPCs
+    filters: asset.platform == "aws-vpc"
     impact: 70
+    mql: |
+      aws.vpc.flowLogs.any(
+        status == "ACTIVE" &&
+        destination != empty &&
+        destinationType == "cloud-watch-logs" &&
+        deliverLogsStatus == "SUCCESS" &&
+        trafficType == "REJECT" ||
+        trafficType == "ALL"
+        )
     docs:
       desc: |
         This check ensures that Amazon Virtual Private Cloud (VPC) flow logs are enabled for all VPCs to capture network traffic metadata. VPC Flow Logs provide visibility into network traffic patterns, allowing security teams to monitor, detect anomalies, and investigate incidents such as unauthorized access, data exfiltration, and security breaches.
@@ -2127,39 +2097,14 @@ queries:
         title: Terraform registry - Cloud Posse AWS Utils Provider
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
         title: Terraform Documentation - AWS Provider
-    variants:
-      - uid: mondoo-aws-security-vpc-flow-logs-enabled-account
-      - uid: mondoo-aws-security-vpc-flow-logs-enabled-single-vpc
-  - uid: mondoo-aws-security-vpc-flow-logs-enabled-account
-    filters: asset.platform == "aws"
-    mql: |
-      aws.vpcs.all(
-        flowLogs.any(
-          status == "ACTIVE" &&
-          destination != empty &&
-          destinationType == "cloud-watch-logs" &&
-          deliverLogsStatus == "SUCCESS" &&
-          trafficType == "REJECT" ||
-          trafficType == "ALL"
-          )
-      )
-  - uid: mondoo-aws-security-vpc-flow-logs-enabled-single-vpc
-    filters: asset.platform == "aws-vpc"
-    mql: |
-      aws.vpc.flowLogs.any(
-        status == "ACTIVE" &&
-        destination != empty &&
-        destinationType == "cloud-watch-logs" &&
-        deliverLogsStatus == "SUCCESS" &&
-        trafficType == "REJECT" ||
-        trafficType == "ALL"
-        )
   - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
     title: Ensure DynamoDB tables are encrypted with AWS Key Management Service (KMS)
+    filters: |
+      asset.platform == "aws-dynamodb-table"
     impact: 30
-    variants:
-      - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-all
-      - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-single
+    mql: |
+      aws.dynamodb.table.sseDescription.SSEType == "KMS"
+      aws.dynamodb.table.sseDescription.Status == "ENABLED"
     docs:
       desc: |
         This check ensures that Amazon DynamoDB tables are encrypted using AWS Key Management Service (KMS) to protect sensitive data at rest. DynamoDB encryption at rest ensures that data is automatically encrypted before being written to disk and decrypted when read, preventing unauthorized access to stored information.
@@ -2336,20 +2281,14 @@ queries:
         title: Terraform Documentation - AWS Provider
       - url: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/EncryptionAtRest.html
         title: AWS Documentation - DynamoDB encryption at rest
-  - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.dynamodb.tables.all(sseDescription.SSEType == "KMS")
-      aws.dynamodb.tables.all(sseDescription.Status == "ENABLED")
-  - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-single
-    filters: |
-      asset.platform == "aws-dynamodb-table"
-    mql: |
-      aws.dynamodb.table.sseDescription.SSEType == "KMS"
-      aws.dynamodb.table.sseDescription.Status == "ENABLED"
   - uid: mondoo-aws-security-lambda-concurrency-check
     title: Ensure Lambda functions are configured with function-level concurrent execution limits
+    filters: |
+      asset.platform == "aws-lambda-function"
     impact: 60
+    mql: |
+      aws.lambda.function.concurrency > 0
+      aws.lambda.function.concurrency <= 100
     docs:
       desc: |
         This check ensures that AWS Lambda functions are configured with function-level concurrent execution limits to prevent excessive resource consumption and throttle protection at the account level. By default, Lambda functions share the account-level concurrency limit, which can lead to resource exhaustion, affecting other critical workloads if a single function consumes too many concurrent executions.
@@ -2444,26 +2383,10 @@ queries:
                   FunctionName: !Ref SecureLambdaFunction
                   ReservedConcurrentExecutions: 10
             ```
-    variants:
-      - uid: mondoo-aws-security-lambda-concurrency-check-single
-      - uid: mondoo-aws-security-lambda-concurrency-check-all
-  - uid: mondoo-aws-security-lambda-concurrency-check-single
-    filters: |
-      asset.platform == "aws-lambda-function"
-    mql: |
-      aws.lambda.function.concurrency > 0
-      aws.lambda.function.concurrency <= 100
-  - uid: mondoo-aws-security-lambda-concurrency-check-all
-    filters: |
-      asset.platform == "aws"
-    mql: |
-      aws.lambda.functions.all(concurrency > 0)
-      aws.lambda.functions.all(concurrency <= 100)
   - uid: mondoo-aws-security-rds-instance-public-access-check
     title: Ensure all RDS instances are not publicly accessible
     impact: 100
     variants:
-      - uid: mondoo-aws-security-rds-instance-public-access-check-all
       - uid: mondoo-aws-security-rds-instance-public-access-check-single
       - uid: mondoo-aws-security-rds-instance-public-access-check-terraform-hcl
       - uid: mondoo-aws-security-rds-instance-public-access-check-terraform-plan
@@ -2611,19 +2534,6 @@ queries:
         title: Terraform Registry - aws_db_instance
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-controls-reference.html
         title: AWS Documentation - Security Hub controls reference
-  - uid: mondoo-aws-security-rds-instance-public-access-check-all
-    filters: |
-      asset.platform == "aws"
-    mql: |
-      aws.rds.instances.all(publiclyAccessible == false)
-      aws.rds.instances
-        .where(publiclyAccessible != false)
-        .none(securityGroups.where(
-          vpc.routeTables.where(
-            routes.any(GatewayId == /igw-/ && DestinationCidrBlock == "0.0.0.0/0")
-          )
-        )
-      )
   - uid: mondoo-aws-security-rds-instance-public-access-check-single
     filters: |
       asset.platform == "aws-rds-dbinstance"
@@ -2647,7 +2557,6 @@ queries:
     title: Ensure Redshift clusters are not publicly accessible
     impact: 95
     variants:
-      - uid: mondoo-aws-security-redshift-cluster-public-access-check-all
       - uid: mondoo-aws-security-redshift-cluster-public-access-check-single
       - uid: mondoo-aws-security-redshift-cluster-public-access-check-terraform-hcl
       - uid: mondoo-aws-security-redshift-cluster-public-access-check-terraform-plan
@@ -2787,9 +2696,6 @@ queries:
         title: AWS Documentation - AWS CLI Command Reference - Redshift
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
         title: Terraform Documentation - AWS Provider
-  - uid: mondoo-aws-security-redshift-cluster-public-access-check-all
-    filters: asset.platform == "aws"
-    mql: aws.redshift.clusters.all(publiclyAccessible == false)
   - uid: mondoo-aws-security-redshift-cluster-public-access-check-single
     filters: asset.platform == "aws-redshift-cluster"
     mql: aws.redshift.cluster.publiclyAccessible == false
@@ -2804,14 +2710,14 @@ queries:
     mql: terraform.state.resources.where( type == "aws_redshift_cluster" ).all( values.publicly_accessible != true )
   - uid: mondoo-aws-security-ec2-volume-inuse-check
     title: Ensure EBS volumes attached to EC2 instances are configured for deletion on instance termination
+    filters: asset.platform == "aws-ebs-volume" && aws.ec2.volume.attachments != empty
     impact: 60
+    mql: |
+      aws.ec2.volume.attachments.any(DeleteOnTermination == true)
     props:
       - uid: mondooAWSSecurityEbsVolumeDeleteOnTermination
         title: Defines whether instances should be configured to delete volumes on termination
         mql: "true"
-    variants:
-      - uid: mondoo-aws-security-ec2-volume-inuse-check-all
-      - uid: mondoo-aws-security-ec2-volume-inuse-check-single
     docs:
       desc: |
         This check ensures that Amazon Elastic Block Store (EBS) volumes attached to EC2 instances are configured to be automatically deleted when the instance is terminated. When an EBS volume is created and attached to an instance, the `DeleteOnTermination` attribute determines whether the volume persists after instance termination.
@@ -2933,17 +2839,12 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-deleting-volume.html
         title: AWS Documentation - Delete an Amazon EBS volume
-  - uid: mondoo-aws-security-ec2-volume-inuse-check-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.volumes.where(attachments != empty).all(attachments.any(DeleteOnTermination == props.mondooAWSSecurityEbsVolumeDeleteOnTermination))
-  - uid: mondoo-aws-security-ec2-volume-inuse-check-single
-    filters: asset.platform == "aws-ec2-volume" && aws.ec2.volume.attachments != empty
-    mql: |
-      aws.ec2.volume.attachments.any(DeleteOnTermination == true)
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
     title: Ensure EBS snapshots are not publicly restorable
+    filters: asset.platform == "aws-ebs-snapshot"
     impact: 80
+    mql: |
+      aws.ec2.snapshot.createVolumePermission.none(Group == "all")
     docs:
       desc: |
         This check ensures that Amazon Elastic Block Store (EBS) snapshots are not configured to be publicly restorable. A public snapshot can be accessed by anyone, potentially exposing sensitive data. AWS provides fine-grained access controls for EBS snapshots, and by default, snapshots are private unless explicitly shared.
@@ -3028,23 +2929,14 @@ queries:
                   Size: 20
                   AvailabilityZone: "us-east-1a"
             ```
-    variants:
-      - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-all
-      - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-single
-  - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.snapshots.all(createVolumePermission.none(Group == "all"))
-  - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-single
-    filters: asset.platform == "aws-ec2-snapshot" || asset.platform == "aws-ebs-snapshot"
-    mql: |
-      aws.ec2.snapshot.createVolumePermission.none(Group == "all")
   - uid: mondoo-aws-security-efs-encrypted-check
     title: Ensure EFS is configured to encrypt file data using KMS
+    filters: |
+      asset.platform == "aws-efs-filesystem"
     impact: 75
-    variants:
-      - uid: mondoo-aws-security-efs-encrypted-check-all
-      - uid: mondoo-aws-security-efs-encrypted-check-single
+    mql: |
+      aws.efs.filesystem.encrypted == true
+      aws.efs.filesystem.kmsKey != empty
     docs:
       desc: |
         This check ensures that Amazon Elastic File System (EFS) is configured to encrypt file data at rest using AWS Key Management Service (KMS). Encryption helps protect sensitive data from unauthorized access by ensuring that files are stored securely. AWS KMS provides centralized key management and integrates with EFS to automatically encrypt and decrypt data transparently.
@@ -3165,18 +3057,6 @@ queries:
         title: Terraform Registry - aws_efs_file_system resource
       - url: https://docs.aws.amazon.com/efs/latest/ug/creating-using-create-fs.html#creating-using-fs-part1-cli
         title: AWS Documentation - Creating a file system using the AWS CLI
-  - uid: mondoo-aws-security-efs-encrypted-check-all
-    filters: |
-      asset.platform == "aws"
-    mql: |
-      aws.efs.filesystems.all(encrypted == true)
-      aws.efs.filesystems.all(kmsKey != empty)
-  - uid: mondoo-aws-security-efs-encrypted-check-single
-    filters: |
-      asset.platform == "aws-efs-filesystem"
-    mql: |
-      aws.efs.filesystem.encrypted == true
-      aws.efs.filesystem.kmsKey != empty
   - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
     title: Ensure CloudWatch Logs are encrypted at rest using KMS CMKs
     filters: asset.platform == "aws"
@@ -3873,17 +3753,9 @@ queries:
           ```
     variants:
       - uid: mondoo-aws-security-secgroup-restricted-ssh-single
-      - uid: mondoo-aws-security-secgroup-restricted-ssh-all
       - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-hcl
       - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-plan
       - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-state
-  - uid: mondoo-aws-security-secgroup-restricted-ssh-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.securityGroups.where(ipPermissions.any(
-        ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0"))).all(
-          ipPermissions.none(fromPort <= 22 && toPort >= 22 && toPort != 0)
-      )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-single
     filters: asset.platform == "aws-security-group"
     mql: |
@@ -3983,17 +3855,9 @@ queries:
             ```
     variants:
       - uid: mondoo-aws-security-secgroup-restricted-vnc-single
-      - uid: mondoo-aws-security-secgroup-restricted-vnc-all
       - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-hcl
       - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-plan
       - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-state
-  - uid: mondoo-aws-security-secgroup-restricted-vnc-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.securityGroups.where(ipPermissions.any(
-        ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0"))).all(
-          ipPermissions.none(fromPort <= 5900 && toPort >= 5900 && toPort != 0)
-       )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-single
     filters: asset.platform == "aws-security-group"
     mql: |
@@ -4130,17 +3994,9 @@ queries:
             ```
     variants:
       - uid: mondoo-aws-security-secgroup-restricted-rdp-single
-      - uid: mondoo-aws-security-secgroup-restricted-rdp-all
       - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-hcl
       - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-plan
       - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-state
-  - uid: mondoo-aws-security-secgroup-restricted-rdp-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.securityGroups.where(ipPermissions.any(
-       ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0"))).all(
-          ipPermissions.none(fromPort <= 3389 && toPort >= 3389 && toPort != 0)
-       )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-single
     filters: asset.platform == "aws-security-group"
     mql: |
@@ -4288,7 +4144,6 @@ queries:
             ```
     variants:
       - uid: mondoo-aws-security-secgroup-restrict-traffic-single
-      - uid: mondoo-aws-security-secgroup-restrict-traffic-all
       - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-hcl
       - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-plan
       - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-state
@@ -4299,13 +4154,6 @@ queries:
         fromPort == -1 && toPort == -1).none(
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
-  - uid: mondoo-aws-security-secgroup-restrict-traffic-all
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ec2.securityGroups.where(ipPermissions.any(
-        ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0"))).all(
-          ipPermissions.none(fromPort == -1 && toPort == -1)
-       )
   - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_security_group")
     mql: terraform.resources.where( nameLabel == "aws_security_group" && blocks.where( type == "ingress").contains( arguments.to_port == -1 )).none( blocks.where( type == "ingress" ) { arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.cidr_blocks.contains("::/0") })
