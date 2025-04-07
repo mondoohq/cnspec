@@ -39,7 +39,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/zclconf/go-cty v1.16.2
-	go.mondoo.com/cnquery/v11 v11.48.0
+	go.mondoo.com/cnquery/v11 v11.48.1-0.20250407060105-29e8495e2b93
 	go.mondoo.com/mondoo-go v0.0.0-20250326000352-c1087ab878cb
 	go.mondoo.com/ranger-rpc v0.6.5
 	go.opentelemetry.io/otel v1.35.0
@@ -152,6 +152,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dvsekhvalnov/jose2go v1.8.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/endobit/oui v0.5.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.2.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
