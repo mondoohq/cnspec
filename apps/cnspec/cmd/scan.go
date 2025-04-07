@@ -76,6 +76,14 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("category")
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
 	_ = scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
+
+	// WIF authentication flags (Hidden for now)
+	_ = scanCmd.Flags().String("audience", "", "Authentication audience")
+	_ = scanCmd.Flags().String("api_endpoint", "", "API endpoint URL")
+	_ = scanCmd.Flags().String("issuer_uri", "", "Issuer URI (optional)")
+	_ = scanCmd.Flags().MarkHidden("audience")
+	_ = scanCmd.Flags().MarkHidden("api_endpoint")
+	_ = scanCmd.Flags().MarkHidden("issuer_uri")
 }
 
 var scanCmd = &cobra.Command{
@@ -132,6 +140,11 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("json", cmd.Flags().Lookup("json"))
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		_ = viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target"))
+
+		// Bind WIF authentication flags
+		_ = viper.BindPFlag("audience", cmd.Flags().Lookup("audience"))
+		_ = viper.BindPFlag("api_endpoint", cmd.Flags().Lookup("api_endpoint"))
+		_ = viper.BindPFlag("issuer_uri", cmd.Flags().Lookup("issuer_uri"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -217,6 +230,11 @@ type scanConfig struct {
 
 	DoRecord bool
 	AgentMrn string
+
+	// WIF authentication parameters
+	Audience    string
+	ApiEndpoint string
+	IssuerUri   string
 }
 
 func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) (*scanConfig, error) {
@@ -264,6 +282,9 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		runtime:        runtime,
 		AgentMrn:       opts.AgentMrn,
 		OutputTarget:   viper.GetString("output-target"),
+		Audience:       viper.GetString("audience"),
+		ApiEndpoint:    viper.GetString("api_endpoint"),
+		IssuerUri:      viper.GetString("issuer_uri"),
 	}
 
 	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
@@ -309,9 +330,16 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	// use the policies that are defined in Mondoo Platform
 	if serviceAccount != nil {
 		log.Info().Msg("using service account credentials")
+
+		// Initialize the API endpoint from the flag or fall back to the default
+		apiEndpoint := conf.ApiEndpoint
+		if apiEndpoint == "" {
+			apiEndpoint = opts.UpstreamApiEndpoint()
+		}
+
 		conf.runtime.UpstreamConfig = &upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
-			ApiEndpoint: opts.UpstreamApiEndpoint(),
+			ApiEndpoint: apiEndpoint,
 			ApiProxy:    opts.APIProxy,
 			Incognito:   conf.IsIncognito,
 			Creds:       serviceAccount,
