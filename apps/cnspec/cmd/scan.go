@@ -80,7 +80,7 @@ func init() {
 	// WIF authentication flags (Hidden for now)
 	_ = scanCmd.Flags().String("audience", "", "Authentication audience")
 	_ = scanCmd.Flags().String("api_endpoint", "", "API endpoint URL")
-	_ = scanCmd.Flags().String("issuer_uri", "", "Issuer URI (optional)")
+	_ = scanCmd.Flags().String("issuer_uri", "", "Issuer URI")
 	_ = scanCmd.Flags().MarkHidden("audience")
 	_ = scanCmd.Flags().MarkHidden("api_endpoint")
 	_ = scanCmd.Flags().MarkHidden("issuer_uri")
@@ -108,6 +108,13 @@ To manually configure a policy, use this:
 		if output == "help" {
 			fmt.Println(reporter.AllAvailableOptions())
 			os.Exit(0)
+		}
+
+		// Validate that if audience is set, api_endpoint must also be set
+		audience, _ := cmd.Flags().GetString("audience")
+		apiEndpoint, _ := cmd.Flags().GetString("api_endpoint")
+		if audience != "" && apiEndpoint == "" {
+			log.Fatal().Msg("When --audience is specified, --api_endpoint must also be specified")
 		}
 
 		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
