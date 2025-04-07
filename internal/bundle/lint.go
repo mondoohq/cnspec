@@ -14,6 +14,7 @@ import (
 	"github.com/Masterminds/semver"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
 	"go.mondoo.com/cnspec/v11/policy"
+	k8sYaml "sigs.k8s.io/yaml"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 	bundleCompileError         = "bundle-compile-error"
 	bundleInvalid              = "bundle-invalid"
 	bundleInvalidUid           = "bundle-invalid-uid"
+	bundleUnknownField         = "bundle-unknown-field"
 	policyUid                  = "policy-uid"
 	policyName                 = "policy-name"
 	policyUidUnique            = "policy-uid-unique"
@@ -239,6 +241,22 @@ func lintFile(file string) (*Results, error) {
 			}},
 		})
 		return res, nil
+	}
+
+	// This will generate errors if the yaml contains fields that are not
+	// known in the policy.Bundle struct
+	err = k8sYaml.UnmarshalStrict(data, &policy.Bundle{})
+	if err != nil {
+		res.Entries = append(res.Entries, Entry{
+			RuleID:  bundleUnknownField,
+			Message: fmt.Sprintf("bundle contains unknown fields %s: %s", filepath.Base(file), err.Error()),
+			Level:   levelError,
+			Location: []Location{{
+				File:   file,
+				Line:   1,
+				Column: 1,
+			}},
+		})
 	}
 
 	// index global queries that are not embedded
