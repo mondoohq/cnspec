@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v11/policy"
 	"gopkg.in/yaml.v3"
+	k8sYaml "sigs.k8s.io/yaml"
 )
 
 // Formats the given bundle to a yaml string
@@ -52,9 +53,22 @@ func FormatRecursive(mqlBundlePath string, sort bool) error {
 
 // ParseYaml loads a yaml file and parse it into the go struct
 func ParseYaml(data []byte) (*Bundle, error) {
+	// This will generate errors if the yaml contains fields that are not
+	// known in the policy.Bundle struct
+	err := k8sYaml.UnmarshalStrict(data, &policy.Bundle{})
+	if err != nil {
+		return nil, err
+	}
+
 	baseline := Bundle{}
 
-	err := yaml.Unmarshal([]byte(data), &baseline)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true) // Enforce strict field mapping
+
+	err = decoder.Decode(&baseline)
+	if err != nil {
+		return nil, err
+	}
 	return &baseline, err
 }
 
