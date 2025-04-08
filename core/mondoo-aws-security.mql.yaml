@@ -69,6 +69,9 @@ policies:
       - title: AWS RDS DB Instance
         checks:
           - uid: mondoo-aws-security-rds-instance-public-access-check
+      - title: AWS RDS DB Cluster
+        checks:
+          - uid: mondoo-aws-security-rds-cluster-public-access-check
       - title: AWS Redshift Cluster
         checks:
           - uid: mondoo-aws-security-redshift-cluster-public-access-check
@@ -2378,6 +2381,180 @@ queries:
                   FunctionName: !Ref SecureLambdaFunction
                   ReservedConcurrentExecutions: 10
             ```
+  - uid: mondoo-aws-security-rds-cluster-public-access-check
+    title: Ensure all RDS clusters are not publicly accessible
+    impact: 100
+    variants:
+      - uid: mondoo-aws-security-rds-cluster-public-access-check-single
+    docs:
+      desc: |
+        This check ensures that Amazon Relational Database Service (RDS) clusters and cluster instances are not publicly accessible to prevent unauthorized access to sensitive databases. By default, RDS instances can be configured to allow public access, which exposes them to the internet, increasing the risk of security breaches, unauthorized data access, and potential data exfiltration.
+
+        **Rationale:**
+
+        Publicly accessible RDS clusters pose significant security risks, including:
+
+        - Unauthorized access if credentials or security configurations are weak.
+        - Brute-force attacks on database authentication.
+        - Non-compliance with security frameworks such as CIS AWS Foundations Benchmark, PCI DSS, HIPAA, and ISO 27001.
+
+        To mitigate these risks, RDS clusters should be deployed in private subnets and accessible only through bastion hosts, VPNs, or AWS PrivateLink instead of direct internet exposure.
+
+        **Risk mitigation:**
+
+        - Prevents unauthorized access by restricting direct exposure to the internet.
+        - Enhances database security by enforcing private networking best practices.
+        - Ensures compliance with regulatory and cloud security standards.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console:**
+
+            1.	Navigate to the AWS RDS Console.
+            2.	In the left panel, select Databases.
+            3.	Locate and select the RDS Cluster (e.g., Aurora) you want to update.
+            4.	Under the Connectivity & security tab, check the Publicly accessible setting for both:
+              - The cluster itself
+              - Each DB instance in the cluster (shown below the cluster details)
+            5.	If the cluster or any of its instances are publicly accessible:
+              - For the cluster:
+              - Choose Modify cluster.
+              - Under Connectivity, set Public access to No.
+              - Select Continue, then choose Apply immediately or schedule for the next maintenance window.
+              - For each instance:
+              - Choose the instance name to open its details.
+              - Select Modify.
+              - Under Connectivity, set Public access to No.
+              - Select Continue, then Apply immediately or schedule as needed.
+            6.	Ensure the DB subnet group used by the cluster points to private subnets (i.e., subnets with MapPublicIpOnLaunch set to false).
+            7.	Confirm the security group allows access only from trusted sources—e.g., your app servers, bastion hosts, or VPN.
+        - id: cli
+          desc: |
+            **Using AWS CLI:**
+
+            Check if an RDS Cluster is publicly accessible:
+
+            ```bash
+            aws rds describe-db-clusters --query "DBClusters[*].{DBClusterIdentifier:DBClusterIdentifier, PubliclyAccessible:PubliclyAccessible}"
+              ```
+
+            Check if RDS Cluster instances are publicly accessible:
+
+            ```bash
+              aws rds describe-db-instances --query "DBInstances[*].{DBInstanceIdentifier:DBInstanceIdentifier, DBClusterIdentifier:DBClusterIdentifier, PubliclyAccessible:PubliclyAccessible}"
+            ```
+
+            If the cluster or any of its instances are public, modify them:
+
+            ```bash
+            aws rds modify-db-cluster --db-cluster-identifier <db-cluster-id> --publicly-accessible false --apply-immediately
+            ```
+
+            ```bash
+            aws rds modify-db-instance --db-instance-identifier <db-instance-id> --publicly-accessible false --apply-immediately
+            ```
+
+            Ensure your RDS cluster is deployed in private subnets:
+
+            ```bash
+
+            Ensure that RDS is in a private subnet:
+
+            ```bash
+            aws ec2 describe-subnets --filters "Name=vpc-id,Values=<vpc-id>" --query "Subnets[*].{SubnetId:SubnetId, MapPublicIpOnLaunch:MapPublicIpOnLaunch}"
+            ```
+
+            If any subnet used by the DB subnet group has MapPublicIpOnLaunch: true, consider moving the cluster to a private subnet group.
+        - id: terraform
+          desc: |
+            **Using Terraform:**
+
+            Ensure RDS clusters are not publicly accessible:
+
+            ```hcl
+              resource "aws_rds_cluster" "secure_cluster" {
+                cluster_identifier      = "secure-rds-cluster"
+                engine                  = "aurora-mysql"
+                master_username         = "admin"
+                master_password         = "yourpassword"
+                vpc_security_group_ids  = [aws_security_group.private_sg.id]
+                db_subnet_group_name    = aws_db_subnet_group.private_db_subnet.name
+                publicly_accessible     = false  # Ensure the cluster is private
+              }
+
+              resource "aws_rds_cluster_instance" "secure_cluster_instances" {
+                count                   = 2
+                identifier              = "secure-rds-cluster-instance-${count.index}"
+                cluster_identifier      = aws_rds_cluster.secure_cluster.id
+                instance_class          = "db.r5.large"
+                publicly_accessible     = false  # Also ensure individual instances are private
+                db_subnet_group_name    = aws_db_subnet_group.private_db_subnet.name
+                engine                  = aws_rds_cluster.secure_cluster.engine
+              }
+
+              resource "aws_db_subnet_group" "private_db_subnet" {
+                name       = "private-db-subnet"
+                subnet_ids = [aws_subnet.private1.id, aws_subnet.private2.id]
+              }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using AWS CloudFormation:**
+
+            Ensure RDS clusters are not publicly accessible:
+
+            ```yaml
+              Resources:
+                SecureRDSCluster:
+                  Type: "AWS::RDS::DBCluster"
+                  Properties:
+                    Engine: "aurora-mysql"
+                    DBClusterIdentifier: "secure-rds-cluster"
+                    MasterUsername: "admin"
+                    MasterUserPassword: "YourSecurePassword123"
+                    VpcSecurityGroupIds:
+                      - !Ref PrivateSecurityGroup
+                    DBSubnetGroupName: !Ref PrivateDBSubnetGroup
+                    PubliclyAccessible: false  # Ensure the cluster is private
+
+                SecureRDSClusterInstance1:
+                  Type: "AWS::RDS::DBInstance"
+                  Properties:
+                    DBInstanceIdentifier: "secure-rds-cluster-instance-1"
+                    DBClusterIdentifier: !Ref SecureRDSCluster
+                    Engine: "aurora-mysql"
+                    DBInstanceClass: "db.r5.large"
+                    PubliclyAccessible: false  # Ensure the instance is private
+                    DBSubnetGroupName: !Ref PrivateDBSubnetGroup
+
+                SecureRDSClusterInstance2:
+                  Type: "AWS::RDS::DBInstance"
+                  Properties:
+                    DBInstanceIdentifier: "secure-rds-cluster-instance-2"
+                    DBClusterIdentifier: !Ref SecureRDSCluster
+                    Engine: "aurora-mysql"
+                    DBInstanceClass: "db.r5.large"
+                    PubliclyAccessible: false
+                    DBSubnetGroupName: !Ref PrivateDBSubnetGroup
+
+                PrivateDBSubnetGroup:
+                  Type: "AWS::RDS::DBSubnetGroup"
+                  Properties:
+                    DBSubnetGroupName: "private-db-subnet"
+                    SubnetIds:
+                      - !Ref PrivateSubnet1
+                      - !Ref PrivateSubnet2
+                    DBSubnetGroupDescription: "Private subnets for RDS cluster"
+            ```
+    refs:
+      - url: https://awscli.amazonaws.com/v2/documentation/api/latest/reference/rds/create-db-cluster.html
+        title: AWS CLI Command Reference - create-db-cluster
+      - url: https://awscli.amazonaws.com/v2/documentation/api/latest/reference/rds/modify-db-cluster.html
+        title: AWS CLI Command Reference - modify-db-cluster
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/rds_cluster_instance#publicly_accessible-1
+        title: Terraform Registry - rds_cluster_instance
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-controls-reference.html
+        title: AWS Documentation - Security Hub controls reference
   - uid: mondoo-aws-security-rds-instance-public-access-check
     title: Ensure all RDS instances are not publicly accessible
     impact: 100
@@ -2535,6 +2712,16 @@ queries:
     mql: |
       aws.rds.dbinstance.publiclyAccessible == false
       aws.rds.dbinstance.securityGroups.none(
+        vpc.routeTables.where(
+          routes.any(GatewayId == /igw-/ && DestinationCidrBlock == "0.0.0.0/0")
+        )
+      )
+  - uid: mondoo-aws-security-rds-cluster-public-access-check-single
+    filters: |
+      asset.platform == "aws-rds-dbcluster"
+    mql: |
+      aws.rds.dbcluster.publiclyAccessible == false
+      aws.rds.dbcluster.securityGroups.none(
         vpc.routeTables.where(
           routes.any(GatewayId == /igw-/ && DestinationCidrBlock == "0.0.0.0/0")
         )
