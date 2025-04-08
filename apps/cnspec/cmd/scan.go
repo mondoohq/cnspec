@@ -110,11 +110,19 @@ To manually configure a policy, use this:
 			os.Exit(0)
 		}
 
-		// Validate that if audience is set, api_endpoint must also be set
+		// Validate audience and api_endpoint combination
 		audience, _ := cmd.Flags().GetString("audience")
 		apiEndpoint, _ := cmd.Flags().GetString("api_endpoint")
-		if audience != "" && apiEndpoint == "" {
-			log.Fatal().Msg("When --audience is specified, --api_endpoint must also be specified")
+		issuerUri, _ := cmd.Flags().GetString("issuer_uri")
+		if audience != "" {
+			if apiEndpoint == "" {
+				log.Fatal().Msg("When --audience is specified, --api_endpoint must also be specified")
+			}
+			// Configure WIF authentication
+			os.Setenv("MONDOO_AUTH_METHOD", "wif")
+			os.Setenv("MONDOO_AUDIENCE", audience)
+			os.Setenv("MONDOO_API_ENDPOINT", apiEndpoint)
+			os.Setenv("MONDOO_ISSUER_URI", issuerUri)
 		}
 
 		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
@@ -338,15 +346,9 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	if serviceAccount != nil {
 		log.Info().Msg("using service account credentials")
 
-		// Initialize the API endpoint from the flag or fall back to the default
-		apiEndpoint := conf.ApiEndpoint
-		if apiEndpoint == "" {
-			apiEndpoint = opts.UpstreamApiEndpoint()
-		}
-
 		conf.runtime.UpstreamConfig = &upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
-			ApiEndpoint: apiEndpoint,
+			ApiEndpoint: opts.UpstreamApiEndpoint(),
 			ApiProxy:    opts.APIProxy,
 			Incognito:   conf.IsIncognito,
 			Creds:       serviceAccount,
