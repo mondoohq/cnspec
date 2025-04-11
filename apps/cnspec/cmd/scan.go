@@ -79,11 +79,11 @@ func init() {
 
 	// WIF authentication flags (Hidden for now)
 	_ = scanCmd.Flags().String("audience", "", "Authentication audience")
-	_ = scanCmd.Flags().String("api_endpoint", "", "API endpoint URL")
-	_ = scanCmd.Flags().String("issuer_uri", "", "Issuer URI")
+	_ = scanCmd.Flags().String("api-endpoint", "", "API endpoint URL")
+	_ = scanCmd.Flags().String("issuer-uri", "", "Issuer URI")
 	_ = scanCmd.Flags().MarkHidden("audience")
-	_ = scanCmd.Flags().MarkHidden("api_endpoint")
-	_ = scanCmd.Flags().MarkHidden("issuer_uri")
+	_ = scanCmd.Flags().MarkHidden("api-endpoint")
+	_ = scanCmd.Flags().MarkHidden("issuer-uri")
 }
 
 var scanCmd = &cobra.Command{
@@ -112,12 +112,13 @@ To manually configure a policy, use this:
 
 		// Validate audience and api_endpoint combination
 		audience, _ := cmd.Flags().GetString("audience")
-		apiEndpoint, _ := cmd.Flags().GetString("api_endpoint")
-		issuerUri, _ := cmd.Flags().GetString("issuer_uri")
+		apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
+		issuerUri, _ := cmd.Flags().GetString("issuer-uri")
 		if audience != "" {
 			if apiEndpoint == "" {
-				log.Fatal().Msg("When --audience is specified, --api_endpoint must also be specified")
+				log.Fatal().Msg("When --audience is specified, --api-endpoint must also be specified")
 			}
+
 			// Configure WIF authentication
 			os.Setenv("MONDOO_AUTH_METHOD", "wif")
 			os.Setenv("MONDOO_AUDIENCE", audience)
@@ -158,8 +159,8 @@ To manually configure a policy, use this:
 
 		// Bind WIF authentication flags
 		_ = viper.BindPFlag("audience", cmd.Flags().Lookup("audience"))
-		_ = viper.BindPFlag("api_endpoint", cmd.Flags().Lookup("api_endpoint"))
-		_ = viper.BindPFlag("issuer_uri", cmd.Flags().Lookup("issuer_uri"))
+		_ = viper.BindPFlag("api-endpoint", cmd.Flags().Lookup("api-endpoint"))
+		_ = viper.BindPFlag("issuer-uri", cmd.Flags().Lookup("issuer-uri"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -298,8 +299,8 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		AgentMrn:       opts.AgentMrn,
 		OutputTarget:   viper.GetString("output-target"),
 		Audience:       viper.GetString("audience"),
-		ApiEndpoint:    viper.GetString("api_endpoint"),
-		IssuerUri:      viper.GetString("issuer_uri"),
+		ApiEndpoint:    viper.GetString("api-endpoint"),
+		IssuerUri:      viper.GetString("issuer-uri"),
 	}
 
 	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
@@ -341,14 +342,28 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	serviceAccount := opts.GetServiceCredential()
 
+	spaceMrn := opts.GetParentMrn()
+	if spaceMrn == "" {
+		log.Info().Msgf("spaceMrn is empty, using serviceAccount.ScopeMrn: %s", serviceAccount.ScopeMrn)
+		spaceMrn = serviceAccount.ScopeMrn
+	}
+
+	apiEndpoint := conf.ApiEndpoint
+	if apiEndpoint == "" {
+		// If not provided via flag, use the one from config
+		apiEndpoint = opts.UpstreamApiEndpoint()
+	}
+
 	// NOTE: even if we have incognito, we want to set the upstream config. Otherwise we would not be able to
 	// use the policies that are defined in Mondoo Platform
 	if serviceAccount != nil {
 		log.Info().Msg("using service account credentials")
 
+		log.Info().Msgf("spaceMrn: %s", spaceMrn)
+
 		conf.runtime.UpstreamConfig = &upstream.UpstreamConfig{
-			SpaceMrn:    opts.GetParentMrn(),
-			ApiEndpoint: opts.UpstreamApiEndpoint(),
+			SpaceMrn:    spaceMrn,
+			ApiEndpoint: apiEndpoint,
 			ApiProxy:    opts.APIProxy,
 			Incognito:   conf.IsIncognito,
 			Creds:       serviceAccount,
