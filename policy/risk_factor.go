@@ -4,9 +4,13 @@
 package policy
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"iter"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -122,6 +126,9 @@ func (r *RiskFactor) RefreshChecksum(ctx context.Context, conf mqlc.CompilerConf
 	return esum, csum, nil
 }
 
+// AdjustRiskScore adjusts the risk score based on the risk factor.
+// Do not use this function directly. Use AdjustRiskScore as it will
+// force you to apply the risk factors in a table order
 func (r *RiskFactor) AdjustRiskScore(score *Score, isDetected bool) {
 	// Absolute risk factors only play a role when they are detected.
 	if r.GetMagnitude().GetIsToxic() {
@@ -261,4 +268,96 @@ func (s *RiskFactor) Migrate() {
 	}
 	s.DeprecatedV11IsAbsolute = s.Magnitude.IsToxic
 	s.DeprecatedV11Magnitude = s.Magnitude.Value
+}
+
+func SortRiskFactors(risks []*RiskFactor) {
+	slices.SortStableFunc(risks, func(ri, rj *RiskFactor) int {
+		return cmpRiskFactors(ri, rj)
+	})
+}
+
+func cmpRiskFactors(ri, rj *RiskFactor) int {
+	// nil-safe access
+	magI, magJ := ri.GetMagnitude(), rj.GetMagnitude()
+	isToxicI, isToxicJ := false, false
+	valI, valJ := float32(0), float32(0)
+
+	if magI != nil {
+		isToxicI = magI.GetIsToxic()
+		valI = magI.GetValue()
+	}
+	if magJ != nil {
+		isToxicJ = magJ.GetIsToxic()
+		valJ = magJ.GetValue()
+	}
+
+	if isToxicI != isToxicJ {
+		if isToxicJ {
+			return -1
+		}
+		return 1
+	}
+	if valI != valJ {
+		return cmp.Compare(valI, valJ)
+	}
+
+	return strings.Compare(ri.GetMrn(), rj.GetMrn())
+}
+
+func SortScoredRiskInfo(risks []*ScoredRiskInfo) {
+	slices.SortStableFunc(risks, func(ri, rj *ScoredRiskInfo) int {
+		return cmpScoredRiskFactors(ri, rj)
+	})
+}
+
+func cmpScoredRiskFactors(ri, rj *ScoredRiskInfo) int {
+	return cmpRiskFactors(ri.RiskFactor, rj.RiskFactor)
+}
+
+// AdjustRiskScore adjusts the risk score based on the risk factors.
+// It merges the risk factors from the sortedRisks and applies them to the score.
+// Each array of ScoredRiskInfo is expected to be sorted using SortScoredRiskInfo.
+func AdjustRiskScore(score *Score, sortedRisks ...[]*ScoredRiskInfo) {
+	// Adjust the score based on the risk factors
+	for risk := range mergeSorted(cmpScoredRiskFactors, sortedRisks...) {
+		risk.AdjustRiskScore(score, risk.IsDetected)
+	}
+}
+
+func mergeSorted[T any](cmp func(i, j T) int, ts ...[]T) iter.Seq[T] {
+	cursors := make([]int, len(ts))
+	scratch := make([]T, len(ts))
+	scrachIdx := make([]int, len(ts))
+	return func(yield func(T) bool) {
+		for {
+			s := 0
+			for i := range ts {
+				if cursors[i] < len(ts[i]) {
+					scratch[s] = ts[i][cursors[i]]
+					scrachIdx[s] = i
+					s++
+				}
+			}
+			if s == 0 {
+				return
+			}
+
+			min := minF(scratch[:s], cmp)
+			cursors[scrachIdx[min]]++
+			if !yield(scratch[min]) {
+				return
+			}
+		}
+	}
+}
+
+func minF[T any](v []T, cmp func(i, j T) int) int {
+	// find the min value in v
+	minIdx := 0
+	for i := 1; i < len(v); i++ {
+		if cmp(v[i], v[minIdx]) < 0 {
+			minIdx = i
+		}
+	}
+	return minIdx
 }
