@@ -527,10 +527,23 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 		return
 	}
 
+	allowedRiskMrns := map[string]bool{}
+	for _, s := range report.Scores {
+		for _, r := range s.RiskFactors.GetItems() {
+			allowedRiskMrns[r.Mrn] = true
+		}
+	}
+
+	// TODO: we need to get the risk factors that apply for vulnerabilities
+	// This is currently not supported
+
 	var res strings.Builder
 	for i := range report.Risks.Items {
 		risk := report.Risks.Items[i]
 		if !risk.IsDetected {
+			continue
+		}
+		if !allowedRiskMrns[risk.Mrn] {
 			continue
 		}
 
