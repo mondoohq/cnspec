@@ -307,6 +307,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	// NOTE: even if we have incognito, we want to set the upstream config. Otherwise we would not be able to
 	// use the policies that are defined in Mondoo Platform
+	// foo
 	if serviceAccount != nil {
 		log.Info().Msg("using service account credentials")
 		conf.runtime.UpstreamConfig = &upstream.UpstreamConfig{
