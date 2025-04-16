@@ -673,13 +673,13 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
 				actions[c.Mrn] = action
 
-				// If the action is ignore, then the check is snoozed
-				if action == explorer.Action_IGNORE {
+				// If the action is ignore, then the check is risk accepted
+				if action == explorer.Action_RISK_ACCEPTED {
 					if impact == nil {
 						impact = &explorer.Impact{}
 					}
 					impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
-					impact.Action = explorer.Action_IGNORE
+					impact.Action = explorer.Action_RISK_ACCEPTED
 				}
 			}
 
@@ -782,7 +782,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			p := b.bundleMap.Policies[pRef.Mrn]
 			if b.addPolicy(p) {
 				var impact *explorer.Impact
-				if pRefAction, ok := b.actionOverrides[pRef.Mrn]; ok && pRefAction == explorer.Action_IGNORE {
+				if pRefAction, ok := b.actionOverrides[pRef.Mrn]; ok && pRefAction == explorer.Action_RISK_ACCEPTED {
 					impact = &explorer.Impact{
 						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 					}
@@ -812,7 +812,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			if _, ok := b.addQuery(c); ok {
 				action := b.actionOverrides[c.Mrn]
 				var impact *explorer.Impact
-				if action == explorer.Action_IGNORE {
+				if action == explorer.Action_RISK_ACCEPTED {
 					impact = &explorer.Impact{
 						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 					}
@@ -1098,7 +1098,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 
 func (b *resolvedPolicyBuilder) actionToImpact(mrn string) *explorer.Impact {
 	action := b.actionOverrides[mrn]
-	if action == explorer.Action_IGNORE {
+	if action == explorer.Action_RISK_ACCEPTED {
 		return &explorer.Impact{
 			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
 		}
@@ -1180,10 +1180,10 @@ func normalizeAction(groupType GroupType, action explorer.Action, impact *explor
 	case GroupType_OUT_OF_SCOPE:
 		return explorer.Action_OUT_OF_SCOPE
 	case GroupType_IGNORED:
-		return explorer.Action_IGNORE
+		return explorer.Action_RISK_ACCEPTED
 	default:
 		if impact != nil && impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
-			return explorer.Action_IGNORE
+			return explorer.Action_RISK_ACCEPTED
 		}
 		return action
 	}

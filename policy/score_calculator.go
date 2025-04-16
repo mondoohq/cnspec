@@ -125,7 +125,7 @@ func (c *averageScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == explorer.Action_RISK_ACCEPTED || impact.Action == explorer.Action_DEACTIVATE) {
 			return
 		}
 
@@ -246,7 +246,7 @@ func (c *weightedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == explorer.Action_RISK_ACCEPTED || impact.Action == explorer.Action_DEACTIVATE) {
 			return
 		}
 
@@ -360,7 +360,7 @@ func (c *worstScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == explorer.Action_RISK_ACCEPTED || impact.Action == explorer.Action_DEACTIVATE) {
 			return
 		}
 
@@ -488,7 +488,7 @@ func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == explorer.Action_RISK_ACCEPTED || impact.Action == explorer.Action_DEACTIVATE) {
 			return
 		}
 
@@ -667,7 +667,7 @@ func (c *decayedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == explorer.Action_RISK_ACCEPTED || impact.Action == explorer.Action_DEACTIVATE) {
 			return
 		}
 

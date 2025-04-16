@@ -529,7 +529,7 @@ framework_maps:
 		{
 			name: "when a framework dependency action changes",
 			modify: func(bundle *policy.Bundle) {
-				bundle.Frameworks[1].Dependencies[0].Action = explorer.Action_IGNORE
+				bundle.Frameworks[1].Dependencies[0].Action = explorer.Action_RISK_ACCEPTED
 			},
 		},
 		{
