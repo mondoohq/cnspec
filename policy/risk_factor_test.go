@@ -4,9 +4,11 @@
 package policy
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -190,6 +192,125 @@ func TestRiskFactor_AdjustRiskScoreMultiple(t *testing.T) {
 	assert.Equal(t, a, b)
 }
 
+func TestRiskFactor_AdjustRiskScoreMultiple2(t *testing.T) {
+	testCases := []struct {
+		name             string
+		scoredRiskInfos1 []*ScoredRiskInfo
+		scoredRiskInfos2 []*ScoredRiskInfo
+		baseScore        uint32
+		expectedScore    uint32
+	}{
+		{
+			name:             "no risk factors",
+			scoredRiskInfos1: []*ScoredRiskInfo{},
+			scoredRiskInfos2: []*ScoredRiskInfo{},
+			baseScore:        30,
+			expectedScore:    30,
+		},
+		{
+			name: "one risk factor",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: -0.1}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			scoredRiskInfos2: []*ScoredRiskInfo{},
+			baseScore:        30,
+			expectedScore:    37,
+		},
+		{
+			name: "two risk factors",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: -0.1}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			scoredRiskInfos2: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: -0.1}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     30,
+			expectedScore: 43,
+		},
+		{
+			name: "mixed toxic and non-toxic",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: -1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			scoredRiskInfos2: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: -0.1, IsToxic: false}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     30,
+			expectedScore: 100,
+		},
+		{
+			name: "test toxic sorted 1",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: -1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: 1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "c", Magnitude: &RiskMagnitude{Value: -1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     30,
+			expectedScore: 0, // applied a c b
+		},
+		{
+			name: "test toxic sorted 2",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: -0.2, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: 0.1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "c", Magnitude: &RiskMagnitude{Value: -0.1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			scoredRiskInfos2: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "d", Magnitude: &RiskMagnitude{Value: -0.1}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     30,
+			expectedScore: 57, // applied d a c b
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			score := &Score{RiskScore: tc.baseScore}
+			SortScoredRiskInfo(tc.scoredRiskInfos1)
+			SortScoredRiskInfo(tc.scoredRiskInfos2)
+			AdjustRiskScore(score, tc.scoredRiskInfos1, tc.scoredRiskInfos2)
+			assert.EqualValues(t, int(tc.expectedScore), int(score.RiskScore))
+		})
+	}
+
+}
+
 func TestRiskFactor_AdjustRiskScore(t *testing.T) {
 	tests := []struct {
 		risk     RiskFactor
@@ -351,4 +472,139 @@ func TestUnmarshal(t *testing.T) {
 			assert.Equal(t, &testCases[i].risk, &risk)
 		})
 	}
+}
+func TestCmpRiskFactors(t *testing.T) {
+	testCases := []struct {
+		name     string
+		ri       *RiskFactor
+		rj       *RiskFactor
+		expected int
+	}{
+		{
+			name:     "both nil magnitudes",
+			ri:       &RiskFactor{Mrn: "a"},
+			rj:       &RiskFactor{Mrn: "b"},
+			expected: strings.Compare("a", "b"),
+		},
+		{
+			name:     "one nil magnitude",
+			ri:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: 0.5}},
+			rj:       &RiskFactor{Mrn: "b"},
+			expected: 1,
+		},
+		{
+			name:     "different toxicity",
+			ri:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: true}},
+			rj:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: 0.5, IsToxic: false}},
+			expected: 1,
+		},
+		{
+			name:     "different values",
+			ri:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: 0.5}},
+			rj:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: 0.7}},
+			expected: cmp.Compare(0.5, 0.7),
+		},
+		{
+			name:     "same values",
+			ri:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: 0.5}},
+			rj:       &RiskFactor{Mrn: "b", Magnitude: &RiskMagnitude{Value: 0.5}},
+			expected: strings.Compare("a", "b"),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := cmpRiskFactors(tc.ri, tc.rj)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestMergeSorted(t *testing.T) {
+	// Test case 1: Merging two sorted slices of integers
+	t.Run("mergeSorted integers", func(t *testing.T) {
+		slice1 := []int{1, 3, 5}
+		slice2 := []int{2, 4, 6}
+		expected := []int{1, 2, 3, 4, 5, 6}
+
+		var result []int
+		seq := mergeSorted(cmp.Compare, slice1, slice2)
+
+		seq(func(val int) bool {
+			result = append(result, val)
+			return true
+		})
+
+		assert.Equal(t, expected, result)
+	})
+
+	// Test case 2: Merging slices with duplicates
+	t.Run("mergeSorted with duplicates", func(t *testing.T) {
+		slice1 := []int{1, 3, 5}
+		slice2 := []int{1, 3, 5}
+		expected := []int{1, 1, 3, 3, 5, 5}
+
+		var result []int
+		seq := mergeSorted(cmp.Compare, slice1, slice2)
+
+		seq(func(val int) bool {
+			result = append(result, val)
+			return true
+		})
+
+		assert.Equal(t, expected, result)
+	})
+
+	// Test case 3: Merging slices of strings
+	t.Run("mergeSorted strings", func(t *testing.T) {
+		slice1 := []string{"apple", "orange"}
+		slice2 := []string{"banana", "pear"}
+		expected := []string{"apple", "banana", "orange", "pear"}
+
+		var result []string
+		seq := mergeSorted(cmp.Compare, slice1, slice2)
+
+		seq(func(val string) bool {
+			result = append(result, val)
+			return true
+		})
+
+		assert.Equal(t, expected, result)
+	})
+
+	// Test case 4: Merging with empty slices
+	t.Run("mergeSorted with empty slices", func(t *testing.T) {
+		slice1 := []int{}
+		slice2 := []int{1, 2, 3}
+		expected := []int{1, 2, 3}
+
+		var result []int
+		seq := mergeSorted(func(i, j int) int {
+			return cmp.Compare(i, j)
+		}, slice1, slice2)
+
+		seq(func(val int) bool {
+			result = append(result, val)
+			return true
+		})
+
+		assert.Equal(t, expected, result)
+	})
+
+	// Test case 5: Merging multiple slices
+	t.Run("mergeSorted multiple slices", func(t *testing.T) {
+		slice1 := []int{1, 4, 7}
+		slice2 := []int{2, 5, 8}
+		slice3 := []int{3, 6, 9}
+		expected := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+		var result []int
+		seq := mergeSorted(cmp.Compare, slice1, slice2, slice3)
+
+		seq(func(val int) bool {
+			result = append(result, val)
+			return true
+		})
+
+		assert.Equal(t, expected, result)
+	})
 }
