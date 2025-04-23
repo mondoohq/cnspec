@@ -4,6 +4,7 @@
 package main
 
 import (
+	"go.mondoo.com/cnquery/v11/metrics"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/cnspec/v11"
 	"go.mondoo.com/cnspec/v11/apps/cnspec/cmd"
@@ -11,5 +12,6 @@ import (
 
 func main() {
 	defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
+	go metrics.Start()
 	cmd.Execute()
 }
