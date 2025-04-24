@@ -301,7 +301,7 @@ func TestRiskFactor_AdjustRiskScoreMultiple2(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			score := &Score{RiskScore: tc.baseScore}
+			score := &Score{Value: tc.baseScore}
 			SortScoredRiskInfo(tc.scoredRiskInfos1)
 			SortScoredRiskInfo(tc.scoredRiskInfos2)
 			AdjustRiskScore(score, tc.scoredRiskInfos1, tc.scoredRiskInfos2)
