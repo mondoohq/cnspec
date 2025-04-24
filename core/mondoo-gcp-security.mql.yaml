@@ -40,55 +40,28 @@ queries:
       - uid: gcp-compute-instances-configured-use-default-service-account-single
     docs:
       desc: |
-        New projects that have enabled the Compute Engine API have a Compute Engine default service account, which contains the following email pattern:
+        This check ensures that Google Cloud Compute Engine instances are not configured to use the default service account (-compute@developer.gserviceaccount.com). Instead, instances should use custom service accounts with only the permissions required for their specific function, adhering to the principle of least privilege.
 
-        ```bash
-        -compute@developer.gserviceaccount.com
-        ```
+        Rationale:
 
-        The Compute Engine default service account is created with the IAM basic Editor role, but you can modify your service account's roles to control the service account's access to Google APIs.
+        When the Compute Engine API is enabled on a new Google Cloud project, Google automatically creates a default Compute Engine service account with the IAM Editor role. This account has broad permissions across many Google Cloud services and is frequently used by default unless explicitly overridden:
+          •	Using the default service account grants more privileges than most applications require, increasing the risk of privilege escalation or lateral movement in the event of compromise.
+          •	The default service account is shared across all instances in the project, reducing visibility and control over which workloads can access which resources.
+          •	Misuse or over-permissioning of default service accounts has been the cause of multiple cloud security incidents, particularly when combined with metadata API access.
 
-        You can disable or delete this service account from your project, but doing so might cause any applications that depend on the service account's credentials to fail. If you accidentally delete the Compute Engine default service account, you can try to recover the account within 30 days. For more information, see Creating and managing service accounts.
+        If instances continue to use the default service account, it can lead to:
+          •	Excessive permissions, violating least privilege principles and security best practices.
+          •	Difficult-to-audit access patterns, as many services share a single identity with broad permissions.
+          •	Increased blast radius if the service account credentials are leaked or the instance is compromised.
+          •	Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark and NIST 800-53.
 
-        It is recommended that you do not configure instances with the default service account. Instead, create a user account using the principle of least privilege.
-      audit: |
-        __cnquery run__
+        Risk mitigation:
+          •	Replace default service accounts with custom service accounts that have narrowly scoped IAM roles tailored to the workload.
+          •	Regularly review and audit service account usage to ensure they are aligned with current access needs.
+          •	Disable or delete the default service account only after ensuring that no dependent applications or services will be disrupted.
+          •	Leverage IAM Conditions and organization policies to prevent the use of default service accounts in new deployments.
 
-        To audit your Google Cloud Project with `cnquery run`:
-
-        1. Ensure the `gcloud` cli is configured to the GCP project:
-
-          ```bash
-          gcloud config set project <project_id>
-          ```
-
-        2. Run this query:
-
-          ```mql
-          cnquery run gcp project <project-id> -c "gcp.compute.instances.where( name != /^gke/ ) {id name serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ )}"
-          ```
-
-        __cnquery shell__
-
-        To audit your Google Cloud Project with `cnquery shell`:
-
-        1. Ensure the `gcloud` cli is configured to the GCP project:
-
-          ```bash
-          gcloud config set project <project_id>
-          ```
-
-        2. Launch `cnquery shell`:
-
-          ```bash
-          cnquery run gcp project <project-id>
-          ```
-
-        3. Run this query:
-
-          ```mql
-          gcp.compute.instances.where( name != /^gke/ ) {id name serviceAccounts.where(email == /^.*compute@developer\.gserviceaccount\.com$/ )}
-          ```
+        By avoiding the use of the default Compute Engine service account, organizations can enforce better identity isolation, minimize unnecessary permissions, and enhance the overall security posture of their Google Cloud environment.
       remediation: |
         ### Terraform
 
@@ -168,45 +141,28 @@ queries:
       - uid: gcp-compute-instances-configured-use-default-service-account-full-access-all-cloud-single
     docs:
       desc: |
-        Google compute instances provisioned with full access to all cloud APIs pose a security risk to a GCP environment. Instances should instead be provisioned using a non-default service account, and limited permissions to cloud APIs using the principle of least privilege.
-      audit: |
-        __cnquery run__
+        This check ensures that Google Cloud Compute Engine instances are not provisioned with full access to all Google Cloud APIs. Instead, instances should be assigned custom service accounts with narrowly scoped permissions, adhering to the principle of least privilege.
 
-         To audit your Google Cloud Project with `cnquery run`:
+        Rationale:
 
-         1. Ensure the `gcloud` cli is configured to the GCP project:
+        By default, when creating a Compute Engine instance, users can assign it “Allow full access to all Cloud APIs”, granting unrestricted access to most Google Cloud services. This setting is overly permissive and introduces significant security risk:
+          •	It allows the instance to interact with nearly any Google Cloud API, regardless of the workload's actual needs.
+          •	In the event of a compromise, an attacker could use the instance's credentials to access sensitive resources, manipulate cloud infrastructure, or move laterally across services.
+          •	The broad access complicates auditing and access management, making it harder to identify excessive privileges or detect misuse.
 
-          ```bash
-          gcloud config set project <project_id>
-          ```
+        If instances are provisioned with full API access, it can lead to:
+          •	Privilege escalation and lateral movement, especially if metadata APIs are accessible from within the VM.
+          •	Increased blast radius in the event of credential theft or VM compromise.
+          •	Violations of least privilege and non-compliance with security frameworks such as CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
+          •	Obscured audit trails, since full access allows interactions with multiple services without role-based segmentation.
 
-         2. Run this query:
+        Risk mitigation:
+          •	Assign custom service accounts to instances with only the specific roles required for their function.
+          •	Avoid using the “Allow full access to all Cloud APIs” option during instance creation.
+          •	Enforce IAM policies and organizational constraints to block the use of overly permissive API scopes.
+          •	Continuously review service account permissions and API scopes as part of your identity and access governance strategy.
 
-          ```mql
-          cnquery run gcp project <project-id> -c "gcp.compute.instances.where( name != /^gke/ ) {id name serviceAccounts.where( email == /^.*compute@developer\.gserviceaccount\.com$/ ) {email scopes}}"
-          ```
-
-         __cnquery shell__
-
-         To audit your Google Cloud Project with `cnquery shell`:
-
-         1. Ensure the `gcloud` cli is configured to the GCP project:
-
-          ```bash
-          gcloud config set project <project_id>
-          ```
-
-         2. Launch `cnquery shell`:
-
-          ```bash
-          cnquery shell gcp
-          ```
-
-         3. Run this query:
-
-          ```mql
-          gcp.compute.instances.where(name != /^gke/) {id name serviceAccounts.where(email == /^.*compute@developer\.gserviceaccount\.com$/) {email scopes}}
-          ```
+        Restricting Compute Engine instances to minimal necessary API access helps contain the impact of security incidents, improves visibility and control, and supports a robust and compliant cloud security posture.
       remediation: |
         ### Terraform
 
@@ -287,47 +243,32 @@ queries:
       - uid: gcp-compute-block-project-wide-ssh-keys-enabled-vm-instances-single
     docs:
       desc: |
-        Project-wide SSH keys can be used to login into all instances within a project. While using project-wide SSH keys eases SSH key management, if SSH keys are compromised, the potential security risk can impact all instances within a project.
+        This check ensures that Google Cloud Platform (GCP) projects are configured to use instance-specific SSH keys rather than project-wide SSH keys. This approach limits the impact of credential compromise and supports strong access control at the individual virtual machine level.
 
-        The recommended approach is to use instance-specific SSH keys instead of common/shared project-wide SSH keys.
-      audit: |
-        __cnquery run__
+        Rationale:
 
-         To audit your Google Cloud Project with `cnquery run`:
+        GCP allows SSH keys to be defined at the project level, enabling access to all Compute Engine instances within the project. While this simplifies SSH key management, it introduces significant security risks:
+          •	If a project-wide SSH key is compromised, an attacker may gain access to every VM in the project.
+          •	Project-wide keys promote shared access, making it harder to enforce least privilege and track user-specific activity.
+          •	Revoking access for a user with a project-wide key affects all instances, which can lead to operational disruption or security gaps.
 
-         1. Ensure the `gcloud` cli is configured to the GCP project:
+        In contrast, instance-specific SSH keys offer finer-grained access control:
+          •	Keys are scoped only to the VM they are intended for.
+          •	It is easier to manage user access on a per-instance basis.
+          •	Auditability is improved, as access can be tracked and revoked at the individual instance level.
 
-          ```bash
-          gcloud config set project <project_id>
-          ```
+        If project-wide SSH keys are used, it may result in:
+          •	Expanded attack surface, where one key exposes multiple critical systems.
+          •	Difficulty in access governance, particularly in large or multi-team environments.
+          •	Non-compliance with cloud security benchmarks like the CIS GCP Foundations Benchmark and access control requirements in frameworks such as NIST 800-53 and ISO 27001.
 
-         2. Run this query:
+        Risk mitigation:
+          •	Disable project-wide SSH key usage by setting the enable-oslogin metadata to TRUE at the project level.
+          •	Configure instance-level SSH keys via instance metadata or use OS Login for centralized and auditable access management.
+          •	Regularly audit and rotate SSH keys, ensuring access is granted only where needed.
+          •	Enforce organizational policies to prohibit the use of project-wide SSH keys across GCP environments.
 
-          ```mql
-          cnquery run gcp -c "gcp.compute.instances {id name metadata['block-project-ssh-keys'] }"
-          ```
-
-         __cnquery shell__
-
-         To audit your Google Cloud Project with `cnquery shell`:
-
-         1. Ensure the `gcloud` cli is configured to the GCP project:
-
-          ```bash
-          gcloud config set project <project_id>
-          ```
-
-         2. Launch `cnquery shell`:
-
-          ```bash
-          cnquery shell gcp
-          ```
-
-         3. Run this query:
-
-          ```mql
-          gcp.compute.instances {id name metadata['block-project-ssh-keys'] }
-          ```
+        Using instance-specific SSH keys improves access control, reduces the blast radius of credential compromise, and aligns with cloud security best practices that emphasize isolation, auditability, and least privilege.
       remediation: |
         ### Terraform
 
@@ -387,45 +328,33 @@ queries:
       - uid: gcp-compute-oslogin-enabled-project-single
     docs:
       desc: |
-        OS Login lets you use Compute Engine Identity and Access Management (IAM) roles to grant or revoke SSH access to your Linux instances. OS Login is an alternative to managing instance access by adding and removing SSH keys in metadata.
-      audit: |
-        __cnquery run__
+        This check ensures that OS Login is enabled on Google Cloud Platform (GCP) Compute Engine instances to manage SSH access through IAM roles rather than relying on SSH keys stored in project or instance metadata. OS Login improves access control, auditability, and security by centralizing identity-based SSH authentication.
 
-         To audit your Google Cloud Project with `cnquery run`:
+        Rationale:
 
-         1. Ensure the `gcloud` cli is configured to the GCP project:
+        By default, SSH access to GCP Compute Engine instances is managed using manually added SSH keys in project or instance metadata. This method has several limitations:
+          •	SSH keys are difficult to track, audit, and revoke, especially in large or dynamic environments.
+          •	Key-based access lacks integration with IAM policies, which makes it harder to enforce centralized identity governance.
+          •	Users can retain access indefinitely if SSH keys are not manually removed, creating lingering access risks.
 
-          ```bash
-          gcloud config set project <project_id>
-          ```
+        OS Login solves these issues by integrating SSH access with IAM:
+          •	Access is granted or revoked based on IAM roles (roles/compute.osLogin, roles/compute.osAdminLogin).
+          •	User access is managed centrally and consistently across all instances.
+          •	Login activity is auditable through Cloud Audit Logs and linked to the user's Google identity.
 
-         2. Run this query:
+        If OS Login is not enabled, it can lead to:
+          •	Stale or orphaned SSH keys, increasing the risk of unauthorized access.
+          •	Limited visibility and control over who has access to which instances.
+          •	Non-compliance with security best practices and frameworks like CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
+          •	Operational complexity, as access changes require manual updates to metadata.
 
-          ```mql
-          cnquery run gcp project <project-id> -c "gcp.compute.instances {id name metadata['enable-oslogin'] == true}"
-          ```
+        Risk mitigation:
+          •	Enable OS Login by setting the enable-oslogin metadata key to TRUE at the project or instance level.
+          •	Use IAM roles to define which users can access which instances, and whether they have standard or administrative privileges.
+          •	Leverage OS Login with 2-Step Verification (OS Login 2SV) for enhanced access protection.
+          •	Regularly review IAM policies and login activity to ensure appropriate access and detect anomalies.
 
-         __cnquery shell__
-
-         To audit your Google Cloud Project with `cnquery shell`:
-
-         1. Ensure the `gcloud` cli is configured to the GCP project:
-
-          ```bash
-          gcloud config set project <project_id>
-          ```
-
-         2. Launch `cnquery shell`:
-
-          ```bash
-          cnquery shell gcp project <project-id>
-          ```
-
-         3. Run this query:
-
-          ```mql
-          gcp.compute.instances {id name metadata['enable-oslogin'] }
-          ```
+        Enabling OS Login provides a secure, scalable, and manageable way to control SSH access to Compute Engine instances, aligning with best practices for identity-based access control and centralized policy enforcement in GCP environments.
       remediation: |
         ### Terraform
 
@@ -502,45 +431,25 @@ queries:
       - uid: gcp-storage-cloud-storage-bucket-anonymously-publicly-accessible-single
     docs:
       desc: |
-        Public access prevention protects Cloud Storage buckets and objects from being accidentally exposed to the public. When you enforce public access prevention, no one can make data in applicable buckets public through IAM policies or ACLs.
-      audit: |
-        __cnquery run__
+        This check ensures that Google Cloud Storage buckets do not have IAM bindings or ACLs that grant access to the allUsers or allAuthenticatedUsers principals. These principals represent unauthenticated and broadly authenticated public access, which significantly increases the risk of unintentional data exposure.
 
-         To audit your Google Cloud Project with `cnquery run`:
+        Rationale:
 
-         1. Ensure the `gcloud` cli is configured to the GCP project:
+        In Google Cloud, the allUsers principal allows anyone on the internet to access a resource without authentication, while allAuthenticatedUsers allows access to any user with a Google account. Assigning these principals to a Cloud Storage bucket—either directly via IAM roles or indirectly through legacy ACLs—exposes data to a much broader audience than intended.
 
-           ```bash
-           gcloud config set project <project_id>
-           ```
+        This type of access is often misconfigured and can lead to:
+          •	Public exposure of sensitive data, including personally identifiable information (PII), internal documents, or application configuration files.
+          •	Data misuse or leakage, especially if access is granted with roles beyond read-only permissions.
+          •	Non-compliance with regulatory frameworks like GDPR, HIPAA, PCI DSS, ISO 27001, and the CIS GCP Foundations Benchmark.
+          •	Audit and incident response challenges, since access by allUsers or allAuthenticatedUsers is not attributable to a specific identity.
 
-         2. Run this query:
+        Risk mitigation:
+          •	Audit IAM policies and bucket ACLs to detect any bindings involving allUsers or allAuthenticatedUsers.
+          •	Remove these principals from bucket policies and replace them with specific identities (e.g., service accounts, groups, or individual users) that require access.
+          •	Enable Public Access Prevention to proactively block public access configuration.
+          •	Enforce organization policies that restrict or deny the use of these principals across your projects.
 
-           ```mql
-           cnquery run gcp -c "gcloud.storage.buckets { iamPolicy { members {*} } } "
-           ```
-
-         __cnquery shell__
-
-         To audit your Google Cloud Project with `cnquery shell`:
-
-         1. Ensure the `gcloud` cli is configured to the GCP project:
-
-           ```bash
-           gcloud config set project <project_id>
-           ```
-
-         2. Launch `cnquery shell`:
-
-           ```bash
-           cnquery shell gcp
-           ```
-
-         3. Run this query:
-
-           ```mql
-           gcloud.storage.buckets { iamPolicy { members {*} } }
-           ```
+        Eliminating access for allUsers and allAuthenticatedUsers on Cloud Storage buckets is a critical step in protecting cloud-resident data, enforcing least privilege access, and ensuring compliance with modern cloud security and privacy standards.
       remediation: |
         ### Terraform
 
@@ -573,10 +482,11 @@ queries:
 
         ### gcloud cli
 
-        Update an existing storage bucket with the `gcloud` cli:
+        To update public access configuration using the `gcloud` cli, ensure `allUsers` and `allAuthenticatedUsers` are not set:
 
         ```bash
-        gcloud storage buckets update gs://BUCKET_NAME --no-pap
+        gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME --member=allUsers --role=roles/storage.objectViewer
+        gcloud storage buckets remove-iam-policy-binding gs://BUCKET_NAME --member=allAuthenticatedUsers --role=roles/storage.objectViewer
         ```
   - uid: gcp-storage-cloud-storage-bucket-anonymously-publicly-accessible-all
     filters: asset.platform == "gcp-project"
@@ -599,44 +509,6 @@ queries:
         Cloud Storage offers two systems for granting users permission to access your buckets and objects: IAM and Access Control Lists (ACLs). These systems act in parallel - in order for a user to access a Cloud Storage resource, only one of the systems needs to grant the user permission. IAM is used throughout Google Cloud and allows you to grant a variety of permissions at the bucket and project levels. ACLs are used only by Cloud Storage and have limited permission options, but they allow you to grant permissions on a per-object basis.
 
         It is recommended to enable uniform bucket-level access on Cloud Storage buckets. Uniform bucket-level access is used to unify and simplify how you grant access to your Cloud Storage resources. Cloud Storage offers two systems that act in parallel to grant users permission to access buckets and objects:
-      audit: |
-        __cnquery run__
-
-         To audit your Google Cloud Project with `cnquery run`:
-
-         1. Ensure the `gcloud` cli is configured to the GCP project:
-
-           ```bash
-           gcloud config set project <project_id>
-           ```
-
-         2. Run this query:
-
-           ```bash
-           cnquery run gcp -c "gcloud.storage.buckets { iamConfiguration['UniformBucketLevelAccess']['Enabled'] }"
-           ```
-
-         __cnquery shell__
-
-         To audit your Google Cloud Project with `cnquery shell`:
-
-         1. Ensure the `gcloud` cli is configured to the GCP project:
-
-           ```bash
-           gcloud config set project <project_id>
-           ```
-
-         2. Launch `cnquery shell`:
-
-           ```bash
-           cnquery shell gcp
-           ```
-
-         3. Run this query:
-
-           ```mql
-           gcloud.storage.buckets { iamConfiguration['UniformBucketLevelAccess']['Enabled'] }
-           ```
       remediation: |
         ### Terraform
 
