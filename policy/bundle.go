@@ -801,8 +801,22 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	// TODO: Make this compatible as a store for shared properties across queries.
 	// Also pre-compile as many as possible before returning any errors.
 	for i := range p.Props {
-		if err := cache.compileProp(p.Props[i]); err != nil {
+		np, err := cache.compileProp(p.Props[i])
+		if err != nil {
 			return nil, err
+		}
+		p.Props[i] = np
+	}
+
+	for i := range p.Policies {
+		policy := p.Policies[i]
+		// Properties
+		for i := range policy.Props {
+			np, err := cache.compileProp(policy.Props[i])
+			if err != nil {
+				return nil, err
+			}
+			policy.Props[i] = np
 		}
 	}
 
@@ -827,13 +841,6 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 
 		if policyUID != "" {
 			cache.uid2mrn[policyUID] = policy.Mrn
-		}
-
-		// Properties
-		for i := range policy.Props {
-			if err := cache.compileProp(policy.Props[i]); err != nil {
-				return nil, err
-			}
 		}
 
 		// Filters: prep a data structure in case it doesn't exist yet and add
@@ -1103,10 +1110,12 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 
 	// ensure MRNs for properties
 	for i := range query.Props {
-		if err := c.compileProp(query.Props[i]); err != nil {
+		np, err := c.compileProp(query.Props[i])
+		if err != nil {
 			c.errors = append(c.errors, errors.New("failed to compile properties for "+query.Mrn))
 			return nil
 		}
+		query.Props[i] = np
 	}
 
 	// filters have no dependencies, so we can compile them early
@@ -1154,7 +1163,7 @@ func (c *bundleCache) compileQuery(query *explorer.Mquery) {
 	}
 }
 
-func (c *bundleCache) compileProp(prop *explorer.Property) error {
+func (c *bundleCache) compileProp(prop *explorer.Property) (*explorer.Property, error) {
 	var name string
 
 	if prop.Mrn == "" {
@@ -1165,7 +1174,7 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 		}
 
 		if err := prop.RefreshMRN(c.ownerMrn); err != nil {
-			return err
+			return nil, err
 		}
 
 		if uid != "" {
@@ -1182,14 +1191,20 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 	} else {
 		m, err := mrn.NewMRN(prop.Mrn)
 		if err != nil {
-			return errors.Wrap(err, "failed to compile prop, invalid mrn: "+prop.Mrn)
+			return nil, errors.Wrap(err, "failed to compile prop, invalid mrn: "+prop.Mrn)
 		}
 
 		name = m.Basename()
 	}
 
+	existing, ok := c.lookupProp[prop.Mrn]
+	if ok && prop.Mql == "" {
+		// this is a shared property, we can skip it
+		return existing.Property, nil
+	}
+
 	if _, err := prop.RefreshChecksumAndType(c.conf.CompilerConfig); err != nil {
-		return err
+		return nil, err
 	}
 
 	c.lookupProp[prop.Mrn] = explorer.PropertyRef{
@@ -1197,7 +1212,7 @@ func (c *bundleCache) compileProp(prop *explorer.Property) error {
 		Name:     name,
 	}
 
-	return nil
+	return prop, nil
 }
 
 func (c *bundleCache) compileRisk(risk *RiskFactor, policy *Policy) error {
