@@ -74,15 +74,26 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		return "", errors.Wrap(err, "failed to generate custom role permissions block")
 	}
 
-	var (
-		providerAzureAD = tfgen.NewProvider("azuread")
-		providerAzureRM = tfgen.NewProvider("azurerm",
-			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
-			tfgen.HclProviderWithGenericBlocks(featuresBlock),
-		)
-		providerMondoo = tfgen.NewProvider("mondoo", tfgen.HclProviderWithAttributes(
+	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
+	if integration.Space != "" {
+		mondooProviderHclModifier = append(mondooProviderHclModifier, tfgen.HclProviderWithAttributes(
 			tfgen.Attributes{"space": integration.Space},
 		))
+	}
+
+	azurermProviderHclModifier := []tfgen.HclProviderModifier{
+		tfgen.HclProviderWithGenericBlocks(featuresBlock),
+	}
+	if integration.Primary != "" {
+		azurermProviderHclModifier = append(azurermProviderHclModifier,
+			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
+		)
+	}
+
+	var (
+		providerAzureAD       = tfgen.NewProvider("azuread")
+		providerAzureRM       = tfgen.NewProvider("azurerm", azurermProviderHclModifier...)
+		providerMondoo        = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 		dataADClientConfig    = tfgen.NewDataSource("azuread_client_config", "current")
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
