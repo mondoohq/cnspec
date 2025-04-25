@@ -154,3 +154,17 @@ license/headers/check:
 license/headers/apply:
 	copywrite headers
 
+#   📈 METRICS       #
+
+metrics/start: metrics/grafana/start metrics/prometheus/start
+
+metrics/prometheus/start:
+	APP_NAME=cnspec VERSION=${VERSION} BUILD=${TAG} prometheus --config.file=prometheus.yml
+
+metrics/grafana/start:
+	docker run -d --name=grafana \
+		-p 3000:3000               \
+		grafana/grafana
+
+metrics/grafana/stop:
+	docker stop grafana
