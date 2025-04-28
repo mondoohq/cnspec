@@ -74,15 +74,26 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		return "", errors.Wrap(err, "failed to generate custom role permissions block")
 	}
 
-	var (
-		providerAzureAD = tfgen.NewProvider("azuread")
-		providerAzureRM = tfgen.NewProvider("azurerm",
-			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
-			tfgen.HclProviderWithGenericBlocks(featuresBlock),
-		)
-		providerMondoo = tfgen.NewProvider("mondoo", tfgen.HclProviderWithAttributes(
+	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
+	if integration.Space != "" {
+		mondooProviderHclModifier = append(mondooProviderHclModifier, tfgen.HclProviderWithAttributes(
 			tfgen.Attributes{"space": integration.Space},
 		))
+	}
+
+	azurermProviderHclModifier := []tfgen.HclProviderModifier{
+		tfgen.HclProviderWithGenericBlocks(featuresBlock),
+	}
+	if integration.Primary != "" {
+		azurermProviderHclModifier = append(azurermProviderHclModifier,
+			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
+		)
+	}
+
+	var (
+		providerAzureAD       = tfgen.NewProvider("azuread")
+		providerAzureRM       = tfgen.NewProvider("azurerm", azurermProviderHclModifier...)
+		providerMondoo        = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 		dataADClientConfig    = tfgen.NewDataSource("azuread_client_config", "current")
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
@@ -122,17 +133,6 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 				"owners":    []interface{}{dataADClientConfig.TraverseRef("object_id")},
 			}),
 		)
-		// TODO can we skip subscriptions if deny is provided
-		dataRMAllSubscriptions         = tfgen.NewDataSource("azurerm_subscriptions", "available")
-		resourceRMReaderRoleAssignment = tfgen.NewResource("azurerm_role_assignment", "reader",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"role_definition_name": "Reader",
-
-				"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
-				"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
-				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
-			}),
-		)
 		// This is the way we avoid Grant Admin Consent issue.
 		//
 		// => https://docs.microsoft.com/en-us/azure/active-directory/roles/permissions-reference#directory-readers
@@ -160,14 +160,9 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 					tfgen.CreateSimpleTraversal(`"\n", [tls_self_signed_cert.credential.cert_pem, tls_private_key.credential.private_key_pem]`),
 				),
 			},
-			"depends_on": []interface{}{
-				resourceADServicePrincipal.TraverseRef(),
-				resourceRMReaderRoleAssignment.TraverseRef(),
-				resourceADApplicationCertificate.TraverseRef(),
-				resourceADReadersRoleAssignment.TraverseRef(),
-			},
 		}
 		// Custom role needed only when scanning VMs
+		dataRMAllSubscriptions         = tfgen.NewDataSource("azurerm_subscriptions", "available")
 		resourceRMCustomRoleDefinition = tfgen.NewResource("azurerm_role_definition", "mondoo_security",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"name":              "tf-mondoo-security-role",
@@ -189,18 +184,7 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		)
 	)
 
-	// Allow and Deny are mutually exclusive and can't be added together
-	if len(integration.Allow) != 0 {
-		integrationAttributes["subscription_allow_list"] = integration.Allow
-	} else if len(integration.Deny) != 0 {
-		integrationAttributes["subscription_deny_list"] = integration.Deny
-	}
-
-	resourceMondooIntegration := tfgen.NewResource("mondoo_integration_azure", "this",
-		tfgen.HclResourceWithAttributes(integrationAttributes),
-	)
-
-	blocks, err := tfgen.ObjectsToBlocks(
+	dynamicObjects := []tfgen.Object{
 		providerMondoo,
 		providerAzureAD,
 		providerAzureRM,
@@ -212,11 +196,50 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		resourceADServicePrincipal,
 		resourceAdApplication,
 		resourceADReadersDirectoryRole,
-		resourceRMReaderRoleAssignment,
 		resourceADReadersRoleAssignment,
 		resourceTimeSleep,
-		resourceMondooIntegration,
+	}
+	integrationDependsOn := []any{
+		resourceADServicePrincipal.TraverseRef(),
+		resourceADApplicationCertificate.TraverseRef(),
+		resourceADReadersRoleAssignment.TraverseRef(),
+	}
+
+	// Allow and Deny are mutually exclusive and can't be added together
+	if len(integration.Allow) != 0 {
+		// add the mondoo integration resource attribute
+		integrationAttributes["subscription_allow_list"] = integration.Allow
+		// grant reader role to only the allowed list of subscriptions
+		readerRoleAssignmentBlocks, dependencies := azureRMReaderRoleAssignmentBlocks(integration.Allow, resourceADServicePrincipal)
+		dynamicObjects = append(dynamicObjects, readerRoleAssignmentBlocks...)
+		integrationDependsOn = append(integrationDependsOn, dependencies...)
+	} else if len(integration.Deny) != 0 {
+		// add the mondoo integration resource attribute
+		integrationAttributes["subscription_deny_list"] = integration.Deny
+		// TODO can we skip subscriptions if deny is provided
+	} else {
+		// grant reader role to all subscriptions
+		resourceRMReaderRoleAssignment := tfgen.NewResource("azurerm_role_assignment", "reader",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"role_definition_name": "Reader",
+
+				"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
+				"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
+				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
+			}),
+		)
+		dynamicObjects = append(dynamicObjects, resourceRMReaderRoleAssignment)
+		integrationDependsOn = append(integrationDependsOn, resourceRMReaderRoleAssignment.TraverseRef())
+	}
+
+	// add the main mondoo integration
+	integrationAttributes["depends_on"] = integrationDependsOn
+	resourceMondooIntegration := tfgen.NewResource("mondoo_integration_azure", "this",
+		tfgen.HclResourceWithAttributes(integrationAttributes),
 	)
+	dynamicObjects = append(dynamicObjects, resourceMondooIntegration)
+
+	blocks, err := tfgen.ObjectsToBlocks(dynamicObjects...)
 	if err != nil {
 		return "", err
 	}
@@ -234,6 +257,29 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 	}
 
 	return tfgen.CreateHclStringOutput(hclBlocks...), nil
+}
+
+// azureRMReaderRoleAssignmentBlocks creates role assignment blocks for a list of subscription IDs,
+// it returns the resources and the list of depends_on objects
+func azureRMReaderRoleAssignmentBlocks(subscriptionIDs []string, resourceADServicePrincipal *tfgen.HclResource) ([]tfgen.Object, []any) {
+	resources := []tfgen.Object{}
+	dependsOn := []any{}
+
+	for i, subscriptionID := range subscriptionIDs {
+		resource := tfgen.NewResource("azurerm_role_assignment", fmt.Sprintf("reader-%d", i),
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"role_definition_name": "Reader",
+				// For scope format see:
+				// https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment
+				"scope":        fmt.Sprintf("/subscriptions/%s", subscriptionID),
+				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
+			}),
+		)
+		resources = append(resources, resource)
+		dependsOn = append(dependsOn, resource.TraverseRef())
+	}
+
+	return resources, dependsOn
 }
 
 type AzAccount struct {
