@@ -33,6 +33,9 @@ func (s *Score) Rating() ScoreRating {
 	}
 
 	switch {
+	// None (100) - we are merging none with low for now
+
+	// Low (61-99)
 	case s.Value >= 95:
 		return ScoreRating_aPlus
 	case s.Value >= 85:
@@ -43,47 +46,65 @@ func (s *Score) Rating() ScoreRating {
 		return ScoreRating_bPlus
 	case s.Value >= 65:
 		return ScoreRating_b
-	case s.Value >= 60:
+	case s.Value >= 61:
 		return ScoreRating_bMinus
+
+	// Medium (31-60)
 	case s.Value >= 50:
 		return ScoreRating_cPlus
 	case s.Value >= 40:
 		return ScoreRating_c
-	case s.Value >= 30:
+	case s.Value >= 31:
 		return ScoreRating_cMinus
-	case s.Value >= 29:
+
+	// High (11-30)
+	case s.Value >= 25:
 		return ScoreRating_dPlus
 	case s.Value >= 15:
 		return ScoreRating_d
-	case s.Value >= 10:
+	case s.Value >= 11:
 		return ScoreRating_dMinus
-	case s.Value < 10:
+
+	// Critical (0-10)
+	case s.Value <= 10:
 		return ScoreRating_failed
 	}
 	return ScoreRating_unrated
 }
 
-var ScoreRating_Letters = map[int32]string{
-	0:  "U",
-	1:  "A",
-	2:  "A",
-	3:  "A",
-	4:  "B",
-	5:  "B",
-	6:  "B",
-	7:  "C",
-	8:  "C",
-	9:  "C",
-	10: "D",
-	11: "D",
-	12: "D",
-	13: "F",
-	14: "X",
-	15: "S",
+var ScoreRatingsText = map[int32]string{
+	0:  ScoreRatingTextUnrated,  // Unscored/Unrated
+	1:  ScoreRatingTextLow,      // A+
+	2:  ScoreRatingTextLow,      // A
+	3:  ScoreRatingTextLow,      // A-
+	4:  ScoreRatingTextLow,      // B+
+	5:  ScoreRatingTextLow,      // B
+	6:  ScoreRatingTextLow,      // B-
+	7:  ScoreRatingTextMedium,   // C+
+	8:  ScoreRatingTextMedium,   // C
+	9:  ScoreRatingTextMedium,   // C-
+	10: ScoreRatingTextHigh,     // D+
+	11: ScoreRatingTextHigh,     // D
+	12: ScoreRatingTextHigh,     // D-
+	13: ScoreRatingTextCritical, // F
+	14: ScoreRatingTextError,    // X
+	15: ScoreRatingTextSkip,     // S
 }
 
-func (r ScoreRating) Letter() string {
-	return enumName(ScoreRating_Letters, int32(r))
+const (
+	ScoreRatingTextError    = "ERROR"
+	ScoreRatingTextSkip     = "SKIP"
+	ScoreRatingTextUnrated  = "UNRATED"
+	ScoreRatingTextNone     = "NONE"
+	ScoreRatingTextLow      = "LOW"
+	ScoreRatingTextMedium   = "MEDIUM"
+	ScoreRatingTextHigh     = "HIGH"
+	ScoreRatingTextCritical = "CRITICAL"
+)
+
+// Text returns a string representation of the score rating
+func (r ScoreRating) Text() string {
+	return enumName(ScoreRatingsText, int32(r))
 }
 
 var ScoreRating_CategoryLabel = map[int32]string{
@@ -107,29 +128,6 @@ var ScoreRating_CategoryLabel = map[int32]string{
 
 func (r ScoreRating) CategoryLabel() string {
 	return enumName(ScoreRating_CategoryLabel, int32(r))
-}
-
-var ScoreRating_FailureLabel = map[int32]string{
-	0:  "unrated",  // Unscored/Unrated
-	1:  "low",      // A+
-	2:  "low",      // A
-	3:  "low",      // A-
-	4:  "low",      // B+
-	5:  "low",      // B
-	6:  "low",      // B-
-	7:  "medium",   // C+
-	8:  "medium",   // C
-	9:  "medium",   // C-
-	10: "high",     // D+
-	11: "high",     // D
-	12: "high",     // D-
-	13: "critical", // F
-	14: "error",    // X
-	15: "skip",     // S
-}
-
-func (r ScoreRating) FailureLabel() string {
-	return enumName(ScoreRating_FailureLabel, int32(r))
 }
 
 func enumName(m map[int32]string, v int32) string {
