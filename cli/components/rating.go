@@ -65,7 +65,7 @@ func NewScoreRating(theme colors.Theme) ScoreRating {
 			policy.ScoreRatingTextMedium:   theme.Medium,
 			policy.ScoreRatingTextHigh:     theme.High,
 			policy.ScoreRatingTextCritical: theme.Critical,
-			policy.ScoreRatingTextError:    theme.Critical,
+			policy.ScoreRatingTextError:    theme.Error,
 		},
 		// TODO @afiune this should live in "go.mondoo.com/cnquery/v11/cli/theme/colors"
 		ScoreRatingLipglossColorMapping: map[string]lipgloss.Color{

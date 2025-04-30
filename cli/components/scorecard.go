@@ -219,10 +219,10 @@ type MicroScoreCard struct{}
 
 func (m MicroScoreCard) Render(score *policy.Score) string {
 	rating := score.Rating()
-	ratingColor := DefaultRatingColors.Color(rating)
 
 	// category code can be 3-8 chars, ensure we always render 8 chars
 	cc := rating.Text()
+	ccColor := DefaultScoreRatingColors.Color(cc)
 	for {
 		if len(cc) >= 8 {
 			break
@@ -232,5 +232,5 @@ func (m MicroScoreCard) Render(score *policy.Score) string {
 	cc = " " + cc + " "
 
 	// return colored micro scorecard
-	return termenv.String(cc).Foreground(ratingColor).String()
+	return termenv.String(cc).Foreground(ccColor).String()
 }
