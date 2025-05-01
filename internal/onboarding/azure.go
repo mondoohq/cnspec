@@ -57,22 +57,6 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 	if err != nil {
 		return "", errors.Wrap(err, "failed to generate self signed cert subject block")
 	}
-	customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil,
-		tfgen.Attributes{
-			"actions ": []string{
-				"Microsoft.Compute/virtualMachines/runCommands/read",
-				"Microsoft.Compute/virtualMachines/runCommands/write",
-				"Microsoft.Compute/virtualMachines/runCommands/delete",
-				"Microsoft.Compute/virtualMachines/runCommand/action",
-			},
-			// not_actions = []
-			// data_actions = []
-			// not_data_actions = []
-		},
-	)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to generate custom role permissions block")
-	}
 
 	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
 	if integration.Space != "" {
@@ -161,27 +145,6 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 				),
 			},
 		}
-		// Custom role needed only when scanning VMs
-		dataRMAllSubscriptions         = tfgen.NewDataSource("azurerm_subscriptions", "available")
-		resourceRMCustomRoleDefinition = tfgen.NewResource("azurerm_role_definition", "mondoo_security",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"name":              "tf-mondoo-security-role",
-				"description":       "Allow Mondoo Security to use run commands for Virtual Machine scanning",
-				"scope":             fmt.Sprintf("/subscriptions/%s", integration.Primary),
-				"assignable_scopes": dataRMAllSubscriptions.TraverseRef("subscriptions[*]", "id"),
-			}),
-			tfgen.HclResourceWithGenericBlocks(customRolePermissionsBlock),
-		)
-		// Adds the custom role to all subscriptions
-		resourceRMCustomRoleAssignment = tfgen.NewResource("azurerm_role_assignment", "mondoo_security",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"role_definition_id": resourceRMCustomRoleDefinition.TraverseRef("role_definition_resource_id"),
-
-				"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
-				"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
-				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
-			}),
-		)
 	)
 
 	dynamicObjects := []tfgen.Object{
@@ -189,7 +152,6 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		providerAzureAD,
 		providerAzureRM,
 		dataADClientConfig,
-		dataRMAllSubscriptions,
 		resourceTLSPrivateKey,
 		resourceTLSSelfSignedCert,
 		resourceADApplicationCertificate,
@@ -207,29 +169,28 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 
 	// Allow and Deny are mutually exclusive and can't be added together
 	if len(integration.Allow) != 0 {
-		// add the mondoo integration resource attribute
+		// add the mondoo integration resource attribute to allow provided subscriptions
 		integrationAttributes["subscription_allow_list"] = integration.Allow
 		// grant reader role to only the allowed list of subscriptions
-		readerRoleAssignmentBlocks, dependencies := azureRMReaderRoleAssignmentBlocks(integration.Allow, resourceADServicePrincipal)
+		readerRoleAssignmentBlocks, dependencies, err := azureRMReaderRoleAssignmentBlocks(integration, resourceADServicePrincipal)
+		if err != nil {
+			return "", err
+		}
 		dynamicObjects = append(dynamicObjects, readerRoleAssignmentBlocks...)
 		integrationDependsOn = append(integrationDependsOn, dependencies...)
-	} else if len(integration.Deny) != 0 {
-		// add the mondoo integration resource attribute
-		integrationAttributes["subscription_deny_list"] = integration.Deny
-		// TODO can we skip subscriptions if deny is provided
 	} else {
 		// grant reader role to all subscriptions
-		resourceRMReaderRoleAssignment := tfgen.NewResource("azurerm_role_assignment", "reader",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"role_definition_name": "Reader",
-
-				"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
-				"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
-				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
-			}),
-		)
-		dynamicObjects = append(dynamicObjects, resourceRMReaderRoleAssignment)
-		integrationDependsOn = append(integrationDependsOn, resourceRMReaderRoleAssignment.TraverseRef())
+		allSubscriptionsBlocks, dependencies, err := generateAllSubscriptionsBlocks(integration, resourceADServicePrincipal)
+		if err != nil {
+			return "", err
+		}
+		dynamicObjects = append(dynamicObjects, allSubscriptionsBlocks...)
+		integrationDependsOn = append(integrationDependsOn, dependencies...)
+		if len(integration.Deny) != 0 {
+			// add the mondoo integration resource attribute to deny provided subscriptions
+			integrationAttributes["subscription_deny_list"] = integration.Deny
+			// TODO can we skip subscriptions if deny is provided
+		}
 	}
 
 	// add the main mondoo integration
@@ -245,41 +206,151 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 	}
 
 	hclBlocks := tfgen.CombineHclBlocks(requiredProvidersBlock, blocks)
+	return tfgen.CreateHclStringOutput(hclBlocks...), nil
+}
+
+func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServicePrincipal *tfgen.HclResource) ([]tfgen.Object, []any, error) {
+	resources := []tfgen.Object{}
+	dependsOn := []any{}
+
+	// data source to fetch all available subscriptions
+	dataRMAllSubscriptions := tfgen.NewDataSource("azurerm_subscriptions", "available")
+	resources = append(resources, dataRMAllSubscriptions)
+	dependsOn = append(dependsOn, dataRMAllSubscriptions.TraverseRef())
+
+	// grant reader role to all subscriptions
+	resourceRMReaderRoleAssignment := tfgen.NewResource("azurerm_role_assignment", "reader",
+		tfgen.HclResourceWithAttributes(tfgen.Attributes{
+			"role_definition_name": "Reader",
+
+			"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
+			"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
+			"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
+		}),
+	)
+	resources = append(resources, resourceRMReaderRoleAssignment)
+	dependsOn = append(dependsOn, resourceRMReaderRoleAssignment.TraverseRef())
+
+	// custom role needed only when scanning VMs
 	if integration.ScanVMs {
-		vmScanningBlocks, err := tfgen.ObjectsToBlocks(
-			resourceRMCustomRoleAssignment,
-			resourceRMCustomRoleDefinition,
+		customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil,
+			tfgen.Attributes{
+				"actions ": []string{
+					"Microsoft.Compute/virtualMachines/runCommands/read",
+					"Microsoft.Compute/virtualMachines/runCommands/write",
+					"Microsoft.Compute/virtualMachines/runCommands/delete",
+					"Microsoft.Compute/virtualMachines/runCommand/action",
+				},
+				// not_actions = []
+				// data_actions = []
+				// not_data_actions = []
+			},
 		)
 		if err != nil {
-			return "", err
+			return resources, dependsOn, errors.Wrap(err, "failed to generate custom role permissions block")
 		}
-		hclBlocks = tfgen.CombineHclBlocks(hclBlocks, vmScanningBlocks)
+		resourceRMCustomRoleDefinition := tfgen.NewResource("azurerm_role_definition", "mondoo_security",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"name":              "tf-mondoo-security-role",
+				"description":       "Allow Mondoo Security to use run commands for Virtual Machine scanning",
+				"scope":             fmt.Sprintf("/subscriptions/%s", integration.Primary),
+				"assignable_scopes": dataRMAllSubscriptions.TraverseRef("subscriptions[*]", "id"),
+			}),
+			tfgen.HclResourceWithGenericBlocks(customRolePermissionsBlock),
+		)
+		resources = append(resources, resourceRMCustomRoleDefinition)
+		dependsOn = append(dependsOn, resourceRMCustomRoleDefinition.TraverseRef())
+
+		// adds the custom role to all subscriptions
+		resourceRMCustomRoleAssignment := tfgen.NewResource("azurerm_role_assignment", "mondoo_security",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"role_definition_id": resourceRMCustomRoleDefinition.TraverseRef("role_definition_resource_id"),
+
+				"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
+				"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
+				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
+			}),
+		)
+		resources = append(resources, resourceRMCustomRoleAssignment)
+		dependsOn = append(dependsOn, resourceRMCustomRoleAssignment.TraverseRef())
 	}
 
-	return tfgen.CreateHclStringOutput(hclBlocks...), nil
+	return resources, dependsOn, nil
 }
 
 // azureRMReaderRoleAssignmentBlocks creates role assignment blocks for a list of subscription IDs,
 // it returns the resources and the list of depends_on objects
-func azureRMReaderRoleAssignmentBlocks(subscriptionIDs []string, resourceADServicePrincipal *tfgen.HclResource) ([]tfgen.Object, []any) {
+func azureRMReaderRoleAssignmentBlocks(integration AzureIntegration, resourceADServicePrincipal *tfgen.HclResource) ([]tfgen.Object, []any, error) {
 	resources := []tfgen.Object{}
 	dependsOn := []any{}
+
+	// For scope format see:
+	// https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment
+	subscriptionIDs := make([]string, len(integration.Allow))
+	for i, id := range integration.Allow {
+		subscriptionIDs[i] = fmt.Sprintf("/subscriptions/%s", id)
+	}
+
+	// custom role needed only when scanning VMs
+	var resourceRMCustomRoleDefinition *tfgen.HclResource
+	if integration.ScanVMs {
+		customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil,
+			tfgen.Attributes{
+				"actions ": []string{
+					"Microsoft.Compute/virtualMachines/runCommands/read",
+					"Microsoft.Compute/virtualMachines/runCommands/write",
+					"Microsoft.Compute/virtualMachines/runCommands/delete",
+					"Microsoft.Compute/virtualMachines/runCommand/action",
+				},
+				// not_actions = []
+				// data_actions = []
+				// not_data_actions = []
+			},
+		)
+		if err != nil {
+			return resources, dependsOn, errors.Wrap(err, "failed to generate custom role permissions block")
+		}
+
+		resourceRMCustomRoleDefinition = tfgen.NewResource("azurerm_role_definition", "mondoo_security",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"name":              "tf-mondoo-security-role",
+				"description":       "Allow Mondoo Security to use run commands for Virtual Machine scanning",
+				"scope":             fmt.Sprintf("/subscriptions/%s", integration.Primary),
+				"assignable_scopes": subscriptionIDs,
+			}),
+			tfgen.HclResourceWithGenericBlocks(customRolePermissionsBlock),
+		)
+		resources = append(resources, resourceRMCustomRoleDefinition)
+		dependsOn = append(dependsOn, resourceRMCustomRoleDefinition.TraverseRef())
+
+	}
 
 	for i, subscriptionID := range subscriptionIDs {
 		resource := tfgen.NewResource("azurerm_role_assignment", fmt.Sprintf("reader-%d", i),
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_definition_name": "Reader",
-				// For scope format see:
-				// https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment
-				"scope":        fmt.Sprintf("/subscriptions/%s", subscriptionID),
-				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
+				"scope":                subscriptionID,
+				"principal_id":         resourceADServicePrincipal.TraverseRef("object_id"),
 			}),
 		)
 		resources = append(resources, resource)
 		dependsOn = append(dependsOn, resource.TraverseRef())
+
+		// add the custom role to allowed subscriptions only when scanning VMs
+		if integration.ScanVMs {
+			resource := tfgen.NewResource("azurerm_role_assignment", fmt.Sprintf("mondoo_security-%d", i),
+				tfgen.HclResourceWithAttributes(tfgen.Attributes{
+					"role_definition_id": resourceRMCustomRoleDefinition.TraverseRef("role_definition_resource_id"),
+					"scope":              subscriptionID,
+					"principal_id":       resourceADServicePrincipal.TraverseRef("object_id"),
+				}),
+			)
+			resources = append(resources, resource)
+			dependsOn = append(dependsOn, resource.TraverseRef())
+		}
 	}
 
-	return resources, dependsOn
+	return resources, dependsOn, nil
 }
 
 type AzAccount struct {
