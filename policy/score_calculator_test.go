@@ -491,7 +491,7 @@ func testEachScoreCalculator(critFail, critCnt, highFail, highCnt, midFail, midC
 		score := calculator.Calculate()
 		results = append(results, score)
 		require.NotNil(t, score)
-		fmt.Printf("    %20s: %3d  (%s)\n", calculator.String(), score.Value, score.Rating().FailureLabel())
+		fmt.Printf("    %20s: %3d  (%s)\n", calculator.String(), score.Value, score.Rating().Text())
 	}
 	fmt.Println("")
 

@@ -581,7 +581,7 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	if err != nil {
 		log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 		job.Reporter.AddScanError(job.Asset, err)
-		job.ProgressReporter.Score("X")
+		job.ProgressReporter.Score(policy.ScoreRatingTextError)
 		job.ProgressReporter.Errored()
 		return
 	}
@@ -817,8 +817,8 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	if err != nil {
 		return ar, err
 	}
-	s.ProgressReporter.Score(report.Score.Rating().Letter())
-	if report.Score.Rating().Letter() == "U" {
+	s.ProgressReporter.Score(report.Score.Rating().Text())
+	if report.Score.Rating().Text() == policy.ScoreRatingTextUnrated {
 		s.ProgressReporter.NotApplicable()
 	} else {
 		s.ProgressReporter.Completed()
@@ -827,34 +827,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
 	return ar, nil
-}
-
-func noPolicyErr(availablePolicies []string, filter []string) error {
-	var sb strings.Builder
-	sb.WriteString("bundle doesn't contain any policies\n")
-	sb.WriteString("\n")
-
-	if len(availablePolicies) > 0 {
-		sb.WriteString("The following policies are available:\n")
-		for i := range availablePolicies {
-			policyMrn := availablePolicies[i]
-			sb.WriteString("- " + policyMrn + "\n")
-		}
-		sb.WriteString("\n")
-	} else {
-		sb.WriteString("The policy bundle for the asset does not contain any policies\n\n")
-	}
-
-	if len(filter) > 0 {
-		sb.WriteString("User selected policies that are allowed to run:\n")
-		for i := range filter {
-			policyMrn := filter[i]
-			sb.WriteString("- " + policyMrn + "\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	return errors.New(sb.String())
 }
 
 func filterPolicyMrns(b *policy.Bundle, filters []string) []string {

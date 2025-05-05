@@ -4,6 +4,7 @@
 package components
 
 import (
+	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnquery/v11/cli/theme/colors"
 	"go.mondoo.com/cnspec/v11/policy"
@@ -47,4 +48,60 @@ func (t Rating) Color(r policy.ScoreRating) termenv.Color {
 		return c
 	}
 	return t.PolicyRatingColorMapping[policy.ScoreRating_unrated]
+}
+
+// These are the new Score Rating labels and colors, once we move away
+// from A-F scores, we can delete the above code.
+
+var DefaultScoreRatingColors = NewScoreRating(colors.DefaultColorTheme)
+
+// Initializes a Score Rating
+func NewScoreRating(theme colors.Theme) ScoreRating {
+	return ScoreRating{
+		ScoreRatingColorMapping: map[string]termenv.Color{
+			policy.ScoreRatingTextUnrated:  theme.Unknown,
+			policy.ScoreRatingTextNone:     theme.Good,
+			policy.ScoreRatingTextLow:      theme.Low,
+			policy.ScoreRatingTextMedium:   theme.Medium,
+			policy.ScoreRatingTextHigh:     theme.High,
+			policy.ScoreRatingTextCritical: theme.Critical,
+			policy.ScoreRatingTextError:    theme.Error,
+		},
+		// TODO @afiune this should live in "go.mondoo.com/cnquery/v11/cli/theme/colors"
+		ScoreRatingLipglossColorMapping: map[string]lipgloss.Color{
+			policy.ScoreRatingTextUnrated:  lipgloss.Color("231"),
+			policy.ScoreRatingTextNone:     lipgloss.Color("78"),
+			policy.ScoreRatingTextLow:      lipgloss.Color("117"),
+			policy.ScoreRatingTextMedium:   lipgloss.Color("75"),
+			policy.ScoreRatingTextHigh:     lipgloss.Color("212"),
+			policy.ScoreRatingTextCritical: lipgloss.Color("204"),
+			policy.ScoreRatingTextError:    lipgloss.Color("210"),
+		},
+	}
+}
+
+type ScoreRating struct {
+	// colors for policy score ratings
+	ScoreRatingColorMapping         map[string]termenv.Color
+	ScoreRatingLipglossColorMapping map[string]lipgloss.Color
+}
+
+func (t ScoreRating) Color(scoreRating string) termenv.Color {
+	c, ok := t.ScoreRatingColorMapping[scoreRating]
+	if ok {
+		return c
+	}
+	return t.ScoreRatingColorMapping[policy.ScoreRatingTextUnrated]
+}
+
+func (t ScoreRating) LipglossColor(scoreRating string) lipgloss.Color {
+	c, ok := t.ScoreRatingLipglossColorMapping[scoreRating]
+	if ok {
+		return c
+	}
+	return t.ScoreRatingLipglossColorMapping[policy.ScoreRatingTextUnrated]
+}
+
+func (t ScoreRating) LipglossStyle(scoreRating string) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(t.LipglossColor(scoreRating))
 }
