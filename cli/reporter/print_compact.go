@@ -12,10 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/muesli/ansi"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/cli/components"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/llx"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
@@ -81,10 +79,12 @@ func (r *defaultReporter) print() error {
 }
 
 func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
-	assetUrl := ""
-	assetsByPlatform := make(map[string][]*inventory.Asset)
-	projectId := ""
-	assetsByScore := make(map[string]int)
+	var (
+		assetUrl         = ""
+		projectId        = ""
+		assetsByPlatform = make(map[string][]*inventory.Asset)
+		assetsByScore    = make(map[string]int)
+	)
 	for _, assetMrnName := range orderedAssets {
 		assetMrn := assetMrnName.Mrn
 		asset := r.data.Assets[assetMrn]
@@ -99,13 +99,13 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			assetsByPlatform[platformName] = append(assetsByPlatform[platformName], asset)
 		}
 		if _, ok := r.data.Reports[assetMrn]; ok {
-			assetScore := r.data.Reports[assetMrn].Score.Rating().Letter()
+			assetScore := r.data.Reports[assetMrn].Score.Rating().Text()
 			assetsByScore[assetScore]++
 		}
 	}
 
 	if len(r.data.Errors) > 0 {
-		assetsByScore["X"] += len(r.data.Errors)
+		assetsByScore[policy.ScoreRatingTextError] += len(r.data.Errors)
 	}
 
 	if len(assetsByScore) > 0 {
@@ -122,51 +122,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 
 	// print distributions
 	if len(orderedAssets) > 1 {
-		summaryHeader := fmt.Sprintf("Summary")
-		summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
+		r.printSummaryHeader()
+		r.out(cnspecComponents.NewDistributions(assetsByScore, assetsByPlatform).View())
 		r.out(NewLineCharacter)
-		r.out(termenv.String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).Foreground(r.Colors.Primary).String())
-		r.out(NewLineCharacter)
-
-		scoreHeader := "Score Distribution"
-		assetHeader := "Asset Distribution"
-		header := scoreHeader + "\t\t" + assetHeader
-		headerDivider := strings.Repeat("-", utf8.RuneCountInString(scoreHeader)) + "\t\t" + strings.Repeat("-", utf8.RuneCountInString(assetHeader))
-
-		r.out(header + NewLineCharacter)
-		r.out(headerDivider + NewLineCharacter)
-
-		scores := r.getScoreDistribution(assetsByScore)
-		assets := r.getAssetDistribution(assetsByPlatform)
-
-		maxIndex := 0
-		if len(scores) > len(assets) {
-			maxIndex = len(scores)
-		} else {
-			maxIndex = len(assets)
-		}
-		// I also gave the tablewriter a try, but it didn't generate a nice output
-		for i := 0; i < maxIndex; i++ {
-			row := ""
-			addedScore := false
-			if i < len(scores) {
-				row = scores[i]
-				addedScore = true
-			}
-			if i < len(assets) {
-				if !addedScore {
-					row += strings.Repeat(" ", utf8.RuneCountInString(scoreHeader))
-				} else {
-					visibleScoreWidth := ansi.PrintableRuneWidth(scores[i])
-					spacing := utf8.RuneCountInString(scoreHeader) - visibleScoreWidth
-					row += strings.Repeat(" ", spacing)
-				}
-				row += "\t\t"
-				row += assets[i]
-			}
-			row += NewLineCharacter
-			r.out(row)
-		}
 	}
 
 	if r.Conf.isCompact {
@@ -202,53 +160,15 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	}
 }
 
-func (r *defaultReporter) getScoreDistribution(assetsByScore map[string]int) []string {
-	scores := []string{}
-	for _, score := range []string{"A", "B", "C", "D", "F", "U", "X"} {
-		scoreColor := r.Colors.Unknown
-		switch score {
-		case "A":
-			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_a)
-		case "B":
-			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_b)
-		case "C":
-			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_c)
-		case "D":
-			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_d)
-		case "F":
-			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_failed)
-		case "X":
-			scoreColor = cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_error)
-		}
-		coloredScore := termenv.String(score).Foreground(scoreColor).String()
-		output := fmt.Sprintf("%s %3d assets", coloredScore, assetsByScore[score])
-		if score == "X" || score == "U" {
-			if _, ok := assetsByScore[score]; !ok {
-				continue
-			}
-		}
-		scores = append(scores, output)
-	}
-	return scores
-}
-
-func (r *defaultReporter) getAssetDistribution(assetsByPlatform map[string][]*inventory.Asset) []string {
-	assets := []string{}
-
-	maxPlatformLength := 0
-	for platform := range assetsByPlatform {
-		if len(platform) > maxPlatformLength {
-			maxPlatformLength = len(platform)
-		}
-	}
-
-	for platform := range assetsByPlatform {
-		spacing := strings.Repeat(" ", maxPlatformLength-len(platform))
-		output := fmt.Sprintf("%s %s%3d", platform, spacing, len(assetsByPlatform[platform]))
-		assets = append(assets, output)
-	}
-
-	return assets
+func (r *defaultReporter) printSummaryHeader() {
+	summaryHeader := "Summary"
+	summaryDivider := strings.Repeat("=", utf8.RuneCountInString(summaryHeader))
+	r.out(NewLineCharacter)
+	r.out(termenv.
+		String(summaryHeader + NewLineCharacter + summaryDivider + NewLineCharacter).
+		Foreground(r.Colors.Primary).
+		String())
+	r.out(NewLineCharacter)
 }
 
 func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*inventory.Asset) {
@@ -269,7 +189,7 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 				assetScore = "[" + strconv.Itoa(int(score.Value)) + "/100]"
 			} else {
 				assetScoreRating = policy.ScoreRating_error
-				assetScore = "X"
+				assetScore = string(policy.ScoreRatingTextError)
 			}
 
 			paddedAssetScore := fmt.Sprintf("%-9s", assetScore)
@@ -278,43 +198,6 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 			r.out(output + NewLineCharacter)
 		}
 	}
-}
-
-func printCompactScoreSummary(score *policy.Score) string {
-	return fmt.Sprintf("%3d/100     (%d%% completed)",
-		score.Value, score.Completion())
-}
-
-func failureHbar(stats *policy.Stats) string {
-	var res string
-
-	if stats.Failed.A > 0 {
-		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_a)
-		pct := float32(stats.Failed.A) / float32(stats.Total) * 100
-		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
-	}
-	if stats.Failed.B > 0 {
-		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_b)
-		pct := float32(stats.Failed.B) / float32(stats.Total) * 100
-		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
-	}
-	if stats.Failed.C > 0 {
-		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_c)
-		pct := float32(stats.Failed.C) / float32(stats.Total) * 100
-		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
-	}
-	if stats.Failed.D > 0 {
-		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_d)
-		pct := float32(stats.Failed.D) / float32(stats.Total) * 100
-		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
-	}
-	if stats.Failed.F > 0 {
-		c := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_failed)
-		pct := float32(stats.Failed.F) / float32(stats.Total) * 100
-		res += termenv.String(components.Hbar(15, pct)).Foreground(c).String()
-	}
-
-	return res
 }
 
 func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
