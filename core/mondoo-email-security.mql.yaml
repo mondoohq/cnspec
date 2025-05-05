@@ -14,7 +14,7 @@ policies:
         email: hello@mondoo.com
     docs:
       desc: |
-        This policy bundle verifies best practices for authenticating email messages using security protocols such as Sender Policy Framework (SPF), Domain Keys Identified Mail (DKIM), and Domain-based Message Authentication, Reporting & Conformance (DMARC).
+        This policy verifies best practices for authenticating email messages using security protocols such as Sender Policy Framework (SPF), Domain Keys Identified Mail (DKIM), and Domain-based Message Authentication, Reporting & Conformance (DMARC).
 
         ### Running the Policy
 
@@ -22,7 +22,7 @@ policies:
         cnspec scan host mondoo.com -f mondoo-email-security.mql.yaml
         ```
 
-         ## Join the community!
+        ## Join the community!
 
         Our goal is to build policies that are simple to deploy, accurate, and actionable.
 
@@ -61,7 +61,17 @@ queries:
       dns(reverseDNSDomain).params.PTR.rData.any(_.contains(domainName.fqdn))
     docs:
       desc: |
-        Reverse DNS queries for IPv4 addresses use the special domain in-addr.arpa. In this domain, the IPv4 address is represented as a concatenated sequence of four decimal numbers separated by periods, to which is added the second-level domain suffix .in-addr.arpa. The four decimal numbers are obtained by splitting the 32-bit IPv4 address into four octets and converting each octet to a decimal number. These decimal numbers are then arranged in the following order: the smallest octet is first (leftmost) and the most significant octet is last (rightmost). It is important to note that this is the reverse order of the usual convention for writing IPv4 addresses in text form.
+        This check ensures that a Reverse IP Lookup PTR record is properly configured. Reverse DNS queries for IPv4 addresses utilize the special domain `in-addr.arpa`. In this domain, the IPv4 address is represented in reverse order as a sequence of four decimal numbers separated by periods, followed by the suffix `.in-addr.arpa`. Each decimal number corresponds to an octet of the 32-bit IPv4 address, arranged from least significant (leftmost) to most significant (rightmost). This reverse ordering is the opposite of the standard IPv4 address notation. Properly configured PTR records are essential for verifying the authenticity of email servers and ensuring compliance with email delivery best practices.
+
+        **Why this matters**
+        - Validates sender identity and prevents spam classification.
+        - Reduces phishing and spoofing by verifying legitimate email servers.
+
+        **If you don't fix this**
+        - Major providers like Gmail and Outlook may reject or silently drop your emails.
+
+        Example:
+        IP `123.123.123.123` should have a PTR record pointing to `mail.example.com`, and a forward lookup of `mail.example.com` should resolve back to `123.123.123.123`.
 
         For example, to query the IP address 8.8.4.4 in reverse order, the PTR record for the domain name 4.4.8.8.in-addr.arpa is queried, which points to dns.google.
 
@@ -71,10 +81,18 @@ queries:
         According to Google's latest guidelines:
 
         "Your sending IP address must have a PTR record. PTR records verify that the sending hostname is associated with the sending IP address.
-        Every IP address must map to a hostname in the PTR record. The hostname specified in the PTR record must have a forward DNS that refers to the sending IP address."
-      audit: Run the `dig -t PTR <special-reverse-domain>` command and verify that the it points to your mail domain.
+
+      audit: |
+        Run the `dig -t PTR <special-reverse-domain>` command and verify that it points to your mail domain.
+
+        Example:
+        For the IP address `123.123.123.123`, the reverse domain would be `123.123.123.123.in-addr.arpa`. The output should show:
+
+        ```
+        123.123.123.123.in-addr.arpa	name = mail.example.com.
+        ```
       remediation: |
-        Set up valid reverse DNS (rDNS) records for the IP addresses of your outbound mail servers. Reverse DNS ensures that when a receiving mail server performs a lookup on the sending IP, it resolves to a fully qualified domain name (FQDN) associated with your organization’s domain—this helps validate the authenticity of your emails and reduces the likelihood of your messages being marked as spam.
+        Set up valid reverse DNS (rDNS) records for the IP addresses of your outbound mail servers. Reverse DNS ensures that when a receiving mail server performs a lookup on the sending IP, it resolves to a fully qualified domain name (FQDN) associated with your organization's domain—this helps validate the authenticity of your emails and reduces the likelihood of your messages being marked as spam.
 
         For example, if mail.lunalectric.com sends email from the IP address 123.123.123.123, the reverse DNS for that IP should resolve to a name within your domain, such as mail.lunalectric.com.
 
@@ -102,14 +120,31 @@ queries:
         title: Forward-confirmed reverse DNS
       - url: https://support.google.com/a/answer/81126?hl=en#ip
         title: Google Email sender guidelines - IP Addresses
-
   - uid: mondoo-email-security-txt-record
     title: Domain Apex should have a TXT record
     mql: dns.records.where(type == "TXT") != empty
     docs:
       desc: |
-        A TXT record is a type of resource record in the Domain Name System (DNS) used to provide the ability to associate arbitrary text with a host or other name, such as human readable information about a server, network, data center, or other accounting information.
-      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set.
+        This check confirms the presence of a TXT record, which provides additional domain ownership verification and policy information.
+
+        **Why this matters**
+        - Supports authentication protocols like SPF and domain verification.
+        - Enhances trust by clearly stating domain policies.
+
+        **If you don't fix this**
+        - Email services may fail to verify domain ownership, impacting deliverability.
+
+        Example:
+        TXT record: `v=spf1 include:_spf.google.com ~all`
+      audit: |
+        Run the `dig +short TXT <domain>` command and verify that the SPF record is set.
+
+        Example output:
+
+        ```
+        "atlassian-domain-verification=12345"
+        "google-site-verification=678910"
+        ```
       remediation: |
         Add a TXT record to your DNS zone file.
 
@@ -119,7 +154,12 @@ queries:
         dig +short TXT lunalectric.com
         ```
 
-        The output should show the TXT record you added.
+        Example output:
+
+        ```
+        "atlassian-domain-verification=12345"
+        "google-site-verification=678910"
+        ```
     refs:
       - url: https://en.wikipedia.org/wiki/TXT_record
         title: TXT Record
@@ -128,7 +168,17 @@ queries:
     mql: dns.records.where(type == "A") != empty
     docs:
       desc: |
-        A domain's apex anchor record should be set to something, even if it's a redirect.
+        This check ensures the existence of an anchor (A) record at the domain apex, which maps a domain name to an IPv4 address.
+
+        **Why this matters**
+        - Ensures users and mail systems can reliably access domain resources.
+        - Improves overall domain stability and trustworthiness.
+
+        **If you don't fix this**
+        - Your domain may appear unreachable, causing website and service access failures.
+
+        Example:
+        A record for `example.com` resolves to `93.184.216.34`.
       audit: Run the `dig -t A <domain>` command and verify that there is an A record
       remediation: |
         Add an A record to your DNS zone file. If you're not hosting a dedicated service on the root domain, consider pointing the A record to a web server that redirects visitors to your main corporate website.
@@ -149,7 +199,17 @@ queries:
       dns.params['TXT']['rData'].one(/v=spf1/)
     docs:
       desc: |
-        Sender Policy Framework (SPF) is a method of preventing email spoofing by allowing the owner of a domain to publish a list of mail servers that are authorized to send email from that domain.
+        Ensures Sender Policy Framework (SPF) records correctly specify authorized mail servers, preventing email spoofing.
+
+        **Why this matters**
+        - Reduces risk of email fraud by clearly specifying legitimate sending servers.
+        - Improves deliverability by reducing false spam detections.
+
+        **If you don't fix this**
+        - Attackers can spoof your domain to send phishing emails.
+
+        Example:
+        SPF record: `v=spf1 ip4:192.168.0.1 include:_spf.example.com -all`
       audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
@@ -171,7 +231,18 @@ queries:
     title: Ensure there are not multiple SPF records
     mql: dns.params['TXT']['rData'].where(/v=spf1/).length <= 1
     docs:
-      desc: A domain should have only one Sender Policy Framework (SPF) record.
+      desc: |
+        Validates that only one SPF record is set per domain, avoiding conflicts and ensuring proper email validation.
+
+        **Why this matters**
+        - Prevents authentication failures caused by multiple conflicting records.
+        - Simplifies SPF management and reduces potential misconfigurations.
+
+        **If you don't fix this**
+        - Mail servers may skip SPF checks entirely, weakening your domain protection.
+
+        Example:
+        Only one TXT record with `v=spf1` exists for `example.com`.
       audit: Run the `dig -t TXT <domain>` command and verify that there is only one SPF record
       remediation: |
         Remove all but one SPF record from your DNS zone file.
@@ -190,7 +261,18 @@ queries:
     title: Ensure SPF record is not too long
     mql: dns.params['TXT']['rData'].where(/v=spf1/).all(_.length <= 255)
     docs:
-      desc: The Sender Policy Framework (SPF) record should not be longer than 255 characters.
+      desc: |
+        Checks SPF records for proper length.
+
+        **Why this matters**
+        - Ensures compliance with DNS standards, preventing truncation or parsing errors.
+        - Reduces risks of SPF validation errors.
+
+        **If you don't fix this**
+        - Broken SPF records could cause legitimate emails to fail authentication.
+
+        Example:
+        SPF record should be under 255 characters: `v=spf1 include:_spf.example.com ~all`
       audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is not longer than 255 characters
       remediation: |
         Remove some of the entries from your SPF record.
@@ -207,7 +289,18 @@ queries:
     title: Ensure SPF record does not contain any excess whitespace
     mql: dns.params['TXT']['rData'].where(/v=spf1/).where(/\s{2,}/) == empty
     docs:
-      desc: The Sender Policy Framework (SPF) record should not contain any unnecessary whitespace.
+      desc: |
+        Checks SPF records for absence of unnecessary whitespace.
+
+        **Why this matters**
+        - Ensures compliance with DNS standards, preventing truncation or parsing errors.
+        - Reduces risks of SPF validation errors.
+
+        **If you don't fix this**
+        - Broken SPF records could cause legitimate emails to fail authentication.
+
+        Example:
+        SPF record should not contain multiple spaces: `v=spf1 include:_spf.example.com ~all`
       audit: Run the `dig -t TXT <domain>` command and verify that the SPF record does not contain any whitespace
       remediation: |
         Remove all excess whitespace from your SPF record.
@@ -225,7 +318,15 @@ queries:
     mql: |
       dns.params['TXT']['rData'].where(/v=spf1/).all(/all/)
     docs:
-      desc: The Sender Policy Framework (SPF) record should be set to soft fail all.
+      desc: |
+        Verifies that the SPF record ends in either ~all (soft fail) or -all (hard fail), ensuring that mail from unauthorized servers is rejected or flagged.
+
+        **Why this matters**
+        - Prevents unauthenticated servers from sending email on behalf of your domain.
+        - Provides clear enforcement to protect against spoofed messages.
+
+        **If you don't fix this**
+        - Anyone can send mail pretending to be from your domain without SPF filtering stopping it.
       audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set to fail or soft fail all
       remediation: |
         The SPF record should end with all.
@@ -242,7 +343,18 @@ queries:
     title: Do not use deprecated SPF DNS Record Type
     mql: dns.records.where(type == "SPF") == empty
     docs:
-      desc: The Sender Policy Framework (SPF) record should not use the deprecated SPF DNS Record Type.
+      desc: |
+        Ensures deprecated SPF DNS record types are not used, maintaining current standards compliance.
+
+        **Why this matters**
+        - Ensures compatibility with modern mail systems.
+        - Reduces likelihood of authentication issues.
+
+        **If you don't fix this**
+        - Mail servers may ignore your SPF configuration, exposing your domain to abuse.
+
+        Example:
+        Use only TXT records for SPF. Do not use deprecated SPF record types.
       audit: Run the `dig SPF <domain>` command and verify that the SPF record does not use the deprecated SPF DNS Record Type
       remediation: |
         Remove the deprecated SPF DNS Record Type from your SPF record.
@@ -259,19 +371,56 @@ queries:
     title: Ensure DMARC DNS entry exists
     mql: dns("_dmarc."+domainName.fqdn).records != empty
     docs:
-      desc: DMARC is a scalable mechanism by which a mail-originating organization can express domain-level policies and preferences for message validation, disposition, and reporting that a mail-receiving organization can use to improve mail handling.
-      audit: Run the `dig _dmarc.<domain>` command and verify that the DMARC DNS entry exists
+      desc: |
+        Verifies DMARC is configured to specify handling policies for emails failing authentication.
+
+        **Why this matters**
+        - Helps prevent domain spoofing and phishing attacks.
+        - Provides clear instructions for handling unauthenticated emails, enhancing domain trust.
+
+        **If you don't fix this**
+        - Attackers can spoof your domain without detection.
+
+        Example:
+        DMARC record: `v=DMARC1; p=reject; rua=mailto:dmarc-reports@example.com`
+      audit: |
+        Run the `dig _dmarc.<domain>` command and verify that the DMARC DNS entry exists.
+
+        Example output:
+
+        ```
+        _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
       remediation: |
         Add the _dmarc entry to you DNS zone file.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
+      - url: https://en.wikipedia.org/wiki/DMARC
+        title: DMARC
   - uid: mondoo-email-security-dmarc-version
     title: Ensure DMARC version 1
     mql: dns("_dmarc."+domainName.fqdn).params['TXT']['rData'].all(/v=DMARC1/)
     docs:
-      desc: Set the DMARC version in the TXT record to 1.
-      audit: Run the `dig _dmarc.<domain>` command and verify that the DMARC TXT record contains `v=DMARC1`.
+      desc: |
+        Ensures the version tag in the DMARC record is v=DMARC1.
+
+        **Why this matters**
+        - Required by all mail receivers to parse the policy.
+
+        **If you don't fix this**
+        - The DMARC policy will be ignored.
+
+        Example:
+        `v=DMARC1; p=reject;`
+      audit: |
+        Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC version is set to 1.
+
+        Example output:
+
+        ```
+        _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
@@ -289,11 +438,25 @@ queries:
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
+      - url: https://en.wikipedia.org/wiki/DMARC
+        title: DMARC
   - uid: mondoo-email-security-dmarc-policy
     title: Ensure DMARC policy is set to quarantine or reject
     mql: dns("_dmarc."+domainName.fqdn).params['TXT']['rData'].all(/reject|quarantine/)
     docs:
-      desc: In the DMARC implementation, you can tell email receivers how to handle email messages that fail authentication and protect your domain from spoofing and other phishing attacks. There are three DMARC policies (Monitoring Policy, Quarantine Policy, Reject Policy) that you can implement.
+      desc: |
+        This check confirms the policy mode is either quarantine or reject. This setting determines how receiving mail servers treat messages that fail DMARC evaluation.
+
+        **Why this matters**
+        - Specifies what to do when email fails authentication.
+        - "None" allows spoofed messages to pass unchecked.
+
+        **If you don't fix this**
+        - Spoofed emails will be delivered unimpeded, potentially harming recipients and damaging your domain's reputation.
+
+        Examples:
+        - `p=reject;` — blocks unauthenticated messages outright.
+        - `p=quarantine;` — flags unauthenticated messages as suspicious and typically places them in the recipient's spam or junk folder. This is a safer starting point if you're still gathering data or fine-tuning your DMARC implementation.
       audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC policy quarantine or reject is configured.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
@@ -311,12 +474,25 @@ queries:
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
+      - url: https://en.wikipedia.org/wiki/DMARC
+        title: DMARC
   - uid: mondoo-email-security-dmarc-rua
     title: Ensure DMARC RUA tag
     mql: dns("_dmarc."+domainName.fqdn).params['TXT']['rData'].all(/rua=mailto/)
     docs:
       desc: |
-        Receiving email servers regularly send DMARC Aggregate Reports (RUA) to all domains that have an adequately implemented DMARC policy. These reports contain encrypted aggregate statistics in XML format and are sent to the email addresses specified in the RUA tag of the DMARC record. In simpler terms, the RUA tag is used to specify one or more email addresses where you want to receive DMARC Aggregate Reports.
+        In the DMARC implementation, you can tell email receivers how to handle email messages that fail authentication and protect your domain from spoofing and other phishing attacks. There are three DMARC policies (Monitoring Policy, Quarantine Policy, Reject Policy) that you can implement.
+
+        Ensures a rua tag exists, specifying where to send aggregate reports.
+
+        **Why this matters**
+        - Lets you monitor authentication pass/fail patterns over time.
+
+        **If you don't fix this**
+        - You won't know if your domain is being spoofed.
+
+        Example:
+        `rua=mailto:dmarc-reports@example.com`
       audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC RUA tag is configured.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
@@ -334,12 +510,26 @@ queries:
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
+      - url: https://en.wikipedia.org/wiki/DMARC
+        title: DMARC
   - uid: mondoo-email-security-dmarc-ruf
     title: Ensure DMARC RUF tag
     mql: dns("_dmarc."+domainName.fqdn).params['TXT']['rData'].all(/ruf=mailto/)
     docs:
       desc: |
         The RUF (or DMARC Failure or Forensic Report) tag was designed to inform domain administrators when emails fail SPF, DKIM, and DMARC authentication checks. The report includes sensitive details about the email, such as the header, subject, URLs, and attachments. However, many organizations prefer not to request RUF reports due to privacy and compliance concerns. The main goal is to comply with privacy laws and prevent data breaches.
+
+        Ensures a ruf tag exists for receiving failure (forensic) reports.
+
+        **Why this matters**
+        - Provides visibility into specific failed messages.
+        - Helps identify targeted spoofing attempts and misconfigurations in near real-time.
+
+        If you don't fix this:
+        - You'll miss real-time insights into attack attempts or authentication failures.
+
+        Example:
+        `ruf=mailto:security@example.com`
       audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC RUF tag is configured.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
@@ -378,7 +568,20 @@ queries:
       props.mondooEmailSecurityDkimSelectors.contains(dns(_+"._domainkey."+domainName.fqdn).params['TXT']['rData'].first == /k=rsa/)
     docs:
       desc: |
-        A DKIM record is a specialized DNS TXT record that stores the public key used to verify an email's authenticity.
+        This check confirms DKIM records exist and correctly provide public keys to validate email authenticity.
+
+        **Why this matters**
+        - Ensures email content integrity.
+        - Protects against message tampering and impersonation.
+
+        **If you don't fix this**
+        - Email recipients cannot verify the origin and integrity of your emails.
+
+        Example:
+        DKIM record for selector google:
+        `google._domainkey.example.com. IN TXT "v=DKIM1; k=rsa; p=MIGfMA0..."`
+
+
       audit: Run the `dig TXT <selector>._domainkey.<domain>` command and verify that the public key is available.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
@@ -396,3 +599,5 @@ queries:
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
+      - url: https://en.wikipedia.org/wiki/DomainKeys_Identified_Mail
+        title: DomainKeys Identified Mail
