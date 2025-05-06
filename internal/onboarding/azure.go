@@ -209,6 +209,15 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 	return tfgen.CreateHclStringOutput(hclBlocks...), nil
 }
 
+var customMondooRolePermissions = tfgen.Attributes{
+	"actions ": []string{
+		"Microsoft.Compute/virtualMachines/runCommands/read",
+		"Microsoft.Compute/virtualMachines/runCommands/write",
+		"Microsoft.Compute/virtualMachines/runCommands/delete",
+		"Microsoft.Compute/virtualMachines/runCommand/action",
+	},
+}
+
 func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServicePrincipal *tfgen.HclResource) ([]tfgen.Object, []any, error) {
 	resources := []tfgen.Object{}
 	dependsOn := []any{}
@@ -233,19 +242,7 @@ func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServ
 
 	// custom role needed only when scanning VMs
 	if integration.ScanVMs {
-		customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil,
-			tfgen.Attributes{
-				"actions ": []string{
-					"Microsoft.Compute/virtualMachines/runCommands/read",
-					"Microsoft.Compute/virtualMachines/runCommands/write",
-					"Microsoft.Compute/virtualMachines/runCommands/delete",
-					"Microsoft.Compute/virtualMachines/runCommand/action",
-				},
-				// not_actions = []
-				// data_actions = []
-				// not_data_actions = []
-			},
-		)
+		customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil, customMondooRolePermissions)
 		if err != nil {
 			return resources, dependsOn, errors.Wrap(err, "failed to generate custom role permissions block")
 		}
@@ -294,19 +291,7 @@ func azureRMReaderRoleAssignmentBlocks(integration AzureIntegration, resourceADS
 	// custom role needed only when scanning VMs
 	var resourceRMCustomRoleDefinition *tfgen.HclResource
 	if integration.ScanVMs {
-		customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil,
-			tfgen.Attributes{
-				"actions ": []string{
-					"Microsoft.Compute/virtualMachines/runCommands/read",
-					"Microsoft.Compute/virtualMachines/runCommands/write",
-					"Microsoft.Compute/virtualMachines/runCommands/delete",
-					"Microsoft.Compute/virtualMachines/runCommand/action",
-				},
-				// not_actions = []
-				// data_actions = []
-				// not_data_actions = []
-			},
-		)
+		customRolePermissionsBlock, err := tfgen.HclCreateGenericBlock("permissions", nil, customMondooRolePermissions)
 		if err != nil {
 			return resources, dependsOn, errors.Wrap(err, "failed to generate custom role permissions block")
 		}
