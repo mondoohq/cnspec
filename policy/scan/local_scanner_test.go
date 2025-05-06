@@ -14,6 +14,7 @@ import (
 	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v11/providers"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/recording"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/testutils"
@@ -91,7 +92,14 @@ type LocalScannerSuite struct {
 
 func (s *LocalScannerSuite) SetupSuite() {
 	s.ctx = context.Background()
+	// @afiune by default, testutils.Local() returns a runtime with auto-update disabled we
+	// need to update this function to accept a runtime, for now, patch it after initialization
 	runtime := testutils.Local()
+	providersRuntime := providers.DefaultRuntime()
+	providersRuntime.AutoUpdate = providers.UpdateProvidersConfig{
+		Enabled:         true,
+		RefreshInterval: 60 * 60,
+	}
 	s.conf = mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)
 }
 
