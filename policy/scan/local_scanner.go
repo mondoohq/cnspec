@@ -94,7 +94,7 @@ func WithReportType(reportType ReportType) ScannerOption {
 }
 
 func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
-	runtime := providers.Coordinator.NewRuntime()
+	runtime := providers.DefaultRuntime()
 
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
