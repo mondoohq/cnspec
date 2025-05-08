@@ -1,3 +1,4 @@
+
 # Copyright (c) Mondoo, Inc.
 # SPDX-License-Identifier: BUSL-1.1
 
@@ -67,21 +68,21 @@ queries:
         **Why this matters**
 
         When the Compute Engine API is enabled on a new Google Cloud project, Google automatically creates a default Compute Engine service account with the IAM Editor role. This account has broad permissions across many Google Cloud services and is frequently used by default unless explicitly overridden:
-          •	Using the default service account grants more privileges than most applications require, increasing the risk of privilege escalation or lateral movement in the event of compromise.
-          •	The default service account is shared across all instances in the project, reducing visibility and control over which workloads can access which resources.
-          •	Misuse or over-permissioning of default service accounts has been the cause of multiple cloud security incidents, particularly when combined with metadata API access.
+          •  Using the default service account grants more privileges than most applications require, increasing the risk of privilege escalation or lateral movement in the event of compromise.
+          •  The default service account is shared across all instances in the project, reducing visibility and control over which workloads can access which resources.
+          •  Misuse or over-permissioning of default service accounts has been the cause of multiple cloud security incidents, particularly when combined with metadata API access.
 
         If instances continue to use the default service account, it can lead to:
-          •	Excessive permissions, violating least privilege principles and security best practices.
-          •	Difficult-to-audit access patterns, as many services share a single identity with broad permissions.
-          •	Increased blast radius if the service account credentials are leaked or the instance is compromised.
-          •	Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark and NIST 800-53.
+          •  Excessive permissions, violating least privilege principles and security best practices.
+          •  Difficult-to-audit access patterns, as many services share a single identity with broad permissions.
+          •  Increased blast radius if the service account credentials are leaked or the instance is compromised.
+          •  Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark and NIST 800-53.
 
         Risk mitigation:
-          •	Replace default service accounts with custom service accounts that have narrowly scoped IAM roles tailored to the workload.
-          •	Regularly review and audit service account usage to ensure they are aligned with current access needs.
-          •	Disable or delete the default service account only after ensuring that no dependent applications or services will be disrupted.
-          •	Leverage IAM Conditions and organization policies to prevent the use of default service accounts in new deployments.
+          •  Replace default service accounts with custom service accounts that have narrowly scoped IAM roles tailored to the workload.
+          •  Regularly review and audit service account usage to ensure they are aligned with current access needs.
+          •  Disable or delete the default service account only after ensuring that no dependent applications or services will be disrupted.
+          •  Leverage IAM Conditions and organization policies to prevent the use of default service accounts in new deployments.
 
         By avoiding the use of the default Compute Engine service account, organizations can enforce better identity isolation, minimize unnecessary permissions, and enhance the overall security posture of their Google Cloud environment.
       remediation:
@@ -148,33 +149,44 @@ queries:
       asset.platform == 'gcp-compute-instance'
       gcp.compute.instance.name != /^gke-/
     mql: |
-        gcp.compute.instance.serviceAccounts.none(
-          email == /^.*compute@developer\.gserviceaccount\.com$/
-        )
+      gcp.compute.instance.serviceAccounts.none(
+        email == /^\d{12}-(compute|cloudservices)@developer\.gserviceaccount\.com$|^[a-z][a-z0-9\-]{4,28}@appspot\.gserviceaccount\.com$/
+      )
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance')
     mql: |
-      terraform.resources.where(nameLabel == 'google_compute_instance').any(
-        blocks.where(type == 'service_account').one(type == 'service_account')
+      terraform.resources.where(
+        nameLabel == 'google_compute_instance'
+      ).all(
+        blocks.where(
+          type == 'service_account'
+        ).none(
+          arguments.email == /^\d{12}-(compute|cloudservices)@developer\.gserviceaccount\.com$|^[a-z][a-z0-9\-]{4,28}@appspot\.gserviceaccount\.com$/
+        )
       )
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_instance').none(
-        change.after.contains(/^.*compute@developer\.gserviceaccount\.com$/)
+      terraform.plan.resourceChanges.where(
+        type == 'google_compute_instance'
+      ).all(
+        change.after.service_account.none(
+          email == /^\d{12}-(compute|cloudservices)@developer\.gserviceaccount\.com$|^[a-z][a-z0-9\-]{4,28}@appspot\.gserviceaccount\.com$/
+        )
       )
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance')
     mql: |
-      terraform.state.resources.where(type == 'google_compute_instance') {
-        values.service_account.contains(/^.*compute@developer\.gserviceaccount\.com$/)
-      }
-
-
-
+      terraform.state.resources.where(
+        type == 'google_compute_instance'
+      ).all(
+        values.service_account.none(
+          email == /^\d{12}-(compute|cloudservices)@developer\.gserviceaccount\.com$|^[a-z][a-z0-9\-]{4,28}@appspot\.gserviceaccount\.com$/
+        )
+      )
   - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api
     title: Ensure instances are not configured to use the default service account with full access to all Cloud APIs
     impact: 90
@@ -185,26 +197,26 @@ queries:
       - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api-terraform-state
     docs:
       desc: |
-        This check ensures that Google Cloud Compute Engine instances are not provisioned with full access to all Google Cloud APIs. Instead, instances should be assigned custom service accounts with narrowly scoped permissions, adhering to the principle of least privilege.
+        This check ensures that Google Cloud Compute Engine instances are not provisioned to use the default service account with full access to all Google Cloud APIs. Instead, instances should be assigned custom service accounts with narrowly scoped permissions, adhering to the principle of least privilege.
 
         **Why this matters**
 
         By default, when creating a Compute Engine instance, users can assign it “Allow full access to all Cloud APIs”, granting unrestricted access to most Google Cloud services. This setting is overly permissive and introduces significant security risk:
-          •	It allows the instance to interact with nearly any Google Cloud API, regardless of the workload's actual needs.
-          •	In the event of a compromise, an attacker could use the instance's credentials to access sensitive resources, manipulate cloud infrastructure, or move laterally across services.
-          •	The broad access complicates auditing and access management, making it harder to identify excessive privileges or detect misuse.
+          •  It allows the instance to interact with nearly any Google Cloud API, regardless of the workload's actual needs.
+          •  In the event of a compromise, an attacker could use the instance's credentials to access sensitive resources, manipulate cloud infrastructure, or move laterally across services.
+          •  The broad access complicates auditing and access management, making it harder to identify excessive privileges or detect misuse.
 
         If instances are provisioned with full API access, it can lead to:
-          •	Privilege escalation and lateral movement, especially if metadata APIs are accessible from within the VM.
-          •	Increased blast radius in the event of credential theft or VM compromise.
-          •	Violations of least privilege and non-compliance with security frameworks such as CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
-          •	Obscured audit trails, since full access allows interactions with multiple services without role-based segmentation.
+          •  Privilege escalation and lateral movement, especially if metadata APIs are accessible from within the VM.
+          •  Increased blast radius in the event of credential theft or VM compromise.
+          •  Violations of least privilege and non-compliance with security frameworks such as CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
+          •  Obscured audit trails, since full access allows interactions with multiple services without role-based segmentation.
 
         Risk mitigation:
-          •	Assign custom service accounts to instances with only the specific roles required for their function.
-          •	Avoid using the “Allow full access to all Cloud APIs” option during instance creation.
-          •	Enforce IAM policies and organizational constraints to block the use of overly permissive API scopes.
-          •	Continuously review service account permissions and API scopes as part of your identity and access governance strategy.
+          •  Assign custom service accounts to instances with only the specific roles required for their function.
+          •  Avoid using the “Allow full access to all Cloud APIs” option during instance creation.
+          •  Enforce IAM policies and organizational constraints to block the use of overly permissive API scopes.
+          •  Continuously review service account permissions and API scopes as part of your identity and access governance strategy.
 
         Restricting Compute Engine instances to minimal necessary API access helps contain the impact of security incidents, improves visibility and control, and supports a robust and compliant cloud security posture.
       remediation:
@@ -270,6 +282,7 @@ queries:
   - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api-single
     filters: |
       asset.platform == 'gcp-compute-instance'
+      gcp.compute.instance.serviceAccounts.contains( email == /^\d{12}-(compute|cloudservices)@developer\.gserviceaccount\.com$|^[a-z][a-z0-9\-]{4,28}@appspot\.gserviceaccount\.com$/ )
       gcp.compute.instance.name != /^gke-/
     mql: |
       gcp.compute.instance.serviceAccounts.none(
@@ -279,32 +292,42 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance')
     mql: |
-      terraform.resources.where(nameLabel == 'google_compute_instance') {
-        blocks.where(type == 'service_account') {
-          arguments.scopes.none(_ == 'https://www.googleapis.com/auth/cloud-platform')
-        }
-      }
+      terraform.resources.where(
+        nameLabel == 'google_compute_instance'
+      ).all(
+        blocks.where(
+          type == 'service_account' &&
+          arguments.email.contains(/^(default|\d{12}-compute@developer\.gserviceaccount\.com)$/)
+        ).all(
+          arguments.scopes.none(
+            _ == /(https?:\/\/www\.googleapis\.com\/auth\/)?cloud-platform/
+          )
+        )
+      )
   - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_instance') {
-        change.after.service_account {
-          _['scopes'].none(_ == 'https://www.googleapis.com/auth/cloud-platform')
-        }
-      }
+      terraform.plan.resourceChanges.where(
+        type == 'google_compute_instance'
+      ).all(
+        change.after.service_account.none(
+          email == /^(default|\d{12}-compute@developer\.gserviceaccount\.com)$/ &&
+          scopes.contains(/(https?:\/\/www\.googleapis\.com\/auth\/)?cloud-platform/)
+        )
+      )
   - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance')
     mql: |
-      terraform.state.resources.where(type == 'google_compute_instance') {
-        values.service_account {
-          _['scopes'].none(_ == 'https://www.googleapis.com/auth/cloud-platform')
-        }
-      }
-
-
-
+      terraform.state.resources.where(
+        type == 'google_compute_instance'
+      ).all(
+        values.service_account.none(
+          email == /^(default|\d{12}-compute@developer\.gserviceaccount\.com)$/ &&
+          scopes.contains(/(https?:\/\/www\.googleapis\.com\/auth\/)?cloud-platform/)
+        )
+      )
   - uid: mondoo-gcp-security-block-project-wide-ssh-keys-enabled-vm-instances
     title: Ensure "Block Project-wide SSH keys" is enabled for VM instances
     impact: 70
@@ -320,25 +343,25 @@ queries:
         **Why this matters**
 
         GCP allows SSH keys to be defined at the project level, enabling access to all Compute Engine instances within the project. While this simplifies SSH key management, it introduces significant security risks:
-          •	If a project-wide SSH key is compromised, an attacker may gain access to every VM in the project.
-          •	Project-wide keys promote shared access, making it harder to enforce least privilege and track user-specific activity.
-          •	Revoking access for a user with a project-wide key affects all instances, which can lead to operational disruption or security gaps.
+          •  If a project-wide SSH key is compromised, an attacker may gain access to every VM in the project.
+          •  Project-wide keys promote shared access, making it harder to enforce least privilege and track user-specific activity.
+          •  Revoking access for a user with a project-wide key affects all instances, which can lead to operational disruption or security gaps.
 
         In contrast, instance-specific SSH keys offer finer-grained access control:
-          •	Keys are scoped only to the VM they are intended for.
-          •	It is easier to manage user access on a per-instance basis.
-          •	Auditability is improved, as access can be tracked and revoked at the individual instance level.
+          •  Keys are scoped only to the VM they are intended for.
+          •  It is easier to manage user access on a per-instance basis.
+          •  Auditability is improved, as access can be tracked and revoked at the individual instance level.
 
         If project-wide SSH keys are used, it may result in:
-          •	Expanded attack surface, where one key exposes multiple critical systems.
-          •	Difficulty in access governance, particularly in large or multi-team environments.
-          •	Non-compliance with cloud security benchmarks like the CIS GCP Foundations Benchmark and access control requirements in frameworks such as NIST 800-53 and ISO 27001.
+          •  Expanded attack surface, where one key exposes multiple critical systems.
+          •  Difficulty in access governance, particularly in large or multi-team environments.
+          •  Non-compliance with cloud security benchmarks like the CIS GCP Foundations Benchmark and access control requirements in frameworks such as NIST 800-53 and ISO 27001.
 
         Risk mitigation:
-          •	Disable project-wide SSH key usage by setting the enable-oslogin metadata to TRUE at the project level.
-          •	Configure instance-level SSH keys via instance metadata or use OS Login for centralized and auditable access management.
-          •	Regularly audit and rotate SSH keys, ensuring access is granted only where needed.
-          •	Enforce organizational policies to prohibit the use of project-wide SSH keys across GCP environments.
+          •  Disable project-wide SSH key usage by setting the enable-oslogin metadata to TRUE at the project level.
+          •  Configure instance-level SSH keys via instance metadata or use OS Login for centralized and auditable access management.
+          •  Regularly audit and rotate SSH keys, ensuring access is granted only where needed.
+          •  Enforce organizational policies to prohibit the use of project-wide SSH keys across GCP environments.
 
         Using instance-specific SSH keys improves access control, reduces the blast radius of credential compromise, and aligns with cloud security best practices that emphasize isolation, auditability, and least privilege.
       remediation:
@@ -407,9 +430,6 @@ queries:
       terraform.state.resources.where(type == 'google_compute_instance') {
         values.metadata['block-project-ssh-keys'] == true
       }
-
-
-
   - uid: mondoo-gcp-security-compute-instances-oslogin-enabled
     title: Ensure oslogin is enabled for compute instances
     impact: 70
@@ -425,26 +445,26 @@ queries:
         **Why this matters**
 
         By default, SSH access to GCP Compute Engine instances is managed using manually added SSH keys in project or instance metadata. This method has several limitations:
-          •	SSH keys are difficult to track, audit, and revoke, especially in large or dynamic environments.
-          •	Key-based access lacks integration with IAM policies, which makes it harder to enforce centralized identity governance.
-          •	Users can retain access indefinitely if SSH keys are not manually removed, creating lingering access risks.
+          •  SSH keys are difficult to track, audit, and revoke, especially in large or dynamic environments.
+          •  Key-based access lacks integration with IAM policies, which makes it harder to enforce centralized identity governance.
+          •  Users can retain access indefinitely if SSH keys are not manually removed, creating lingering access risks.
 
         OS Login solves these issues by integrating SSH access with IAM:
-          •	Access is granted or revoked based on IAM roles (roles/compute.osLogin, roles/compute.osAdminLogin).
-          •	User access is managed centrally and consistently across all instances.
-          •	Login activity is auditable through Cloud Audit Logs and linked to the user's Google identity.
+          •  Access is granted or revoked based on IAM roles (roles/compute.osLogin, roles/compute.osAdminLogin).
+          •  User access is managed centrally and consistently across all instances.
+          •  Login activity is auditable through Cloud Audit Logs and linked to the user's Google identity.
 
         If OS Login is not enabled, it can lead to:
-          •	Stale or orphaned SSH keys, increasing the risk of unauthorized access.
-          •	Limited visibility and control over who has access to which instances.
-          •	Non-compliance with security best practices and frameworks like CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
-          •	Operational complexity, as access changes require manual updates to metadata.
+          •  Stale or orphaned SSH keys, increasing the risk of unauthorized access.
+          •  Limited visibility and control over who has access to which instances.
+          •  Non-compliance with security best practices and frameworks like CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
+          •  Operational complexity, as access changes require manual updates to metadata.
 
         Risk mitigation:
-          •	Enable OS Login by setting the enable-oslogin metadata key to TRUE at the project or instance level.
-          •	Use IAM roles to define which users can access which instances, and whether they have standard or administrative privileges.
-          •	Leverage OS Login with 2-Step Verification (OS Login 2SV) for enhanced access protection.
-          •	Regularly review IAM policies and login activity to ensure appropriate access and detect anomalies.
+          •  Enable OS Login by setting the enable-oslogin metadata key to TRUE at the project or instance level.
+          •  Use IAM roles to define which users can access which instances, and whether they have standard or administrative privileges.
+          •  Leverage OS Login with 2-Step Verification (OS Login 2SV) for enhanced access protection.
+          •  Regularly review IAM policies and login activity to ensure appropriate access and detect anomalies.
 
         Enabling OS Login provides a secure, scalable, and manageable way to control SSH access to Compute Engine instances, aligning with best practices for identity-based access control and centralized policy enforcement in GCP environments.
       remediation:
@@ -551,9 +571,6 @@ queries:
       terraform.state.resources.where(type == 'google_compute_project_metadata').all(
         values.metadata['enable-oslogin'] == "TRUE"
       )
-
-
-
   - uid: mondoo-gcp-security-cloud-storage-bucket-not-anonymously-publicly-accessible
     title: Ensure that Cloud Storage buckets are not anonymously or publicly accessible
     impact: 90
@@ -571,16 +588,16 @@ queries:
         In Google Cloud, the allUsers principal allows anyone on the internet to access a resource without authentication, while allAuthenticatedUsers allows access to any user with a Google account. Assigning these principals to a Cloud Storage bucket—either directly via IAM roles or indirectly through legacy ACLs—exposes data to a much broader audience than intended.
 
         This type of access is often misconfigured and can lead to:
-          •	Public exposure of sensitive data, including personally identifiable information (PII), internal documents, or application configuration files.
-          •	Data misuse or leakage, especially if access is granted with roles beyond read-only permissions.
-          •	Non-compliance with regulatory frameworks like GDPR, HIPAA, PCI DSS, ISO 27001, and the CIS GCP Foundations Benchmark.
-          •	Audit and incident response challenges, since access by allUsers or allAuthenticatedUsers is not attributable to a specific identity.
+          •  Public exposure of sensitive data, including personally identifiable information (PII), internal documents, or application configuration files.
+          •  Data misuse or leakage, especially if access is granted with roles beyond read-only permissions.
+          •  Non-compliance with regulatory frameworks like GDPR, HIPAA, PCI DSS, ISO 27001, and the CIS GCP Foundations Benchmark.
+          •  Audit and incident response challenges, since access by allUsers or allAuthenticatedUsers is not attributable to a specific identity.
 
         Risk mitigation:
-          •	Audit IAM policies and bucket ACLs to detect any bindings involving allUsers or allAuthenticatedUsers.
-          •	Remove these principals from bucket policies and replace them with specific identities (e.g., service accounts, groups, or individual users) that require access.
-          •	Enable Public Access Prevention to proactively block public access configuration.
-          •	Enforce organization policies that restrict or deny the use of these principals across your projects.
+          •  Audit IAM policies and bucket ACLs to detect any bindings involving allUsers or allAuthenticatedUsers.
+          •  Remove these principals from bucket policies and replace them with specific identities (e.g., service accounts, groups, or individual users) that require access.
+          •  Enable Public Access Prevention to proactively block public access configuration.
+          •  Enforce organization policies that restrict or deny the use of these principals across your projects.
 
         Eliminating access for allUsers and allAuthenticatedUsers on Cloud Storage buckets is a critical step in protecting cloud-resident data, enforcing least privilege access, and ensuring compliance with modern cloud security and privacy standards.
       remediation:
@@ -664,8 +681,6 @@ queries:
       terraform.state.resources.where(type == 'google_storage_bucket_iam_member').all(
         values.member != 'allUsers' && values.member != 'allAuthenticatedUsers'
       )
-
-
   - uid: mondoo-gcp-security-cloud-storage-buckets-have-uniform-bucket-level-access-enabled
     title: Ensure that Cloud Storage buckets have uniform bucket-level access enabled
     impact: 60
@@ -735,8 +750,6 @@ queries:
       terraform.state.resources.where(type == 'google_storage_bucket').all(
         values.uniform_bucket_level_access == true
       )
-
-
   - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed
     title: Ensure Cloud SQL MySQL instances are not publicly exposed
     impact: 100
@@ -856,9 +869,6 @@ queries:
       terraform.state.resources.where(type == 'google_sql_database_instance') {
         values['ip_address'].none(type == 'PRIMARY')
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
     title: Ensure Cloud SQL MySQL connections require SSL/TLS
     impact: 100
@@ -991,9 +1001,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled
     title: Ensure 'skip_show_database' Database Flag for Cloud SQL MySQL Instances is enabled
     impact: 70
@@ -1120,9 +1127,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled
     title: Ensure the 'local_infile' Database Flag for Cloud SQL MySQL Instance is disabled
     impact: 70
@@ -1248,9 +1252,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose
     title: Ensure the 'log_error_verbosity' Database Flag for Cloud SQL PostgreSQL Instance Is Set to 'DEFAULT' or 'verbose'
     impact: 70
@@ -1384,9 +1385,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled
     title: Ensure 'log_connections' Database Flag for Cloud SQL PostgreSQL Instances is enabled
     impact: 70
@@ -1512,9 +1510,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled
     title: Ensure 'log_disconnections' Database Flag for Cloud SQL PostgreSQL Instances is enabled
     impact: 70
@@ -1644,9 +1639,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-compute-instances-no-public-ip
     title: Ensure public IP addresses are not assigned to VM instances
     impact: 75
@@ -1789,9 +1781,6 @@ queries:
           _['access_config'] == empty
         }
       }
-
-
-
   - uid: mondoo-gcp-security-compute-instances-no-default-service-account
     title: Ensure the default service account is not used on VM instances
     impact: 80
@@ -1939,9 +1928,6 @@ queries:
           _['email'] == /$-compute@developer.gserviceaccount.com/
         }
       }
-
-
-
   - uid: mondoo-gcp-security-compute-instances-block-project-wide-ssh-keys
     title: Ensure “Block Project-Wide SSH Keys” Is Enabled for VM Instances
     impact: 80
@@ -2064,9 +2050,6 @@ queries:
           _['block-project-ssh-keys'] == true
         }
       }
-
-
-
   - uid: mondoo-gcp-security-compute-instances-confidential-vm-service-enabled
     title: Ensure Confidential VM Service is enabled for all VM instances
     impact: 75
@@ -2217,9 +2200,6 @@ queries:
           _['enable_confidential_compute'] == true
         }
       }
-
-
-
   - uid: mondoo-gcp-security-compute-instances-secure-boot-enabled
     title: Ensure Secure Boot is enabled for all VM instances
     impact: 90
@@ -2342,39 +2322,40 @@ queries:
     filters: |
       asset.platform == 'gcp-compute-instance'
     mql: |
-      gcp.compute.instance {
-        enableSecureBoot == true
-      }
+      gcp.compute.instance.enableSecureBoot == true
   - uid: mondoo-gcp-security-compute-instances-secure-boot-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance')
     mql: |
-      terraform.resources.where(nameLabel == 'google_compute_instance') {
-        blocks.where(type == 'shielded_instance_config') {
-          attributes['enable_secure_boot'].value == true
-        }
-      }
+      terraform.resources.where(
+        nameLabel == 'google_compute_instance'
+      ).all(
+        blocks.where(
+          type == 'shielded_instance_config'
+        ).all(
+           attributes.enable_secure_boot.value == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-secure-boot-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_instance') {
-        change.after['shielded_instance_config'] {
-          _['enable_secure_boot'] == true
-        }
-      }
+      terraform.plan.resourceChanges.where(
+        type == 'google_compute_instance'
+      ).all(
+        change.after.shielded_instance_config.all(
+          enable_secure_boot == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-secure-boot-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance')
     mql: |
-      terraform.state.resources.where(type == 'google_compute_instance') {
-        values['shielded_instance_config'] {
-          _['enable_secure_boot'] == true
-        }
-      }
-
-
-
+      terraform.state.resources.where(type == 'google_compute_instance').all(
+        values.shielded_instance_config.all(
+          enable_secure_boot == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-vtpm-enabled
     title: Ensure vTPM is enabled for all VM instances
     impact: 90
@@ -2498,39 +2479,40 @@ queries:
     filters: |
       asset.platform == 'gcp-compute-instance'
     mql: |
-      gcp.compute.instance {
-        enableVtpm == true
-      }
+      gcp.compute.instance.enableVtpm == true
   - uid: mondoo-gcp-security-compute-instances-vtpm-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance')
     mql: |
-      terraform.resources.where(nameLabel == 'google_compute_instance') {
-        blocks.where(type == 'shielded_instance_config') {
-          attributes['enable_vtpm'].value == true
-        }
-      }
+      terraform.resources.where(
+        nameLabel == 'google_compute_instance'
+      ).all(
+        blocks.where(
+          type == 'shielded_instance_config'
+        ).all(
+           attributes.enable_vtpm.value == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-vtpm-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_instance') {
-        change.after['shielded_instance_config'] {
-          _['enable_vtpm'] == true
-        }
-      }
+      terraform.plan.resourceChanges.where(
+        type == 'google_compute_instance'
+      ).all(
+        change.after.shielded_instance_config.all(
+          enable_vtpm == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-vtpm-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance')
     mql: |
-      terraform.state.resources.where(type == 'google_compute_instance') {
-        values['shielded_instance_config'] {
-          _['enable_vtpm'] == true
-        }
-      }
-
-
-
+      terraform.state.resources.where(type == 'google_compute_instance').all(
+        values.shielded_instance_config.all(
+          enable_vtpm == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-integrity-monitoring-enabled
     title: Ensure Integrity Monitoring is enabled for all VM instances
     impact: 90
@@ -2658,39 +2640,40 @@ queries:
     filters: |
       asset.platform == 'gcp-compute-instance'
     mql: |
-      gcp.compute.instance {
-        enableIntegrityMonitoring == true
-      }
+      gcp.compute.instance.enableIntegrityMonitoring == true
   - uid: mondoo-gcp-security-compute-instances-integrity-monitoring-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance')
     mql: |
-      terraform.resources.where(nameLabel == 'google_compute_instance') {
-        blocks.where(type == 'shielded_instance_config') {
-          attributes['enable_integrity_monitoring'].value == true
-        }
-      }
+      terraform.resources.where(
+        nameLabel == 'google_compute_instance'
+      ).all(
+        blocks.where(
+          type == 'shielded_instance_config'
+        ).all(
+           arguments.enable_integrity_monitoring == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-integrity-monitoring-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_instance') {
-        change.after['shielded_instance_config'] {
-          _['enable_integrity_monitoring'] == true
-        }
-      }
+      terraform.plan.resourceChanges.where(
+        type == 'google_compute_instance'
+      ).all(
+        change.after.shielded_instance_config.all(
+          enable_integrity_monitoring == true
+        )
+      )
   - uid: mondoo-gcp-security-compute-instances-integrity-monitoring-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance')
     mql: |
-      terraform.state.resources.where(type == 'google_compute_instance') {
-        values['shielded_instance_config'] {
-          _['enable_integrity_monitoring'] == true
-        }
-      }
-
-
-
+      terraform.state.resources.where(type == 'google_compute_instance').all(
+        values.shielded_instance_config.all(
+          enable_integrity_monitoring == true
+        )
+      )
   - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed
     title: Ensure Cloud SQL PostgreSQL instances are not publicly exposed
     impact: 100
@@ -2823,9 +2806,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed
     title: Ensure Cloud SQL for SQL Server instances are not publicly exposed
     impact: 100
@@ -2953,9 +2933,6 @@ queries:
           }
         }
       }
-
-
-
   - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls
     title: Ensure Cloud SQL PostgreSQL connections require SSL/TLS
     impact: 90
@@ -3088,8 +3065,6 @@ queries:
           }
         }
       }
-
-
   - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls
     title: Ensure Cloud SQL for SQL Server connections require SSL/TLS
     impact: 90
