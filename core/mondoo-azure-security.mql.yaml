@@ -20,35 +20,52 @@ policies:
 
         Our goal is to build policies that are simple to deploy, accurate, and actionable. This policy is open-source and we welcome contributions from the community, whether it's adding new checks, refining existing ones, or providing feedback. If you have suggestions to improve this policy, visit our [cnspec-policies repository](https://github.com/mondoohq/cnspec-policies).
     groups:
+      - title: Azure Storage
+        filters: |
+          asset.runtime == "azure"
+        checks:
+          - uid: mondoo-azure-security-public-access-level-private-blob-containers
+          - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
+          - uid: mondoo-azure-security-secure-transfer-required-enabled
+          - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
+      - title: Azure SQL
+        filters: |
+          asset.runtime == "azure"
+        checks:
+          - uid: mondoo-azure-security-sql-server-audit-on
+          - uid: mondoo-azure-security-sql-server-tde-on
+          - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql
+          - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql
+          - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0
+          - uid: mondoo-azure-security-ensure-disabled-public-access-sql
+      - title: Azure Key Vault
+        filters: |
+          asset.runtime == "azure"
+        checks:
+          - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
+          - uid: mondoo-azure-security-ensure-the-kv-is-recoverable
+          - uid: mondoo-azure-security-ensure-logging-enabled-kv
+          - uid: mondoo-azure-security-keyvault-public-access-disabled
+      - title: Azure Compute
+        filters: |
+          asset.runtime == "azure"
+        checks:
+          - uid: mondoo-azure-security-rdp-access-restricted-from-internet
+          - uid: mondoo-azure-security-ssh-access-restricted-from-internet
+          - uid: mondoo-azure-security-vnc-access-restricted-from-internet
+          - uid: mondoo-azure-security-disable-udp-virtualmachines
+          - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
+          - uid: mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group
       - title: Azure Core
         filters: |
           asset.runtime == "azure"
         checks:
-          - uid: mondoo-azure-security-default-network-access-rule-storage-accounts-deny
           - uid: mondoo-azure-security-diagnostic-settings-essential-categories
           - uid: mondoo-azure-security-diagnostic-settings-exist
-          - uid: mondoo-azure-security-disable-udp-virtualmachines
-          - uid: mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group
           - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days
-          - uid: mondoo-azure-security-ensure-disabled-public-access-sql
-          - uid: mondoo-azure-security-ensure-logging-enabled-kv
-          - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
           - uid: mondoo-azure-security-ensure-register-with-ad-is-enabled-on-app-service
           - uid: mondoo-azure-security-ensure-that-notify-about-alerts-with-high-severity-is-on
-          - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql
-          - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql
-          - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
-          - uid: mondoo-azure-security-ensure-the-kv-is-recoverable
           - uid: mondoo-azure-security-ensure-web-app-is-using-the-latest-tls
-          - uid: mondoo-azure-security-keyvault-public-access-disabled
-          - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0
-          - uid: mondoo-azure-security-public-access-level-private-blob-containers
-          - uid: mondoo-azure-security-rdp-access-restricted-from-internet
-          - uid: mondoo-azure-security-secure-transfer-required-enabled
-          - uid: mondoo-azure-security-sql-server-audit-on
-          - uid: mondoo-azure-security-sql-server-tde-on
-          - uid: mondoo-azure-security-ssh-access-restricted-from-internet
-          - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
     scoring_system: highest impact
 queries:
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
@@ -384,6 +401,113 @@ queries:
               }
             }
             ```
+  - uid: mondoo-azure-security-vnc-access-restricted-from-internet
+    title: Ensure that VNC access is restricted from the internet
+    impact: 80
+    props:
+      - uid: mondooAzureSecurityDisallowedPortsVNC
+        title: a list of disallowed TCP ports, by default VNC listens only on TCP port 5900, add more ports as needed
+        mql: |
+          return [
+            5900,
+          ]
+    filters: |
+      asset.platform == "azure-network-security-group"
+    mql: |
+      allNsgTCP = azure.subscription.network.securityGroup.securityRules
+        .where(
+          properties.access == 'Allow'
+            && direction == 'Inbound'
+            && properties.protocol == /TCP|\*/i
+            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|<nw>\/0|\/0|internet|any/
+        )
+      allNsgTCP.all(properties.destinationPortRange != "*")
+      props.mondooAzureSecurityDisallowedPortsVNC {
+        disallowedPortVNC = _
+        disallowedPortVNC
+        allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortVNC && toPort >= disallowedPortVNC))
+      }
+    docs:
+      desc: |
+        This check ensures that VNC access (port 5900) is restricted from the internet to minimize security risks.
+
+        **Why this matters**
+
+        Exposing VNC access to the internet can lead to significant security risks:
+
+        - **Unauthorized access**: VNC is a common target for brute force and other unauthorized access attempts.
+        - **Increased attack surface**: Allowing unrestricted VNC access expands the attack surface, making it easier for attackers to exploit vulnerabilities.
+        - **Compliance risks**: Many security standards and best practices recommend restricting VNC access to reduce potential threats.
+        - **Operational risks**: Misconfigured or exposed VNC access can lead to unintended access, service disruptions, or data breaches.
+
+        By ensuring VNC access is restricted to known, secure sources, this check helps to minimize security vulnerabilities, align with best practices, and enhance the overall security posture of Azure resources.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Log into the Azure Portal.
+        2. Navigate to **Network security groups** under the Networking or directly through the search bar.
+        3. For each NSG, access the **Inbound security rules**.
+        4. Carefully review each rule to identify any that allow inbound VNC traffic (TCP port 5900):
+          - Check for rules where the protocol is set to `TCP`.
+          - The destination port or port range includes `5900`.
+          - The source address prefix is too broad, such as 'Any', '0.0.0.0', '<nw>/0', '/0', 'internet', or 'any'.
+        5. Note down any NSG rules that do not comply with your organization's security policy regarding restricted access to VNC. These rules should ideally allow access only from trusted, secure networks, and not from the open internet.
+
+        1. Navigate to **Virtual Machines** in the Azure Portal.
+        2. For each VM, select the **Networking** blade to review network configurations.
+        3. Check the **Inbound port rules** under the associated Network Security Group (NSG).
+        4. Verify that there are no rules allowing VNC access (TCP port 5900) from 'Any' or 'Internet'. Only secure, specified IP ranges should be allowed if necessary.
+
+        **Automated Audit with Azure CLI:**
+
+        List NSGs and verify VNC access rules:
+
+        ```bash
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='5900' || destinationPortRanges.contains('5900')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='<nw>/0' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
+
+            1. Log into the Azure Portal and navigate to **Network Security Groups**.
+            2. Select the NSG associated with your VM.
+            3. Review the **Inbound security rules** and modify or delete any rules that allow internet access to port 5900.
+            4. Preferably, change the `source_address_prefix` to more restrictive settings, such as a specific IP range or a secure VPN gateway.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
+
+            Update or create a new NSG rule to restrict VNC access:
+
+            ```bash
+            az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictVNC --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes <YourSecureIPRange> --destination-port-ranges 5900
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            # Ensure the `source_address_prefix` is configured to a restrictive CIDR address
+
+            resource "azure_network_security_group" "example" {
+              name                = "example-vnc-security"
+              location            = azure_resource_group.rg.location
+              resource_group_name = azure_resource_group.rg.name
+
+              security_rule {
+                name                       = "VNC"
+                priority                   = 1001
+                direction                  = "Inbound"
+                access                     = "Allow"
+                protocol                   = "Tcp"
+                source_port_range          = "*"
+                destination_port_range     = "5900"
+                source_address_prefix      = "192.168.22.5/24"
+                destination_address_prefix = "*"
+              }
+            }
+            ```
   - uid: mondoo-azure-security-secure-transfer-required-enabled
     title: Mandate HTTPS for Secure Data Transfer to azure storage accounts
     impact: 80
@@ -576,52 +700,56 @@ queries:
         ```
 
         This command lists each storage account along with the default action. Verify that all entries show "Deny" as the default action.
-      remediation: |
-        ### Configuring Default Action via Azure Portal:
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
 
-        1. Access the Azure Portal and go to **Storage Accounts**.
-        2. Select the storage account you wish to configure.
-        3. select the **Networking** blade.
-        4. Navigate to the **Firewalls and virtual networks** section.
-        5. Set the **Default action** to **Deny**.
-        6. Save your changes to enforce that all unrecognized network traffic is blocked by default.
+            1. Log into the Azure Portal and navigate to **Storage Accounts**.
+            2. Select the storage account you wish to configure.
+            3. Select the **Networking** blade.
+            4. Navigate to the **Firewalls and virtual networks** section.
+            5. Set the **Default action** to **Deny**.
+            6. Save your changes to enforce that all unrecognized network traffic is blocked by default.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
 
-        **Using Azure CLI**
+            To set the default network access rule to "Deny" for a new storage account, use the following Azure CLI command:
 
-        To set the default network access rule to "Deny" for an existing storage account, use the following Azure CLI command:
+            ```bash
+            az storage account create --name <StorageAccountName> --resource-group <ResourceGroupName> --location <Location> --default-action Deny
+            ```
 
-        ```bash
-        az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --default-action Deny
-        ```
+            This command updates the storage account to deny all traffic by default, significantly enhancing the security posture by limiting access to only configured exceptions.
+        - id: terraform
+          desc: |
+            **Using Terraform**
 
-        This command updates the storage account to deny all traffic by default, significantly enhancing the security posture by limiting access to only configured exceptions.
+            ```hcl
+            # Ensure the `default_action` is set to `Deny`
 
-        **Using Terraform**
+            resource "azure_storage_account_network_rules" "example_storage_account" {
+              resource_group_name  = azure_resource_group.example.name
+              storage_account_name = azure_storage_account.example.name
 
-        ```hcl
-        # Ensure the `default_action` is set to `Deny`
+              default_action       = "Deny"
+            }
+            ```
 
-        resource "azure_storage_account_network_rules" "example_storage_account" {
-          resource_group_name  = azure_resource_group.example.name
-          storage_account_name = azure_storage_account.example.name
+            ```hcl
+            resource "azure_storage_account" "example_storage_account" {
+              name                = "example_storage_account"
+              resource_group_name = azure_resource_group.example.name
+              location            = azure_resource_group.example.location
 
-          default_action       = "Deny"
-        }
-        ```
+              network_rules {
+                default_action = "Deny"
+              }
 
-        ```hcl
-        resource "azure_storage_account" "example_storage_account" {
-          name                = "example_storage_account"
-          resource_group_name = azure_resource_group.example.name
-          location            = azure_resource_group.example.location
-
-          network_rules {
-            default_action = "Deny"
-          }
-
-          ...
-        }
-        ```
+              ...
+            }
+            ```
   - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
     title: Ensure "Trusted Microsoft Services" have access to azure storage accounts
     impact: 80
@@ -659,35 +787,39 @@ queries:
         ```bash
         az storage account list --query "[*].{AccountName:name, BypassRules:networkRuleSet.bypass}" -o table
         ```
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
 
-      remediation: |
-        From Azure Portal:
-            1. Go to `Storage Accounts` and select the relevant account.
-            2. Select the `Networking` blade.
-            3. Under `Firewalls and virtual networks`, select `Enabled from selected virtual networks and IP addresses`.
-            4. Check the box for `Allow Azure services on the trusted services list to access this storage account` to enable it.
-            5. Save the changes.
+            1. Navigate to **Storage Accounts** in the Azure Portal.
+            2. Select the storage account you want to configure.
+            3. Go to the **Networking** blade.
+            4. Under the **Firewalls and virtual networks** section, check the box for **Allow Azure services on the trusted services list to access this storage account**.
+            5. Save your changes.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
 
-        **Using Azure CLI**
+            Enable trusted Microsoft services for a storage account:
 
-        Enable the trusted Microsoft services for a storage account:
+            ```bash
+            az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --bypass AzureServices
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
 
-        ```bash
-        az storage account update --name <StorageAccountName> --resource-group <resourceGroupName> --bypass AzureServices
-        ```
-
-        **Using Terraform**
-
-        ```hcl
-        resource "azure_storage_account" "example" {
-            ...
-          network_rules {
-            ...
-            bypass = ["AzureServices"]
-            ...
-          }
-        }
-        ```
+            ```hcl
+            resource "azure_storage_account" "example" {
+                ...
+              network_rules {
+                ...
+                bypass = ["AzureServices"]
+                ...
+              }
+            }
+            ```
   - uid: mondoo-azure-security-ensure-auditing-retention-greater-than-30-days
     title: Ensure minimum 30-Day retention for SQL server Audit Logs
     impact: 80
@@ -727,36 +859,40 @@ queries:
         ```
 
         Ensure that each server listed has a retention period of 30 days or more.
-      remediation: |
-        **Configuring Audit Retention via Azure Portal:**
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
 
-        1. Access the Azure Portal and navigate to **SQL servers**.
-        2. Select the relevant SQL server.
-        3. Go to **Auditing** under the **Security** section.
-        4. Set the **Retention (days)** to at least 30 days, or use '0' for unlimited retention.
-        5. Select **Save** to apply the changes.
+            1. Navigate to **SQL servers** in the Azure Portal.
+            2. Select the SQL server you want to configure.
+            3. Go to **Auditing** under the **Security** section.
+            4. Set the **Retention (days)** to at least 30 days, or use '0' for unlimited retention.
+            5. Select **Save** to apply the changes.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
 
-        **Using Azure CLI:**
+            Update the audit retention policy for a specific SQL server:
 
-        Update the audit retention policy for a specific SQL server:
+            ```bash
+            az sql db audit-policy update --name <DatabaseName> --resource-group <ResourceGroupName> --retention-days 30
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
 
-        ```bash
-        az sql server audit-policy update --name <ServerName> --resource-group <ResourceGroupName> --retention-days 30
-        ```
-
-        **Using Terraform**
-
-        ```hcl
-        resource "azure_sql_server" "example" {
-          ...
-          extended_auditing_policy {
-            storage_endpoint           = azure_storage_account.example.primary_blob_endpoint
-            storage_account_access_key = azure_storage_account.example.primary_access_key
-            storage_account_access_key_is_secondary = true
-            retention_in_days                       = 30
-          }
-        }
-        ```
+            ```hcl
+            resource "azure_sql_server" "example" {
+              ...
+              extended_auditing_policy {
+                storage_endpoint           = azure_storage_account.example.primary_blob_endpoint
+                storage_account_access_key = azure_storage_account.example.primary_access_key
+                storage_account_access_key_is_secondary = true
+                retention_in_days                       = 30
+              }
+            }
+            ```
   - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0
     title: Ensure no SQL Databases allow ingress 0.0.0.0/0 (ANY IP)
     impact: 80
@@ -798,76 +934,89 @@ queries:
         az mysql server firewall-rule list --server <server-name> --resource-group <resource-group> --query "[?startIpAddress=='0.0.0.0'].{Name:name, StartIP:startIpAddress}"
         az mariadb server firewall-rule list --server <server-name> --resource-group <resource-group> --query "[?startIpAddress=='0.0.0.0'].{Name:name, StartIP:startIpAddress}"
         ```
-      remediation: |
-        **Azure CLI Commands for Restricting Ingress at the Firewall Level:**
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
 
-        Ensure that the start and end IP addresses in the firewall rules are set to secure IPs within your controlled network range, effectively blocking public access.
+            1. Navigate to **SQL servers** in the Azure Portal.
+            2. Select the SQL server you want to configure.
+            3. Go to **Firewall and virtual networks** under the **Settings** section.
+            4. Review the **Firewall rules** and remove any rules allowing ingress from "0.0.0.0/0".
+            5. Preferably, create new rules that restrict access to specific IP ranges or virtual networks.
+            6. Save your changes.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
 
-        ```bash
-        # Replace <server-name>, <resource-group>, and <rule-name> with your specific details
+            Ensure that the start and end IP addresses in the firewall rules are set to secure IPs within your controlled network range, effectively blocking public access.
 
-        # Azure SQL
-        az sql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+            ```bash
+            # Replace <server-name>, <resource-group>, and <rule-name> with your specific details
 
-        # PostgreSQL
-        az postgres server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+            # Azure SQL
+            az sql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
 
-        # MySQL
-        az mysql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+            # PostgreSQL
+            az postgres server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
 
-        # MariaDB
-        az mariadb server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
-        ```
+            # MySQL
+            az mysql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
 
-        **Using Terraform**
+            # MariaDB
+            az mariadb server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
 
-        __mySQL__
+            __mySQL__
 
-        ```hcl
-        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+            ```hcl
+            # Ensure `start_ip_address` is not configured to `0.0.0.0`
 
-        resource "azure_mysql_firewall_rule" "example" {
-          ...
-          start_ip_address    = "192.168.2.22"
-          end_ip_address      = "255.255.255.255"
-        }
-        ```
+            resource "azure_mysql_firewall_rule" "example" {
+              ...
+              start_ip_address    = "192.168.2.22"
+              end_ip_address      = "255.255.255.255"
+            }
+            ```
 
-        __MariaDB__
+            __MariaDB__
 
-        ```hcl
-        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+            ```hcl
+            # Ensure `start_ip_address` is not configured to `0.0.0.0`
 
-        resource "azure_mariadb_firewall_rule" "example" {
-          ...
-          start_ip_address    = "192.168.2.22"
-          end_ip_address      = "255.255.255.255"
-        }
-        ```
+            resource "azure_mariadb_firewall_rule" "example" {
+              ...
+              start_ip_address    = "192.168.2.22"
+              end_ip_address      = "255.255.255.255"
+            }
+            ```
 
-        __SQL__
+            __SQL__
 
-        ```hcl
-        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+            ```hcl
+            # Ensure `start_ip_address` is not configured to `0.0.0.0`
 
-        resource "azure_sql_firewall_rule" "example" {
-          ...
-          start_ip_address    = "192.168.2.22"
-          end_ip_address      = "255.255.255.255"
-        }
-        ```
+            resource "azure_sql_firewall_rule" "example" {
+              ...
+              start_ip_address    = "192.168.2.22"
+              end_ip_address      = "255.255.255.255"
+            }
+            ```
 
-        __Postgres__
+            __Postgres__
 
-        ```hcl
-        # Ensure `start_ip_address` is not configured to `0.0.0.0`
+            ```hcl
+            # Ensure `start_ip_address` is not configured to `0.0.0.0`
 
-        resource "azure_postgresql_firewall_rule" "example" {
-          ...
-          start_ip_address    = "192.168.2.22"
-          end_ip_address      = "255.255.255.255"
-        }
-        ```
+            resource "azure_postgresql_firewall_rule" "example" {
+              ...
+              start_ip_address    = "192.168.2.22"
+              end_ip_address      = "255.255.255.255"
+            }
+            ```
   - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-single-azuresql
     filters: |
       asset.platform == "azure-sql-server"
@@ -924,36 +1073,41 @@ queries:
         az webapp identity show --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME> --query principalId
         ```
         If the command returns a non-null principal ID, it indicates that the managed identity is enabled. If it returns null, the managed identity is not enabled.
-      remediation: |
-        **Using Azure Portal**
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
 
-        To update using Microsoft Azure Portal:
-        1. Log into Microsoft Azure Portal at https://portal.azure.com.
-        2. Go to **App Services**.
-        3. For each app:
-           a. Select the app.
-           b. Under **Settings**, select **Identity**.
-           c. On the **System assigned** tab, set **Status** to **On**.
+            1. Log in to the Azure Portal
+            2. Navigate to **App Services**.
+            3. Select an app service and select **Identity** under **Settings**.
+            4. Set the **Status** for **System assigned managed identity** to **On**.
+            5. Save your changes.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
 
-        **Using Azure CLI:**
+            Enable a system-assigned managed identity for an App Service:
 
-        Enable a system-assigned managed identity for an App Service:
+            ```bash
+            az webapp identity assign --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
 
-        ```bash
-        az webapp identity assign --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME>
-        ```
+            ```hcl
+            resource "azurerm_app_service" "example" {
+              name                = "example-app-service"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+              app_service_plan_id = azurerm_app_service_plan.example.id
 
-        **Using Terraform**
-        resource "azurerm_app_service" "example" {
-          name                = "example-app-service"
-          location            = azurerm_resource_group.example.location
-          resource_group_name = azurerm_resource_group.example.name
-          app_service_plan_id = azurerm_app_service_plan.example.id
-
-          identity {
-            type = "SystemAssigned"
-          }
-        }
+              identity {
+                type = "SystemAssigned"
+              }
+            }
+            ```
   - uid: mondoo-azure-security-ensure-the-kv-is-recoverable
     title: Ensure Key Vaults are configured with Recovery features
     impact: 80
@@ -991,22 +1145,39 @@ queries:
         az keyvault list --query "[].{Name: name, PurgeProtection: properties.enablePurgeProtection}"
         ```
         Check the output for each Key Vault, ensuring that PurgeProtection is set to true.
-      remediation: |
-        **Using Azure Portal**
+      remediation:
+        - id: portal
+          desc: |
+            **Using Azure Portal**
 
-        1. Log in to the Azure Portal at https://portal.azure.com.
-        2. Navigate to **Key Vaults**.
-        3. Select a key vault and select **Properties**.
-        4. Scroll to the **Security** section.
-        5. If **Purge Protection** is not enabled, enable it. Note that once enabled, this setting cannot be disabled.
+            1. Log in to the Azure Portal at https://portal.azure.com.
+            2. Navigate to **Key Vaults**.
+            3. Select a key vault and select **Properties**.
+            4. Scroll to the **Security** section.
+            5. If **Purge Protection** is not enabled, enable it. Note that once enabled, this setting cannot be disabled.
+            6. Save your changes.
+        - id: cli
+          desc: |
+            **Using Azure CLI**
 
-        **Automated Audit with Azure CLI:**
+            Enable Purge Protection for a specific Key Vault:
 
-        Enable Purge Protection for a specific Key Vault:
+            ```bash
+            az keyvault update --name <VaultName> --resource-group <ResourceGroupName> --set properties.enablePurgeProtection=true
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
 
-        ```bash
-        az keyvault update --name <VaultName> --resource-group <ResourceGroupName> --set properties.enablePurgeProtection=true
-        ```
+            ```hcl
+            resource "azurerm_key_vault" "example" {
+              name                = "example-keyvault"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+
+              purge_protection_enabled = true
+            }
+            ```
   - uid: mondoo-azure-security-ensure-web-app-is-using-the-latest-tls
     title: Ensure that Web Apps use the latest available version of TLS encryption
     impact: 80
@@ -1047,44 +1218,54 @@ queries:
         Get-AzWebApp | foreach {
           Get-AzWebApp -ResourceGroupName $_.ResourceGroup -Name $_.Name | Select-Object Name, ResourceGroup, @{Name="TLS Version"; Expression={$_.SiteConfig.MinTlsVersion}}
         }
-      remediation: |
-        **Using Azure Portal**
+      remediation:
+      - id: portal
+        desc: |
+          **Using Azure Portal**
 
-        To update using Microsoft Azure Portal:
-        1. Log into Microsoft Azure Portal at https://portal.azure.com
-        2. Go to **App Services**.
-        3. For each app:
-           a. Select the app.
-           b. Select **Configuration** and select the **General settings** tab.
-           c. Under **Minimum Inbound TLS Version**, select **1.2**.
-           d. Select **Save**.
+          To update using Microsoft Azure Portal:
+          1. Log into Microsoft Azure Portal at https://portal.azure.com
+          2. Go to **App Services**.
+          3. For each app:
+             a. Select the app.
+             b. Select **TLS/SSL settings** under **Settings**.
+             c. Under **Minimum TLS Version**, select **1.2**.
+             d. Select **Save**.
 
-        **Automated Audit with Azure CLI:**
+      - id: cli
+        desc: |
+          **Using Azure CLI**
 
-        Set the minimum TLS version to 1.2 for an existing app service:
+          To set the minimum TLS version to 1.2 for a new app service:
 
-        ```bash
-        az webapp config set --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME> --min-tls-version 1.2
-        ```
+          ```bash
+          az webapp create --name <APP_NAME> --resource-group <RESOURCE_GROUP_NAME> --plan <APP_SERVICE_PLAN> --min-tls-version 1.2
+          ```
+      - id: powershell
+        desc: |
+          **Using PowerShell:**
 
-        **Automated Audit with PowerShell:**
-
-        Get-AzWebApp | foreach {
-          Set-AzWebApp -ResourceGroupName $_.ResourceGroup -Name $_.Name -MinTlsVersion "1.2"
-        }
-
-        **Using Terraform**
-
-        resource "azurerm_app_service" "example" {
-          name                = "example-app-service"
-          location            = azurerm_resource_group.example.location
-          resource_group_name = azurerm_resource_group.example.name
-          app_service_plan_id = azurerm_app_service_plan.example.id
-
-          site_config {
-            min_tls_version = "1.2"
+          Get-AzWebApp | foreach {
+            Set-AzWebApp -ResourceGroupName $_.ResourceGroup -Name $_.Name -MinTlsVersion "1.2"
           }
-        }
+      - id: terraform
+        desc: |
+          **Using Terraform**
+
+          To set the minimum TLS version to 1.2 for an app service:
+
+          ```hcl
+          resource "azurerm_app_service" "example" {
+            name                = "example-app-service"
+            location            = azurerm_resource_group.example.location
+            resource_group_name = azurerm_resource_group.example.name
+            app_service_plan_id = azurerm_app_service_plan.example.id
+
+            site_config {
+              min_tls_version = "1.2"
+            }
+          }
+          ```
   - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
     title: Ensure that the expiration date is set for all keys and secrets in key vaults
     impact: 80
