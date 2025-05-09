@@ -260,11 +260,12 @@ func getQueryNoop(ctx context.Context, mrn string) (*explorer.Mquery, error) {
 }
 
 func (p *Policy) UpdateChecksums(ctx context.Context,
+	now time.Time,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
 	bundle *PolicyBundleMap,
 	conf mqlc.CompilerConfig,
-) error {
+) (*time.Time, error) {
 	// simplify the access if we don't have a bundle
 	if bundle == nil {
 		bundle = &PolicyBundleMap{
@@ -283,7 +284,7 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 	// if we have local checksums set, we can take an optimized route;
 	// if not, we have to update all checksums
 	if p.LocalContentChecksum == "" || p.LocalExecutionChecksum == "" {
-		return p.updateAllChecksums(ctx, getPolicy, getQuery, bundle, conf)
+		return p.updateAllChecksums(ctx, now, getPolicy, getQuery, bundle, conf)
 	}
 
 	// otherwise we have local checksums and only need to recompute the
@@ -292,7 +293,7 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 
 	graphExecutionChecksum := checksums.New
 	graphContentChecksum := checksums.New
-
+	recalculateAt := p.recalculateAt(now)
 	var err error
 	for i := range p.Groups {
 		group := p.Groups[i]
@@ -308,14 +309,20 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 			if !ok {
 				p, err = getPolicy(ctx, policyMRN)
 				if err != nil {
-					return err
+					return recalculateAt, err
+				}
+				ra := p.recalculateAt(now)
+				if ra != nil {
+					if recalculateAt == nil || ra.Before(*recalculateAt) {
+						recalculateAt = ra
+					}
 				}
 			}
 
 			if p.GraphContentChecksum == "" || p.GraphExecutionChecksum == "" {
-				err = p.UpdateChecksums(ctx, getPolicy, getQuery, bundle, conf)
+				_, err = p.UpdateChecksums(ctx, now, getPolicy, getQuery, bundle, conf)
 				if err != nil {
-					return err
+					return recalculateAt, err
 				}
 			}
 
@@ -327,15 +334,40 @@ func (p *Policy) UpdateChecksums(ctx context.Context,
 	p.GraphExecutionChecksum = graphExecutionChecksum.Add(p.LocalExecutionChecksum).String()
 	p.GraphContentChecksum = graphContentChecksum.Add(p.LocalContentChecksum).String()
 
-	return nil
+	return recalculateAt, nil
+}
+
+func (p *Policy) recalculateAt(now time.Time) *time.Time {
+	var timeToRecalculate time.Time
+
+	updateTimeToRecalculate := func(tUnix int64) {
+		if tUnix == 0 {
+			return
+		}
+		t := time.Unix(tUnix, 0)
+		if !t.Before(now) && (timeToRecalculate.IsZero() || t.Before(timeToRecalculate)) {
+			timeToRecalculate = t
+		}
+	}
+
+	for _, g := range p.Groups {
+		updateTimeToRecalculate(g.StartDate)
+		updateTimeToRecalculate(g.EndDate)
+	}
+
+	if timeToRecalculate.IsZero() {
+		return nil
+	}
+	return &timeToRecalculate
 }
 
 func (p *Policy) updateAllChecksums(ctx context.Context,
+	now time.Time,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
 	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
 	bundle *PolicyBundleMap,
 	conf mqlc.CompilerConfig,
-) error {
+) (*time.Time, error) {
 	log.Trace().Str("policy", p.Mrn).Msg("update policy checksum")
 	p.LocalContentChecksum = ""
 	p.LocalExecutionChecksum = ""
@@ -408,6 +440,13 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		executionChecksum = executionChecksum.Add(p.Props[i].Checksum)
 	}
 
+	recalculateAt := p.recalculateAt(now)
+	if recalculateAt != nil {
+		executionChecksum = executionChecksum.AddUint(uint64(recalculateAt.Unix()))
+	} else {
+		executionChecksum = executionChecksum.AddUint(0)
+	}
+
 	// GROUPS
 	for i := range p.Groups {
 		group := p.Groups[i]
@@ -426,11 +465,17 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 			p, err := getPolicy(ctx, ref.Mrn)
 			if err != nil {
-				return err
+				return recalculateAt, err
 			}
 
 			if p.GraphContentChecksum == "" || p.GraphExecutionChecksum == "" {
-				return errors.New("failed to get checksums for dependent policy " + ref.Mrn)
+				return recalculateAt, errors.New("failed to get checksums for dependent policy " + ref.Mrn)
+			}
+			ra := p.recalculateAt(now)
+			if ra != nil {
+				if recalculateAt == nil || ra.Before(*recalculateAt) {
+					recalculateAt = ra
+				}
 			}
 
 			executionChecksum = executionChecksum.Add(ref.Mrn)
@@ -455,22 +500,22 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			if base, ok := bundle.Queries[check.Mrn]; ok {
 				check = check.Merge(base)
 				if err := check.RefreshChecksum(ctx, conf, getQuery); err != nil {
-					return err
+					return recalculateAt, err
 				}
 			} else if check.Checksum == "" {
 				if check.Mrn == "" {
-					return errors.New("failed to get checksum for check " + check.Uid + ", MRN is empty")
+					return recalculateAt, errors.New("failed to get checksum for check " + check.Uid + ", MRN is empty")
 				}
 				if x, err := getQuery(ctx, check.Mrn); err == nil {
 					check = check.Merge(x)
 					if err := check.RefreshChecksum(ctx, conf, getQuery); err != nil {
-						return err
+						return recalculateAt, err
 					}
 				}
 			}
 
 			if check.Checksum == "" {
-				return errors.New("failed to get checksum for check " + check.Mrn)
+				return recalculateAt, errors.New("failed to get checksum for check " + check.Mrn)
 			}
 
 			contentChecksum = contentChecksum.Add(check.Checksum)
@@ -478,7 +523,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			var err error
 			executionChecksum, err = variantsExecutionChecksum(check, executionChecksum, true, getQuery)
 			if err != nil {
-				return err
+				return recalculateAt, err
 			}
 
 			for _, p := range check.Props {
@@ -500,22 +545,22 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			if base, ok := bundle.Queries[query.Mrn]; ok {
 				query = query.Merge(base)
 				if err := query.RefreshChecksum(ctx, conf, getQuery); err != nil {
-					return err
+					return recalculateAt, err
 				}
 			} else if query.Checksum == "" {
 				if query.Mrn == "" {
-					return errors.New("failed to get checksum for query " + query.Uid + ", MRN is empty")
+					return recalculateAt, errors.New("failed to get checksum for query " + query.Uid + ", MRN is empty")
 				}
 				if x, err := getQuery(ctx, query.Mrn); err == nil {
 					query = query.Merge(x)
 					if err := query.RefreshChecksum(ctx, conf, getQuery); err != nil {
-						return err
+						return recalculateAt, err
 					}
 				}
 			}
 
 			if query.Checksum == "" {
-				return errors.New("failed to get checksum for query " + query.Mrn)
+				return recalculateAt, errors.New("failed to get checksum for query " + query.Mrn)
 			}
 
 			contentChecksum = contentChecksum.Add(query.Checksum)
@@ -523,7 +568,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			var err error
 			executionChecksum, err = variantsExecutionChecksum(query, executionChecksum, false, getQuery)
 			if err != nil {
-				return err
+				return recalculateAt, err
 			}
 
 			for _, p := range query.Props {
@@ -545,10 +590,10 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				key := keys[i]
 				filter := group.Filters.Items[key]
 				if filter.Checksum == "" {
-					return errors.New("failed to get checksum for filter " + filter.Mrn)
+					return recalculateAt, errors.New("failed to get checksum for filter " + filter.Mrn)
 				}
 				if filter.CodeId == "" {
-					return errors.New("failed to get code ID for filter " + filter.Mrn)
+					return recalculateAt, errors.New("failed to get code ID for filter " + filter.Mrn)
 				}
 
 				contentChecksum = contentChecksum.Add(filter.Checksum)
@@ -585,7 +630,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	for _, riskMRN := range sortedRiskMRNs {
 		esum, csum, err := riskIdx[riskMRN].RefreshChecksum(ctx, conf)
 		if err != nil {
-			return err
+			return recalculateAt, err
 		}
 		executionChecksum = executionChecksum.AddUint(uint64(esum))
 		contentChecksum = contentChecksum.AddUint(uint64(csum))
@@ -597,7 +642,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	p.GraphExecutionChecksum = graphExecutionChecksum.Add(p.LocalExecutionChecksum).String()
 	p.GraphContentChecksum = graphContentChecksum.Add(p.LocalContentChecksum).String()
 
-	return nil
+	return recalculateAt, nil
 }
 
 func (p *Policy) InvalidateGraphChecksums() {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -63,12 +64,12 @@ func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, 
 //
 // Note1: The bundle must have been pre-compiled and validated!
 // Note2: The bundle may be nil, in which case we will try to find what is needed for the policy
-func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*explorer.Mquery, error) {
+func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*explorer.Mquery, *time.Time, error) {
 	logCtx := logger.FromContext(ctx)
 	var err error
 
 	if policyObj == nil || len(policyObj.Mrn) == 0 {
-		return nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+		return nil, nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
 
 	var queriesLookup map[string]*explorer.Mquery
@@ -89,17 +90,19 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 
 	// NOTE: its important to update the checksum AFTER the queries have been changed,
 	// otherwise we generate the old GraphChecksum
+	var recalcuateAt *time.Time
 	if policyObj.GraphExecutionChecksum == "" || policyObj.GraphContentChecksum == "" {
 		logCtx.Trace().Str("policy", policyObj.Mrn).Msg("marketplace> update graphchecksum")
-		err = policyObj.UpdateChecksums(
+		recalcuateAt, err = policyObj.UpdateChecksums(
 			ctx,
+			s.NowProvider(),
 			s.DataLake.GetValidatedPolicy,
 			s.DataLake.GetQuery,
 			bundle,
 			s.NewCompilerConfig(),
 		)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
@@ -115,10 +118,10 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 		false,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return policyObj, filters, nil
+	return policyObj, filters, recalcuateAt, nil
 }
 
 // PrepareFramework takes a framework and an optional bundle and gets it
@@ -165,12 +168,12 @@ func (s *LocalServices) PrepareFramework(ctx context.Context, frameworkObj *Fram
 // bundle is used as an optional local reference.
 func (s *LocalServices) SetPolicyFromBundle(ctx context.Context, policyObj *Policy, bundleMap *PolicyBundleMap) error {
 	logCtx := logger.FromContext(ctx)
-	policyObj, filters, err := s.PreparePolicy(ctx, policyObj, bundleMap)
+	policyObj, filters, recalculateAt, err := s.PreparePolicy(ctx, policyObj, bundleMap)
 	if err != nil {
 		return err
 	}
 
-	err = s.DataLake.SetPolicy(ctx, policyObj, filters)
+	err = s.DataLake.SetPolicy(ctx, policyObj, recalculateAt, filters)
 	if err != nil {
 		return err
 	}

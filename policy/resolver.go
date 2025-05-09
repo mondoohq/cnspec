@@ -451,7 +451,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 }
 
 func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
-	now := time.Now()
+	now := s.NowProvider()
 	conf := s.NewCompilerConfig()
 
 	// phase 1: resolve asset filters and see if we can find a cached policy

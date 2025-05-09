@@ -6,6 +6,7 @@ package policy
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/explorer/transport"
@@ -41,19 +42,21 @@ type Services struct {
 // yield results for a request, and the upstream handler is defined, it will
 // be used instead.
 type LocalServices struct {
-	DataLake  DataLake
-	Upstream  *Services
-	Incognito bool
-	Runtime   llx.Runtime
+	DataLake    DataLake
+	Upstream    *Services
+	Incognito   bool
+	Runtime     llx.Runtime
+	NowProvider func() time.Time
 }
 
 // NewLocalServices initializes a reasonably configured local services struct
 func NewLocalServices(datalake DataLake, uuid string, runtime llx.Runtime) *LocalServices {
 	return &LocalServices{
-		DataLake:  datalake,
-		Upstream:  nil,
-		Incognito: false,
-		Runtime:   runtime,
+		DataLake:    datalake,
+		Upstream:    nil,
+		Incognito:   false,
+		Runtime:     runtime,
+		NowProvider: time.Now,
 	}
 }
 

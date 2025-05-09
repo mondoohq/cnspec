@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/checksums"
@@ -127,7 +128,7 @@ func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mqu
 }
 
 // SetPolicy stores a given policy in the data lake
-func (db *Db) SetPolicy(ctx context.Context, policyObj *policy.Policy, filters []*explorer.Mquery) error {
+func (db *Db) SetPolicy(ctx context.Context, policyObj *policy.Policy, recalculateAt *time.Time, filters []*explorer.Mquery) error {
 	_, err := db.setPolicy(ctx, policyObj, filters)
 	return err
 }
@@ -482,6 +483,7 @@ func (db *Db) GetValidatedPolicy(ctx context.Context, mrn string) (*policy.Polic
 	}
 
 	p := q.(wrapPolicy)
+
 	if p.invalidated {
 		err := db.fixInvalidatedPolicy(ctx, &p)
 		if err != nil {
@@ -548,6 +550,7 @@ func (db *Db) EntityGraphContentChecksum(ctx context.Context, mrn string) (strin
 func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error {
 	wrap.Policy.InvalidateGraphChecksums()
 	wrap.Policy.UpdateChecksums(ctx,
+		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
