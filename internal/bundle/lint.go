@@ -18,26 +18,34 @@ import (
 )
 
 const (
-	levelError                 = "error"
-	levelWarning               = "warning"
-	bundleCompileError         = "bundle-compile-error"
-	bundleInvalid              = "bundle-invalid"
-	bundleInvalidUid           = "bundle-invalid-uid"
-	bundleUnknownField         = "bundle-unknown-field"
-	policyUid                  = "policy-uid"
-	policyName                 = "policy-name"
-	policyUidUnique            = "policy-uid-unique"
-	policyMissingAssetFilter   = "policy-missing-asset-filter"
-	policyMissingAssignedQuery = "policy-missing-assigned-query"
-	policyMissingChecks        = "policy-missing-checks"
-	policyMissingVersion       = "policy-missing-version"
-	policyWrongVersion         = "policy-wrong-version"
-	queryUid                   = "query-uid"
-	queryTitle                 = "query-name"
-	queryUidUnique             = "query-uid-unique"
-	queryUnassigned            = "query-unassigned"
-	queryUsedAsDifferentTypes  = "query-used-as-different-types"
+	levelError                       = "error"
+	levelWarning                     = "warning"
+	bundleCompileError               = "bundle-compile-error"
+	bundleInvalid                    = "bundle-invalid"
+	bundleInvalidUid                 = "bundle-invalid-uid"
+	bundleUnknownField               = "bundle-unknown-field"
+	policyUid                        = "policy-uid"
+	policyName                       = "policy-name"
+	policyUidUnique                  = "policy-uid-unique"
+	policyMissingAssetFilter         = "policy-missing-asset-filter"
+	policyMissingAssignedQuery       = "policy-missing-assigned-query"
+	policyMissingChecks              = "policy-missing-checks"
+	policyMissingVersion             = "policy-missing-version"
+	policyWrongVersion               = "policy-wrong-version"
+	policyRequiredTagsMissing        = "policy-required-tags-missing"
+	queryUid                         = "query-uid"
+	queryTitle                       = "query-name"
+	queryUidUnique                   = "query-uid-unique"
+	queryUnassigned                  = "query-unassigned"
+	queryUsedAsDifferentTypes        = "query-used-as-different-types"
+	queryMissingMQL                  = "query-missing-mql"
+	queryMissingDocs                 = "query-missing-docs"
+	queryDocsTooShort                = "query-docs-too-short"
+	queryDocsRemediationMissingId    = "query-docs-remediation-missing-id"
+	queryVariantUsesNonDefaultFields = "query-variant-uses-non-default-fields"
 )
+
+const MinDocsLength = 50
 
 type Rule struct {
 	ID          string
@@ -330,6 +338,36 @@ func lintFile(file string) (*Results, error) {
 			}
 		}
 
+		// check if required tags are in the policy `mondoo.com/category`
+		_, ok := policy.Tags["mondoo.com/category"]
+		if !ok {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  policyRequiredTagsMissing,
+				Message: fmt.Sprintf("policy %s does not contain the required tag `mondoo.com/category`", policyId),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   policy.FileContext.Line,
+					Column: policy.FileContext.Column,
+				}},
+			})
+		}
+
+		// check if required tags are in the policy `mondoo.com/platform`
+		_, ok = policy.Tags["mondoo.com/platform"]
+		if !ok {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  policyRequiredTagsMissing,
+				Message: fmt.Sprintf("policy %s does not contain the required tag `mondoo.com/platform`", policyId),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   policy.FileContext.Line,
+					Column: policy.FileContext.Column,
+				}},
+			})
+		}
+
 		if policy.Name == "" {
 			res.Entries = append(res.Entries, Entry{
 				RuleID:  policyName,
@@ -344,7 +382,7 @@ func lintFile(file string) (*Results, error) {
 		}
 
 		// check if policy id was used already
-		_, ok := policyUids[policy.Uid]
+		_, ok = policyUids[policy.Uid]
 		if ok {
 			res.Entries = append(res.Entries, Entry{
 				RuleID:  policyUidUnique,
@@ -388,6 +426,7 @@ func lintFile(file string) (*Results, error) {
 			})
 		}
 
+		// check that groups are not empty
 		if len(policy.Groups) == 0 {
 			res.Entries = append(res.Entries, Entry{
 				RuleID:  policyMissingChecks,
@@ -610,6 +649,7 @@ func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, ass
 		}
 	}
 
+	// check for empty title
 	if query.Title == "" {
 		_, hasParent := variantMapping[query.Uid]
 		if !hasParent {
@@ -623,6 +663,157 @@ func lintQuery(query *Mquery, file string, globalQueriesUids map[string]int, ass
 					Column: query.FileContext.Column,
 				}},
 			})
+		}
+	}
+
+	// checks for variant query
+	_, hasParent := variantMapping[query.Uid]
+	if hasParent {
+		// if it has impact
+		if query.Impact != nil {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryVariantUsesNonDefaultFields,
+				Message: fmt.Sprintf("query variant %s must not define impact", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
+
+		// if it has title
+		if query.Title != "" {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryVariantUsesNonDefaultFields,
+				Message: fmt.Sprintf("query variant %s must not define title", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
+
+		// if it has tags
+		if len(query.Tags) > 0 {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryVariantUsesNonDefaultFields,
+				Message: fmt.Sprintf("query variant %s must not define tags", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
+
+		// check if variant query has variants
+		if len(query.Variants) > 0 {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryVariantUsesNonDefaultFields,
+				Message: fmt.Sprintf("query variant %s must not define variants", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
+
+		// check if variant query has empty MQL
+		if query.Mql == "" {
+			res.Entries = append(res.Entries, Entry{
+				RuleID:  queryMissingMQL,
+				Message: fmt.Sprintf("query variant %s must define MQL", uid),
+				Level:   levelError,
+				Location: []Location{{
+					File:   file,
+					Line:   query.FileContext.Line,
+					Column: query.FileContext.Column,
+				}},
+			})
+		}
+	} else {
+		// checks on the non-variant queries
+
+		// This is a very noisy one, I am not sure if we want to implement it
+		//if query.Docs == nil {
+		// res.Entries = append(res.Entries, Entry{
+		// RuleID: queryMissingDocs,
+		// Message: fmt.Sprintf("query %s must define docs", uid),
+		// Level: levelError,
+		// Location: []Location{{
+		// File: file,
+		// Line: query.FileContext.Line,
+		// Column: query.FileContext.Column,
+		// }},
+		// })
+		//}
+		// A variant of this check would be this
+		if query.Docs != nil {
+			// check if audit is less than 100 characters
+			if len(query.Docs.Audit) <= MinDocsLength {
+				res.Entries = append(res.Entries, Entry{
+					RuleID:  queryDocsTooShort,
+					Message: fmt.Sprintf("query %s must define longer audit", uid),
+					Level:   levelError,
+					Location: []Location{{
+						File:   file,
+						Line:   query.FileContext.Line,
+						Column: query.FileContext.Column,
+					}},
+				})
+			}
+			if len(query.Docs.Desc) <= MinDocsLength {
+				res.Entries = append(res.Entries, Entry{
+					RuleID:  queryDocsTooShort,
+					Message: fmt.Sprintf("query %s must define longer description", uid),
+					Level:   levelError,
+					Location: []Location{{
+						File:   file,
+						Line:   query.FileContext.Line,
+						Column: query.FileContext.Column,
+					}},
+				})
+			}
+			// check for the remediation
+			if query.Docs.Remediation != nil && len(query.Docs.Remediation.Items) > 0 {
+				for _, r := range query.Docs.Remediation.Items {
+					// check for remediation description
+					if len(r.Desc) <= MinDocsLength {
+						res.Entries = append(res.Entries, Entry{
+							RuleID:  queryDocsTooShort,
+							Message: fmt.Sprintf("query %s must define longer description for the remediation", uid),
+							Level:   levelError,
+							Location: []Location{{
+								File:   file,
+								Line:   query.FileContext.Line,
+								Column: query.FileContext.Column,
+							}},
+						})
+					}
+
+					// check for remediation id
+					// very noisy
+					//if r.Id == "" {
+					// res.Entries = append(res.Entries, Entry{
+					// RuleID: queryDocsRemediationMissingId,
+					// Message: fmt.Sprintf("query %s must define id for remediation", uid),
+					// Level: levelWarning,
+					// Location: []Location{{
+					// File: file,
+					// Line: query.FileContext.Line,
+					// Column: query.FileContext.Column,
+					// }},
+					// })
+					//}
+				}
+			}
 		}
 	}
 
