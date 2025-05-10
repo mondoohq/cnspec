@@ -19,6 +19,7 @@ const (
 )
 
 func (r *Results) SarifReport(rootDir string) (*sarif.Report, error) {
+	linterRules := AllLinterRules()
 	absRootPath, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, err
@@ -35,8 +36,8 @@ func (r *Results) SarifReport(rootDir string) (*sarif.Report, error) {
 
 	// create a new rule for each rule id
 	ruleIndex := map[string]int{}
-	for i := range LinterRules {
-		r := LinterRules[i]
+	for i := range linterRules {
+		r := linterRules[i]
 		run.AddRule(r.ID).
 			WithName(r.Name).
 			WithDescription(r.Description)
