@@ -78,6 +78,16 @@ policies:
           - uid: mondoo-linux-security-ipv6-router-advertisements-are-not-accepted
           - uid: mondoo-linux-security-mail-transfer-agent-is-configured-for-local-only-mode
           - uid: mondoo-linux-security-packet-redirect-sending-is-disabled
+          - uid: mondoo-linux-security-prelink-is-disabled
+          - uid: mondoo-linux-security-reverse-path-filtering-is-enabled
+          - uid: mondoo-linux-security-secure-icmp-redirects-are-not-accepted
+          - uid: mondoo-linux-security-source-routed-packets-are-not-accepted
+          - uid: mondoo-linux-security-suspicious-packets-are-logged
+          - uid: mondoo-linux-security-tcp-syn-cookies-is-enabled
+      - title: Sensitive Files
+        filters: |
+          asset.family.contains('linux')
+        checks:
           - uid: mondoo-linux-security-permissions-on-etcgroup--are-configured
           - uid: mondoo-linux-security-permissions-on-etcgroup-are-configured
           - uid: mondoo-linux-security-permissions-on-etcgshadow--are-configured
@@ -86,12 +96,6 @@ policies:
           - uid: mondoo-linux-security-permissions-on-etcpasswd-are-configured
           - uid: mondoo-linux-security-permissions-on-etcshadow--are-configured
           - uid: mondoo-linux-security-permissions-on-etcshadow-are-configured
-          - uid: mondoo-linux-security-prelink-is-disabled
-          - uid: mondoo-linux-security-reverse-path-filtering-is-enabled
-          - uid: mondoo-linux-security-secure-icmp-redirects-are-not-accepted
-          - uid: mondoo-linux-security-source-routed-packets-are-not-accepted
-          - uid: mondoo-linux-security-suspicious-packets-are-logged
-          - uid: mondoo-linux-security-tcp-syn-cookies-is-enabled
       - title: Sensitive Services
         filters: |
           asset.family.contains('linux')
@@ -161,8 +165,7 @@ policies:
           - uid: mondoo-linux-security-login-and-logout-events-are-collected
           - uid: mondoo-linux-security-permissions-on-all-logfiles-are-configured
           - uid: mondoo-linux-security-rsyslog-default-file-permissions-configured
-          - uid: mondoo-linux-security-rsyslog-is-installed
-          - uid: mondoo-linux-security-rsyslog-service-is-enabled
+          - uid: mondoo-linux-security-rsyslog-is-installed-and-enabled
           - uid: mondoo-linux-security-session-initiation-information-is-collected
           - uid: mondoo-linux-security-successful-file-system-mounts-are-collected
           - uid: mondoo-linux-security-sudo-logging-is-enabled
@@ -210,34 +213,42 @@ queries:
           - NIST 800-53 (SI-7: Software, Firmware, and Information Integrity)
 
         Ensuring AIDE is installed lays the foundation for host-based file integrity monitoring, which is a critical part of a defense-in-depth strategy for detecting intrusions and preserving system integrity.
-      remediation: |-
-        Run this command to install `aide`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ### RHEL/Fedora/Amazon Linux and derivatives
+            Run this command to install `aide`:
 
-        ```bash
-        yum install aide
-        ```
+            ### RHEL/Fedora/Amazon Linux and derivatives
 
-        ### Debian/Ubuntu and derivatives
+            ```bash
+            yum install aide
+            ```
 
-        ```bash
-        apt-get install aide
-        ```
+            ### Debian/Ubuntu and derivatives
 
-        ### SLES and openSUSE
+            ```bash
+            apt-get install aide
+            ```
 
-        ```bash
-        zypper install aide
-        ```
+            ### SLES and openSUSE
 
-        Configure AIDE as appropriate for your environment. Consult the AIDE documentation for options.
+            ```bash
+            zypper install aide
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
 
-        Initialize AIDE:
+            Use this Ansible playbook to install `aide`:
 
-        ```bash
-        aideinit
-        ```
+            ```yaml
+            - name: Install AIDE
+              package:
+                name: aide
+                state: present
+            ```
   - uid: mondoo-linux-security-filesystem-integrity-is-regularly-checked
     title: Ensure filesystem integrity is regularly checked using AIDE
     impact: 50
@@ -260,64 +271,136 @@ queries:
           - Integrity violations may go undetected, exposing the system to persistent threats such as rootkits or malware.
           - Audit logs and incident response efforts may be incomplete due to a lack of timely data.
           - Organizations may fail to meet compliance requirements that mandate proactive monitoring of system integrity.
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI to setup Cron:***
 
-        Regular integrity checks serve as a crucial early warning mechanism that strengthens security posture by enabling timely investigation and response.
-      remediation: |-
-        ### To run aide using cron
+            1. Run this command to initialize the AIDE database:
 
-        Run this command:
+            ```bash
+            aide --init
+            ```
 
-        ```bash
-        crontab -u root -e
-        ```
 
-        Add the following line to the crontab:
+            2. Edit the root crontab:
 
-        ```
-        0 5 * * * /usr/sbin/aide --check
-        ```
+            ```bash
+            crontab -u root -e
+            ```
 
-        ### To run aide using a systemd timer
+            Add the following line to the crontab:
 
-        Create or edit the file `/etc/systemd/system/aidecheck.service` and add the following lines:
+            ```
+            0 5 * * * /usr/sbin/aide --check
+            ```
 
-        ```
-        [Unit]
-        Description=Aide Check
+            ***Using the CLI to setup systemd:***
 
-        [Service]
-        Type=simple
-        ExecStart=/usr/sbin/aide --check
+            1. Run this command to initialize the AIDE database:
 
-        [Install]
-        WantedBy=multi-user.target
-        ```
+            ```bash
+            aide --init
+            ```
 
-        Create or edit the file `/etc/systemd/system/aidecheck.timer` and add the following lines:
+            2. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines:
 
-        ```
-        [Unit]
-        Description=Aide check every day at 5AM
+            ```
+            [Unit]
+            Description=Aide Check
 
-        [Timer]
-        OnCalendar=*-*-* 05:00:00
-        Unit=aidecheck.service
+            [Service]
+            Type=simple
+            ExecStart=/usr/sbin/aide --check
 
-        [Install]
-        WantedBy=multi-user.target
-        ```
+            [Install]
+            WantedBy=multi-user.target
+            ```
 
-        Run these commands:
+            3. Create the systemd timer by creating or editing the file `/etc/systemd/system/aidecheck.timer` and add the following lines:
 
-        ```bash
-        chown root:root /etc/systemd/system/aidecheck.*
-        chmod 0644 /etc/systemd/system/aidecheck.*
+            ```
+            [Unit]
+            Description=Aide check every day at 5AM
 
-        systemctl daemon-reload
+            [Timer]
+            OnCalendar=*-*-* 05:00:00
+            Unit=aidecheck.service
 
-        systemctl enable aidecheck.service
-        systemctl --now enable aidecheck.timer
-        ```
+            [Install]
+            WantedBy=multi-user.target
+            ```
+
+            4. Configure the service and timer to run:
+
+            ```bash
+            chown root:root /etc/systemd/system/aidecheck.*
+            chmod 0644 /etc/systemd/system/aidecheck.*
+
+            systemctl daemon-reload
+
+            systemctl enable aidecheck.service
+            systemctl --now enable aidecheck.timer
+            ```
+        - id: ansible
+          desc: |
+            Use this Ansible playbook to run AIDE using a systemd timer:
+
+            ```yaml
+              ---
+              - name: Configure daily AIDE check using systemd timer
+                hosts: all
+                become: true
+                tasks:
+
+                  - name: Create systemd service unit for AIDE check
+                    copy:
+                      dest: /etc/systemd/system/aidecheck.service
+                      owner: root
+                      group: root
+                      mode: '0644'
+                      content: |
+                        [Unit]
+                        Description=Aide Check
+
+                        [Service]
+                        Type=simple
+                        ExecStart=/usr/sbin/aide --check
+
+                        [Install]
+                        WantedBy=multi-user.target
+
+                  - name: Create systemd timer unit for daily AIDE check at 5AM
+                    copy:
+                      dest: /etc/systemd/system/aidecheck.timer
+                      owner: root
+                      group: root
+                      mode: '0644'
+                      content: |
+                        [Unit]
+                        Description=Aide check every day at 5AM
+
+                        [Timer]
+                        OnCalendar=*-*-* 05:00:00
+                        Unit=aidecheck.service
+
+                        [Install]
+                        WantedBy=multi-user.target
+
+                  - name: Reload systemd daemon to recognize new units
+                    command: systemctl daemon-reexec
+
+                  - name: Enable aidecheck.service (not started, only enabled)
+                    systemd:
+                      name: aidecheck.service
+                      enabled: true
+
+                  - name: Enable and start aidecheck.timer
+                    systemd:
+                      name: aidecheck.timer
+                      enabled: true
+                      state: started
+            ```
   - uid: mondoo-linux-security-core-dumps-are-restricted
     title: Ensure core dumps are restricted
     filters: |
@@ -352,39 +435,95 @@ queries:
           - Properly configuring the coredump service (if installed) with ProcessSizeMax=0 and Storage=none to prevent systemd-based core dump handling from storing crash data.
 
         Restricting core dumps helps preserve the confidentiality of system memory, prevents unnecessary disk usage, and protects against inadvertent leakage of sensitive data.
-      remediation: |-
-        Add the following line to `/etc/security/limits.conf` or a `/etc/security/limits.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```
-        * hard core 0
-        ```
+            1. Run this command to set the core dump size to 0:
 
-        Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+            ```bash
+            ulimit -c 0
+            ```
 
-        ```
-        fs.suid_dumpable = 0
-        ```
+            2. To make the change permanent:
 
-        Run this command to set the active kernel parameter:
+            Edit `/etc/security/limits.conf` and add the following line:
 
-        ```bash
-        sysctl -w fs.suid_dumpable=0
-        ```
+            ```
+            * hard core 0
+            ```
 
-        If systemd-coredump is installed:
+            Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        edit `/etc/systemd/coredump.conf` and add/modify the following lines:
+            ```
+            fs.suid_dumpable = 0
+            ```
 
-        ```
-        Storage=none
-        ProcessSizeMax=0
-        ```
+            Run this command to set the active kernel parameter:
 
-        Run the command:
+            ```bash
+            sysctl -w fs.suid_dumpable=0
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
 
-        ```bash
-        systemctl daemon-reload
-        ```
+            Use this Ansible playbook to restrict core dumps:
+
+            ```yaml
+            ---
+            - name: Disable core dumps on Linux
+              hosts: all
+              become: true
+              tasks:
+
+                - name: Set hard core dump limit to 0 in limits.d
+                  copy:
+                    dest: /etc/security/limits.d/99-disable-core.conf
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      * hard core 0
+
+                - name: Set fs.suid_dumpable = 0 in sysctl.d
+                  copy:
+                    dest: /etc/sysctl.d/99-disable-coredump.conf
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      fs.suid_dumpable = 0
+
+                - name: Apply fs.suid_dumpable runtime setting
+                  sysctl:
+                    name: fs.suid_dumpable
+                    value: '0'
+                    state: present
+                    reload: yes
+
+                - name: Check if systemd-coredump config exists
+                  stat:
+                    path: /etc/systemd/coredump.conf
+                  register: coredump_conf
+
+                - name: Set systemd-coredump options if applicable
+                  block:
+                    - name: Ensure /etc/systemd/coredump.conf exists with correct settings
+                      ini_file:
+                        path: /etc/systemd/coredump.conf
+                        section: Coredump
+                        option: "{{ item.option }}"
+                        value: "{{ item.value }}"
+                      loop:
+                        - { option: 'Storage', value: 'none' }
+                        - { option: 'ProcessSizeMax', value: '0' }
+
+                    - name: Reload systemd daemon after coredump config change
+                      command: systemctl daemon-reexec
+                  when: coredump_conf.stat.exists
+            ```
   - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
     title: Ensure address space layout randomization (ASLR) is enabled
     impact: 90
@@ -704,7 +843,7 @@ queries:
       service("pure-ftpd").enabled == false
       service("pure-ftpd").running == false
     docs:
-      desc: |-
+      desc: |
         This check verifies that common FTP server services—vsftpd, proftpd, and pure-ftpd—are not running and are disabled on the system.
 
         **Why this matters**
@@ -715,21 +854,21 @@ queries:
           - Abuse in reconnaissance and data exfiltration by attackers
 
         In most environments, FTP has been replaced by more secure alternatives like SFTP or FTPS, which encrypt both authentication and file transfer traffic. Unless explicitly required, running an FTP server introduces unnecessary risk and increases the system's attack surface.
+      remediation:
+        - id: cli
+          desc: |
+            Run this command to stop and disable `vsftpd`, `proftpd`, and `pure-ftpd`:
 
-        Disabling vsftpd, proftpd, and pure-ftpd helps enforce the principle of least functionality by ensuring that legacy, insecure services are not inadvertently exposed or abused.
-      remediation: |-
-        Run this command to stop and disable `vsftpd`, `proftpd`, and `pure-ftpd`:
+            ```bash
+            systemctl stop vsftpd
+            systemctl disable vsftpd
 
-        ```bash
-        systemctl stop vsftpd
-        systemctl disable vsftpd
+            systemctl stop proftpd
+            systemctl disable proftpd
 
-        systemctl stop proftpd
-        systemctl disable proftpd
-
-        systemctl stop pure-ftpd
-        systemctl disable pure-ftpd
-        ```
+            systemctl stop pure-ftpd
+            systemctl disable pure-ftpd
+            ```
   - uid: mondoo-linux-security-http-server-is-not-enabled
     title: Ensure HTTP servers are stopped and not enabled
     impact: 60
@@ -1129,14 +1268,18 @@ queries:
       service("talkd").running == false
     docs:
       desc: |
-        The talk protocol enables real-time text-based communication between users on UNIX systems. The talk server (talkd or ntalk) listens for incoming connection requests and facilitates terminal-to-terminal chat sessions. However, this protocol is outdated and lacks encryption or strong authentication mechanisms.
+        This check verifies that the talk server (talkd or ntalk) is disabled to prevent the use of an outdated and insecure communication protocol.
+
+        **Why this matters**
+
+        The talk protocol enables real-time text-based communication between users on UNIX systems. However, it lacks encryption and strong authentication mechanisms, making it unsuitable for modern environments.
 
         If the talk server is enabled:
           - It exposes the system to network-based attacks through an unnecessary and insecure service.
           - Messages are transmitted in plaintext, allowing for potential interception and eavesdropping.
           - The service increases the system's attack surface and may be abused for denial-of-service attacks or unauthorized user messaging.
 
-        Since modern environments use more secure communication tools, talk services should be disabled on systems where they are not explicitly required. This minimizes risk and helps enforce a minimal, hardened system configuration.
+        Disabling the talk server minimizes risk, reduces the system's attack surface, and enforces a minimal, hardened system configuration.
       remediation: |-
         Run this command to stop and disable talk:
 
@@ -1796,7 +1939,7 @@ queries:
         }
       }
     docs:
-      desc: |-
+      desc: |
         This check verifies that the system is configured to disable itself when audit logs are full by ensuring the `space_left_action` and `admin_space_left_action` parameters in `/etc/audit/auditd.conf` are set to appropriate values.
 
         **Why this matters**
@@ -1988,7 +2131,7 @@ queries:
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
     docs:
-      desc: |-
+      desc: |
         This check verifies that the system is configured to record session start events in the audit logs, ensuring that audit rules are in place to track successful login sessions using the auditd subsystem.
 
         **Why this matters**
@@ -2055,7 +2198,7 @@ queries:
             || split(" ").containsAll(["-k", "time-change"])
       )
     docs:
-      desc: |-
+      desc: |
         This check verifies that the audit system is configured to log all events that change the system’s date and time settings, including modifications to the system clock and timezone.
 
         **Why this matters**
@@ -2125,17 +2268,17 @@ queries:
        && props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/usr\/share\/selinux(\/?)\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
       appArmorSys || seLinuxSys
     docs:
-      desc: |-
+      desc: |
         This check verifies that the audit system is configured to log changes to the system’s Mandatory Access Control (MAC) configurations, such as modifications to SELinux or AppArmor policies.
 
-        Why this matters
+        **Why this matters**
 
         Mandatory Access Controls enforce strict rules about which subjects (users, processes) can access which objects (files, resources) beyond traditional discretionary permissions. Changes to MAC settings directly impact the system’s security posture and can either strengthen or weaken its defenses.
 
-        If modifications to MAC configurations are not audited:
-          •	Unauthorized or malicious changes may go undetected, potentially disabling key security mechanisms.
-          •	Administrators may be unaware of policy alterations that expose the system to privilege escalation or data leakage.
-          •	The system’s compliance with security frameworks requiring MAC enforcement may be compromised.
+        When modifications to MAC configurations are not audited:
+          - Unauthorized or malicious changes may go undetected, potentially disabling key security mechanisms.
+          - Administrators may be unaware of policy alterations that expose the system to privilege escalation or data leakage.
+          - The system’s compliance with security frameworks requiring MAC enforcement may be compromised.
 
         Logging events that alter SELinux modes, AppArmor profiles, or related configuration files helps ensure that all security policy changes are tracked and attributable. This supports continuous monitoring, strengthens control over access enforcement, and enhances trust in the system’s security model.
       remediation: |-
@@ -2341,7 +2484,7 @@ queries:
             || split("-").containsAll(["k perm_mod"])
       )
     docs:
-      desc: |-
+      desc: |
         This check verifies that changes to file permissions, attributes, ownership, and group are monitored. It ensures that system calls affecting these properties—such as `chmod`, `fchmod`, `fchmodat` (permissions), `chown`, `fchown`, `fchownat`, `lchown` (ownership), and `setxattr`, `lsetxattr`, `fsetxattr`, `removexattr`, `lremovexattr`, `fremovexattr` (extended attributes)—are audited.
 
         **Why this matters**
@@ -2494,7 +2637,7 @@ queries:
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/shadow\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/security\/opasswd\s+\-p\s+wa\s+\-k\s+identity(\s+)?$/))
     docs:
-      desc: |-
+      desc: |
         This check verifies that the system is configured to monitor changes to critical user and group management files, including `/etc/group`, `/etc/passwd`, `/etc/shadow`, `/etc/gshadow`, and `/etc/security/opasswd`. These files store information about user accounts, group memberships, and password policies.
 
         **Why this matters**
@@ -2547,7 +2690,7 @@ queries:
     mql: |
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b64\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+mounts(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always\,exit\s+\-F\s+arch\=b32\s+\-S\s+mount\s+\-F\s+auid\>\=1000\s+\-F\s+auid\!\=(4294967295|unset|-1)\s+\-k\s+mounts(\s+)?$/))
     docs:
-      desc: |-
+      desc: |
         This check verifies that the system is configured to monitor successful file system mount events by auditing the `mount` system call. The audit log will record events where the user is a non-privileged user (auid >= 1000) and is not a daemon event (auid=4294967295). All audit records will be tagged with the identifier "mounts."
 
         **Why this matters**
@@ -2621,17 +2764,26 @@ queries:
             || split("-").containsAll(["k delete"])
       )
     docs:
-      desc: |-
-        Monitor the use of system calls associated with the deletion or renaming of files and file attributes. This configuration statement sets up monitoring for the `unlink` (remove a file), `unlinkat` (remove a file attribute), `rename` (rename a file) and `renameat` (rename a file attribute) system calls and tags them with the identifier "delete".
+      desc: |
+        This check ensures that the system is configured to monitor the use of system calls associated with the deletion or renaming of files and file attributes. It verifies that the `unlink`, `unlinkat`, `rename`, and `renameat` system calls are audited, which helps track file deletions and renames.
+
+        **Why this matters**
+
+        Monitoring file deletion and renaming events is critical for maintaining system security and integrity. If these events are not audited:
+          - Unauthorized file deletions or renames may go unnoticed, leading to data loss or tampering.
+          - Malicious actors could exploit this lack of visibility to hide their tracks or disrupt system operations.
+          - Compliance with security standards requiring audit logging may be compromised.
+
+        Auditing these system calls ensures that all file deletion and renaming activities are logged, providing visibility into potential security incidents and supporting forensic investigations.
 
         **Note:**
         Systems may have been customized to change the default UID_MIN. To confirm the UID_MIN for your system, run this command:
 
-        ```
+        ```bash
         awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
         ```
 
-        If your systems' UID_MIN is not `1000`, replace `audit>=1000` with `audit>=<UID_MIN for your system>` in the Audit and Remediation procedures.
+        If your system's UID_MIN is not `1000`, replace `auid>=1000` with `auid>=<UID_MIN for your system>` in the audit and remediation procedures.
       remediation: |-
         For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
@@ -2682,8 +2834,17 @@ queries:
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/modprobe\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/))
     docs:
-      desc: |-
-        Monitor the loading and unloading of kernel modules. The programs `insmod` (install a kernel module), `rmmod` (remove a kernel module), and `modprobe` (a more sophisticated program to load and unload modules, as well as some other features) control loading and unloading of modules. The `init_module` (load a module) and `delete_module` (delete a module) system calls control loading and unloading of modules. Any execution of the loading and unloading module programs and system calls will trigger an audit record with an identifier of "modules".
+      desc: |
+        This check verifies that the loading and unloading of kernel modules is monitored by auditing the execution of related programs and system calls, such as `insmod`, `rmmod`, `modprobe`, `init_module`, and `delete_module`.
+
+        **Why this matters**
+
+        Kernel modules extend the functionality of the Linux kernel by adding features such as device drivers or file systems. Monitoring the loading and unloading of kernel modules is critical for maintaining system security and integrity. If these events are not audited:
+          - Unauthorized or malicious modules could be loaded, compromising the system's security.
+          - Attackers could use kernel modules to hide malicious activities or escalate privileges.
+          - System administrators may lack visibility into critical changes to the kernel's behavior.
+
+        By auditing the execution of module-related programs and system calls, organizations can detect and respond to unauthorized changes, ensuring the integrity and security of the kernel.
       remediation: |-
         For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
@@ -2736,8 +2897,17 @@ queries:
     mql: |
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/sudo\.log\s+\-p\s+wa\s+\-k\s+actions(\s+)?$/))
     docs:
-      desc: |-
-        Monitor the `sudo` log file. If the system has been properly configured to disable the use of the `su` command and force all administrators to have to log in first and then use `sudo` to execute privileged commands, then all administrator commands will be logged to `/var/log/sudo.log`. Any time a command is executed, an audit event will be triggered as the `/var/log/sudo.log` file will be opened for write and the executed administration command will be written to the log.
+      desc: |
+        This check ensures that the `sudo` log file is monitored to track all privileged commands executed by administrators. Properly configured systems disable the use of the `su` command, requiring administrators to log in and use `sudo` for privileged actions. This setup ensures that all administrator commands are logged to `/var/log/sudo.log`.
+
+        **Why this matters**
+
+        Monitoring the `sudo` log file provides visibility into administrative actions, ensuring accountability and enhancing security. If the `sudo` log file is not monitored:
+          - Unauthorized or malicious actions by administrators may go undetected.
+          - Critical audit trails may be incomplete, complicating incident response and forensic investigations.
+          - Compliance with security policies requiring detailed logging of administrative actions may be compromised.
+
+        By monitoring the `sudo` log file, organizations can ensure that all privileged commands are logged, supporting accountability, security, and compliance efforts.
       remediation: |
         Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules` and add the following line:
 
@@ -2778,8 +2948,17 @@ queries:
     mql: |
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/(\s+)?\-e\s+2(\s+)?$/))
     docs:
-      desc: |-
-        Set system audit so that audit rules cannot be modified with `auditctl`. Setting the flag `-e 2` forces audit to be put in immutable mode. Audit changes can only be made on system reboot.
+      desc: |
+        This check ensures that the audit system is configured to operate in immutable mode by setting the `-e 2` flag. Immutable mode prevents any modifications to audit rules using `auditctl`, ensuring that audit configurations remain secure and consistent.
+
+        **Why this matters**
+
+        Immutable mode is a critical security feature for the audit system:
+          - It prevents unauthorized or accidental changes to audit rules, maintaining the integrity of audit logs.
+          - It ensures that audit configurations cannot be tampered with during runtime, reducing the risk of malicious activity going undetected.
+          - It supports compliance with security standards that require robust and unalterable audit logging mechanisms.
+
+        Once the audit system is set to immutable mode, changes to audit rules can only be made by rebooting the system, providing an additional layer of protection against unauthorized modifications.
       remediation: |-
         Edit or create the file `/etc/audit/audit.rules` and add the following line at the end of the file:
 
@@ -2814,7 +2993,17 @@ queries:
         .where(_ == /Defaults/)
         .any(_ == /logfile=\"\/var\/log\/sudo\.log\"/)
     docs:
-      desc: By default, sudo logs all events in the /var/log/auth.log file. This log file contains all authentication events system-wide, making it difficult to audit sudo failures. To reduce the chances of sudo failures going unnoticed, administrations should configure sudo to log to a dedicated log file location.
+      desc: |
+        This check ensures that sudo logs all events to a dedicated log file instead of the default `/var/log/auth.log` file, which contains all authentication events system-wide. Configuring a dedicated log file for sudo events improves the ability to audit and monitor sudo usage effectively.
+
+        **Why this matters**
+
+        By default, sudo logs are mixed with other authentication events in `/var/log/auth.log`, making it difficult to identify and analyze sudo-specific failures or activities. Without a dedicated log file:
+          - Sudo failures may go unnoticed due to the volume of unrelated log entries.
+          - Administrators may face challenges in auditing and investigating sudo usage.
+          - Critical security events related to sudo may be obscured, increasing the risk of unauthorized access or privilege escalation.
+
+        Configuring sudo to log to a dedicated file enhances visibility into sudo activities, supports effective auditing, and strengthens overall system security.
       remediation: |-
         Using the `visudo` command, add the following line to the `/etc/sudoers` configuration file.
 
@@ -2837,7 +3026,17 @@ queries:
         permissions.other_executable == false
       }
     docs:
-      desc: The `/etc/ssh/sshd_config` file contains configuration specifications for `sshd`. The command below sets the owner and group of the file to root.
+      desc: |
+        This check ensures that the `/etc/ssh/sshd_config` file is secured with appropriate ownership and permissions. The file must be owned by the root user and group to prevent unauthorized modifications.
+
+        **Why this matters**
+
+        The `/etc/ssh/sshd_config` file contains critical configuration settings for the SSH daemon. If this file is improperly secured:
+          - Unauthorized users could modify SSH settings, potentially compromising system security.
+          - Malicious actors could weaken SSH configurations to allow unauthorized access or escalate privileges.
+          - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that the `/etc/ssh/sshd_config` file is owned by the root user and group, organizations can protect critical SSH configurations and maintain a secure system configuration.
       remediation: |-
         Run these commands to set ownership and permissions on `/etc/ssh/sshd_config`:
 
@@ -2845,45 +3044,45 @@ queries:
         chown root:root /etc/ssh/sshd_config
         chmod og-rwx /etc/ssh/sshd_config
         ```
-  - uid: mondoo-linux-security-rsyslog-is-installed
+  - uid: mondoo-linux-security-rsyslog-is-installed-and-enabled
     title: Ensure rsyslog is installed
     impact: 50
     mql: |
       package("rsyslog").installed
+      service("rsyslog").enabled
     docs:
-      desc: |-
-        The `rsyslog` software is a recommended replacement to the original `syslogd` daemon which provide improvements over `syslogd`, such as connection-oriented (i.e. TCP) transmission of logs, the option to log to database formats, and the encryption of log data en route to a central logging server.
+      desc: |
+        This check ensures that the `rsyslog` software is installed and enabled as a replacement for the original `syslogd` daemon, providing enhanced logging capabilities and security features.
+
+        **Why this matters**
+
+        `rsyslog` offers several improvements over `syslogd`, including:
+          - Connection-oriented (i.e., TCP) transmission of logs, ensuring reliable delivery.
+          - Support for logging to database formats, enabling advanced log analysis and storage.
+          - Encryption of log data during transmission, protecting sensitive information from interception.
+
+        By using `rsyslog`, organizations can enhance their logging infrastructure, improve log reliability and security, and meet compliance requirements for secure log management.
       remediation: |-
-        Run this command to install rsyslog:
+        Run this command to install and enable rsyslog:
 
         ### RHEL/Fedora/Amazon Linux and derivatives
 
         ```bash
         yum install rsyslog
+        systemctl --now enable rsyslog
         ```
 
         ### Debian/Ubuntu and derivatives
 
         ```bash
         apt-get install rsyslog
+        systemctl --now enable rsyslog
         ```
 
         ### SLES and openSUSE
 
         ```bash
         zypper install rsyslog
-        ```
-  - uid: mondoo-linux-security-rsyslog-service-is-enabled
-    title: Ensure rsyslog Service is enabled
-    impact: 50
-    mql: |
-      service("rsyslog").enabled
-    docs:
-      desc: Once the `rsyslog` package is installed it needs to be enabled.
-      remediation: |-
-        Run this command to enable `rsyslog`:
-
-        ```bash
         systemctl --now enable rsyslog
         ```
   - uid: mondoo-linux-security-rsyslog-default-file-permissions-configured
@@ -2892,7 +3091,17 @@ queries:
     mql: |
       rsyslog.conf.settings.contains("$FileCreateMode 0640")
     docs:
-      desc: rsyslog will create log files that do not already exist on the system. This setting controls what permissions will be applied to these newly created files.
+      desc: |
+        This check ensures that `rsyslog` is configured to apply appropriate permissions to newly created log files. This setting controls the default permissions for log files that do not already exist on the system.
+
+        **Why this matters**
+
+        Properly configured file permissions for log files are critical for maintaining system security:
+          - Prevents unauthorized access to sensitive log data.
+          - Ensures compliance with security policies and regulatory requirements.
+          - Protects the integrity and confidentiality of log information.
+
+        By setting appropriate permissions for newly created log files, organizations can safeguard sensitive information, maintain a secure logging environment, and reduce the risk of data exposure.
       remediation: |-
         Edit the `/etc/rsyslog.conf` and `/etc/rsyslog.d/*.conf` files and set `$FileCreateMode` to `0640` or more restrictive:
 
@@ -2909,8 +3118,17 @@ queries:
         }
       }
     docs:
-      desc: |-
-        Data from journald may be stored in volatile memory or persisted locally on the server. Utilities exist to accept remote export of journald logs, however, use of the rsyslog service provides a consistent means of log collection and export.
+      desc: |
+        This check ensures that journald is configured to forward logs to rsyslog, providing a consistent and reliable means of log collection and export.
+
+        **Why this matters**
+
+        Forwarding logs from journald to rsyslog offers several benefits:
+          - Centralized log management, enabling easier analysis and troubleshooting.
+          - Compatibility with existing rsyslog configurations for log forwarding and storage.
+          - Enhanced reliability and flexibility in log handling, including support for remote log export.
+
+        By configuring journald to forward logs to rsyslog, organizations can improve log management, ensure consistent log collection, and maintain compliance with security best practices.
       remediation: |-
         Edit the `/etc/systemd/journald.conf` file and add the following line:
 
@@ -2933,7 +3151,17 @@ queries:
         }
       }
     docs:
-      desc: The journald system includes the capability of compressing overly large files to avoid filling up the system with logs or making the logs unmanageably large.
+      desc: |
+        This check ensures that journald is configured to compress large log files, helping to manage disk space and maintain system performance.
+
+        **Why this matters**
+
+        Journald's compression capability provides several benefits:
+          - Prevents log files from consuming excessive disk space, ensuring system stability.
+          - Reduces the risk of logs becoming unmanageably large, simplifying log management.
+          - Supports efficient storage of log data, enabling better resource utilization.
+
+        By enabling log compression in journald, organizations can maintain a reliable logging system, optimize disk usage, and ensure effective log management.
       remediation: |-
         Edit the `/etc/systemd/journald.conf` file and add the following line:
 
@@ -2956,7 +3184,17 @@ queries:
         }
       }
     docs:
-      desc: Data from journald may be stored in volatile memory or persisted locally on the server. Logs in memory will be lost upon a system reboot. Persisting logs to a local disk on the server protects logs loss.
+      desc: |
+        This check ensures that journald is configured to write log files to a persistent disk, preventing log loss during system reboots and ensuring reliable log retention.
+
+        **Why this matters**
+
+        Persisting logs to a local disk provides several benefits:
+          - Protects logs from being lost during system reboots, ensuring continuity in log data.
+          - Enhances the reliability of log retention for troubleshooting and auditing purposes.
+          - Supports compliance with security policies and regulatory requirements that mandate log preservation.
+
+        By configuring journald to write logs to a persistent disk, organizations can maintain a robust logging infrastructure, safeguard critical log data, and ensure effective system monitoring.
       remediation: |-
         Edit the `/etc/systemd/journald.conf` file and add the following line:
 
@@ -2982,7 +3220,17 @@ queries:
         permissions.other_executable == false
       }
     docs:
-      desc: Log files stored in /var/log/ contain logged information from many services on the system. If the host is a log aggregation server, these logs may collect sensitive data from large numbers of systems in your environment.
+      desc: |
+        This check ensures that log files stored in `/var/log/` are properly secured to protect sensitive information and maintain system integrity.
+
+        **Why this matters**
+
+        Log files in `/var/log/` contain critical information from various services on the system. If these files are not properly secured:
+          - Sensitive data may be exposed, especially on log aggregation servers that collect logs from multiple systems.
+          - Unauthorized access to log files could lead to data breaches or compromise system security.
+          - Compliance with security policies and regulatory requirements for log protection may be violated.
+
+        By ensuring that log files in `/var/log/` are properly secured, organizations can protect sensitive information, maintain system integrity, and meet compliance requirements.
       remediation: |-
         Run these commands to set permissions on all existing log files:
 
@@ -3027,7 +3275,17 @@ queries:
           permissions.other_executable == false
         }
     docs:
-      desc: An SSH private key is one of two files used in SSH public key authentication. In this authentication method, The possession of the private key is proof of identity. Only a private key corresponding to a public key can authenticate successfully. The private keys need to be stored and handled carefully, and no copies of the private key should be distributed.
+      desc: |
+        This check ensures that SSH private keys are securely stored and handled to prevent unauthorized access and maintain the integrity of SSH public key authentication.
+
+        **Why this matters**
+
+        SSH private keys are critical for authentication in public key cryptography. If private keys are not properly secured:
+          - Unauthorized users could gain access to sensitive systems by using compromised private keys.
+          - The integrity of the authentication process could be undermined, leading to potential security breaches.
+          - Compliance with security policies requiring proper key management may be compromised.
+
+        By ensuring that SSH private keys are securely stored and handled, organizations can protect sensitive systems, maintain secure authentication, and comply with security best practices.
       remediation: |-
         Run these commands to set ownership and permissions on the private SSH host key files
 
@@ -3052,7 +3310,17 @@ queries:
           permissions.other_executable == false
         }
     docs:
-      desc: An SSH public key is one of two files used in SSH public key authentication. In this authentication method, a public key is a key that can be used for verifying digital signatures generated using a corresponding private key. Only a public key corresponding to a private key can authenticate successfully.
+      desc: |
+        This check ensures that SSH public keys are properly configured and secured as part of the SSH public key authentication mechanism. Public keys are used to verify digital signatures generated by their corresponding private keys, enabling secure and reliable authentication.
+
+        **Why this matters**
+
+        SSH public key authentication provides several benefits:
+          - Enhances security by eliminating the need for password-based authentication, reducing the risk of brute-force attacks.
+          - Ensures that only users with the corresponding private key can authenticate successfully.
+          - Supports compliance with security policies requiring strong authentication mechanisms.
+
+        By properly configuring and securing SSH public keys, organizations can strengthen their authentication processes, protect sensitive systems, and maintain a secure environment.
       remediation: |-
         Run these commands to set permissions and ownership on the SSH host public key files
 
@@ -3067,11 +3335,25 @@ queries:
     title: Ensure SSH Protocol is set to 2
     impact: 80
     # openssh-server 7.6 and later remove support for protocol v1
-    filters: package('openssh-server').version  >= semver("6") && package('openssh-server').version  < semver("7.6")
+    filters: package('openssh-server').version  >= semver("6") && package('openssh-server').version < semver("7.6")
     mql: |
       sshd.config.params["Protocol"] == 2
     docs:
-      desc: 'SSH supports two different and incompatible protocols: SSH1 and SSH2. SSH1 was the original protocol and was subject to security issues. SSH2 is more advanced and secure.'
+      desc: |
+        This check ensures that the SSH protocol is set to version 2, which provides enhanced security and addresses vulnerabilities present in the older SSH1 protocol.
+
+        **Why this matters**
+
+        SSH1 is an outdated protocol with known security issues, including:
+          - Weak encryption algorithms that are susceptible to attacks.
+          - Vulnerabilities that can be exploited to compromise the confidentiality and integrity of SSH sessions.
+
+        SSH2 is a more advanced and secure protocol, offering:
+          - Stronger encryption algorithms to protect data in transit.
+          - Improved authentication mechanisms to prevent unauthorized access.
+          - Enhanced security features to mitigate modern threats.
+
+        By enforcing the use of SSH2, organizations can ensure secure remote access, protect sensitive data, and maintain compliance with security best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `Protocol`parameter as follows:
 
@@ -3084,10 +3366,16 @@ queries:
     mql: |
       sshd.config.params["LogLevel"] == /INFO|VERBOSE/
     docs:
-      desc: |-
-        `INFO` level is the basic level that only records the login activity of SSH users. In many situations, such as incident response, it is important to determine when a particular user was active on a system. The logout record can eliminate those users who disconnected, which helps narrow the field.
+      desc: |
+        This check ensures that the `LogLevel` parameter in the SSH configuration is set to an appropriate level to log user login and logout activity, as well as key fingerprints for SSH key-based logins.
 
-        `VERBOSE` level specifies that login and logout activity as well as the key fingerprint for any SSH key used for login will be logged. This information is important for SSH key management, especially in legacy environments.
+        **Why this matters**
+
+        The `INFO` level logs basic login activity, which is essential for tracking user access to the system. This helps identify when users were active and supports incident response efforts by narrowing down potential suspects during investigations.
+
+        The `VERBOSE` level provides additional details, including the key fingerprint for any SSH key used during login. This is particularly useful for SSH key management, especially in environments with legacy systems or shared keys.
+
+        By configuring the `LogLevel` parameter to `INFO` or `VERBOSE`, organizations can enhance visibility into SSH activity, improve auditability, and strengthen overall security.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `LogLevel` parameter as follows:
 
@@ -3106,7 +3394,17 @@ queries:
     mql: |
       sshd.config.params["X11Forwarding"] == "no"
     docs:
-      desc: The X11Forwarding parameter allows tunneling X11 traffic through the connection to enable remote graphic connections.
+      desc: |
+        This check ensures that the `X11Forwarding` parameter in the SSH configuration is disabled to prevent tunneling of X11 traffic through the connection, which could expose the system to security risks.
+
+        **Why this matters**
+
+        The `X11Forwarding` parameter allows remote graphical connections by tunneling X11 traffic through the SSH connection. If enabled:
+          - It could expose the system to unauthorized access or data leakage through the X11 protocol.
+          - Attackers could exploit this feature to capture sensitive information or compromise the system.
+          - It increases the attack surface of the SSH server, potentially leading to security vulnerabilities.
+
+        By disabling `X11Forwarding`, organizations can reduce the attack surface, enhance system security, and maintain compliance with security best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `X11Forwarding` parameter as follows:
 
@@ -3119,7 +3417,18 @@ queries:
     mql: |
       sshd.config.params["MaxAuthTries"] <= 4
     docs:
-      desc: The `MaxAuthTries` parameter specifies the maximum number of authentication attempts permitted per connection. When the login failure count reaches half this maximum value, error messages will be written to the `syslog` file detailing the login failure.
+      desc: |
+        This check ensures that the `MaxAuthTries` parameter is configured to limit the maximum number of authentication attempts permitted per connection. Properly setting this parameter helps prevent brute-force attacks and enhances system security.
+
+        **Why this matters**
+
+        The `MaxAuthTries` parameter controls the number of authentication attempts allowed before the connection is terminated. If this parameter is not properly configured:
+
+        - Attackers could exploit unlimited or high authentication attempts to perform brute-force attacks.
+        - System logs could be flooded with failed login attempts, making it harder to detect legitimate security incidents.
+        - The overall security posture of the system could be weakened, increasing the risk of unauthorized access.
+
+        By configuring `MaxAuthTries` to an appropriate value, organizations can mitigate the risk of brute-force attacks, protect sensitive data, and maintain compliance with security best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `MaxAuthTries` parameter as follows:
 
@@ -3132,7 +3441,18 @@ queries:
     mql: |
       sshd.config.params["IgnoreRhosts"] == "yes"
     docs:
-      desc: The `IgnoreRhosts` parameter specifies that `.rhosts` and `.shosts` files will not be used in `RhostsRSAAuthentication` or `HostbasedAuthentication` .
+      desc: |
+        This check ensures that the `IgnoreRhosts` parameter in the SSH configuration is enabled to prevent the use of `.rhosts` and `.shosts` files for authentication. Disabling these files enhances the security of the SSH server by enforcing stricter authentication mechanisms.
+
+        **Why this matters**
+
+        The `IgnoreRhosts` parameter ensures that `.rhosts` and `.shosts` files are not used in `RhostsRSAAuthentication` or `HostbasedAuthentication`. If these files are allowed:
+
+        - Unauthorized users could exploit trusted host relationships to gain access to the system.
+        - Malicious actors could use compromised `.rhosts` or `.shosts` files to bypass authentication mechanisms.
+        - System integrity and compliance with security policies could be compromised.
+
+        By enabling the `IgnoreRhosts` parameter, organizations can reduce the attack surface and ensure that authentication relies on more secure mechanisms, such as public key or password-based authentication.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `IgnoreRhosts` parameter as follows:
 
@@ -3145,7 +3465,18 @@ queries:
     mql: |
       sshd.config.params["HostbasedAuthentication"] == "no"
     docs:
-      desc: The `HostbasedAuthentication` parameter specifies if authentication is allowed through trusted hosts via the user of `.rhosts`, or `/etc/hosts.equiv`, along with successful public key client host authentication. This option only applies to SSH Protocol Version 2.
+      desc: |
+        This check ensures that the `HostbasedAuthentication` parameter in the SSH configuration is properly set to prevent authentication through trusted hosts using `.rhosts` or `/etc/hosts.equiv` files, combined with public key client host authentication. This setting applies only to SSH Protocol Version 2.
+
+        **Why this matters**
+
+        Allowing host-based authentication can introduce significant security risks:
+
+        - Unauthorized users could exploit trusted host relationships to gain access to the system.
+        - Malicious actors could use compromised `.rhosts` or `/etc/hosts.equiv` files to bypass authentication mechanisms.
+        - System integrity and compliance with security policies could be compromised.
+
+        By disabling `HostbasedAuthentication`, organizations can reduce the attack surface and ensure that authentication relies on more secure mechanisms, such as public key or password-based authentication.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `HostbasedAuthentication` parameter as follows:
 
@@ -3158,7 +3489,18 @@ queries:
     mql: |
       sshd.config.params["PermitRootLogin"] == "no" || sshd.config.params["PermitRootLogin"] == "prohibit-password" || sshd.config.params["PermitRootLogin"] == "without-password"
     docs:
-      desc: The `PermitRootLogin` parameter specifies if the root user can log in using ssh(1). The default is no.
+      desc: |
+        This check ensures that the `PermitRootLogin` parameter in the SSH configuration is set to restrict root login access. Disabling root login enhances the security of the SSH server by preventing direct access to the root account.
+
+        **Why this matters**
+
+        Allowing root login via SSH poses significant security risks:
+
+        - Attackers could target the root account with brute-force attacks, increasing the likelihood of unauthorized access.
+        - Direct root access bypasses the accountability provided by individual user accounts.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that the `PermitRootLogin` parameter is disabled or set to `prohibit-password`, organizations can enforce secure authentication practices, reduce the attack surface, and maintain a secure system configuration.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `PermitRootLogin` parameter as follows:
 
@@ -3171,7 +3513,18 @@ queries:
     mql: |
       sshd.config.params["PermitEmptyPasswords"] == "no"
     docs:
-      desc: The `PermitEmptyPasswords` parameter specifies if the SSH server allows login to accounts with empty password strings.
+      desc: |
+        This check ensures that the `PermitEmptyPasswords` parameter in the SSH configuration is disabled to prevent accounts with empty password strings from being used for login. Disabling this option enhances the security of the SSH server by enforcing password-based authentication.
+
+        **Why this matters**
+
+        Allowing accounts with empty passwords to log in via SSH poses significant security risks:
+
+        - Unauthorized users could gain access to the system without providing any credentials.
+        - Malicious actors could exploit this vulnerability to compromise sensitive data or escalate privileges.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that the `PermitEmptyPasswords` parameter is disabled, organizations can enforce secure authentication practices, reduce the attack surface, and maintain a secure system configuration.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `PermitEmptyPasswords` parameter as follows:
 
@@ -3184,7 +3537,18 @@ queries:
     mql: |
       sshd.config.params["PermitUserEnvironment"] == "no"
     docs:
-      desc: The `PermitUserEnvironment` option allows users to present environment options to the `ssh` daemon.
+      desc: |
+        This check ensures that the `PermitUserEnvironment` option in the SSH configuration is disabled to prevent users from passing environment variables to the SSH daemon. Disabling this option helps maintain a secure and controlled SSH environment.
+
+        **Why this matters**
+
+        The `PermitUserEnvironment` option allows users to specify environment variables that are passed to the SSH daemon. If enabled:
+
+        - Malicious users could exploit this feature to inject unauthorized environment variables, potentially compromising system security.
+        - It increases the risk of privilege escalation or unauthorized access to sensitive resources.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By disabling the `PermitUserEnvironment` option, organizations can reduce the attack surface, maintain a secure SSH configuration, and ensure compliance with security best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `PermitUserEnvironment` parameter as follows:
 
@@ -3207,7 +3571,18 @@ queries:
       sshd.config.ciphers != empty
       sshd.config.ciphers.containsOnly(props.mondooLinuxSecuritySshdCiphers)
     docs:
-      desc: This variable limits the ciphers that SSH can use during communication.
+      desc: |
+        This check ensures that the SSH configuration limits the ciphers used during communication to secure and approved algorithms. Restricting the ciphers helps prevent the use of weak or deprecated encryption methods that could compromise the confidentiality and integrity of SSH sessions.
+
+        **Why this matters**
+
+        SSH is a critical protocol for secure remote access and management of systems. If weak or deprecated ciphers are allowed:
+
+        - Attackers could exploit vulnerabilities in outdated encryption methods to intercept or manipulate SSH communications.
+        - Sensitive data transmitted during SSH sessions could be exposed to unauthorized parties.
+        - The overall security posture of the system could be weakened, increasing the risk of compromise.
+
+        By enforcing the use of strong and approved ciphers, organizations can ensure secure SSH communication, protect sensitive data, and maintain compliance with security best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to add or modify the `Ciphers` parameter so that it contains a comma-separated list of the site approved ciphers
 
@@ -3229,7 +3604,18 @@ queries:
       sshd.config.macs != empty
       sshd.config.macs.containsOnly(props.mondooLinuxSecurityMacAlgos)
     docs:
-      desc: This variable limits the types of MAC algorithms that SSH can use during communication.
+      desc: |
+        This check ensures that the types of MAC (Message Authentication Code) algorithms used by SSH during communication are restricted to secure and approved options. Limiting the MAC algorithms helps to prevent the use of weak or deprecated algorithms that could compromise the integrity of SSH connections.
+
+        **Why this matters**
+
+        SSH communication relies on MAC algorithms to ensure the integrity and authenticity of transmitted data. If insecure or outdated MAC algorithms are allowed:
+
+        - Attackers could exploit vulnerabilities in weak algorithms to intercept or tamper with SSH communications.
+        - The confidentiality and integrity of sensitive data transmitted over SSH could be compromised.
+        - Compliance with security standards and best practices could be violated.
+
+        By enforcing the use of secure MAC algorithms, organizations can strengthen the security of SSH connections, protect sensitive data, and maintain compliance with security policies.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to add or modify the `MACs` parameter so that it contains a comma-separated list of the site approved MACs
 
@@ -3260,7 +3646,18 @@ queries:
       sshd.config.kexs != empty
       sshd.config.kexs.containsOnly(props.mondooLinuxSecurityKexAlgos)
     docs:
-      desc: Key exchange is any method in cryptography by which cryptographic keys are exchanged between two parties, allowing use of a cryptographic algorithm. If the sender and receiver wish to exchange encrypted messages, each must be equipped to encrypt messages to be sent and decrypt messages received
+      desc: |
+        This check ensures that strong key exchange algorithms are used in the SSH configuration to secure the exchange of cryptographic keys between two parties. Key exchange is a critical component of cryptography, enabling secure communication by allowing both parties to establish a shared secret.
+
+        **Why this matters**
+
+        Key exchange algorithms play a vital role in establishing secure communication channels. If weak or outdated algorithms are used:
+
+        - Attackers could exploit vulnerabilities to intercept or manipulate the key exchange process.
+        - The confidentiality and integrity of encrypted communications could be compromised.
+        - Compliance with security standards requiring strong cryptographic practices may be violated.
+
+        By ensuring that only strong key exchange algorithms are used, organizations can protect sensitive data, maintain secure communications, and comply with cryptographic best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to add or modify the `KexAlgorithms` parameter so that it contains a comma-separated list of the site approved key exchange algorithms
 
@@ -3323,7 +3720,18 @@ queries:
       defaultBlock.all(params.ClientAliveCountMax > 0)
       defaultBlock.all(params.ClientAliveCountMax <= 3)
     docs:
-      desc: The two options `ClientAliveInterval` and `ClientAliveCountMax` control the timeout of ssh sessions. When the `ClientAliveInterval` variable is set, ssh sessions that have no activity for the specified length of time are terminated. When the `ClientAliveCountMax` variable is set, `sshd` will send client alive messages at every `ClientAliveInterval` interval. When the number of consecutive client alive messages are sent with no response from the client, the `ssh` session is terminated. For example, if the `ClientAliveInterval` is set to 15 seconds and the `ClientAliveCountMax` is set to 3, the client `ssh` session will be terminated after 45 seconds of idle time.
+      desc: |
+        This check ensures that the `ClientAliveInterval` and `ClientAliveCountMax` parameters in the SSH configuration are set to control the timeout of SSH sessions. These parameters help terminate idle SSH sessions after a specified period of inactivity.
+
+        **Why this matters**
+
+        The `ClientAliveInterval` parameter specifies the interval (in seconds) at which the SSH server sends keepalive messages to the client. The `ClientAliveCountMax` parameter determines the maximum number of keepalive messages sent without a response before terminating the session. If these parameters are not configured:
+
+        - Idle SSH sessions may remain open indefinitely, increasing the risk of unauthorized access.
+        - System resources may be consumed by inactive connections, potentially impacting performance.
+        - Compliance with security policies requiring session timeouts may be compromised.
+
+        By configuring `ClientAliveInterval` and `ClientAliveCountMax`, organizations can enforce session timeouts, reduce the risk of unauthorized access, and maintain a secure system configuration.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `ClientAliveInterval` and `ClientAliveCountMax` parameters according to site policy:
 
@@ -3338,7 +3746,18 @@ queries:
       sshd.config.params["LoginGraceTime"] >= 1
       sshd.config.params["LoginGraceTime"] <= 60
     docs:
-      desc: The `LoginGraceTime` parameter specifies the time (in seconds) allowed for successful authentication to the SSH server. The longer the grace period is, the more open unauthenticated connections can exist. Like other session controls, the grace period should be limited to appropriate organizational limits to ensure the service is available for needed access.
+      desc: |
+        This check ensures that the `LoginGraceTime` parameter in the SSH configuration is set to an appropriate value, limiting the time allowed for successful authentication to the SSH server. This configuration helps reduce the risk of unauthenticated connections lingering on the system.
+
+        **Why this matters**
+
+        The `LoginGraceTime` parameter specifies the time (in seconds) allowed for successful authentication to the SSH server. If this value is set too high:
+
+        - Unauthenticated connections may remain open for extended periods, increasing the risk of unauthorized access.
+        - System resources may be consumed by idle connections, potentially impacting performance.
+        - Compliance with security policies requiring strict session controls may be compromised.
+
+        By setting the `LoginGraceTime` parameter to a minimal value, organizations can reduce the risk of unauthorized access, maintain system performance, and ensure compliance with security best practices.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `LoginGraceTime` parameter as follows:
 
@@ -3356,16 +3775,18 @@ queries:
       if (sshd.config.params["DenyUsers"] != empty) { sshd.config.params["DenyUsers"] != "" }
       if (sshd.config.params["DenyGroups"] != empty) { sshd.config.params["DenyGroups"] != "" }
     docs:
-      desc: |-
-        There are several options available to limit which users and groups can access the system via SSH. It is recommended that at least one of the following options be leveraged: `AllowUsers`
+      desc: |
+        This check ensures that SSH access is restricted to specific users or groups by configuring the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters in the `/etc/ssh/sshd_config` file. These options provide granular control over who can access the system via SSH.
 
-        The `AllowUsers` variable gives the system administrator the option of allowing specific users to `ssh` into the system. The list consists of space-separated user names. Numeric user IDs are not recognized with this variable. If a system administrator wants to restrict user access further by only allowing the allowed users to log in from a particular host, the entry can be specified in the form of user@host. `AllowGroups`
+        **Why this matters**
 
-        The `AllowGroups` variable gives the system administrator the option of allowing specific groups of users to `ssh` into the system. The list consists of space-separated group names. Numeric group IDs are not recognized with this variable. `DenyUsers`
+        Restricting SSH access to authorized users and groups is critical for maintaining system security. If SSH access is not properly restricted:
 
-        The `DenyUsers` variable gives the system administrator the option of denying specific users to `ssh` into the system. The list consists of space-separated user names. Numeric user IDs are not recognized with this variable. If a system administrator wants to restrict user access further by specifically denying user access from a particular host, the entry can be specified in the form of user@host. `DenyGroups`
+        - Unauthorized users could gain access to the system, potentially compromising sensitive data or escalating privileges.
+        - Malicious actors could exploit open access to perform brute-force attacks or other unauthorized actions.
+        - System integrity and compliance with security policies could be jeopardized.
 
-        The `DenyGroups` variable gives the system administrator the option of denying specific groups of users to `ssh` into the system. The list consists of space-separated group names. Numeric group IDs are not recognized with this variable.
+        By configuring the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters, organizations can enforce strict access controls, reduce the attack surface, and maintain a secure system configuration.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file and add one or more of these parameters:
 
@@ -3382,7 +3803,18 @@ queries:
     mql: |
       sshd.config.params["Banner"] == "/etc/issue.net"
     docs:
-      desc: The `Banner` parameter specifies a file whose contents must be sent to the remote user before authentication is permitted. By default, no banner is displayed.
+      desc: |
+        This check ensures that the `Banner` parameter in the SSH configuration is set to display a warning banner to remote users before authentication. The banner file typically contains legal or security notices to inform users of acceptable use policies.
+
+        **Why this matters**
+
+        Displaying a warning banner before authentication serves several purposes:
+
+        - It informs users of the system's acceptable use policy and legal restrictions.
+        - It provides a deterrent to unauthorized access by clearly stating the consequences of misuse.
+        - It supports compliance with security standards and regulatory requirements that mandate the use of warning banners.
+
+        By ensuring that the `Banner` parameter is configured, organizations can enhance security awareness, deter unauthorized access, and maintain compliance with security policies.
       remediation: |-
         Edit the `/etc/ssh/sshd_config` file to set the `Banner` parameter as follows:
 
@@ -3401,7 +3833,18 @@ queries:
         permissions.other_executable == false
       }
     docs:
-      desc: The `/etc/passwd` file contains user account information used by many system utilities and therefore must be readable for these utilities to operate.
+      desc: |
+        This check ensures that the `/etc/passwd` file, which contains user account information, is secured with appropriate permissions. The file must be readable for system utilities to operate correctly, but write access should be restricted to the root user to prevent unauthorized modifications.
+
+        **Why this matters**
+
+        The `/etc/passwd` file is critical for managing user accounts and system operations. If this file is improperly secured:
+
+        - Unauthorized users could modify account information, potentially escalating privileges or disrupting system operations.
+        - Malicious actors could exploit this information to compromise system security.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has write access to the `/etc/passwd` file, organizations can protect critical account data and maintain a secure system configuration.
       remediation: |-
         Run this command to set permissions on `/etc/passwd`:
 
@@ -3424,7 +3867,18 @@ queries:
         }
       }
     docs:
-      desc: The `/etc/shadow` file is used to store the information about user accounts that is critical to the security of those accounts, such as the hashed password and other security information.
+      desc: |
+        This check ensures that the `/etc/shadow` file, which stores sensitive information about user accounts, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized access to critical account data.
+
+        **Why this matters**
+
+        The `/etc/shadow` file contains hashed passwords and other security-related information for user accounts. If this file is improperly secured:
+
+        - Unauthorized users could access sensitive password data.
+        - Malicious actors could exploit this information to compromise user accounts or escalate privileges.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/shadow` file, organizations can protect critical account data and maintain a secure system configuration.
       remediation: |-
         Run these commands to set permissions on `/etc/shadow`:
 
@@ -3444,7 +3898,18 @@ queries:
         permissions.other_executable == false
       }
     docs:
-      desc: The `/etc/group` file contains a list of all the valid groups defined in the system. This file should have read/write access for root and read access for all other users to prevent non-administrative users from modifying groups.
+      desc: |
+        This check ensures that the `/etc/group` file, which contains a list of all valid groups defined in the system, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized modifications to group definitions.
+
+        **Why this matters**
+
+        The `/etc/group` file defines group memberships on the system. If this file is improperly secured:
+
+        - Unauthorized users could modify group definitions, potentially escalating privileges or disrupting access control.
+        - Malicious actors could exploit this information to compromise system security.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/group` file, organizations can protect critical group membership data and maintain a secure system configuration.
       remediation: |-
         Run this command to set permissions on `/etc/group`:
 
@@ -3468,9 +3933,17 @@ queries:
       }
     docs:
       desc: |-
-        The `/etc/gshadow` file stores hashed group passwords. It serves as a companion to `/etc/group`, which lists groups and membership, but not sensitive password information.
+        This check ensures that the `/etc/gshadow` file, which stores hashed group passwords, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized access to sensitive group password information.
 
-        If an attacker gains access to `/etc/gshadow` file, they could potentially crack the group passwords to gain elevated access across the system.
+        **Why this matters**
+
+        The `/etc/gshadow` file serves as a companion to `/etc/group`, listing group memberships while storing sensitive password information. If this file is improperly secured:
+
+        - Unauthorized users could access sensitive group password data.
+        - Malicious actors could exploit this information to escalate privileges or compromise system security.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/gshadow` file, organizations can protect critical group password data and maintain a secure system configuration.
       remediation: |-
         Run the following chown to set permissions on `/etc/gshadow`:
 
@@ -3494,8 +3967,18 @@ queries:
         }
       }
     docs:
-      desc: |-
-        The `/etc/passwd-`` file in Linux is a backup copy of the main `/etc/passwd` file, which contains essential information about system users. The `-` suffix signifies that this file is a backup and is created automatically by the system when there are changes made to the /etc/passwd file, such as adding or deleting a user.
+      desc: |
+        This check ensures that the `/etc/passwd-` file, which contains a backup of the `/etc/passwd` file, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized access to sensitive user account information.
+
+        **Why this matters**
+
+        The `/etc/passwd-` file serves as a backup for the `/etc/passwd` file, which stores essential information about system users. If this file is improperly secured:
+
+        - Unauthorized users could access sensitive user account information.
+        - Malicious actors could exploit this information to compromise user accounts or escalate privileges.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/passwd-` file, organizations can protect critical user account data and maintain a secure system configuration.
       remediation: |-
         Run this command to set permissions on `/etc/passwd-`:
 
@@ -3524,8 +4007,19 @@ queries:
         }
       }
     docs:
-      desc: The `/etc/shadow-` file is used to store backup information about user accounts, such as the hashed password and other security information. Only the root user should have read and write permissions on this file so that sensitive user information is not available to non-administrative users on the system.
-      remediation: |-
+      desc: |
+        This check ensures that the `/etc/shadow-` file, which contains a backup of the `/etc/shadow` file, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized access to sensitive user account information.
+
+        **Why this matters**
+
+        The `/etc/shadow-` file serves as a backup for the `/etc/shadow` file, which stores hashed passwords and other critical security information about user accounts. If this file is improperly secured:
+
+        - Unauthorized users could access sensitive password data.
+        - Malicious actors could exploit this information to compromise user accounts or escalate privileges.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/shadow-` file, organizations can protect critical user account data and maintain a secure system configuration.
+      remediation: |
         Run these commands to set permissions on `/etc/shadow-`:
 
         ```bash
@@ -3554,7 +4048,18 @@ queries:
         }
       }
     docs:
-      desc: The `/etc/group-` file contains a backup list of all the valid groups defined in the system. Only the root user should have read and write permissions on this file so that group names an user membership is not available to non-administrative users on the system.
+      desc: |
+        This check ensures that the `/etc/group-` file, which contains a backup of all valid groups defined in the system, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized access to group names and user membership information.
+
+        **Why this matters**
+
+        The `/etc/group-` file serves as a backup for the `/etc/group` file, which defines group memberships on the system. If this file is improperly secured:
+
+        - Unauthorized users could access sensitive group membership information.
+        - Malicious actors could exploit this information to escalate privileges or compromise system security.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/group-` file, organizations can protect critical group membership data and maintain a secure system configuration.
       remediation: |-
         Run this command to set permissions on `/etc/group-`:
 
@@ -3583,10 +4088,18 @@ queries:
         }
       }
     docs:
-      desc: |-
-        The `/etc/gshadow-` file in is a backup of `/etc/gshadow` file, which contains group password information. This file stores information about group administrators, group members, and encrypted group passwords.
+      desc: |
+        This check ensures that the `/etc/gshadow-` file, which contains a backup of the `/etc/gshadow` file, is secured with appropriate permissions. Only the root user should have read and write access to this file to prevent unauthorized access to sensitive group password information.
 
-        If an attacker gains access to `/etc/gshadow-`, they could potentially crack the group passwords to gain elevated access across the system.
+        **Why this matters**
+
+        The `/etc/gshadow-` file serves as a backup for the `/etc/gshadow` file, which stores information about group administrators, group members, and encrypted group passwords. If this file is improperly secured:
+
+        - Unauthorized users could access sensitive group password information.
+        - Malicious actors could exploit this information to escalate privileges or compromise system security.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the root user has access to the `/etc/gshadow-` file, organizations can protect critical group password data and maintain a secure system configuration.
       remediation: |-
         Run these commands to set permissions on `/etc/gshadow-`:
 
@@ -3607,9 +4120,17 @@ queries:
       users.list.duplicates(uid).none()
     docs:
       desc: |
-        Each login name, each user ID (UID), and each group ID (GID) MUST ONLY be used once. Every user MUST be a member of at least one group. Every GID mentioned in the /etc/passwd file MUST be defined in the /etc/group file. Every group SHOULD only contain the users that are absolutely necessary. In networked systems, care MUST also be taken to ensure that user and group names (UIDs and GIDs) are assigned consistently in the system network if there is a possibility that the same UIDs or GIDs could be assigned to different user or group names on the systems during cross-system access.
+        This check ensures that each user ID (UID), login name, and group ID (GID) is unique across the system. Duplicate UIDs, user names, or GIDs can lead to security and operational issues, making it critical to maintain uniqueness.
 
-        The `useradd` program does not let you create duplicate user IDs (UID), but for an administrator it is possible to manually edit the `/etc/passwd` and create a duplicate UID entry.
+        **Why this matters**
+
+        Unique UIDs, user names, and GIDs are essential for proper system management and security. If duplicates exist:
+
+        - It becomes difficult to track user activity and file ownership, leading to potential security gaps.
+        - System utilities and applications may behave unpredictably due to conflicts in user or group identification.
+        - Networked systems may experience inconsistencies, especially when sharing resources or accessing files across systems.
+
+        By ensuring that UIDs, user names, and GIDs are unique, organizations can maintain a secure and well-functioning system configuration.
       remediation: |
         Based on the results of the query output, establish unique UIDs and review all files owned by the shared UIDs to determine which UID they are supposed to belong to.
 
@@ -3625,9 +4146,17 @@ queries:
       users.list.duplicates(name).none()
     docs:
       desc: |
-        Each login name, each user ID (UID), and each group ID (GID) MUST ONLY be used once. Every user MUST be a member of at least one group. Every GID mentioned in the /etc/passwd file MUST be defined in the /etc/group file. Every group SHOULD only contain the users that are absolutely necessary. In networked systems, care MUST also be taken to ensure that user and group names (UIDs and GIDs) are assigned consistently in the system network if there is a possibility that the same UIDs or GIDs could be assigned to different user or group names on the systems during cross-system access.
+        This check ensures that each user name in the system is unique and does not have duplicates in the `/etc/passwd` file. Unique user names are critical for maintaining proper user identification and system security.
 
-        The `useradd` program does not let you create a duplicate user name, but for an administrator it is possible to manually edit the `/etc/passwd` file and create a duplicated username entry.
+        **Why this matters**
+
+        Duplicate user names can lead to confusion and security risks:
+
+        - It becomes difficult to track user activity and file ownership, leading to potential security gaps.
+        - System utilities and applications may behave unpredictably due to conflicts in user identification.
+        - Networked systems may experience inconsistencies, especially when sharing resources or accessing files across systems.
+
+        By ensuring that user names are unique, organizations can maintain a secure and well-functioning system configuration.
       remediation: |
         Based on the results of the query output, establish unique user names for the users. File ownerships will automatically reflect the change as long as the users have unique UIDs.
 
@@ -3643,9 +4172,17 @@ queries:
       groups.list.duplicates(gid).none()
     docs:
       desc: |
-        Each login name, each user ID (UID), and each group ID (GID) MUST ONLY be used once. Every user MUST be a member of at least one group. Every GID mentioned in the /etc/passwd file MUST be defined in the /etc/group file. Every group SHOULD only contain the users that are absolutely necessary. In networked systems, care MUST also be taken to ensure that user and group names (UIDs and GIDs) are assigned consistently in the system network if there is a possibility that the same UIDs or GIDs could be assigned to different user or group names on the systems during cross-system access.
+        This check ensures that each group ID (GID) in the system is unique and does not have duplicates in the `/etc/group` file. Unique GIDs are critical for maintaining proper group identification and system security.
 
-        The `groupadd` program does not let you create a duplicate group ID (GID), but for an administrator it is possible to manually edit the `/etc/group` file and create a duplicated GID entry.
+        **Why this matters**
+
+        Duplicate GIDs can lead to confusion and security risks:
+
+        - It becomes difficult to track group ownership and permissions, leading to potential security gaps.
+        - System utilities and applications may behave unpredictably due to conflicts in group identification.
+        - Networked systems may experience inconsistencies, especially when sharing resources or accessing files across systems.
+
+        By ensuring that GIDs are unique, organizations can maintain a secure and well-functioning system configuration.
       remediation: |
         Based on the results of the query output, establish unique GIDs and review all files owned by the shared GID to determine which group they are supposed to belong to.
   - uid: mondoo-linux-security-no-duplicate-group-names-exist
@@ -3655,9 +4192,17 @@ queries:
       groups.list.duplicates(name).none()
     docs:
       desc: |
-        Each login name, each user ID (UID), and each group ID (GID) MUST ONLY be used once. Every user MUST be a member of at least one group. Every GID mentioned in the /etc/passwd file MUST be defined in the /etc/group file. Every group SHOULD only contain the users that are absolutely necessary. In networked systems, care MUST also be taken to ensure that user and group names (UIDs and GIDs) are assigned consistently in the system network if there is a possibility that the same UIDs or GIDs could be assigned to different user or group names on the systems during cross-system access.
+        This check ensures that each login name, user ID (UID), and group ID (GID) is unique across the system. It also ensures that every user is a member of at least one group, and that every GID mentioned in the `/etc/passwd` file is defined in the `/etc/group` file.
 
-        The `groupadd` program does not let you create a duplicate group name, but for an administrator it is possible to manually edit the `/etc/group` file and create a duplicated group name entry.
+        **Why this matters**
+
+        Unique UIDs, user names, and GIDs are essential for proper system management and security. If duplicates or inconsistencies exist:
+
+        - It becomes difficult to track user activity and file ownership, leading to potential security gaps.
+        - System utilities and applications may behave unpredictably due to conflicts in user or group identification.
+        - Networked systems may experience inconsistencies, especially when sharing resources or accessing files across systems.
+
+        By ensuring that UIDs, user names, and GIDs are unique, and that group memberships are properly defined, organizations can maintain a secure and well-functioning system configuration.
       remediation: |
         Based on the results of the query output, establish unique names for the user groups. File group ownerships will automatically reflect the change as long as the groups have unique GIDs.
 
@@ -3673,7 +4218,17 @@ queries:
       users.where(name == "root").list.all(gid == 0)
     docs:
       desc: |
-        The `usermod` command can be used to specify which group the root user belongs to. This affects permissions of files that are created by the root user.
+        This check ensures that the default group for the root account is set to GID 0, which is the standard group for administrative privileges on Linux systems. This configuration ensures proper access control and consistency in file ownership and permissions.
+
+        **Why this matters**
+
+        The root account is the most privileged account on a Linux system. Ensuring that its default group is set to GID 0 is critical for maintaining system security and proper access control. If the root account is assigned to a different group:
+
+        - Files created by the root user may have incorrect group ownership, leading to potential security risks.
+        - System utilities and processes that rely on the root group may behave unpredictably.
+        - Compliance with security standards and best practices may be compromised.
+
+        By ensuring that the root account's default group is GID 0, organizations can maintain a secure and consistent system configuration.
       remediation: |
         Run this command to set the `root` user default group to GID `0`:
 
@@ -3687,7 +4242,17 @@ queries:
       users.list.all(gid != empty)
     docs:
       desc: |
-        Each user MUST be a member of at least one group.
+        This check ensures that each user is a member of at least one group, as defined in the `/etc/group` file. Group memberships are essential for managing access control and permissions on Linux systems.
+
+        **Why this matters**
+
+        Group memberships provide a mechanism for assigning permissions and access rights to multiple users. If a user is not a member of any group:
+
+        - The user may lack necessary permissions to access files or resources.
+        - System administrators may face challenges in managing access control effectively.
+        - Compliance with security policies that require group-based access control may be compromised.
+
+        By ensuring that each user is a member of at least one group, organizations can maintain proper access control, streamline user management, and enhance system security.
       remediation: |
         Based on the results of the query output, add the user to a primary group.
 
@@ -3703,7 +4268,17 @@ queries:
       users.list.all(group != empty)
     docs:
       desc: |
-        Every GID mentioned in the /etc/passwd file must be defined in the /etc/group file.
+        This check ensures that every GID mentioned in the `/etc/passwd` file is defined in the `/etc/group` file. This ensures consistency and proper mapping of user groups across the system.
+
+        **Why this matters**
+
+        The `/etc/passwd` file associates users with their respective GIDs, while the `/etc/group` file defines the groups and their memberships. If a GID in `/etc/passwd` is not defined in `/etc/group`:
+
+        - Users may encounter issues with group-based permissions and access control.
+        - System utilities and applications may behave unpredictably due to missing group definitions.
+        - Compliance with security policies requiring proper group management may be compromised.
+
+        By ensuring that all GIDs in `/etc/passwd` exist in `/etc/group`, organizations can maintain a consistent and secure system configuration.
       remediation: |
         Based on the results of the query output, correct the GIDs in `/etc/passwd` and `/etc/group`.
   - uid: mondoo-linux-security-uid-min-is-set-to-1000
@@ -3715,7 +4290,17 @@ queries:
       logindefs.params{ _['UID_MIN'] == 1000 }
     docs:
       desc: |
-        User ID or UID is used to identify a Linux user with an ID or number. The start number for newly created users can be set with this configuration.
+        This check ensures that the `UID_MIN` parameter in the `/etc/login.defs` file is set to 1000, which defines the starting UID for newly created user accounts. This configuration ensures consistency and proper user management on the system.
+
+        **Why this matters**
+
+        The `UID_MIN` parameter determines the range of UIDs assigned to regular user accounts. If this value is not set correctly:
+
+        - User accounts may overlap with system accounts, leading to potential security and operational issues.
+        - System utilities and applications may behave unpredictably due to conflicts in UID assignments.
+        - Compliance with security policies requiring separation of system and user accounts may be compromised.
+
+        By ensuring that `UID_MIN` is set to 1000, organizations can maintain a secure and consistent user management configuration.
       remediation: |
         Edit the `login.defs` file and set UID_MIN.
 
@@ -3731,16 +4316,40 @@ queries:
     mql: |
       groups.where(name == "shadow").all(members.length == 0)
     docs:
-      desc: The shadow group allows system programs or defined users the ability to read the `/etc/shadow` file. No users should be assigned to the shadow group.
-      remediation: Remove all users from the shadow group in `/etc/group`, and change the primary group of any users with shadow as their primary group.
+      desc: |
+        This check ensures that the `shadow` group, which allows access to the `/etc/shadow` file, is empty. No users should be assigned to this group to prevent unauthorized access to sensitive password information.
+
+        **Why this matters**
+
+        The `shadow` group provides access to the `/etc/shadow` file, which contains hashed passwords and other sensitive account information. If users are improperly assigned to this group:
+
+        - Unauthorized users could gain access to sensitive password data.
+        - Malicious actors could exploit this information to compromise user accounts or escalate privileges.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that the `shadow` group is empty, organizations can protect critical account data and maintain a secure system configuration.
+      remediation: |-
+        Remove all users from the `shadow` group in `/etc/group`, and change the primary group of any users with `shadow` as their primary group.
   - uid: mondoo-linux-security-root-group-is-empty
     title: Ensure root group is empty
     impact: 100
     mql: |
       groups.where(name == "root").all(members == empty || members.all(name == 'root'))
     docs:
-      desc: The root group allows system programs or defined users the ability to read and write configurations and files on the system. No users should be assigned to the root group.
-      remediation: Remove all users from the shadow group in `/etc/group`, and change the primary group of any users with root as their primary group, except the root user.
+      desc: |
+        This check ensures that the `root` group, which allows system programs or defined users the ability to read and write configurations and files on the system, is properly secured by ensuring no users other than the `root` user are assigned to it.
+
+        **Why this matters**
+
+        The `root` group provides elevated privileges that can impact the security and stability of the system. If unauthorized users are assigned to the `root` group:
+
+        - They could gain access to sensitive system configurations and files.
+        - Malicious actors could exploit this access to compromise system security or escalate privileges.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that only the `root` user is assigned to the `root` group, organizations can maintain a secure and well-functioning system configuration.
+      remediation: |-
+        Remove all users from the `root` group in `/etc/group`, and change the primary group of any users with `root` as their primary group, except the `root` user.
   - uid: mondoo-linux-security-system-accounts-are-non-login
     title: Ensure system accounts are non-login
     impact: 70
@@ -3750,8 +4359,18 @@ queries:
       }
     docs:
       desc: |
-        There are a number of accounts on Linux systems that are used to manage applications and services. These accounts are not intended for interactive use and do not require a shell.
-      remediation: |
+        This check ensures that system accounts, which are used to manage applications and services, are configured as non-login accounts. These accounts do not require a shell for interactive use.
+
+        **Why this matters**
+
+        System accounts are intended for managing applications and services, not for interactive user access. If these accounts are configured with login shells:
+
+        - Unauthorized users could exploit these accounts to gain access to the system.
+        - Malicious actors could use these accounts to escalate privileges or compromise system security.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By ensuring that system accounts are non-login, organizations can reduce the attack surface and maintain a secure system configuration. remediation: |
+      remediation: |-
         Set the shell for any accounts returned by the audit script to `/sbin/nologin`:
 
         ```bash
@@ -3799,7 +4418,17 @@ queries:
       }
     docs:
       desc: |
-        The `su` command allows a user to run a command or shell as another user. Typically, the `su` command can be executed by any user, which is a security concern. Users should instead rely on the`sudo` command, which allows for more granular control over privileged access.
+        This check ensures that access to the `su` command is restricted to authorized users by configuring the `pam_wheel.so` module in the `/etc/pam.d/su` file. This configuration limits the use of the `su` command to members of the `wheel` or `sudo` group, enhancing system security.
+
+        **Why this matters**
+
+        The `su` command allows a user to switch to another user account, including the root account, without logging out. If unrestricted:
+
+        - Unauthorized users could gain elevated privileges, potentially compromising system security.
+        - Malicious actors could exploit the `su` command to escalate privileges or perform unauthorized actions.
+        - System integrity and compliance with security policies could be jeopardized.
+
+        By restricting access to the `su` command, organizations can ensure that only authorized users can perform privileged actions, reducing the risk of unauthorized access and maintaining a secure system configuration.
       audit: |
         Run this command and verify output includes matching line:
 
