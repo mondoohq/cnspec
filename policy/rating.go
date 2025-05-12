@@ -126,6 +126,29 @@ var ScoreRating_CategoryLabel = map[int32]string{
 	15: "Skip",      // S
 }
 
+var ScoreRating_Letters = map[int32]string{
+	0:  "U",
+	1:  "A",
+	2:  "A",
+	3:  "A",
+	4:  "B",
+	5:  "B",
+	6:  "B",
+	7:  "C",
+	8:  "C",
+	9:  "C",
+	10: "D",
+	11: "D",
+	12: "D",
+	13: "F",
+	14: "X",
+	15: "S",
+}
+
+func (r ScoreRating) Letter() string {
+	return enumName(ScoreRating_Letters, int32(r))
+}
+
 func (r ScoreRating) CategoryLabel() string {
 	return enumName(ScoreRating_CategoryLabel, int32(r))
 }
