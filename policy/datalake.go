@@ -5,6 +5,7 @@ package policy
 
 import (
 	"context"
+	"time"
 
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/explorer/resources"
@@ -59,7 +60,7 @@ type DataLake interface {
 	// GetRawPolicy retrieves the policy without fixing any invalidations (fast)
 	GetRawPolicy(ctx context.Context, mrn string) (*Policy, error)
 	// SetPolicy stores a given policy in the data lake
-	SetPolicy(ctx context.Context, policy *Policy, filters []*explorer.Mquery) error
+	SetPolicy(ctx context.Context, policy *Policy, recalculateAt *time.Time, filters []*explorer.Mquery) error
 	// SetRiskFactor creates and stores a risk factor
 	SetRiskFactor(ctx context.Context, ownerMrn string, riskFactor *RiskFactor) error
 
