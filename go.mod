@@ -1,6 +1,6 @@
 module go.mondoo.com/cnspec/v11
 
-go 1.23.0
+go 1.24
 
 toolchain go1.24.1
 
@@ -8,11 +8,11 @@ toolchain go1.24.1
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.9.0
-	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.8.0
+	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.9.0
 	github.com/Masterminds/semver v1.5.0
 	github.com/abiosoft/colima v0.8.1
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.78.2
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.79.3
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.5
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -22,9 +22,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-version v1.7.0
-	github.com/hashicorp/hc-install v0.9.1
+	github.com/hashicorp/hc-install v0.9.2
 	github.com/hashicorp/hcl/v2 v2.23.0
-	github.com/hashicorp/terraform-exec v0.22.0
+	github.com/hashicorp/terraform-exec v0.23.0
 	github.com/hashicorp/terraform-json v0.24.0
 	github.com/jstemmer/go-junit-report/v2 v2.1.0
 	github.com/mattn/go-isatty v0.0.20
@@ -45,8 +45,8 @@ require (
 	go.mondoo.com/mondoo-go v0.0.0-20250430000358-71abb93a3c47
 	go.mondoo.com/ranger-rpc v0.6.5
 	go.opentelemetry.io/otel v1.35.0
-	gocloud.dev v0.40.0
-	golang.org/x/sys v0.32.0
+	gocloud.dev v0.41.0
+	golang.org/x/sys v0.33.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250428153025-10db94c68c34
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/yaml.v3 v3.0.1
@@ -72,7 +72,7 @@ require (
 	github.com/Azure/azure-amqp-common-go/v3 v3.2.3 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
-	github.com/Azure/go-amqp v1.3.0 // indirect
+	github.com/Azure/go-amqp v1.4.0 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.4.2 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
@@ -91,7 +91,7 @@ require (
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go v1.55.5 // indirect
+	github.com/aws/aws-sdk-go v1.55.6 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.36.3 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.10 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67 // indirect
@@ -105,12 +105,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.44.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.7.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.7.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.35.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sns v1.31.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.34.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sns v1.34.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.59.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.25.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.1 // indirect
@@ -308,7 +308,7 @@ require (
 	golang.org/x/text v0.24.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	golang.org/x/tools v0.32.0 // indirect
-	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
+	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.231.0 // indirect
 	google.golang.org/genproto v0.0.0-20250428153025-10db94c68c34 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250428153025-10db94c68c34 // indirect
