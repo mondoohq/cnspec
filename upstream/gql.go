@@ -33,57 +33,76 @@ func SearchPolicy(
 	includePublic,
 	includePrivate *bool,
 ) ([]*UpstreamPolicy, error) {
-	var q struct {
-		Content struct {
-			TotalCount int `json:"totalCount"`
-			Edges      []struct {
-				Cursor string `json:"cursor"`
-				Node   struct {
-					Policy struct {
-						Mrn        string
-						Name       string
-						TrustLevel mondoogql.TrustLevel
-						Action     mondoogql.PolicyAction
-						Assigned   bool
-					} `graphql:"... on Policy"`
-				} `json:"node"`
-			} `json:"edges"`
-			PageInfo PageInfo `json:"pageInfo"`
-		} `graphql:"content(input: $input)"`
-	}
+	var policies []*UpstreamPolicy
+	var after *mondoogql.String = nil
 
-	input := mondoogql.ContentSearchInput{
-		ScopeMrn:    mondoogql.String(scopeMrn),
-		CatalogType: mondoogql.CatalogType("POLICY"),
-	}
-	if assignedOnly != nil {
-		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
-	}
-	if includePublic != nil {
-		input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))
-	}
-	if includePrivate != nil {
-		input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
-	}
-	err := c.Query(ctx, &q, map[string]interface{}{
-		"input": input,
-	})
-	if err != nil {
-		return nil, err
-	}
+	for {
+		var q struct {
+			Content struct {
+				TotalCount int `json:"totalCount"`
+				Edges      []struct {
+					Cursor string `json:"cursor"`
+					Node   struct {
+						Policy struct {
+							Mrn        string
+							Name       string
+							TrustLevel mondoogql.TrustLevel
+							Action     mondoogql.PolicyAction
+							Assigned   bool
+						} `graphql:"... on Policy"`
+					} `json:"node"`
+				} `json:"edges"`
+				PageInfo PageInfo `json:"pageInfo"`
+			} `graphql:"content(input: $input)"`
+		}
 
-	policies := make([]*UpstreamPolicy, 0, len(q.Content.Edges))
-	for _, edge := range q.Content.Edges {
-		policies = append(policies, &UpstreamPolicy{
-			Policy: policy.Policy{
-				Mrn:  edge.Node.Policy.Mrn,
-				Name: edge.Node.Policy.Name,
-			},
-			TrustLevel: edge.Node.Policy.TrustLevel,
-			Action:     edge.Node.Policy.Action,
-			Assigned:   edge.Node.Policy.Assigned,
+		input := mondoogql.ContentSearchInput{
+			ScopeMrn:    mondoogql.String(scopeMrn),
+			CatalogType: mondoogql.CatalogType("POLICY"),
+		}
+
+		if after != nil {
+			input.After = after
+		}
+
+		if assignedOnly != nil {
+			input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
+		}
+		if includePublic != nil {
+			input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))
+		}
+		if includePrivate != nil {
+			input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
+		}
+		err := c.Query(ctx, &q, map[string]interface{}{
+			"input": input,
 		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, edge := range q.Content.Edges {
+			policies = append(policies, &UpstreamPolicy{
+				Policy: policy.Policy{
+					Mrn:  edge.Node.Policy.Mrn,
+					Name: edge.Node.Policy.Name,
+				},
+				TrustLevel: edge.Node.Policy.TrustLevel,
+				Action:     edge.Node.Policy.Action,
+				Assigned:   edge.Node.Policy.Assigned,
+			})
+		}
+
+		// Check if there are more pages
+		if !q.Content.PageInfo.HasNextPage {
+			break
+		}
+
+		// Set cursor for next page
+		afterCursor := mondoogql.String(q.Content.PageInfo.EndCursor)
+		after = &afterCursor
 	}
+
 	return policies, nil
 }
 
