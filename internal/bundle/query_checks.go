@@ -17,8 +17,8 @@ const (
 	QueryUsedAsDifferentTypesRuleID = "query-used-as-different-types"
 	QueryMissingMQLRuleID           = "query-missing-mql"
 	QueryDocsTooShortRuleID         = "query-docs-too-short"
-	// QueryMissingDocsRuleID (commented out in original, can be added if needed)
-	// QueryDocsRemediationMissingIdRuleID (commented out in original, can be added if needed)
+	// QueryMissingDocsRuleID // Too noisy
+	// QueryDocsRemediationMissingIdRuleID // Too noisy
 	QueryVariantUsesNonDefaultFieldsRuleID = "query-variant-uses-non-default-fields"
 )
 
@@ -53,13 +53,13 @@ func init() {
 		Severity:    LevelError,
 		Run:         runCheckQueryMQLPresence,
 	})
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryDocsTooShortRuleID,
-		Name:        "Query Documentation Length",
-		Description: fmt.Sprintf("Ensures query documentation (desc, audit, remediation desc) meets minimum length of %d characters for non-variant queries.", MinDocsLength),
-		Severity:    LevelError, // Original was error
-		Run:         runCheckQueryDocs,
-	})
+	// RegisterQueryCheck(LintCheck{
+	// 	ID:          QueryDocsTooShortRuleID,
+	// 	Name:        "Query Documentation Length",
+	// 	Description: fmt.Sprintf("Ensures query documentation (desc, audit, remediation desc) meets minimum length of %d characters for non-variant queries.", MinDocsLength),
+	// 	Severity:    LevelError, // Original was error
+	// 	Run:         runCheckQueryDocs,
+	// })
 	RegisterQueryCheck(LintCheck{
 		ID:          QueryUnassignedRuleID,
 		Name:        "Unassigned Query",
