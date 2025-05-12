@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,9 +91,9 @@ func TestUpdateChecksums_Group_ReviewStatus(t *testing.T) {
 	ctx := context.Background()
 	_, err = bundle.Compile(ctx, conf.Schema, nil)
 	require.NoError(t, err)
-
+	now := time.Now()
 	p := bundle.Policies[0]
-	err = p.UpdateChecksums(ctx, nil, nil, bundle.ToMap(), conf)
+	_, err = p.UpdateChecksums(ctx, now, nil, nil, bundle.ToMap(), conf)
 	require.NoError(t, err)
 
 	oldChecksum := p.GraphExecutionChecksum
@@ -100,7 +101,7 @@ func TestUpdateChecksums_Group_ReviewStatus(t *testing.T) {
 	p.Groups[0].ReviewStatus = policy.ReviewStatus_REJECTED
 	p.InvalidateExecutionChecksums()
 
-	err = p.UpdateChecksums(ctx, nil, nil, bundle.ToMap(), conf)
+	_, err = p.UpdateChecksums(ctx, now, nil, nil, bundle.ToMap(), conf)
 	require.NoError(t, err)
 
 	// Make sure the execution checksum changes when the review status changed.
@@ -112,6 +113,7 @@ func TestPolicyChecksums(t *testing.T) {
 		"../examples/example.mql.yaml",
 	}
 
+	now := time.Now()
 	for _, file := range files {
 		t.Run(file, func(t *testing.T) {
 			loader := policy.DefaultBundleLoader()
@@ -127,7 +129,7 @@ func TestPolicyChecksums(t *testing.T) {
 
 			// regular checksum tests
 
-			err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), conf)
+			_, err = p.UpdateChecksums(ctx, now, nil, nil, b.ToMap(), conf)
 			require.NoError(t, err, "computing initial checksums works")
 
 			checksums := getChecksums(p)
@@ -136,7 +138,7 @@ func TestPolicyChecksums(t *testing.T) {
 			}
 
 			p.InvalidateLocalChecksums()
-			err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), conf)
+			_, err = p.UpdateChecksums(ctx, now, nil, nil, b.ToMap(), conf)
 			assert.NoError(t, err, "computing checksums again")
 			assert.Equal(t, checksums, getChecksums(p), "recomputing yields same checksums")
 
@@ -165,7 +167,7 @@ func TestPolicyChecksums(t *testing.T) {
 					checksums = getChecksums(p)
 					f(p)
 					p.InvalidateLocalChecksums()
-					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), conf)
+					_, err = p.UpdateChecksums(ctx, now, nil, nil, b.ToMap(), conf)
 					assert.NoError(t, err, "computing checksums")
 					testChecksums(t, []bool{false, true, false, true}, checksums, getChecksums(p))
 				})
@@ -187,7 +189,7 @@ func TestPolicyChecksums(t *testing.T) {
 			assetBundle := &policy.Bundle{Policies: []*policy.Policy{assetPolicy}}
 			_, err = assetBundle.Compile(ctx, conf.Schema, nil)
 			require.NoError(t, err)
-			err = assetPolicy.UpdateChecksums(ctx, nil, nil, assetBundle.ToMap(), conf)
+			_, err = assetPolicy.UpdateChecksums(ctx, now, nil, nil, assetBundle.ToMap(), conf)
 			require.NoError(t, err)
 
 			runContentTest(assetPolicy, "changing asset policy mrn", func(p *policy.Policy) {
@@ -229,7 +231,7 @@ func TestPolicyChecksums(t *testing.T) {
 					checksums = getChecksums(p)
 					f()
 					p.InvalidateLocalChecksums()
-					err = p.UpdateChecksums(ctx, nil, nil, b.ToMap(), conf)
+					_, err = p.UpdateChecksums(ctx, now, nil, nil, b.ToMap(), conf)
 					assert.NoError(t, err, "computing checksums")
 					updated := getChecksums(p)
 					testChecksums(t, []bool{false, false, false, false}, checksums, updated)
@@ -240,6 +242,7 @@ func TestPolicyChecksums(t *testing.T) {
 }
 
 func TestPolicyChecksummingWithVariantQueries(t *testing.T) {
+	now := time.Now()
 	bundleInitial, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
@@ -268,7 +271,7 @@ queries:
 	pInitial.InvalidateLocalChecksums()
 	initialBundleMap, err := bundleInitial.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
+	_, err = pInitial.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	bundleUpdated, err := policy.BundleFromYAML([]byte(`
@@ -299,7 +302,7 @@ queries:
 	pUpdated.InvalidateLocalChecksums()
 	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+	_, err = pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
@@ -309,6 +312,7 @@ queries:
 }
 
 func TestPolicyChecksummingWithVariantChecks(t *testing.T) {
+	now := time.Now()
 	bundleInitial, err := policy.BundleFromYAML([]byte(`
 policies:
   - uid: variants-test
@@ -337,7 +341,7 @@ queries:
 	pInitial.InvalidateLocalChecksums()
 	initialBundleMap, err := bundleInitial.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	err = pInitial.UpdateChecksums(context.Background(), nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
+	_, err = pInitial.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	bundleUpdated, err := policy.BundleFromYAML([]byte(`
@@ -368,7 +372,7 @@ queries:
 	pUpdated.InvalidateLocalChecksums()
 	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	err = pUpdated.UpdateChecksums(context.Background(), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+	_, err = pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
@@ -440,5 +444,84 @@ queries:
 		pInitial.InvalidateLocalChecksums()
 		_, err = bundleInitial.Compile(context.Background(), conf.Schema, nil)
 		require.Contains(t, err.Error(), "variant cycle detected")
+	}
+}
+
+func TestPolicyRecalculateAt(t *testing.T) {
+	bundle, err := policy.BundleFromYAML([]byte(`
+policies:
+  - uid: test-policy
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - queries:
+          - uid: query1
+      - queries:
+          - uid: query2
+      - queries:
+          - uid: query3
+      - queries:
+          - uid: query4
+queries:
+  - uid: query1
+    mql: 1 == 1
+    filters: asset.family.contains("unix")
+  - uid: query2
+    mql: 2 == 2
+    filters: asset.family.contains("unix")
+  - uid: query3
+    mql: 3 == 3
+    filters: asset.family.contains("unix")
+  - uid: query4
+    mql: 4 == 4
+    filters: asset.family.contains("unix")
+`))
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+
+	pUpdated := bundle.Policies[0]
+
+	pUpdated.Groups[0].StartDate = now.Unix()
+	pUpdated.Groups[0].EndDate = now.Add(1 * time.Hour).Unix()
+	pUpdated.Groups[2].StartDate = now.Add(2 * time.Hour).Unix()
+	pUpdated.Groups[2].EndDate = now.Add(3 * time.Hour).Unix()
+	pUpdated.Groups[1].StartDate = now.Add(4 * time.Hour).Unix()
+	pUpdated.Groups[1].EndDate = now.Add(5 * time.Hour).Unix()
+	pUpdated.Groups[3].StartDate = now.Add(6 * time.Hour).Unix()
+
+	pUpdated.InvalidateLocalChecksums()
+	updatedBundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
+	require.NoError(t, err)
+
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(1*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(1*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(2*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(2*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(3*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(3*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(4*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(6*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Nil(t, recalculateAt, "recalculateAt should be nil")
 	}
 }

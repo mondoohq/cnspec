@@ -69,7 +69,7 @@ func (db *Db) ensureAsset(ctx context.Context, mrn string) (wrapAsset, wrapPolic
 
 func (db *Db) ensureAssetPolicy(ctx context.Context, mrn string) (wrapPolicy, error) {
 	policyObj := db.services.CreatePolicyObject(mrn, "")
-	policyObj, filters, err := db.services.PreparePolicy(ctx, policyObj, nil)
+	policyObj, filters, _, err := db.services.PreparePolicy(ctx, policyObj, nil)
 	if err != nil {
 		return wrapPolicy{}, err
 	}
