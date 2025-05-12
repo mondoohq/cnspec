@@ -66,7 +66,7 @@ policies:
         filters: |
           asset.family.contains('linux')
         checks:
-          - uid: mondoo-linux-security--window-system-is-not-installed
+          - uid: mondoo-linux-security-window-system-is-not-installed
           - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
           - uid: mondoo-linux-security-aide-is-installed
           - uid: mondoo-linux-security-bogus-icmp-responses-are-ignored
@@ -244,10 +244,16 @@ queries:
             Use this Ansible playbook to install `aide`:
 
             ```yaml
-            - name: Install AIDE
-              package:
-                name: aide
-                state: present
+            ---
+            - name: Install AIDE on Linux systems
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure AIDE is installed
+                  ansible.builtin.package:
+                    name: aide
+                    state: present
             ```
   - uid: mondoo-linux-security-filesystem-integrity-is-regularly-checked
     title: Ensure filesystem integrity is regularly checked using AIDE
@@ -479,7 +485,7 @@ queries:
               tasks:
 
                 - name: Set hard core dump limit to 0 in limits.d
-                  copy:
+                  ansible.builtin.copy:
                     dest: /etc/security/limits.d/99-disable-core.conf
                     owner: root
                     group: root
@@ -487,31 +493,23 @@ queries:
                     content: |
                       * hard core 0
 
-                - name: Set fs.suid_dumpable = 0 in sysctl.d
-                  copy:
-                    dest: /etc/sysctl.d/99-disable-coredump.conf
-                    owner: root
-                    group: root
-                    mode: '0644'
-                    content: |
-                      fs.suid_dumpable = 0
-
-                - name: Apply fs.suid_dumpable runtime setting
-                  sysctl:
+                - name: Disable core dumps via sysctl
+                  ansible.builtin.sysctl:
                     name: fs.suid_dumpable
                     value: '0'
+                    sysctl_file: /etc/sysctl.d/99-disable-coredump.conf
                     state: present
                     reload: yes
 
                 - name: Check if systemd-coredump config exists
-                  stat:
+                  ansible.builtin.stat:
                     path: /etc/systemd/coredump.conf
                   register: coredump_conf
 
                 - name: Set systemd-coredump options if applicable
                   block:
                     - name: Ensure /etc/systemd/coredump.conf exists with correct settings
-                      ini_file:
+                      ansible.builtin.ini_file:
                         path: /etc/systemd/coredump.conf
                         section: Coredump
                         option: "{{ item.option }}"
@@ -521,7 +519,7 @@ queries:
                         - { option: 'ProcessSizeMax', value: '0' }
 
                     - name: Reload systemd daemon after coredump config change
-                      command: systemctl daemon-reexec
+                      ansible.builtin.command: systemctl daemon-reexec
                   when: coredump_conf.stat.exists
             ```
   - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
@@ -546,18 +544,44 @@ queries:
           - Systems become more susceptible to privilege escalation, remote code execution, and other forms of memory-based attacks.
 
         Setting kernel.randomize_va_space to 2 enables full ASLR, providing the strongest level of memory layout unpredictability and helping to enforce modern exploit mitigation strategies on Linux systems.
-      remediation: |-
-        Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```
-        kernel.randomize_va_space = 2
-        ```
+            Run this command to set the ASLR value to 2:
 
-        Run this command to set the active kernel parameter:
+            ```bash
+            sysctl -w kernel.randomize_va_space=2
+            ```
 
-        ```bash
-        sysctl -w kernel.randomize_va_space=2
-        ```
+            To make the change permanent:
+
+            Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+
+            ```
+            kernel.randomize_va_space = 2
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to set ASLR:
+
+            ```yaml
+            ---
+            - name: Set ASLR to 2 on Linux systems
+              hosts: all
+              become: true
+              tasks:
+                - name: Set kernel.randomize_va_space to 2
+                  ansible.builtin.sysctl:
+                    name: kernel.randomize_va_space
+                    value: '2'
+                    sysctl_file: /etc/sysctl.d/99-aslr.conf
+                    state: present
+                    reload: yes
+            ```
   - uid: mondoo-linux-security-prelink-is-disabled
     title: Ensure prelink is disabled
     impact: 70
@@ -591,7 +615,7 @@ queries:
         prelink -ua
         apt-get purge prelink
         ```
-  - uid: mondoo-linux-security--window-system-is-not-installed
+  - uid: mondoo-linux-security-window-system-is-not-installed
     title: Ensure X Window System is not installed
     impact: 100
     mql: |
@@ -610,26 +634,60 @@ queries:
           - Consume additional system resources that could otherwise be allocated to critical services.
 
         On headless or server-class Linux systems, the X Window System should be removed unless explicitly required. Removing it aligns with the principle of least functionality, ensuring only essential software is installed and reducing the opportunity for exploitation.
-      remediation: |-
-        Run this command to remove the X Windows System packages:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ### RHEL/Fedora/Amazon Linux and derivatives
+            Run this command to remove the X Windows System packages:
 
-        ```bash
-        yum remove xorg-x11*
-        ```
+            ### RHEL/Fedora/Amazon Linux and derivatives
 
-        ### Debian/Ubuntu and derivatives
+            ```bash
+            yum remove xorg-x11*
+            ```
 
-        ```bash
-        apt-get purge xserver-xorg
-        ```
+            ### Debian/Ubuntu and derivatives
 
-        ### SLES and openSUSE
+            ```bash
+            apt-get purge xserver-xorg
+            ```
 
-        ```bash
-        zypper remove xorg-x11-server
-        ```
+            ### SLES and openSUSE
+
+            ```bash
+            zypper remove xorg-x11-server
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to remove the X Windows System packages:
+
+            ```yaml
+            ---
+            - name: Remove X Window System packages
+              hosts: all
+              become: true
+              tasks:
+                - name: Remove X Window System packages on RHEL/Fedora/Amazon Linux
+                  ansible.builtin.yum:
+                    name: xorg-x11*
+                    state: absent
+                  when: ansible_os_family == "RedHat"
+
+                - name: Remove X Window System packages on Debian/Ubuntu
+                  ansible.builtin.apt:
+                    name: xserver-xorg
+                    state: absent
+                  when: ansible_os_family == "Debian"
+
+                - name: Remove X Window System packages on SLES/openSUSE
+                  ansible.builtin.zypper:
+                    name: xorg-x11-server
+                    state: absent
+                  when: ansible_os_family == "Suse"
+            ```
   - uid: mondoo-linux-security-avahi-server-is-not-enabled
     title: Ensure Avahi server is stopped and not enabled
     impact: 100
@@ -650,21 +708,44 @@ queries:
           - Allow unauthorized devices to detect and interact with the host without explicit configuration.
 
         In secure environments, it is a best practice to disable Avahi unless explicitly required for functionality. Stopping and disabling the avahi-daemon service helps enforce the principle of least functionality and reduces the risk of unintended network exposure.
-      remediation: |-
-        Run this command to stop and disable `avahi-daemon`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```bash
-        systemctl stop avahi-daemon
-        systemctl disable avahi-daemon
-        ```
+            Run this command to stop and disable `avahi-daemon`:
 
-        Note: Since the `avahi-daemon` service is often interdependent with other services, it might not be enough to disable the service because other services will likely restart the service automatically.
+            ```bash
+            systemctl stop avahi-daemon
+            systemctl disable avahi-daemon
+            ```
 
-        To make the service `avahi-daemon` invisible to other services run this command:
+            Note: Since the `avahi-daemon` service is often interdependent with other services, it might not be enough to disable the service because other services will likely restart the service automatically.
 
-        ```bash
-        systemctl mask avahi-daemon
-        ```
+            To make the service `avahi-daemon` invisible to other services run this command:
+
+            ```bash
+            systemctl mask avahi-daemon
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to stop and disable `avahi-daemon`:
+
+            ```yaml
+            ---
+            - name: Stop and disable Avahi daemon
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure Avahi daemon is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: avahi-daemon
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-cups-is-not-enabled
     title: Ensure CUPS is stopped and not enabled
     impact: 100
@@ -685,25 +766,44 @@ queries:
           - Unused services like CUPS can be leveraged in lateral movement or privilege escalation scenarios, particularly if misconfigured or unpatched.
 
         Disabling CUPS aligns with the principle of least functionality and helps reduce the number of services available for exploitation. It is recommended to stop and disable the service unless printing capabilities are explicitly required for the system's role.
-      remediation: |-
-        Run this command to stop and disable `cups`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```bash
-        systemctl stop cups
-        systemctl disable cups
-        ```
+            Run this command to stop and disable `cups`:
 
-        Note: Since the `cups` service is often interdependent with other services, it might not be enough to disable the service because other services such as `cups-browsed` will likely restart the service automatically.
+            ```bash
+            systemctl stop cups
+            systemctl disable cups
+            ```
 
-        To make the service `cups` invisible to other services run this command:
+            Note: Since the `cups` service is often interdependent with other services, it might not be enough to disable the service because other services will likely restart the service automatically.
 
-        ```bash
-        systemctl mask cups
-        ```
+            To make the service `cups` invisible to other services run this command:
 
-        **Impact:**
+            ```bash
+            systemctl mask cups
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
 
-        Disabling CUPS will prevent printing from the system, a common task for workstation systems.
+            Use this Ansible playbook to stop and disable `cups`:
+
+            ```yaml
+            ---
+            - name: Stop and disable CUPS printing service
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure CUPS service is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: cups
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-dhcp-server-is-not-enabled
     title: Ensure DHCP server is stopped and not enabled
     impact: 100
@@ -726,13 +826,42 @@ queries:
           - Expose the host to exploitation if the service is vulnerable or misconfigured.
 
         Disabling unused services like dhcpd reduces the system's attack surface and aligns with the principle of least functionality. On systems that are not intended to serve as DHCP servers, the service should be fully disabled to prevent accidental exposure or misuse.
-      remediation: |-
-        Run this command to stop and disable `dhcpd`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```bash
-        systemctl stop dhcpd
-        systemctl disable dhcpd
-        ```
+            1. Run this command to stop and disable `dhcpd`:
+
+            ```bash
+            systemctl stop dhcpd
+            systemctl disable dhcpd
+            ```
+
+            2. To make the service `dhcpd` invisible to other services run this command:
+
+            ```bash
+            systemctl mask dhcpd
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to stop and disable `dhcpd`:
+
+            ```yaml
+            ---
+            - name: Stop and disable DHCP server service
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure DHCP server (dhcpd) is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: dhcpd
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-ldap-server-is-not-enabled
     title: Ensure LDAP server is stopped and not enabled
     impact: 100
@@ -755,13 +884,36 @@ queries:
           - It can be misused or targeted by attackers to enumerate user accounts, perform unauthorized lookups, or exploit known vulnerabilities.
 
         To reduce risk and enforce the principle of least functionality, the slapd service should be stopped and disabled on systems that are not intended to serve directory services. This helps limit exposure and strengthens the host's overall security posture.
-      remediation: |-
-        Run this command to stop and disable `slapd`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```bash
-        systemctl stop slapd
-        systemctl disable slapd
-        ```
+            Run this command to stop and disable `slapd`:
+
+            ```bash
+            systemctl stop slapd
+            systemctl disable slapd
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to stop and disable `slapd`:
+
+            ```yaml
+            ---
+            - name: Stop and disable LDAP server (slapd)
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure LDAP server (slapd) is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: slapd
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-nfs-and-rpc-are-not-enabled
     title: Ensure NFS and RPC are stopped and not enabled
     impact: 60
@@ -786,16 +938,49 @@ queries:
           - Misconfigurations or vulnerabilities in these services can be used for privilege escalation, lateral movement, or data exfiltration.
 
         Disabling NFS and RPC services on systems where they are not required reduces unnecessary network exposure, aligns with the principle of least functionality, and helps harden systems against remote access threats.
-      remediation: |-
-        Run these commands to stop and disable `nfs` and `rpcbind`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI:***
 
-        ```bash
-        systemctl stop nfs
-        systemctl stop rpcbind
+            1. Run this command to stop and disable `nfs` and `rpcbind`:
 
-        systemctl disable nfs
-        systemctl disable rpcbind
-        ```
+            ```bash
+            systemctl stop nfs
+            systemctl stop rpcbind
+
+            systemctl disable nfs
+            systemctl disable rpcbind
+            ```
+
+            2. To make the service `nfs` and `rpcbind` invisible to other services run this command:
+
+            ```bash
+            systemctl mask nfs
+            systemctl mask rpcbind
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to stop and disable `nfs` and `rpcbind`:
+
+            ```yaml
+            ---
+            - name: Stop and disable NFS and RPC services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure NFS and RPC services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - nfs
+                    - rpcbind
+            ```
   - uid: mondoo-linux-security-dns-server-is-not-enabled
     title: Ensure DNS server is stopped and not enabled
     impact: 60
@@ -820,16 +1005,42 @@ queries:
           - It increases the system's attack surface through open ports and additional daemon processes.
 
         Disabling DNS server services on systems that are not authoritative or caching resolvers aligns with the principle of least functionality. This reduces exposure to misconfiguration, limits available network services, and strengthens the host's security posture.
-      remediation: |-
-        Run this command to stop and disable BIND:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI***
 
-        ```bash
-        systemctl stop named
-        systemctl stop bind9
+            Run this command to stop and disable `named` and `bind9`:
 
-        systemctl disable named
-        systemctl disable bind9
-        ```
+            ```bash
+            systemctl stop named
+            systemctl stop bind9
+
+            systemctl disable named
+            systemctl disable bind9
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible:***
+
+            Use this Ansible playbook to stop and disable `named` and `bind9`:
+
+            ```yaml
+            ---
+            - name: Stop and disable DNS server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure DNS server services (named and bind9) are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - named
+                    - bind9
+            ```
   - uid: mondoo-linux-security-ftp-server-is-not-enabled
     title: Ensure FTP servers are stopped and not enabled
     impact: 60
@@ -857,6 +1068,8 @@ queries:
       remediation:
         - id: cli
           desc: |
+            **Using CLI**
+
             Run this command to stop and disable `vsftpd`, `proftpd`, and `pure-ftpd`:
 
             ```bash
@@ -868,6 +1081,29 @@ queries:
 
             systemctl stop pure-ftpd
             systemctl disable pure-ftpd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `vsftpd`, `proftpd`, and `pure-ftpd`:
+
+            ```yaml
+            ---
+            - name: Stop and disable FTP server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure FTP server services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - vsftpd
+                    - proftpd
+                    - pure-ftpd
             ```
   - uid: mondoo-linux-security-http-server-is-not-enabled
     title: Ensure HTTP servers are stopped and not enabled
@@ -895,19 +1131,46 @@ queries:
           - Misconfigurations can lead to data leakage, privilege escalation, or unauthorized access.
 
         Disabling web servers like Apache and NGINX on systems where they are not required aligns with the principle of least functionality. This reduces the system's attack surface and helps ensure that only essential services are active and maintained.
-      remediation: |-
-        Run these commands to stop and disable web servers:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop httpd
-        systemctl disable httpd
+            Run this command to stop and disable `httpd`, `apache2`, and `nginx`:
 
-        systemctl stop apache2
-        systemctl disable apache2
+            ```bash
+            systemctl stop httpd
+            systemctl disable httpd
 
-        systemctl stop nginx
-        systemctl disable nginx
-        ```
+            systemctl stop apache2
+            systemctl disable apache2
+
+            systemctl stop nginx
+            systemctl disable nginx
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `httpd`, `apache2`, and `nginx`:
+
+            ```yaml
+            ---
+            - name: Stop and disable HTTP server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure HTTP server services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - httpd
+                    - apache2
+                    - nginx
+            ```
   - uid: mondoo-linux-security-imap-and-pop3-server-is-not-enabled
     title: Ensure IMAP and POP3 servers are stopped and not enabled
     impact: 100
@@ -932,16 +1195,42 @@ queries:
           - Create compliance and privacy issues if email data is improperly stored or transmitted.
 
         To minimize exposure, systems that do not explicitly require mail delivery services should have dovecot, cyrus-imapd, and similar services disabled. This approach supports the principle of least functionality and reduces the risk of unauthorized access or system compromise.
-      remediation: |-
-        Run this command to stop and disable `dovecot` and `cyrus-imapd`:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop dovecot
-        systemctl disable dovecot
+            Run this command to stop and disable `dovecot` and `cyrus-imapd`:
 
-        systemctl stop cyrus-imapd
-        systemctl disable cyrus-imapd
-        ```
+            ```bash
+            systemctl stop dovecot
+            systemctl disable dovecot
+
+            systemctl stop cyrus-imapd
+            systemctl disable cyrus-imapd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `dovecot` and `cyrus-imapd`:
+
+            ```yaml
+            ---
+            - name: Stop and disable IMAP and POP3 server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure IMAP and POP3 server services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - dovecot
+                    - cyrus-imapd
+            ```
   - uid: mondoo-linux-security-samba-is-not-enabled
     title: Ensure Samba is stopped and not enabled
     impact: 100
@@ -966,16 +1255,36 @@ queries:
           - It increases the system's attack surface and may expose internal file systems unintentionally.
 
         To minimize unnecessary exposure, Samba should be disabled on systems that do not explicitly require Windows-compatible file sharing. This approach supports a least functionality model and helps reduce the risk of data leakage or compromise.
-      remediation: |-
-        Run this command to stop and disable `smb` and `smbd` services:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop smb
-        systemctl stop smbd
+            Run these commands to stop and disable `smb` and `smbd`:
 
-        systemctl disable smb
-        systemctl disable smbd
-        ```
+            ```bash
+            systemctl stop smb
+            systemctl stop smbd
+
+            systemctl disable smb
+            systemctl disable smbd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `smb` and `smbd`:
+
+            ```yaml
+            - name: Stop and disable Samba services
+              systemd:
+                name: "{{ item }}"
+                state: stopped
+                enabled: no
+              loop:
+                - smb
+                - smbd
+            ```
   - uid: mondoo-linux-security-http-proxy-server-is-not-enabled
     title: Ensure HTTP Proxy server is stopped and not enabled
     impact: 60
@@ -1000,16 +1309,42 @@ queries:
           - Proxy daemons increase the system's attack surface through open ports and additional network logic.
 
         To reduce risk, squid, tinyproxy, and similar services should be stopped and disabled unless the system is explicitly designed to function as a proxy server. This limits unnecessary service exposure and aligns with best practices for host hardening.
-      remediation: |-
-        Run this command to stop and disable `squid` and `tinyproxy`:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop squid
-        systemctl stop tinyproxy
+            Run these commands to stop and disable `squid` and `tinyproxy`:
 
-        systemctl disable squid
-        systemctl disable tinyproxy
-        ```
+            ```bash
+            systemctl stop squid
+            systemctl stop tinyproxy
+
+            systemctl disable squid
+            systemctl disable tinyproxy
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `squid` and `tinyproxy`:
+
+            ```yaml
+            ---
+            - name: Stop and disable HTTP proxy services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure HTTP proxy services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - squid
+                    - tinyproxy
+            ```
   - uid: mondoo-linux-security-snmp-server-is-not-enabled
     title: Ensure SNMP server is stopped and not enabled
     impact: 100
@@ -1032,13 +1367,44 @@ queries:
           - Misconfigured or unmonitored SNMP services can be leveraged for network reconnaissance or as part of broader attack campaigns.
 
         To reduce the risk of information disclosure and limit unnecessary network services, snmpd should be stopped and disabled on systems that are not specifically designated for SNMP-based monitoring. This supports the principle of least functionality and strengthens the system's security posture.
-      remediation: |-
-        Run this command to stop and disable `snmpd`:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop snmpd
-        systemctl disable snmpd
-        ```
+            Run these commands to stop and disable `snmpd`:
+
+            ```bash
+            systemctl stop snmpd
+            systemctl disable snmpd
+            ```
+
+            Note: Since the `snmpd` service is often interdependent with other services, it might not be enough to disable the service because other services will likely restart the service automatically.
+
+            To make the service `snmpd` invisible to other services run this command:
+
+            ```bash
+            systemctl mask snmpd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `snmpd`:
+
+            ```yaml
+            ---
+            - name: Stop and disable SNMP server
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure SNMP server (snmpd) is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: snmpd
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-mail-transfer-agent-is-configured-for-local-only-mode
     title: Ensure mail transfer agent is configured for local-only mode
     impact: 85
@@ -1121,16 +1487,42 @@ queries:
           - Running NIS services can expose the system to unauthorized access or information disclosure, especially in mixed or untrusted networks.
 
         On systems that are not explicitly designated to serve as NIS servers, ypserv, nis, and related services should be stopped and disabled. This helps enforce the principle of least functionality and significantly reduces the system's vulnerability to legacy protocol risks.
-      remediation: |-
-        Run this command to stop and disable `ypserv` and `nis` services:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop ypserv
-        systemctl stop nis
+            Run these commands to stop and disable `ypserv` and `nis`:
 
-        systemctl disable ypserv
-        systemctl disable nis
-        ```
+            ```bash
+            systemctl stop ypserv
+            systemctl stop nis
+
+            systemctl disable ypserv
+            systemctl disable nis
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `ypserv` and `nis`:
+
+            ```yaml
+            ---
+            - name: Stop and disable NIS server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure NIS server services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - ypserv
+                    - nis
+            ```
   - uid: mondoo-linux-security-rsh-server-is-not-enabled
     title: Ensure rsh server is stopped and not enabled
     impact: 75
@@ -1157,20 +1549,47 @@ queries:
           - They increase the system's attack surface and may be exploited for lateral movement in a compromised environment.
 
         Because of these risks, rsh is considered obsolete and should be replaced with secure alternatives such as SSH. Disabling rsh, rlogin, and rexec services helps prevent unauthorized remote access and aligns with modern security best practices for system hardening.
-      remediation: |-
-        Run these commands to stop and disable `rsh`, `rlogin`, and `rexec`:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop rsh.socket
-        systemctl stop rlogin.socket
-        systemctl stop rexec.socket
+            Run these commands to stop and disable `rsh`, `rlogin`, and `rexec`:
 
-        systemctl disable rsh.socket
-        systemctl disable rlogin.socket
-        systemctl disable rexec.socket
-        ```
+            ```bash
+            systemctl stop rsh.socket
+            systemctl stop rlogin.socket
+            systemctl stop rexec.socket
+
+            systemctl disable rsh.socket
+            systemctl disable rlogin.socket
+            systemctl disable rexec.socket
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `rsh`, `rlogin`, and `rexec`:
+
+            ```yaml
+            ---
+            - name: Stop and disable rsh server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure rsh-related services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - rsh.socket
+                    - rlogin.socket
+                    - rexec.socket
+            ```
   - uid: mondoo-linux-security-telnet-server-is-not-enabled
-    title: Ensure telnet server is stopped and not enabled
+    title: Ensure Telnet server is stopped and not enabled
     impact: 90
     filters: |
       asset.kind != "container-image"
@@ -1191,15 +1610,38 @@ queries:
           - It creates a significant attack surface that can be exploited by automated tools or targeted threats.
 
         Modern systems should use secure alternatives such as SSH, which encrypt all communications. Disabling Telnet services on systems where they are not explicitly required strengthens the host's security posture and reduces the risk of unauthorized access.
-      remediation: |-
-        Run this command to stop and disable telnet:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop telnet.socket
-        systemctl disable telnet.socket
-        ```
+            Run these command to stop and disable telnet:
+
+            ```bash
+            systemctl stop telnet.socket
+            systemctl disable telnet.socket
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable telnet:
+
+            ```yaml
+            ---
+            - name: Stop and disable Telnet server
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure Telnet server is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: telnet.socket
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-tftp-server-is-not-enabled
-    title: Ensure tftp server is stopped and not enabled
+    title: Ensure TFTP server is stopped and not enabled
     impact: 100
     filters: |
       asset.kind != "container-image"
@@ -1220,13 +1662,36 @@ queries:
           - It may serve as an entry point for lateral movement in network-based attacks, especially in environments with legacy devices.
 
         Unless TFTP is explicitly required for a specific, isolated use case, the service should be stopped and disabled. Removing unnecessary TFTP services reduces the system's attack surface and aligns with best practices for minimizing unauthenticated network protocols.
-      remediation: |-
-        Run this command to stop and disable tftp:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop tftp.socket
-        systemctl disable tftp.socket
-        ```
+            Run these commands to stop and disable tftp:
+
+            ```bash
+            systemctl stop tftp.socket
+            systemctl disable tftp.socket
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable tftp:
+
+            ```yaml
+            ---
+            - name: Stop and disable TFTP server
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure TFTP server is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: tftp.socket
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-rsync-service-is-not-enabled
     title: Ensure rsync service is stopped and not enabled
     impact: 100
@@ -1249,13 +1714,36 @@ queries:
           - Unrestricted or anonymous rsync configurations can lead to data exfiltration or integrity compromise.
 
         Unless the system is explicitly configured to serve files via rsyncd, the service should be disabled. This aligns with the principle of least functionality and helps prevent accidental exposure of file data to untrusted networks.
-      remediation: |-
-        Run this command to stop and disable `rsync`:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop rsyncd
-        systemctl disable rsyncd
-        ```
+            Run these commands to stop and disable `rsync`:
+
+            ```bash
+            systemctl stop rsyncd
+            systemctl disable rsyncd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `rsync`:
+
+            ```yaml
+            ---
+            - name: Stop and disable rsync service
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure rsync service is stopped and disabled
+                  ansible.builtin.systemd:
+                    name: rsyncd
+                    state: stopped
+                    enabled: no
+            ```
   - uid: mondoo-linux-security-talk-server-is-not-enabled
     title: Ensure talk server is stopped and not enabled
     impact: 100
@@ -1280,16 +1768,42 @@ queries:
           - The service increases the system's attack surface and may be abused for denial-of-service attacks or unauthorized user messaging.
 
         Disabling the talk server minimizes risk, reduces the system's attack surface, and enforces a minimal, hardened system configuration.
-      remediation: |-
-        Run this command to stop and disable talk:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```bash
-        systemctl stop ntalk
-        systemctl stop talkd
+            Run these commands to stop and disable `ntalk` and `talkd`:
 
-        systemctl disable ntalk
-        systemctl disable talkd
-        ```
+            ```bash
+            systemctl stop ntalk
+            systemctl stop talkd
+
+            systemctl disable ntalk
+            systemctl disable talkd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable `ntalk` and `talkd`:
+
+            ```yaml
+            ---
+            - name: Stop and disable talk server services
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure talk server services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: no
+                  loop:
+                    - ntalk
+                    - talkd
+            ```
   - uid: mondoo-linux-security-ip-forwarding-is-disabled
     title: Ensure IP forwarding is disabled
     impact: 75
@@ -1315,24 +1829,53 @@ queries:
           - It may violate segmentation and isolation policies in secure environments.
 
         Disabling IP forwarding ensures the system cannot forward packets between networks, reducing the potential for misuse or compromise. This helps maintain clear boundaries between network zones and supports a more secure and predictable system configuration.
-      remediation: |-
-        Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.ip_forward = 0
+            Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        net.ipv6.conf.all.forwarding = 0
-        ```
+            ```
+            net.ipv4.ip_forward = 0
+            net.ipv6.conf.all.forwarding = 0
+            ```
 
-        Run these commands to set the active kernel parameters:
+            Run these commands to set the active kernel parameters:
 
-        ```bash
-        sysctl -w net.ipv4.ip_forward=0
-        sysctl -w net.ipv4.route.flush=1
+            ```bash
+            sysctl -w net.ipv4.ip_forward=0
+            sysctl -w net.ipv4.route.flush=1
 
-        sysctl -w net.ipv6.conf.all.forwarding=0
-        sysctl -w net.ipv6.route.flush=1
-        ```
+            sysctl -w net.ipv6.conf.all.forwarding=0
+            sysctl -w net.ipv6.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable IPv4 and IPv6 forwarding
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure IPv4 and IPv6 forwarding is disabled in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-ip-forwarding.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.ip_forward', value: '0' }
+                    - { name: 'net.ipv6.conf.all.forwarding', value: '0' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+                    - { name: 'net.ipv6.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-packet-redirect-sending-is-disabled
     title: Ensure packet redirect sending is disabled
     impact: 75
