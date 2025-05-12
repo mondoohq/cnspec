@@ -258,58 +258,57 @@ func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckQueryDocs(ctx *LintContext, item interface{}) []Entry {
-	input, ok := item.(QueryLintInput)
-	if !ok {
-		return nil
-	}
-	q := input.Query
-	var entries []Entry
-
-	_, isVariant := ctx.VariantMapping[q.Uid]
-	if isVariant {
-		return nil // Docs are typically on the parent query, not variants
-	}
-	if !input.IsGlobal && !isQueryDefinitionComplete(q) {
-		return nil // Not a full definition, skip doc checks
-	}
-
-	if q.Docs != nil {
-		if len(q.Docs.Audit) <= MinDocsLength {
-			entries = append(entries, Entry{
-				RuleID:   QueryDocsTooShortRuleID,
-				Message:  fmt.Sprintf("%s must define longer audit text (min %d chars)", queryIdentifier(q, input.IsGlobal), MinDocsLength),
-				Level:    LevelError, // Kept as error as per original
-				Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
-			})
-		}
-		if len(q.Docs.Desc) <= MinDocsLength {
-			entries = append(entries, Entry{
-				RuleID:   QueryDocsTooShortRuleID,
-				Message:  fmt.Sprintf("%s must define longer description text (min %d chars)", queryIdentifier(q, input.IsGlobal), MinDocsLength),
-				Level:    LevelError, // Kept as error
-				Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
-			})
-		}
-		if q.Docs.Remediation != nil {
-			for _, rItem := range q.Docs.Remediation.Items {
-				if len(rItem.Desc) <= MinDocsLength {
-					entries = append(entries, Entry{
-						RuleID:   QueryDocsTooShortRuleID,
-						Message:  fmt.Sprintf("%s remediation item '%s' must have longer description (min %d chars)", queryIdentifier(q, input.IsGlobal), rItem.Id, MinDocsLength),
-						Level:    LevelError,                                                                               // Kept as error
-						Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}}, // More specific location if TypedDoc has FileContext
-					})
-				}
-			}
-		}
-	} else {
-		// Original code had a commented-out check for q.Docs == nil (QueryMissingDocsRuleID)
-		// If we want to enforce docs presence:
-		// entries = append(entries, Entry{... QueryMissingDocsRuleID ...})
-	}
-	return entries
-}
+//func runCheckQueryDocs(ctx *LintContext, item interface{}) []Entry {
+//	input, ok := item.(QueryLintInput)
+//	if !ok {
+//		return nil
+//	}
+//	q := input.Query
+//	var entries []Entry
+//
+//	_, isVariant := ctx.VariantMapping[q.Uid]
+//	if isVariant {
+//		return nil // Docs are typically on the parent query, not variants
+//	}
+//	if !input.IsGlobal && !isQueryDefinitionComplete(q) {
+//		return nil // Not a full definition, skip doc checks
+//	}
+//
+//	if q.Docs != nil {
+//		if len(q.Docs.Audit) <= MinDocsLength {
+//			entries = append(entries, Entry{
+//				RuleID:   QueryDocsTooShortRuleID,
+//				Message:  fmt.Sprintf("%s must define longer audit text (min %d chars)", queryIdentifier(q, input.IsGlobal), MinDocsLength),
+//				Level:    LevelError, // Kept as error as per original
+//				Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
+//			})
+//		}
+//		if len(q.Docs.Desc) <= MinDocsLength {
+//			entries = append(entries, Entry{
+//				RuleID:   QueryDocsTooShortRuleID,
+//				Message:  fmt.Sprintf("%s must define longer description text (min %d chars)", queryIdentifier(q, input.IsGlobal), MinDocsLength),
+//				Level:    LevelError, // Kept as error
+//				Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
+//			})
+//		}
+//		if q.Docs.Remediation != nil {
+//			for _, rItem := range q.Docs.Remediation.Items {
+//				if len(rItem.Desc) <= MinDocsLength {
+//					entries = append(entries, Entry{
+//						RuleID:   QueryDocsTooShortRuleID,
+//						Message:  fmt.Sprintf("%s remediation item '%s' must have longer description (min %d chars)", queryIdentifier(q, input.IsGlobal), rItem.Id, MinDocsLength),
+//						Level:    LevelError,                                                                               // Kept as error
+//						Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}}, // More specific location if TypedDoc has FileContext
+//					})
+//				}
+//			}
+//		}
+//	} else {
+//		// If we want to enforce docs presence:
+//		// entries = append(entries, Entry{... QueryMissingDocsRuleID ...})
+//	}
+//	return entries
+//}
 
 func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []Entry {
 	input, ok := item.(QueryLintInput)
