@@ -136,10 +136,10 @@ func TestLinter_Fail_PolicyRequiredTagsMissingRuleID(t *testing.T) {
 	assert.Equal(t, 2, len(results.Entries))
 	assert.Equal(t, "policy 'ubuntu-bench-1' does not contain the required tag `mondoo.com/category`", results.Entries[0].Message)
 	assert.Equal(t, "policy-required-tags-missing", results.Entries[0].RuleID)
-	assert.Equal(t, "error", results.Entries[0].Level)
+	assert.Equal(t, "warning", results.Entries[0].Level)
 	assert.Equal(t, "policy 'ubuntu-bench-1' does not contain the required tag `mondoo.com/platform`", results.Entries[1].Message)
 	assert.Equal(t, "policy-required-tags-missing", results.Entries[1].RuleID)
-	assert.Equal(t, "error", results.Entries[1].Level)
+	assert.Equal(t, "warning", results.Entries[1].Level)
 }
 
 func TestLinter_Fail_QueryUidRuleID(t *testing.T) {
