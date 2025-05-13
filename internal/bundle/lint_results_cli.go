@@ -44,19 +44,29 @@ func (r *Results) ToCli() []byte {
 	table.SetBorder(false)
 	table.SetHeaderLine(false)
 	table.SetRowLine(false)
-	table.SetColumnSeparator("")
+	table.SetColumnSeparator("") // Keep this for no vertical lines
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	table.SetAutoWrapText(false) // Disable automatic text wrapping
 
 	header := []string{"Rule ID", "Level", "File", "Line", "Message"}
 	table.SetHeader(header)
 
 	for i := range r.Entries {
 		entry := r.Entries[i]
+		// Ensure there's at least one location before accessing
+		fileName := ""
+		lineNumber := ""
+		if len(entry.Location) > 0 {
+			fileName = filepath.Base(entry.Location[0].File)
+			lineNumber = strconv.Itoa(entry.Location[0].Line)
+		}
+
 		table.Append([]string{
 			entry.RuleID,
 			entry.Level,
-			filepath.Base(entry.Location[0].File),
-			strconv.Itoa(entry.Location[0].Line),
+			fileName,
+			lineNumber,
 			entry.Message,
 		})
 	}
