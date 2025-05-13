@@ -42,7 +42,7 @@ func init() {
 		ID:          PolicyRequiredTagsMissingRuleID,
 		Name:        "Policy Required Tags",
 		Description: "Ensures policies have required tags like 'mondoo.com/category' and 'mondoo.com/platform'.",
-		Severity:    LevelError,
+		Severity:    LevelWarning,
 		Run:         runCheckPolicyRequiredTags,
 	})
 	RegisterPolicyCheck(LintCheck{
@@ -173,7 +173,7 @@ func runCheckPolicyRequiredTags(ctx *LintContext, item interface{}) []Entry {
 			entries = append(entries, Entry{
 				RuleID:  PolicyRequiredTagsMissingRuleID,
 				Message: fmt.Sprintf("%s does not contain the required tag `%s`", policyIdentifier(p), tagKey),
-				Level:   LevelError,
+				Level:   LevelWarning,
 				Location: []Location{{
 					File:   ctx.FilePath,
 					Line:   p.FileContext.Line,
