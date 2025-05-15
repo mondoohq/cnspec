@@ -69,19 +69,19 @@ var (
 		
 		To onboard your AWS account, you need to provide the AWS access key and secret key, as well as the Mondoo space id.
 		
-			conspec integrate aws --access-key <access_key> --secret-access-key <secret_key> --space <space_id>
+			cnspec integrate aws --access-key <access_key> --secret-key <secret_key> --space <space_id>
 
 		Or you can provide the AWS role ARN and external ID to assume a role in another account:
 
-			conspec integrate aws --role-arn <role_arn> --external-id <external_id> --space <space_id>
+			cnspec integrate aws --role-arn <role_arn> --external-id <external_id> --space <space_id>
 
 		NOTE: access key id and secret access key are mutually exclusive with role ARN and external ID.
 		
 		Other flags are optional:
 
-			conspec integrate aws ... --output <output_dir> --integration-name <name>`,
+			cnspec integrate aws ... --output <output_dir> --integration-name <name>`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			var errs = []error{
+			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
@@ -190,7 +190,7 @@ want Mondoo to scan using the --deny flag.
 
 NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			var errs = []error{
+			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
