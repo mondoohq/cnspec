@@ -29,7 +29,7 @@ func CompareReports(baseReport, compareReport *Report) bool {
 		similarAsset := FindSameAsset(baseAsset.Name, compareReport.Assets)
 		if similarAsset == "" {
 			log.Info().Msgf("🔴 asset %q is missing in compare report", baseAsset.Name)
-			equal = true
+			equal = false
 			continue
 		}
 
@@ -39,8 +39,8 @@ func CompareReports(baseReport, compareReport *Report) bool {
 		}
 	}
 
-	if equal {
-		log.Info().Msg("🔴 reports differ")
+	if !equal {
+		log.Info().Msg("🔴 reports are not equal")
 	} else {
 		log.Info().Msg("✅ reports are equal")
 	}

@@ -23,20 +23,20 @@ var reportCmd = &cobra.Command{
 }
 
 var cmpReportCmd = &cobra.Command{
-	Use:   "cmp <expected> <compare>",
+	Use:   "cmp <expected> <actual>",
 	Short: "Compare cnspec reports",
 	Run: func(cmd *cobra.Command, args []string) {
-		base := args[0]
-		compare := args[1]
+		expected := args[0]
+		actual := args[1]
 
-		expectedReport, err := reporter.FromSingleFile(base)
+		expectedReport, err := reporter.FromSingleFile(expected)
 		if err != nil {
-			log.Fatal().Err(err).Str("base", base).Msg("failed to load base report")
+			log.Fatal().Err(err).Str("expected", expected).Msg("failed to load expected report")
 		}
 
-		compareReport, err := reporter.FromSingleFile(compare)
+		compareReport, err := reporter.FromSingleFile(actual)
 		if err != nil {
-			log.Fatal().Err(err).Str("base", base).Msg("failed to load base report")
+			log.Fatal().Err(err).Str("actual", actual).Msg("failed to load actual report")
 		}
 
 		equal := reporter.CompareReports(expectedReport, compareReport)
