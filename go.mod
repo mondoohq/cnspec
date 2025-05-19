@@ -7,7 +7,7 @@ toolchain go1.24.1
 // replace go.mondoo.com/cnquery/v11 => ../cnquery
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.9.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.0
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.9.0
 	github.com/Masterminds/semver v1.5.0
 	github.com/abiosoft/colima v0.8.1
@@ -25,7 +25,7 @@ require (
 	github.com/hashicorp/hc-install v0.9.2
 	github.com/hashicorp/hcl/v2 v2.23.0
 	github.com/hashicorp/terraform-exec v0.23.0
-	github.com/hashicorp/terraform-json v0.24.0
+	github.com/hashicorp/terraform-json v0.25.0
 	github.com/jstemmer/go-junit-report/v2 v2.1.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/muesli/reflow v0.3.0
@@ -40,7 +40,7 @@ require (
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
-	github.com/zclconf/go-cty v1.16.2
+	github.com/zclconf/go-cty v1.16.3
 	go.mondoo.com/cnquery/v11 v11.54.0
 	go.mondoo.com/mondoo-go v0.0.0-20250430000358-71abb93a3c47
 	go.mondoo.com/ranger-rpc v0.6.5
