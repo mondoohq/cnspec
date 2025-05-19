@@ -34,6 +34,17 @@ func init() {
 	integrateCmd.PersistentFlags().String("output", "", "Location to write automation code")
 	integrateCmd.PersistentFlags().String("integration-name", "", "The name of the integration")
 
+	// cnspec integrate aws
+	integrateCmd.AddCommand(integrateAwsCmd)
+	integrateAwsCmd.Flags().String("access-key", "", "AWS access key")
+	integrateAwsCmd.Flags().String("secret-key", "", "AWS secret key")
+	integrateAwsCmd.Flags().String("role-arn", "", "AWS role ARN")
+	integrateAwsCmd.Flags().String("external-id", "", "AWS external ID")
+	integrateAwsCmd.MarkFlagsMutuallyExclusive("role-arn", "access-key")
+	integrateAwsCmd.MarkFlagsMutuallyExclusive("external-id", "access-key")
+	integrateAwsCmd.MarkFlagsMutuallyExclusive("role-arn", "secret-key")
+	integrateAwsCmd.MarkFlagsMutuallyExclusive("external-id", "secret-key")
+
 	// cnspec integrate azure
 	integrateCmd.AddCommand(integrateAzureCmd)
 	integrateAzureCmd.Flags().String("subscription-id", "", "Azure subscription used to create resources")
@@ -54,6 +65,115 @@ var (
 		Hidden:  true,
 		Short:   "Onboard integrations for continuous scanning into the Mondoo Platform",
 		Long:    "Run automation code to onboard your account and deploy Mondoo into various environments.",
+	}
+	integrateAwsCmd = &cobra.Command{
+		Use:   "aws",
+		Short: "Onboard Amazon Web Services",
+		Long: `Use this command to connect your AWS environment into the Mondoo platform.
+		
+		To onboard your AWS account, you need to provide the AWS access key and secret key, as well as the Mondoo space id.
+		
+			cnspec integrate aws --access-key <access_key> --secret-key <secret_key> --space <space_id>
+
+		Or you can provide the AWS role ARN and external ID to assume a role in another account:
+
+			cnspec integrate aws --role-arn <role_arn> --external-id <external_id> --space <space_id>
+
+		NOTE: access key id and secret access key are mutually exclusive with role ARN and external ID.
+		
+		Other flags are optional:
+
+			cnspec integrate aws ... --output <output_dir> --integration-name <name>`,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			errs := []error{
+				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
+				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
+				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
+				viper.BindPFlag("access-key", cmd.Flags().Lookup("access-key")),
+				viper.BindPFlag("secret-key", cmd.Flags().Lookup("secret-key")),
+				viper.BindPFlag("role-arn", cmd.Flags().Lookup("role-arn")),
+				viper.BindPFlag("external-id", cmd.Flags().Lookup("external-id")),
+			}
+			return errors.Join(errs...)
+		},
+		RunE: func(_ *cobra.Command, _ []string) error {
+			var (
+				space           = viper.GetString("space")
+				output          = viper.GetString("output")
+				integrationName = viper.GetString("integration-name")
+				accessKey       = viper.GetString("access-key")
+				secretKey       = viper.GetString("secret-key")
+				roleArn         = viper.GetString("role-arn")
+				externalID      = viper.GetString("external-id")
+			)
+
+			// Verify if space exists, which verifies we have access to the Mondoo platform
+			opts, err := config.Read()
+			if err != nil {
+				return err
+			}
+			// TODO verify that the config is a service account
+			config.DisplayUsedConfig()
+			mondooClient, err := getGqlClient(opts)
+			if err != nil {
+				return err
+			}
+			// by default, use the MRN from the config
+			spaceMrn := opts.GetParentMrn()
+			if space != "" {
+				// unless it was specified via flag
+				spaceMrn = spacePrefix + space
+			}
+			spaceInfo, err := cnspec_upstream.GetSpace(context.Background(), mondooClient, spaceMrn)
+			if err != nil {
+				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
+			}
+			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
+
+			if (accessKey == "" && secretKey == "") && (roleArn == "" && externalID == "") {
+				log.Error().Msg("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
+				os.Exit(1)
+			} else if (accessKey == "" && secretKey != "") || (roleArn == "" && externalID != "") || (accessKey != "" && secretKey == "") || (roleArn != "" && externalID == "") {
+				log.Error().Msg("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
+				os.Exit(1)
+			}
+
+			// Generate HCL for aws deployment
+			log.Info().Msg("generating automation code")
+			hcl, err := onboarding.GenerateAwsHCL(onboarding.AwsIntegration{
+				Name:       integrationName,
+				Space:      space,
+				AccessKey:  accessKey,
+				SecretKey:  secretKey,
+				RoleArn:    roleArn,
+				ExternalID: externalID,
+			})
+			if err != nil {
+				return errors.Wrap(err, "unable to generate automation code")
+			}
+
+			// Write generated code to disk
+			dirname, err := onboarding.WriteHCL(hcl, output, "aws")
+			if err != nil {
+				return err
+			}
+			log.Info().Msgf("code stored at %s", theme.DefaultTheme.Secondary(dirname))
+
+			// Run Terraform
+			applied, err := onboarding.TerraformPlanAndExecute(dirname)
+			if err != nil {
+				return err
+			}
+
+			if applied {
+				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
+				log.Info().Msgf(
+					"To view integration status, visit https://console.mondoo.com/space/integrations/aws?spaceId=%s",
+					space,
+				)
+			}
+			return nil
+		},
 	}
 	integrateAzureCmd = &cobra.Command{
 		Use:     "azure",
