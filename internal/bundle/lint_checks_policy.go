@@ -1,4 +1,3 @@
-// internal/bundle/policy_checks.go
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
@@ -6,9 +5,44 @@ package bundle
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/Masterminds/semver"
 )
+
+// reResourceID: lowercase letters, digits, dots or hyphens, fewer than 200 chars, more than 5 chars
+var reResourceID = regexp.MustCompile(`^([\d-_\.]|[a-zA-Z]){5,200}$`)
+
+// LintContext provides shared information and state to lint check functions.
+type LintContext struct {
+	FilePath              string
+	PolicyBundle          *Bundle
+	GlobalQueriesUids     map[string]int      // Counts occurrences of global query UIDs
+	GlobalQueriesByUid    map[string]*Mquery  // Maps global query UID to Mquery object
+	PolicyUidsInFile      map[string]struct{} // Tracks policy UIDs defined in the current file for uniqueness
+	GlobalQueryUidsInFile map[string]struct{} // Tracks global query UIDs defined in the current file for uniqueness
+	AssignedQueryUIDs     map[string]struct{} // UIDs of queries (and their variants) assigned in policies
+	QueryUsageAsCheck     map[string]struct{} // UIDs of queries used as checks
+	QueryUsageAsData      map[string]struct{} // UIDs of queries used as data queries
+	VariantMapping        map[string]string   // Maps variant child UID to parent query UID
+}
+
+// LintCheck defines the structure for a single linting rule.
+// The item interface{} will be cast to *Policy or QueryLintInput.
+type LintCheck struct {
+	ID          string
+	Name        string
+	Description string
+	Severity    string
+	Run         func(ctx *LintContext, item interface{}) []Entry
+}
+
+// QueryLintInput is used to pass a query and its context (global or embedded) to check functions.
+type QueryLintInput struct {
+	Query    *Mquery
+	IsGlobal bool // True if the query is from the top-level `queries:` block
+	// IsEmbedded bool // True if the query is defined inline within a policy group (can be inferred if !IsGlobal and has MQL/Title/Variants)
+}
 
 // Policy Rule ID Constants
 const (
@@ -23,63 +57,60 @@ const (
 	PolicyRequiredTagsMissingRuleID  = "policy-required-tags-missing"
 )
 
-func init() {
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyUidRuleID,
-		Name:        "Policy UID Presence and Format",
-		Description: "Checks if a policy has a UID and if it conforms to naming standards. Also checks for uniqueness within the file.",
-		Severity:    LevelError,
-		Run:         runCheckPolicyUid,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyNameRuleID,
-		Name:        "Policy Name Presence",
-		Description: "Ensures every policy has a `name` field.",
-		Severity:    LevelError,
-		Run:         runCheckPolicyName,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyRequiredTagsMissingRuleID,
-		Name:        "Policy Required Tags",
-		Description: "Ensures policies have required tags like 'mondoo.com/category' and 'mondoo.com/platform'.",
-		Severity:    LevelWarning,
-		Run:         runCheckPolicyRequiredTags,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyMissingVersionRuleID,
-		Name:        "Policy Version Presence",
-		Description: "Ensures every policy has a `version` field.",
-		Severity:    LevelError,
-		Run:         runCheckPolicyMissingVersion,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyWrongVersionRuleID,
-		Name:        "Policy Version Format",
-		Description: "Ensures policy versions follow semantic versioning (semver).",
-		Severity:    LevelError,
-		Run:         runCheckPolicyWrongVersion,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyMissingChecksRuleID, // Covers empty groups and empty checks/queries in groups
-		Name:        "Policy Missing Checks or Groups",
-		Description: "Ensures policies have defined groups, and groups have checks or queries.",
-		Severity:    LevelError,
-		Run:         runCheckPolicyGroupsAndChecks,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyMissingAssetFilterRuleID,
-		Name:        "Policy Group Missing Asset Filter",
-		Description: "Warns if a policy group or its checks lack asset filters or variants.",
-		Severity:    LevelWarning, // Original was warning
-		Run:         runCheckPolicyGroupAssetFilter,
-	})
-	RegisterPolicyCheck(LintCheck{
-		ID:          PolicyMissingAssignedQueryRuleID,
-		Name:        "Policy Assigned Query Existence",
-		Description: "Ensures that queries assigned in policy groups exist globally or are valid embedded queries.",
-		Severity:    LevelError,
-		Run:         runCheckPolicyAssignedQueriesExist,
-	})
+// GetPolicyLintChecks returns a list of lint checks for policies.
+func GetPolicyLintChecks() []LintCheck {
+	return []LintCheck{
+		{
+			ID:          PolicyUidRuleID,
+			Name:        "Policy UID Presence and Format",
+			Description: "Checks if a policy has a UID and if it conforms to naming standards. Also checks for uniqueness within the file.",
+			Severity:    LevelError,
+			Run:         runCheckPolicyUid,
+		},
+		{
+			ID:          PolicyNameRuleID,
+			Name:        "Policy Name Presence",
+			Description: "Ensures every policy has a `name` field.",
+			Severity:    LevelError,
+			Run:         runCheckPolicyName,
+		}, {
+			ID:          PolicyRequiredTagsMissingRuleID,
+			Name:        "Policy Required Tags",
+			Description: "Ensures policies have required tags like 'mondoo.com/category' and 'mondoo.com/platform'.",
+			Severity:    LevelWarning,
+			Run:         runCheckPolicyRequiredTags,
+		}, {
+			ID:          PolicyMissingVersionRuleID,
+			Name:        "Policy Version Presence",
+			Description: "Ensures every policy has a `version` field.",
+			Severity:    LevelError,
+			Run:         runCheckPolicyMissingVersion,
+		}, {
+			ID:          PolicyWrongVersionRuleID,
+			Name:        "Policy Version Format",
+			Description: "Ensures policy versions follow semantic versioning (semver).",
+			Severity:    LevelError,
+			Run:         runCheckPolicyWrongVersion,
+		}, {
+			ID:          PolicyMissingChecksRuleID, // Covers empty groups and empty checks/queries in groups
+			Name:        "Policy Missing Checks or Groups",
+			Description: "Ensures policies have defined groups, and groups have checks or queries.",
+			Severity:    LevelError,
+			Run:         runCheckPolicyGroupsAndChecks,
+		}, {
+			ID:          PolicyMissingAssetFilterRuleID,
+			Name:        "Policy Group Missing Asset Filter",
+			Description: "Warns if a policy group or its checks lack asset filters or variants.",
+			Severity:    LevelWarning, // Original was warning
+			Run:         runCheckPolicyGroupAssetFilter,
+		}, {
+			ID:          PolicyMissingAssignedQueryRuleID,
+			Name:        "Policy Assigned Query Existence",
+			Description: "Ensures that queries assigned in policy groups exist globally or are valid embedded queries.",
+			Severity:    LevelError,
+			Run:         runCheckPolicyAssignedQueriesExist,
+		},
+	}
 }
 
 func policyIdentifier(p *Policy) string {

@@ -14,7 +14,18 @@ import (
 	k8sYaml "sigs.k8s.io/yaml"
 )
 
-// Original LinterRules var is removed. Use AllLinterRules() from checks_core.go if needed.
+// Constants for Rule IDs that are checked at the bundle level, not per-item.
+const (
+	BundleCompileErrorRuleID = "bundle-compile-error"
+	BundleInvalidRuleID      = "bundle-invalid"
+	BundleUnknownFieldRuleID = "bundle-unknown-field"
+	BundleInvalidUidRuleID   = "bundle-invalid-uid" // Shared by policy/query checks
+)
+
+const (
+	LevelError   = "error"
+	LevelWarning = "warning"
+)
 
 // Lint validates a policy bundle for consistency
 func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
@@ -22,6 +33,9 @@ func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
 		BundleLocations: []string{},
 		Entries:         []Entry{},
 	}
+
+	policyChecks := GetPolicyLintChecks()
+	queryChecks := GetQueryLintChecks()
 
 	var absFiles []string
 	parsedBundles := make(map[string]*Bundle)

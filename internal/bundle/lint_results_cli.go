@@ -12,6 +12,21 @@ import (
 	"github.com/olekukonko/tablewriter"
 )
 
+// Entry represents a single linting issue found.
+type Entry struct {
+	RuleID   string
+	Level    string
+	Message  string
+	Location []Location
+}
+
+// Location specifies the file, line, and column of a linting issue.
+type Location struct {
+	File   string
+	Line   int
+	Column int
+}
+
 type SortResults []Entry
 
 func (s SortResults) Len() int {
@@ -27,6 +42,32 @@ func (s SortResults) Less(i, j int) bool {
 		return s[i].Level < s[j].Level
 	}
 	return s[i].RuleID < s[j].RuleID
+}
+
+// Results holds all linting entries for a bundle.
+type Results struct {
+	BundleLocations []string
+	Entries         []Entry
+}
+
+// HasError checks if there are any error-level entries.
+func (r *Results) HasError() bool {
+	for i := range r.Entries {
+		if r.Entries[i].Level == LevelError {
+			return true
+		}
+	}
+	return false
+}
+
+// HasWarning checks if there are any warning-level entries.
+func (r *Results) HasWarning() bool {
+	for i := range r.Entries {
+		if r.Entries[i].Level == LevelWarning {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Results) ToCli() []byte {

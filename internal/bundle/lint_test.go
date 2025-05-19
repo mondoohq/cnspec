@@ -1,7 +1,7 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package bundle_test
+package bundle
 
 import (
 	"testing"
@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v11/internal/bundle"
 )
 
 var schema resources.ResourcesSchema
@@ -23,18 +22,18 @@ func init() {
 func TestResults_SarifReport(t *testing.T) {
 	file := "./testdata/pass_linter.yaml"
 	rootDir := "./testdata"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	report, err := results.SarifReport(rootDir)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(report.Runs))
-	assert.Equal(t, len(bundle.AllLinterRules()), len(report.Runs[0].Tool.Driver.Rules))
+	assert.Equal(t, len(sarifLinterRules()), len(report.Runs[0].Tool.Driver.Rules))
 	assert.Equal(t, 0, len(report.Runs[0].Results))
 }
 
 func TestLinter_Pass(t *testing.T) {
 	file := "./testdata/pass_linter.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 0, len(results.Entries))
@@ -43,7 +42,7 @@ func TestLinter_Pass(t *testing.T) {
 
 func TestLinter_Fail_PolicyUidRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyUidRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(results.Entries))
 	assert.Equal(t, "policy 'Ubuntu Benchmark 1' (at line 3) does not define a UID", results.Entries[0].Message)
@@ -55,7 +54,7 @@ func TestLinter_Fail_PolicyUidRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyNameRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyNameRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "policy 'ubuntu-bench-1' does not define a name", results.Entries[0].Message)
@@ -65,7 +64,7 @@ func TestLinter_Fail_PolicyNameRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyMissingAssetFilterRuleID_Variant(t *testing.T) {
 	file := "./testdata/fail_noFiltersGroupAndCheckVariant.mql.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "policy 'mondoo-aws-security', group 'AWS IAM' (line 20): Check 'mondoo-aws-security-access-keys-rotated' lacks an asset filter or variants, and the group also has no filter.", results.Entries[0].Message)
@@ -75,7 +74,7 @@ func TestLinter_Fail_PolicyMissingAssetFilterRuleID_Variant(t *testing.T) {
 
 func TestLinter_Fail_PolicyMissingAssetFilterRuleID(t *testing.T) {
 	file := "./testdata/fail_noFiltersGroupAndCheck.mql.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "policy 'mondoo-aws-security', group 'AWS IAM' (line 20): Check 'mondoo-aws-security-access-keys-rotated' lacks an asset filter or variants, and the group also has no filter.", results.Entries[0].Message)
@@ -85,7 +84,7 @@ func TestLinter_Fail_PolicyMissingAssetFilterRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyUidUniqueRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyUidUniqueRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Global query UID 'ubuntu-hard-2-1' is used multiple times in the same file", results.Entries[0].Message)
@@ -95,7 +94,7 @@ func TestLinter_Fail_PolicyUidUniqueRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyMissingChecksRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyMissingChecksRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 5, len(results.Entries))
 	assert.Equal(t, "policy 'ubuntu-bench-1', group 'Configure Ubuntu 1' (line 16) has no checks, data queries, or sub-policies defined", results.Entries[0].Message)
@@ -108,7 +107,7 @@ func TestLinter_Fail_PolicyMissingChecksRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyMissingVersionRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyMissingVersionRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "policy 'ubuntu-bench-1' is missing version", results.Entries[0].Message)
@@ -118,7 +117,7 @@ func TestLinter_Fail_PolicyMissingVersionRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyWrongVersionRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyWrongVersionRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(results.Entries))
 	assert.Equal(t, "policy 'ubuntu-bench-1' has invalid version 'hehe.1.2.3.4': Invalid Semantic Version", results.Entries[0].Message)
@@ -131,7 +130,7 @@ func TestLinter_Fail_PolicyWrongVersionRuleID(t *testing.T) {
 
 func TestLinter_Fail_PolicyRequiredTagsMissingRuleID(t *testing.T) {
 	file := "./testdata/fail_PolicyRequiredTagsMissingRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(results.Entries))
 	assert.Equal(t, "policy 'ubuntu-bench-1' does not contain the required tag `mondoo.com/category`", results.Entries[0].Message)
@@ -144,7 +143,7 @@ func TestLinter_Fail_PolicyRequiredTagsMissingRuleID(t *testing.T) {
 
 func TestLinter_Fail_QueryUidRuleID(t *testing.T) {
 	file := "./testdata/fail_QueryUidRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Global query UID 'ubuntu-1-1' is used multiple times in the same file", results.Entries[0].Message)
@@ -154,7 +153,7 @@ func TestLinter_Fail_QueryUidRuleID(t *testing.T) {
 
 func TestLinter_Fail_QueryTitleRuleID(t *testing.T) {
 	file := "./testdata/fail_QueryTitleRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Global query 'ubuntu-hard-2-2' does not define a title", results.Entries[0].Message)
@@ -164,7 +163,7 @@ func TestLinter_Fail_QueryTitleRuleID(t *testing.T) {
 
 func TestLinter_Fail_QueryVariantUsesNonDefaultFieldsRuleID(t *testing.T) {
 	file := "./testdata/fail_QueryVariantUsesNonDefaultFieldsRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Query variant 'ubuntu-hard-2-1-var1' must not define 'impact'", results.Entries[0].Message)
@@ -174,7 +173,7 @@ func TestLinter_Fail_QueryVariantUsesNonDefaultFieldsRuleID(t *testing.T) {
 
 func TestLinter_Fail_QueryMissingMQLRuleID(t *testing.T) {
 	file := "./testdata/fail_QueryMissingMQLRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(results.Entries))
 	assert.Equal(t, "Global query 'ubuntu-hard-2-2' has no variants and must define MQL", results.Entries[0].Message)
@@ -187,7 +186,7 @@ func TestLinter_Fail_QueryMissingMQLRuleID(t *testing.T) {
 
 func TestLinter_Fail_QueryUnassignedRuleID(t *testing.T) {
 	file := "./testdata/fail_QueryUnassignedRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Global query UID 'ubuntu-hard-1-1' is defined but not assigned to any policy", results.Entries[0].Message)
@@ -197,7 +196,7 @@ func TestLinter_Fail_QueryUnassignedRuleID(t *testing.T) {
 
 func TestLinter_QueryUsedAsDifferentTypesRuleID(t *testing.T) {
 	file := "./testdata/fail_QueryUsedAsDifferentTypesRuleID.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Query UID 'sshd-sshd-01' is used as both a check and a data query in policies", results.Entries[0].Message)
@@ -207,7 +206,7 @@ func TestLinter_QueryUsedAsDifferentTypesRuleID(t *testing.T) {
 
 func TestLinter_BundleUnknownField(t *testing.T) {
 	file := "./testdata/fail_BundleUnknownField.yaml"
-	results, err := bundle.Lint(schema, file)
+	results, err := Lint(schema, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.Entries))
 	assert.Equal(t, "Bundle file fail_BundleUnknownField.yaml contains unknown fields: error unmarshaling JSON: while decoding JSON: json: unknown field \"unknown_field\"", results.Entries[0].Message)

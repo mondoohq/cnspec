@@ -1,4 +1,3 @@
-// internal/bundle/query_checks.go
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
@@ -10,70 +9,56 @@ import (
 
 // Query Rule ID Constants
 const (
-	QueryUidRuleID                  = "query-uid"
-	QueryTitleRuleID                = "query-name" // Original ID was query-name
-	QueryUidUniqueRuleID            = "query-uid-unique"
-	QueryUnassignedRuleID           = "query-unassigned"
-	QueryUsedAsDifferentTypesRuleID = "query-used-as-different-types"
-	QueryMissingMQLRuleID           = "query-missing-mql"
-	QueryDocsTooShortRuleID         = "query-docs-too-short"
-	// QueryMissingDocsRuleID // Too noisy
-	// QueryDocsRemediationMissingIdRuleID // Too noisy
+	QueryUidRuleID                         = "query-uid"
+	QueryTitleRuleID                       = "query-name" // Original ID was query-name
+	QueryUidUniqueRuleID                   = "query-uid-unique"
+	QueryUnassignedRuleID                  = "query-unassigned"
+	QueryUsedAsDifferentTypesRuleID        = "query-used-as-different-types"
+	QueryMissingMQLRuleID                  = "query-missing-mql"
 	QueryVariantUsesNonDefaultFieldsRuleID = "query-variant-uses-non-default-fields"
 )
 
-const MinDocsLength = 50 // Specific to query docs
-
-func init() {
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryUidRuleID, // This check now covers UID presence, format, and uniqueness for global queries
-		Name:        "Query UID Validation",
-		Description: "Ensures global queries have a UID, it's correctly formatted, and unique within the file.",
-		Severity:    LevelError,
-		Run:         runCheckQueryUid,
-	})
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryTitleRuleID,
-		Name:        "Query Title Presence",
-		Description: "Ensures non-variant queries have a `title` field.",
-		Severity:    LevelError,
-		Run:         runCheckQueryTitle,
-	})
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryVariantUsesNonDefaultFieldsRuleID,
-		Name:        "Query Variant Field Restrictions",
-		Description: "Ensures variant queries do not define fields like impact, title, tags, or nested variants.",
-		Severity:    LevelError,
-		Run:         runCheckQueryVariantFields,
-	})
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryMissingMQLRuleID,
-		Name:        "Query MQL Presence (for Variants and Non-Variant Parents)",
-		Description: "Ensures variant queries have MQL. Ensures parent queries without variants have MQL.",
-		Severity:    LevelError,
-		Run:         runCheckQueryMQLPresence,
-	})
-	// RegisterQueryCheck(LintCheck{
-	// 	ID:          QueryDocsTooShortRuleID,
-	// 	Name:        "Query Documentation Length",
-	// 	Description: fmt.Sprintf("Ensures query documentation (desc, audit, remediation desc) meets minimum length of %d characters for non-variant queries.", MinDocsLength),
-	// 	Severity:    LevelError, // Original was error
-	// 	Run:         runCheckQueryDocs,
-	// })
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryUnassignedRuleID,
-		Name:        "Unassigned Query",
-		Description: "Warns if a global query is defined but not assigned to any policy.",
-		Severity:    LevelWarning,
-		Run:         runCheckQueryUnassigned,
-	})
-	RegisterQueryCheck(LintCheck{
-		ID:          QueryUsedAsDifferentTypesRuleID,
-		Name:        "Query Usage Consistency",
-		Description: "Ensures a query is not used as both a check and a data query within policies.",
-		Severity:    LevelError,
-		Run:         runCheckQueryUsageConsistency,
-	})
+// GetQueryLintChecks is the input type for lint checks on queries.
+func GetQueryLintChecks() []LintCheck {
+	return []LintCheck{
+		{
+			ID:          QueryUidRuleID, // This check now covers UID presence, format, and uniqueness for global queries
+			Name:        "Query UID Validation",
+			Description: "Ensures global queries have a UID, it's correctly formatted, and unique within the file.",
+			Severity:    LevelError,
+			Run:         runCheckQueryUid,
+		}, {
+			ID:          QueryTitleRuleID,
+			Name:        "Query Title Presence",
+			Description: "Ensures non-variant queries have a `title` field.",
+			Severity:    LevelError,
+			Run:         runCheckQueryTitle,
+		}, {
+			ID:          QueryVariantUsesNonDefaultFieldsRuleID,
+			Name:        "Query Variant Field Restrictions",
+			Description: "Ensures variant queries do not define fields like impact, title, tags, or nested variants.",
+			Severity:    LevelError,
+			Run:         runCheckQueryVariantFields,
+		}, {
+			ID:          QueryMissingMQLRuleID,
+			Name:        "Query MQL Presence (for Variants and Non-Variant Parents)",
+			Description: "Ensures variant queries have MQL. Ensures parent queries without variants have MQL.",
+			Severity:    LevelError,
+			Run:         runCheckQueryMQLPresence,
+		}, {
+			ID:          QueryUnassignedRuleID,
+			Name:        "Unassigned Query",
+			Description: "Warns if a global query is defined but not assigned to any policy.",
+			Severity:    LevelWarning,
+			Run:         runCheckQueryUnassigned,
+		}, {
+			ID:          QueryUsedAsDifferentTypesRuleID,
+			Name:        "Query Usage Consistency",
+			Description: "Ensures a query is not used as both a check and a data query within policies.",
+			Severity:    LevelError,
+			Run:         runCheckQueryUsageConsistency,
+		},
+	}
 }
 
 func queryIdentifier(q *Mquery, isGlobal bool) string {
@@ -257,58 +242,6 @@ func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []Entry {
 	}
 	return nil
 }
-
-//func runCheckQueryDocs(ctx *LintContext, item interface{}) []Entry {
-//	input, ok := item.(QueryLintInput)
-//	if !ok {
-//		return nil
-//	}
-//	q := input.Query
-//	var entries []Entry
-//
-//	_, isVariant := ctx.VariantMapping[q.Uid]
-//	if isVariant {
-//		return nil // Docs are typically on the parent query, not variants
-//	}
-//	if !input.IsGlobal && !isQueryDefinitionComplete(q) {
-//		return nil // Not a full definition, skip doc checks
-//	}
-//
-//	if q.Docs != nil {
-//		if len(q.Docs.Audit) <= MinDocsLength {
-//			entries = append(entries, Entry{
-//				RuleID:   QueryDocsTooShortRuleID,
-//				Message:  fmt.Sprintf("%s must define longer audit text (min %d chars)", queryIdentifier(q, input.IsGlobal), MinDocsLength),
-//				Level:    LevelError, // Kept as error as per original
-//				Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
-//			})
-//		}
-//		if len(q.Docs.Desc) <= MinDocsLength {
-//			entries = append(entries, Entry{
-//				RuleID:   QueryDocsTooShortRuleID,
-//				Message:  fmt.Sprintf("%s must define longer description text (min %d chars)", queryIdentifier(q, input.IsGlobal), MinDocsLength),
-//				Level:    LevelError, // Kept as error
-//				Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
-//			})
-//		}
-//		if q.Docs.Remediation != nil {
-//			for _, rItem := range q.Docs.Remediation.Items {
-//				if len(rItem.Desc) <= MinDocsLength {
-//					entries = append(entries, Entry{
-//						RuleID:   QueryDocsTooShortRuleID,
-//						Message:  fmt.Sprintf("%s remediation item '%s' must have longer description (min %d chars)", queryIdentifier(q, input.IsGlobal), rItem.Id, MinDocsLength),
-//						Level:    LevelError,                                                                               // Kept as error
-//						Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}}, // More specific location if TypedDoc has FileContext
-//					})
-//				}
-//			}
-//		}
-//	} else {
-//		// If we want to enforce docs presence:
-//		// entries = append(entries, Entry{... QueryMissingDocsRuleID ...})
-//	}
-//	return entries
-//}
 
 func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []Entry {
 	input, ok := item.(QueryLintInput)
