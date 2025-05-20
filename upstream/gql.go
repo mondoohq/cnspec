@@ -36,26 +36,26 @@ func SearchPolicy(
 	var policies []*UpstreamPolicy
 	var after *mondoogql.String = nil
 
-	for {
-		var q struct {
-			Content struct {
-				TotalCount int `json:"totalCount"`
-				Edges      []struct {
-					Cursor string `json:"cursor"`
-					Node   struct {
-						Policy struct {
-							Mrn        string
-							Name       string
-							TrustLevel mondoogql.TrustLevel
-							Action     mondoogql.PolicyAction
-							Assigned   bool
-						} `graphql:"... on Policy"`
-					} `json:"node"`
-				} `json:"edges"`
-				PageInfo PageInfo `json:"pageInfo"`
-			} `graphql:"content(input: $input)"`
-		}
+	var q struct {
+		Content struct {
+			TotalCount int `json:"totalCount"`
+			Edges      []struct {
+				Cursor string `json:"cursor"`
+				Node   struct {
+					Policy struct {
+						Mrn        string
+						Name       string
+						TrustLevel mondoogql.TrustLevel
+						Action     mondoogql.PolicyAction
+						Assigned   bool
+					} `graphql:"... on Policy"`
+				} `json:"node"`
+			} `json:"edges"`
+			PageInfo PageInfo `json:"pageInfo"`
+		} `graphql:"content(input: $input)"`
+	}
 
+	for {
 		input := mondoogql.ContentSearchInput{
 			ScopeMrn:    mondoogql.String(scopeMrn),
 			CatalogType: mondoogql.CatalogType("POLICY"),
@@ -74,7 +74,8 @@ func SearchPolicy(
 		if includePrivate != nil {
 			input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
 		}
-		err := c.Query(ctx, &q, map[string]interface{}{
+
+		err := c.Query(ctx, &q, map[string]any{
 			"input": input,
 		})
 		if err != nil {
