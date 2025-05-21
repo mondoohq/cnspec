@@ -55,24 +55,26 @@ func SearchPolicy(
 		} `graphql:"content(input: $input)"`
 	}
 
-	for {
-		input := mondoogql.ContentSearchInput{
-			ScopeMrn:    mondoogql.String(scopeMrn),
-			CatalogType: mondoogql.CatalogType("POLICY"),
-		}
+	input := mondoogql.ContentSearchInput{
+		ScopeMrn:    mondoogql.String(scopeMrn),
+		CatalogType: mondoogql.CatalogType("POLICY"),
+	}
 
+	if assignedOnly != nil {
+		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
+	}
+	if includePublic != nil {
+		input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))
+	}
+	if includePrivate != nil {
+		input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
+	}
+
+	for {
 		if after != nil {
 			input.After = after
-		}
-
-		if assignedOnly != nil {
-			input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
-		}
-		if includePublic != nil {
-			input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))
-		}
-		if includePrivate != nil {
-			input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
+		} else {
+			input.After = nil
 		}
 
 		err := c.Query(ctx, &q, map[string]any{
