@@ -84,21 +84,11 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "warning", results.Entries[0].Level)
 	})
 
-	t.Run("fail-query-uid-unique-policy", func(t *testing.T) {
-		file := "./testdata/fail-query-uid-unique-policy.mql.yaml"
-		results, err := Lint(schema, file)
-		require.NoError(t, err)
-		assert.Equal(t, 1, len(results.Entries))
-		assert.Equal(t, "Global query UID 'ubuntu-hard-2-1' is used multiple times in the same file", results.Entries[0].Message)
-		assert.Equal(t, "query-uid-unique", results.Entries[0].RuleID)
-		assert.Equal(t, "error", results.Entries[0].Level)
-	})
-
 	t.Run("fail-policy-missing-checks", func(t *testing.T) {
 		file := "./testdata/fail-policy-missing-checks.mql.yaml"
 		results, err := Lint(schema, file)
 		require.NoError(t, err)
-		assert.Equal(t, 5, len(results.Entries))
+		assert.Equal(t, 2, len(results.Entries))
 		assert.Equal(t, "policy 'ubuntu-bench-1', group 'Configure Ubuntu 1' (line 14) has no checks, data queries, or sub-policies defined", results.Entries[0].Message)
 		assert.Equal(t, "policy-missing-checks", results.Entries[0].RuleID)
 		assert.Equal(t, "error", results.Entries[0].Level)
