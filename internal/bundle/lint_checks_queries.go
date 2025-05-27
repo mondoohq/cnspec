@@ -72,18 +72,18 @@ func queryIdentifier(q *Mquery, isGlobal bool) string {
 	return fmt.Sprintf("%s at line %d", prefix, q.FileContext.Line)
 }
 
-func runCheckQueryUid(ctx *LintContext, item interface{}) []Entry {
+func runCheckQueryUid(ctx *LintContext, item interface{}) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
 	}
 	q := input.Query
 	isGlobal := input.IsGlobal
-	var entries []Entry
+	var entries []*Entry
 
 	if isGlobal { // UID is mandatory and must be valid/unique for global queries
 		if q.Uid == "" {
-			entries = append(entries, Entry{
+			entries = append(entries, &Entry{
 				RuleID:  QueryUidRuleID,
 				Message: fmt.Sprintf("%s does not define a UID", queryIdentifier(q, isGlobal)),
 				Level:   LevelError,
@@ -95,7 +95,7 @@ func runCheckQueryUid(ctx *LintContext, item interface{}) []Entry {
 			})
 		} else {
 			if !reResourceID.MatchString(q.Uid) {
-				entries = append(entries, Entry{
+				entries = append(entries, &Entry{
 					RuleID:  BundleInvalidUidRuleID, // Shared Rule ID
 					Message: fmt.Sprintf("%s UID does not meet the requirements", queryIdentifier(q, isGlobal)),
 					Level:   LevelError,
@@ -108,7 +108,7 @@ func runCheckQueryUid(ctx *LintContext, item interface{}) []Entry {
 			}
 			// Check for uniqueness among global queries defined in this file
 			if _, exists := ctx.GlobalQueryUidsInFile[q.Uid]; exists {
-				entries = append(entries, Entry{
+				entries = append(entries, &Entry{
 					RuleID:  QueryUidUniqueRuleID,
 					Message: fmt.Sprintf("Global query UID '%s' is used multiple times in the same file", q.Uid),
 					Level:   LevelError,
@@ -133,7 +133,7 @@ func runCheckQueryUid(ctx *LintContext, item interface{}) []Entry {
 	return entries
 }
 
-func runCheckQueryTitle(ctx *LintContext, item interface{}) []Entry {
+func runCheckQueryTitle(ctx *LintContext, item interface{}) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -145,7 +145,7 @@ func runCheckQueryTitle(ctx *LintContext, item interface{}) []Entry {
 		// Also, if it's an embedded query that's just a reference (no MQL, no Variants), it doesn't need a title.
 		// This check is primarily for query definitions.
 		if input.IsGlobal || isQueryDefinitionComplete(q) {
-			return []Entry{{
+			return []*Entry{{
 				RuleID:  QueryTitleRuleID,
 				Message: fmt.Sprintf("%s does not define a title", queryIdentifier(q, input.IsGlobal)),
 				Level:   LevelError,
@@ -160,13 +160,13 @@ func runCheckQueryTitle(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []Entry {
+func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
 	}
 	q := input.Query
-	var entries []Entry
+	var entries []*Entry
 
 	_, isVariant := ctx.VariantMapping[q.Uid]
 	if !isVariant {
@@ -175,7 +175,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []Entry {
 
 	// Variant checks
 	if q.Impact != nil {
-		entries = append(entries, Entry{
+		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
 			Message:  fmt.Sprintf("Query variant '%s' must not define 'impact'", q.Uid),
 			Level:    LevelError,
@@ -183,7 +183,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []Entry {
 		})
 	}
 	if q.Title != "" {
-		entries = append(entries, Entry{
+		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
 			Message:  fmt.Sprintf("Query variant '%s' must not define 'title'", q.Uid),
 			Level:    LevelError,
@@ -191,7 +191,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []Entry {
 		})
 	}
 	if len(q.Tags) > 0 {
-		entries = append(entries, Entry{
+		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
 			Message:  fmt.Sprintf("Query variant '%s' must not define 'tags'", q.Uid),
 			Level:    LevelError,
@@ -199,7 +199,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []Entry {
 		})
 	}
 	if len(q.Variants) > 0 {
-		entries = append(entries, Entry{
+		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
 			Message:  fmt.Sprintf("Query variant '%s' must not define nested 'variants'", q.Uid),
 			Level:    LevelError,
@@ -209,7 +209,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []Entry {
 	return entries
 }
 
-func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []Entry {
+func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -219,7 +219,7 @@ func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []Entry {
 
 	if isVariant { // Variants must have MQL
 		if q.Mql == "" {
-			return []Entry{{
+			return []*Entry{{
 				RuleID:   QueryMissingMQLRuleID,
 				Message:  fmt.Sprintf("Query variant '%s' must define MQL", q.Uid),
 				Level:    LevelError,
@@ -231,7 +231,7 @@ func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []Entry {
 			// If it's a parent query that itself has no variants, it must have MQL.
 			// This applies to global queries and fully defined embedded queries.
 			if input.IsGlobal || isQueryDefinitionComplete(q) {
-				return []Entry{{
+				return []*Entry{{
 					RuleID:   QueryMissingMQLRuleID,
 					Message:  fmt.Sprintf("%s has no variants and must define MQL", queryIdentifier(q, input.IsGlobal)),
 					Level:    LevelError,
@@ -243,7 +243,7 @@ func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []Entry {
+func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -257,7 +257,7 @@ func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []Entry {
 	}
 
 	if _, isAssigned := ctx.AssignedQueryUIDs[q.Uid]; !isAssigned {
-		return []Entry{{
+		return []*Entry{{
 			RuleID:  QueryUnassignedRuleID,
 			Message: fmt.Sprintf("Global query UID '%s' is defined but not assigned to any policy", q.Uid),
 			Level:   LevelWarning,
@@ -271,7 +271,7 @@ func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckQueryUsageConsistency(ctx *LintContext, item interface{}) []Entry {
+func runCheckQueryUsageConsistency(ctx *LintContext, item interface{}) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -290,7 +290,7 @@ func runCheckQueryUsageConsistency(ctx *LintContext, item interface{}) []Entry {
 	if usedAsCheck && usedAsData {
 		// Find a relevant line number. This is tricky as the usage is in policies.
 		// The query's own definition line is a fallback.
-		return []Entry{{
+		return []*Entry{{
 			RuleID:  QueryUsedAsDifferentTypesRuleID,
 			Message: fmt.Sprintf("Query UID '%s' is used as both a check and a data query in policies", q.Uid),
 			Level:   LevelError,

@@ -1,12 +1,13 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package fmt
+package tooling
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v11/policy"
-	"testing"
 )
 
 func TestBundleFormattedYaml(t *testing.T) {
@@ -32,7 +33,10 @@ func TestBundleFormattedYaml(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, bundle)
 
-	formatted, err := ToFormattedYAML(bundle)
+	data, err := bundle.ToYAML()
+	require.NoError(t, err)
+
+	formatted, err := Format(data)
 	require.NoError(t, err)
 
 	expectedStr := `owner_mrn: //test.sth

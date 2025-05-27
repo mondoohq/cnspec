@@ -34,7 +34,7 @@ type LintCheck struct {
 	Name        string
 	Description string
 	Severity    string
-	Run         func(ctx *LintContext, item interface{}) []Entry
+	Run         func(ctx *LintContext, item interface{}) []*Entry
 }
 
 // QueryLintInput is used to pass a query and its context (global or embedded) to check functions.
@@ -123,15 +123,15 @@ func policyIdentifier(p *Policy) string {
 	return fmt.Sprintf("policy at line %d", p.FileContext.Line)
 }
 
-func runCheckPolicyUid(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyUid(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
-	var entries []Entry
+	var entries []*Entry
 
 	if p.Uid == "" {
-		entries = append(entries, Entry{
+		entries = append(entries, &Entry{
 			RuleID:  PolicyUidRuleID,
 			Message: fmt.Sprintf("%s does not define a UID", policyIdentifier(p)),
 			Level:   LevelError,
@@ -143,7 +143,7 @@ func runCheckPolicyUid(ctx *LintContext, item interface{}) []Entry {
 		})
 	} else {
 		if !reResourceID.MatchString(p.Uid) {
-			entries = append(entries, Entry{
+			entries = append(entries, &Entry{
 				RuleID:  BundleInvalidUidRuleID,
 				Message: fmt.Sprintf("%s UID does not meet the requirements", policyIdentifier(p)),
 				Level:   LevelError,
@@ -155,7 +155,7 @@ func runCheckPolicyUid(ctx *LintContext, item interface{}) []Entry {
 			})
 		}
 		if _, exists := ctx.PolicyUidsInFile[p.Uid]; exists {
-			entries = append(entries, Entry{
+			entries = append(entries, &Entry{
 				RuleID:  PolicyUidUniqueRuleID,
 				Message: fmt.Sprintf("Policy UID '%s' is used multiple times in the same file", p.Uid),
 				Level:   LevelError,
@@ -172,13 +172,13 @@ func runCheckPolicyUid(ctx *LintContext, item interface{}) []Entry {
 	return entries
 }
 
-func runCheckPolicyName(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyName(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
 	if p.Name == "" {
-		return []Entry{{
+		return []*Entry{{
 			RuleID:  PolicyNameRuleID,
 			Message: fmt.Sprintf("%s does not define a name", policyIdentifier(p)),
 			Level:   LevelError,
@@ -192,16 +192,16 @@ func runCheckPolicyName(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckPolicyRequiredTags(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyRequiredTags(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
-	var entries []Entry
+	var entries []*Entry
 	requiredTags := []string{"mondoo.com/category", "mondoo.com/platform"}
 	for _, tagKey := range requiredTags {
 		if _, exists := p.Tags[tagKey]; !exists {
-			entries = append(entries, Entry{
+			entries = append(entries, &Entry{
 				RuleID:  PolicyRequiredTagsMissingRuleID,
 				Message: fmt.Sprintf("%s does not contain the required tag `%s`", policyIdentifier(p), tagKey),
 				Level:   LevelWarning,
@@ -216,13 +216,13 @@ func runCheckPolicyRequiredTags(ctx *LintContext, item interface{}) []Entry {
 	return entries
 }
 
-func runCheckPolicyMissingVersion(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyMissingVersion(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
 	if p.Version == "" {
-		return []Entry{{
+		return []*Entry{{
 			RuleID:  PolicyMissingVersionRuleID,
 			Message: fmt.Sprintf("%s is missing version", policyIdentifier(p)),
 			Level:   LevelError,
@@ -236,7 +236,7 @@ func runCheckPolicyMissingVersion(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckPolicyWrongVersion(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyWrongVersion(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -244,7 +244,7 @@ func runCheckPolicyWrongVersion(ctx *LintContext, item interface{}) []Entry {
 	if p.Version != "" { // Only check if version is present
 		_, err := semver.NewVersion(p.Version)
 		if err != nil {
-			return []Entry{{
+			return []*Entry{{
 				RuleID:  PolicyWrongVersionRuleID,
 				Message: fmt.Sprintf("%s has invalid version '%s': %s", policyIdentifier(p), p.Version, err.Error()),
 				Level:   LevelError,
@@ -259,14 +259,14 @@ func runCheckPolicyWrongVersion(ctx *LintContext, item interface{}) []Entry {
 	return nil
 }
 
-func runCheckPolicyGroupsAndChecks(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyGroupsAndChecks(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
-	var entries []Entry
+	var entries []*Entry
 	if len(p.Groups) == 0 {
-		entries = append(entries, Entry{
+		entries = append(entries, &Entry{
 			RuleID:  PolicyMissingChecksRuleID, // Using this ID for missing groups too
 			Message: fmt.Sprintf("%s has no groups defined", policyIdentifier(p)),
 			Level:   LevelError,
@@ -281,7 +281,7 @@ func runCheckPolicyGroupsAndChecks(ctx *LintContext, item interface{}) []Entry {
 
 	for _, group := range p.Groups {
 		if len(group.Checks) == 0 && len(group.Queries) == 0 && len(group.Policies) == 0 {
-			entries = append(entries, Entry{
+			entries = append(entries, &Entry{
 				RuleID: PolicyMissingChecksRuleID,
 				Message: fmt.Sprintf("%s, group '%s' (line %d) has no checks, data queries, or sub-policies defined",
 					policyIdentifier(p), group.Title, group.FileContext.Line),
@@ -297,12 +297,12 @@ func runCheckPolicyGroupsAndChecks(ctx *LintContext, item interface{}) []Entry {
 	return entries
 }
 
-func runCheckPolicyGroupAssetFilter(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyGroupAssetFilter(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
-	var entries []Entry
+	var entries []*Entry
 	for _, group := range p.Groups {
 		groupHasFilter := group.Filters != nil && len(group.Filters.Items) > 0
 		if groupHasFilter {
@@ -333,7 +333,7 @@ func runCheckPolicyGroupAssetFilter(ctx *LintContext, item interface{}) []Entry 
 			// Try to get more specific location if possible (e.g., checkRef.FileContext)
 			// For now, group location is a reasonable approximation.
 
-			entries = append(entries, Entry{
+			entries = append(entries, &Entry{
 				RuleID: PolicyMissingAssetFilterRuleID,
 				Message: fmt.Sprintf("%s, group '%s' (line %d): Check '%s' lacks an asset filter or variants, and the group also has no filter.",
 					policyIdentifier(p), group.Title, group.FileContext.Line, queryRefIdentifier(checkRef)),
@@ -345,18 +345,18 @@ func runCheckPolicyGroupAssetFilter(ctx *LintContext, item interface{}) []Entry 
 	return entries
 }
 
-func runCheckPolicyAssignedQueriesExist(ctx *LintContext, item interface{}) []Entry {
+func runCheckPolicyAssignedQueriesExist(ctx *LintContext, item interface{}) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
 	}
-	var entries []Entry
+	var entries []*Entry
 
 	for _, group := range p.Groups {
 		for _, checkRef := range group.Checks { // checkRef is an Mquery struct (either a ref or embedded)
 			if !isQueryDefinitionComplete(checkRef) && checkRef.Uid != "" { // It's a reference
 				if _, exists := ctx.GlobalQueriesByUid[checkRef.Uid]; !exists {
-					entries = append(entries, Entry{
+					entries = append(entries, &Entry{
 						RuleID: PolicyMissingAssignedQueryRuleID,
 						Message: fmt.Sprintf("%s, group '%s': Assigned check query UID '%s' does not exist as a global query.",
 							policyIdentifier(p), group.Title, checkRef.Uid),
@@ -373,7 +373,7 @@ func runCheckPolicyAssignedQueriesExist(ctx *LintContext, item interface{}) []En
 		for _, queryRef := range group.Queries { // data queries
 			if !isQueryDefinitionComplete(queryRef) && queryRef.Uid != "" { // It's a reference
 				if _, exists := ctx.GlobalQueriesByUid[queryRef.Uid]; !exists {
-					entries = append(entries, Entry{
+					entries = append(entries, &Entry{
 						RuleID: PolicyMissingAssignedQueryRuleID,
 						Message: fmt.Sprintf("%s, group '%s': Assigned data query UID '%s' does not exist as a global query.",
 							policyIdentifier(p), group.Title, queryRef.Uid),
