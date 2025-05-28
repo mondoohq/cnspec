@@ -27,7 +27,7 @@ type Location struct {
 	Column int
 }
 
-type SortResults []Entry
+type SortResults []*Entry
 
 func (s SortResults) Len() int {
 	return len(s)
@@ -47,7 +47,7 @@ func (s SortResults) Less(i, j int) bool {
 // Results holds all linting entries for a bundle.
 type Results struct {
 	BundleLocations []string
-	Entries         []Entry
+	Entries         []*Entry
 }
 
 // HasError checks if there are any error-level entries.

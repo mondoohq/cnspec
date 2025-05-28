@@ -42,16 +42,29 @@ func TestLinter_Pass(t *testing.T) {
 
 func TestLinter_Fail(t *testing.T) {
 
+	findEntry := func(entries []*Entry, id string) *Entry {
+		for _, entry := range entries {
+			if entry.RuleID == id {
+				return entry
+			}
+		}
+		return nil
+	}
+
 	t.Run("fail-policy-uid", func(t *testing.T) {
 		file := "./testdata/fail-policy-uid.mql.yaml"
 		results, err := Lint(schema, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
-		assert.Equal(t, "policy 'Ubuntu Benchmark 1' (at line 2) does not define a UID", results.Entries[0].Message)
-		assert.Equal(t, "policy-uid", results.Entries[0].RuleID)
-		assert.Equal(t, "error", results.Entries[0].Level)
-		assert.Equal(t, "Could not compile policy bundle: failed to refresh policy : failed to refresh mrn for policy Ubuntu Benchmark 1 : cannot refresh MRN with an empty UID", results.Entries[1].Message)
-		assert.Equal(t, "bundle-compile-error", results.Entries[1].RuleID)
+
+		result := findEntry(results.Entries, "policy-uid")
+		assert.Equal(t, "policy 'Ubuntu Benchmark 1' (at line 2) does not define a UID", result.Message)
+		assert.Equal(t, "policy-uid", result.RuleID)
+		assert.Equal(t, "error", result.Level)
+
+		result = findEntry(results.Entries, "bundle-compile-error")
+		assert.Equal(t, "Could not compile policy bundle: failed to refresh policy : failed to refresh mrn for policy Ubuntu Benchmark 1 : cannot refresh MRN with an empty UID", result.Message)
+		assert.Equal(t, "bundle-compile-error", result.RuleID)
 	})
 
 	t.Run("fail-policy-name", func(t *testing.T) {
@@ -112,12 +125,16 @@ func TestLinter_Fail(t *testing.T) {
 		results, err := Lint(schema, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
-		assert.Equal(t, "policy 'ubuntu-bench-1' has invalid version 'test.1.2.3.4': Invalid Semantic Version", results.Entries[0].Message)
-		assert.Equal(t, "policy-wrong-version", results.Entries[0].RuleID)
-		assert.Equal(t, "error", results.Entries[0].Level)
-		assert.Equal(t, "Could not compile policy bundle: failed to validate policy: policy '//local.cnspec.io/run/local-execution/policies/ubuntu-bench-1' version 'test.1.2.3.4' is not a valid semver version", results.Entries[1].Message)
-		assert.Equal(t, "bundle-compile-error", results.Entries[1].RuleID)
-		assert.Equal(t, "error", results.Entries[1].Level)
+
+		result := findEntry(results.Entries, "policy-wrong-version")
+		assert.Equal(t, "policy 'ubuntu-bench-1' has invalid version 'test.1.2.3.4': Invalid Semantic Version", result.Message)
+		assert.Equal(t, "policy-wrong-version", result.RuleID)
+		assert.Equal(t, "error", result.Level)
+
+		result = findEntry(results.Entries, "bundle-compile-error")
+		assert.Equal(t, "Could not compile policy bundle: failed to validate policy: policy '//local.cnspec.io/run/local-execution/policies/ubuntu-bench-1' version 'test.1.2.3.4' is not a valid semver version", result.Message)
+		assert.Equal(t, "bundle-compile-error", result.RuleID)
+		assert.Equal(t, "error", result.Level)
 	})
 
 	t.Run("fail-policy-required-tags-missing", func(t *testing.T) {
@@ -168,12 +185,16 @@ func TestLinter_Fail(t *testing.T) {
 		results, err := Lint(schema, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
-		assert.Equal(t, "Global query 'ubuntu-hard-2-2' has no variants and must define MQL", results.Entries[0].Message)
-		assert.Equal(t, "query-missing-mql", results.Entries[0].RuleID)
-		assert.Equal(t, "error", results.Entries[0].Level)
-		assert.Equal(t, "Could not compile policy bundle: failed to validate query '//local.cnspec.io/run/local-execution/queries/ubuntu-hard-2-2': failed to compile query '': query is not implemented '//local.cnspec.io/run/local-execution/queries/ubuntu-hard-2-2'\n", results.Entries[1].Message)
-		assert.Equal(t, "bundle-compile-error", results.Entries[1].RuleID)
-		assert.Equal(t, "error", results.Entries[1].Level)
+
+		result := findEntry(results.Entries, "query-missing-mql")
+		assert.Equal(t, "Global query 'ubuntu-hard-2-2' has no variants and must define MQL", result.Message)
+		assert.Equal(t, "query-missing-mql", result.RuleID)
+		assert.Equal(t, "error", result.Level)
+
+		result = findEntry(results.Entries, "bundle-compile-error")
+		assert.Equal(t, "Could not compile policy bundle: failed to validate query '//local.cnspec.io/run/local-execution/queries/ubuntu-hard-2-2': failed to compile query '': query is not implemented '//local.cnspec.io/run/local-execution/queries/ubuntu-hard-2-2'\n", result.Message)
+		assert.Equal(t, "bundle-compile-error", result.RuleID)
+		assert.Equal(t, "error", result.Level)
 	})
 
 	t.Run("fail-query-unassigned", func(t *testing.T) {
