@@ -87,11 +87,15 @@ resource "time_sleep" "wait_time" {
 data "azurerm_subscriptions" "available" {
 }
 
+locals {
+  active_subscriptions = [for sub in data.azurerm_subscriptions.available.subscriptions : sub if sub.state == "Enabled" ]
+}
+
 resource "azurerm_role_assignment" "reader" {
-  count                = length(data.azurerm_subscriptions.available.subscriptions)
+  count                = length(local.active_subscriptions)
   principal_id         = azuread_service_principal.mondoo.object_id
   role_definition_name = "Reader"
-  scope                = data.azurerm_subscriptions.available.subscriptions[count.index].id
+  scope                = local.active_subscriptions[count.index].id
 }
 
 resource "mondoo_integration_azure" "this" {
@@ -443,15 +447,19 @@ resource "time_sleep" "wait_time" {
 data "azurerm_subscriptions" "available" {
 }
 
+locals {
+  active_subscriptions = [for sub in data.azurerm_subscriptions.available.subscriptions : sub if sub.state == "Enabled" ]
+}
+
 resource "azurerm_role_assignment" "reader" {
-  count                = length(data.azurerm_subscriptions.available.subscriptions)
+  count                = length(local.active_subscriptions)
   principal_id         = azuread_service_principal.mondoo.object_id
   role_definition_name = "Reader"
-  scope                = data.azurerm_subscriptions.available.subscriptions[count.index].id
+  scope                = local.active_subscriptions[count.index].id
 }
 
 resource "azurerm_role_definition" "mondoo_security" {
-  assignable_scopes = data.azurerm_subscriptions.available.subscriptions[*].id
+  assignable_scopes = local.active_subscriptions[*].id
   description       = "Allow Mondoo Security to use run commands for Virtual Machine scanning"
   name              = "tf-mondoo-security-role"
   scope             = "/subscriptions/abc-123-xyz-456-1"
@@ -462,10 +470,10 @@ resource "azurerm_role_definition" "mondoo_security" {
 }
 
 resource "azurerm_role_assignment" "mondoo_security" {
-  count              = length(data.azurerm_subscriptions.available.subscriptions)
+  count              = length(local.active_subscriptions)
   principal_id       = azuread_service_principal.mondoo.object_id
   role_definition_id = azurerm_role_definition.mondoo_security.role_definition_resource_id
-  scope              = data.azurerm_subscriptions.available.subscriptions[count.index].id
+  scope              = local.active_subscriptions[count.index].id
 }
 
 resource "mondoo_integration_azure" "this" {

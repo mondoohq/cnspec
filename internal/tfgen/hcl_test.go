@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.mondoo.com/cnspec/v11/internal/tfgen"
 )
@@ -206,6 +207,11 @@ func TestCreateSimpleTraversal(t *testing.T) {
 	assert.Equal(t, "aws_instance", traversal.RootName())
 }
 
+func TestTraversalToString(t *testing.T) {
+	traversal := tfgen.CreateSimpleTraversal("aws_instance", "example", "id")
+	assert.Equal(t, "aws_instance.example.id", tfgen.TraversalToString(traversal))
+}
+
 func TestGenericBlockCreation(t *testing.T) {
 	t.Run("should be a working generic block", func(t *testing.T) {
 		data, err := tfgen.HclCreateGenericBlock(
@@ -280,6 +286,17 @@ func TestGenericBlockCreation(t *testing.T) {
 
 		assert.Error(t, err, "should fail to generate block with mismatched list element types")
 	})
+}
+
+func TestLocalVariable(t *testing.T) {
+	local := tfgen.NewLocal("foo", "bar")
+	assert.Equal(t, "local.foo", tfgen.TraversalToString(local.TraverseRef()))
+	localBlock, err := local.ToBlock()
+	require.Nil(t, err)
+	assert.Equal(t, `locals {
+  foo = "bar"
+}
+`, tfgen.CreateHclStringOutput(localBlock))
 }
 
 func TestModuleBlock(t *testing.T) {

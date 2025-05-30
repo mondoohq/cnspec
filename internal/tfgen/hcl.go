@@ -7,6 +7,7 @@ package tfgen
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/hcl/v2"
@@ -112,6 +113,56 @@ func NewRequiredProvider(name string, mods ...HclRequiredProviderModifier) *HclR
 	}
 	return provider
 }
+
+// There are two kinds of variables in HCL:
+//   * Input variables, sometimes simply called "variables"
+//   * Local variables, also known as "locals"
+
+type HclLocal struct {
+	// Required. Name of the local variable.
+	name string
+
+	// Required. Value of the local variable.
+	value any
+}
+
+func (l *HclLocal) TraverseRef(args ...string) hcl.Traversal {
+	traverser := []string{"local"}
+
+	if len(args) != 0 && strings.HasPrefix(args[0], "[") {
+		// Traversal is accessing a list variable
+		traverser = append(traverser, l.name+args[0])
+		args = args[1:]
+	} else {
+		traverser = append(traverser, l.name)
+	}
+
+	traverser = append(traverser, args...)
+
+	return CreateSimpleTraversal(traverser...)
+}
+
+func (l *HclLocal) ToBlock() (*hclwrite.Block, error) {
+	if l.value == nil {
+		return nil, errors.New("value must be supplied")
+	}
+
+	return HclCreateGenericBlock(
+		"locals",
+		[]string{},
+		map[string]any{l.name: l.value},
+	)
+}
+
+// NewLocal Create a local variable in HCL.
+func NewLocal(name string, value any) *HclLocal {
+	return &HclLocal{name: name, value: value}
+}
+
+// Variables are not used yet, but we might use them in the future and they
+// would look something similar to this.
+//
+// type HclVariable struct { }
 
 type ForEach struct {
 	key   string
@@ -350,6 +401,10 @@ func (m *HclResource) TraverseRef(input ...string) hcl.Traversal {
 	ref = append(ref, m.rType, m.name)
 	ref = append(ref, input...)
 	return CreateSimpleTraversal(ref...)
+}
+
+func (m *HclResource) TraverseRefString(input ...string) string {
+	return TraversalToString(m.TraverseRef(input...))
 }
 
 // HclResourceWithAttributesAndProviderDetails Used to set parameters within the resource usage.
@@ -770,4 +825,13 @@ func CreateSimpleTraversal(input ...string) hcl.Traversal {
 // NewFuncCall wraps the function name around the traversal and returns hcl tokens
 func NewFuncCall(funcName string, traversal hcl.Traversal) hclwrite.Tokens {
 	return hclwrite.TokensForFunctionCall(funcName, hclwrite.TokensForTraversal(traversal))
+}
+
+func TraversalToString(traversal hcl.Traversal) string {
+	tokens := hclwrite.TokensForTraversal(traversal)
+	var sb strings.Builder
+	for _, token := range tokens {
+		sb.Write(token.Bytes)
+	}
+	return sb.String()
 }
