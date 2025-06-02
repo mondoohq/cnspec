@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/mattn/go-isatty"
@@ -125,6 +126,10 @@ var (
 				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
 			}
 			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
+
+			if space == "" {
+				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
+			}
 
 			if (accessKey == "" && secretKey == "") && (roleArn == "" && externalID == "") {
 				log.Error().Msg("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
