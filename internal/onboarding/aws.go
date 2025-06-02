@@ -42,10 +42,15 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 		return "", errors.Wrap(err, "failed to generate required providers")
 	}
 
-	var (
-		providerMondoo = tfgen.NewProvider("mondoo", tfgen.HclProviderWithAttributes(
+	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
+	if integration.Space != "" {
+		mondooProviderHclModifier = append(mondooProviderHclModifier, tfgen.HclProviderWithAttributes(
 			tfgen.Attributes{"space": integration.Space},
 		))
+	}
+
+	var (
+		providerMondoo = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 
 		integrationKeyAttributes = tfgen.Attributes{
 			"name": integration.Name,

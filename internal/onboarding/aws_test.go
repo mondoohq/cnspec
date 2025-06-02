@@ -64,7 +64,6 @@ func TestGenerateAwsHCL_RoleBased(t *testing.T) {
 }
 
 provider "mondoo" {
-  space = ""
 }
 
 resource "mondoo_integration_aws" "this" {
@@ -94,7 +93,6 @@ func TestGenerateAwsHCL_Minimal(t *testing.T) {
 }
 
 provider "mondoo" {
-  space = ""
 }
 
 resource "mondoo_integration_aws" "this" {
