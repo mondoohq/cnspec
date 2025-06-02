@@ -75,51 +75,27 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 	if err != nil {
 		return "", errors.Wrap(err, "failed to generate self signed cert subject block")
 	}
-	requiredResourceAccessBlock1, err := createResourceAccessBlock(
-		"00000003-0000-0000-c000-000000000000",
-		[]map[string]interface{}{
-			{"id": "246dd0d5-5bd0-4def-940b-0421030a5b68", "type": "Role"},
-			{"id": "e321f0bb-e7f7-481e-bb28-e3b0b32d4bd0", "type": "Role"},
-			{"id": "5e0edab9-c148-49d0-b423-ac253e121825", "type": "Role"},
-			{"id": "bf394140-e372-4bf9-a898-299cfc7564e5", "type": "Role"},
-			{"id": "dc377aa6-52d8-4e23-b271-2a7ae04cedf3", "type": "Role"},
-			{"id": "9e640839-a198-48fb-8b9a-013fd6f6cbcd", "type": "Role"},
-			{"id": "37730810-e9ba-4e46-b07e-8ca78d182097", "type": "Role"},
-		},
-	)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to generate first resource access block")
+
+	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
+	if integration.Space != "" {
+		mondooProviderHclModifier = append(mondooProviderHclModifier, tfgen.HclProviderWithAttributes(
+			tfgen.Attributes{"space": integration.Space},
+		))
 	}
 
-	requiredResourceAccessBlock2, err := createResourceAccessBlock(
-		"00000003-0000-0ff1-ce00-000000000000",
-		[]map[string]interface{}{
-			{"id": "678536fe-1083-478a-9c59-b99265e6b0d3", "type": "Role"},
-		},
-	)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to generate second resource access block")
+	azurermProviderHclModifier := []tfgen.HclProviderModifier{
+		tfgen.HclProviderWithGenericBlocks(featuresBlock),
 	}
-
-	requiredResourceAccessBlock3, err := createResourceAccessBlock(
-		"00000002-0000-0ff1-ce00-000000000000",
-		[]map[string]interface{}{
-			{"id": "dc50a0fb-09a3-484d-be87-e023b12c6440", "type": "Role"},
-		},
-	)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to generate third resource access block")
+	if integration.Primary != "" {
+		azurermProviderHclModifier = append(azurermProviderHclModifier,
+			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
+		)
 	}
 
 	var (
-		providerAzureAD = tfgen.NewProvider("azuread")
-		providerAzureRM = tfgen.NewProvider("azurerm",
-			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
-			tfgen.HclProviderWithGenericBlocks(featuresBlock),
-		)
-		providerMondoo = tfgen.NewProvider("mondoo", tfgen.HclProviderWithAttributes(
-			tfgen.Attributes{"space": integration.Space},
-		))
+		providerAzureAD       = tfgen.NewProvider("azuread")
+		providerAzureRM       = tfgen.NewProvider("azurerm", azurermProviderHclModifier...)
+		providerMondoo        = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 		dataADClientConfig    = tfgen.NewDataSource("azuread_client_config", "current")
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
@@ -127,7 +103,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 				"owners":        []interface{}{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),
-			tfgen.HclResourceWithGenericBlocks(requiredResourceAccessBlock1, requiredResourceAccessBlock2, requiredResourceAccessBlock3),
 		)
 		resourceTLSPrivateKey = tfgen.NewResource("tls_private_key", "credential",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
@@ -166,6 +141,11 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "global_reader",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"display_name": "Global Reader"}),
 		)
+		resourceADExchangeAdminDirectoryRole = tfgen.NewResource("azuread_directory_role", "exchange_admin",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"display_name": "Exchange Administrator",
+			}),
+		)
 		resourceTimeSleep = tfgen.NewResource("time_sleep", "wait_time",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"create_duration": "60s"}),
 		)
@@ -173,6 +153,13 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_id":             resourceADReadersDirectoryRole.TraverseRef("template_id"),
 				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
+				"depends_on":          []interface{}{resourceTimeSleep.TraverseRef()},
+			}),
+		)
+		resourceADExchangeAdminRoleAssignment = tfgen.NewResource("azuread_directory_role_assignment", "exchange_admin",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
+				"role_id":             resourceADExchangeAdminDirectoryRole.TraverseRef("object_id"),
 				"depends_on":          []interface{}{resourceTimeSleep.TraverseRef()},
 			}),
 		)
@@ -209,6 +196,8 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceAdApplication,
 		resourceADReadersDirectoryRole,
 		resourceADReadersRoleAssignment,
+		resourceADExchangeAdminDirectoryRole,
+		resourceADExchangeAdminRoleAssignment,
 		resourceTimeSleep,
 		resourceMondooIntegration,
 	)

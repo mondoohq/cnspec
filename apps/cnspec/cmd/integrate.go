@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/mattn/go-isatty"
@@ -75,7 +76,7 @@ want Mondoo to scan using the --deny flag.
 
 NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			var errs = []error{
+			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
@@ -119,6 +120,10 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
 			}
 			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
+
+			if space == "" {
+				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
+			}
 
 			// Discover the subscription used to create resources in the cloud, if it wasn't specified. Note
 			// that this will also verify that we have access to Azure. If we fail, we shouldn't try to continue.
@@ -201,17 +206,13 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 		Short: "Onboard Microsoft 365",
 		Long: `Use this command to connect your Microsoft 365 environment into the Mondoo platform.
 
-To onboard, you must provide your Mondoo space id:
-
-	cnspec integrate ms365 --space <space_id>
-
-Other flags are optional:
+Flags are optional:
 
 	cnspec integrate ms365 --space <space_id> --subscription-id <tenant_id> --output <output_dir> --integration-name <name>
 
 Ensure that the Azure account used for execution has the Azure AD Role "Global Reader".`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			var errs = []error{
+			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
@@ -249,6 +250,10 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
 			}
 			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
+
+			if space == "" {
+				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
+			}
 
 			// Discover the subscription used to create resources in the cloud, if it wasn't specified. Note
 			// that this will also verify that we have access to Azure. If we fail, we shouldn't try to continue.
@@ -290,7 +295,7 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 			}
 
 			// Generate HCL for MS365 deployment
-			log.Info().Msg("generating automation code for MS365 integration")
+			log.Info().Msg("generating automation code")
 			hcl, err := onboarding.GenerateMs365HCL(onboarding.Ms365Integration{
 				Name:    integrationName,
 				Space:   space,
@@ -314,7 +319,7 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 			}
 
 			if applied {
-				log.Info().Msg(theme.DefaultTheme.Success("Mondoo MS365 integration was successful!"))
+				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
 				log.Info().Msgf(
 					"To view integration status, visit https://console.mondoo.com/space/integrations/ms365?spaceId=%s",
 					space,
