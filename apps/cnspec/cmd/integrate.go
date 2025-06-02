@@ -79,7 +79,7 @@ var (
 		
 		Other flags are optional:
 
-			cnspec integrate aws ... --output <output_dir> --integration-name <name>`,
+			cnspec integrate aws ... --space <space_id> --output <output_dir> --integration-name <name>`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
