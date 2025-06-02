@@ -130,6 +130,10 @@ var (
 			}
 			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
 
+			if space == "" {
+				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
+			}
+
 			if (accessKey == "" && secretKey == "") && (roleArn == "" && externalID == "") {
 				log.Error().Msg("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
 				os.Exit(1)
