@@ -5,7 +5,6 @@ package onboarding
 
 import (
 	"github.com/cockroachdb/errors"
-	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/rs/zerolog/log"
 
 	"go.mondoo.com/cnquery/v11/cli/theme"
@@ -17,30 +16,6 @@ type Ms365Integration struct {
 	Name    string
 	Space   string
 	Primary string
-}
-
-func createResourceAccessBlock(resourceAppID string, resourceAccesses []map[string]interface{}) (*hclwrite.Block, error) {
-	resourceAccessBlocks := make([]*hclwrite.Block, len(resourceAccesses))
-	for i, access := range resourceAccesses {
-		block, err := tfgen.HclCreateGenericBlock("resource_access", nil, access)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create resource_access block")
-		}
-		resourceAccessBlocks[i] = block
-	}
-
-	requiredResourceAccessBlock, err := tfgen.HclCreateGenericBlock("required_resource_access", nil, map[string]interface{}{
-		"resource_app_id": resourceAppID,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create required_resource_access block")
-	}
-
-	for _, block := range resourceAccessBlocks {
-		requiredResourceAccessBlock.Body().AppendBlock(block)
-	}
-
-	return requiredResourceAccessBlock, nil
 }
 
 // GenerateMs365HCL generates automation code to create a Microsoft 365 integration.
