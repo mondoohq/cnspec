@@ -23,6 +23,11 @@ type AwsIntegration struct {
 
 // GenerateAzureHCL generates automation code to create an AWS integration.
 func GenerateAwsHCL(integration AwsIntegration) (string, error) {
+	if (integration.AccessKey == "" && integration.SecretKey == "") && (integration.RoleArn == "" && integration.ExternalID == "") {
+		return "", errors.New("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
+	} else if (integration.AccessKey == "" && integration.SecretKey != "") || (integration.RoleArn == "" && integration.ExternalID != "") || (integration.AccessKey != "" && integration.SecretKey == "") || (integration.RoleArn != "" && integration.ExternalID == "") {
+		return "", errors.New("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
+	}
 	// Validate integration name is not empty, if it is, generate a random one
 	if integration.Name == "" {
 		integration.Name = "AWS Integration"

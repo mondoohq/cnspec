@@ -134,14 +134,6 @@ var (
 				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
 			}
 
-			if (accessKey == "" && secretKey == "") && (roleArn == "" && externalID == "") {
-				log.Error().Msg("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
-				os.Exit(1)
-			} else if (accessKey == "" && secretKey != "") || (roleArn == "" && externalID != "") || (accessKey != "" && secretKey == "") || (roleArn != "" && externalID == "") {
-				log.Error().Msg("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
-				os.Exit(1)
-			}
-
 			// Generate HCL for aws deployment
 			log.Info().Msg("generating automation code")
 			hcl, err := onboarding.GenerateAwsHCL(onboarding.AwsIntegration{

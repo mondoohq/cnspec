@@ -79,31 +79,9 @@ resource "mondoo_integration_aws" "this" {
 	assert.Equal(t, expected, code)
 }
 
-func TestGenerateAwsHCL_Minimal(t *testing.T) {
-	code, err := subject.GenerateAwsHCL(subject.AwsIntegration{})
-	assert.Nil(t, err)
-
-	expected := `terraform {
-  required_providers {
-    mondoo = {
-      source  = "mondoohq/mondoo"
-      version = "~> 0.19"
-    }
-  }
-}
-
-provider "mondoo" {
-}
-
-resource "mondoo_integration_aws" "this" {
-  credentials = {
-    role = {
-      external_id = ""
-      role_arn    = ""
-    }
-  }
-  name = "AWS Integration"
-}
-`
-	assert.Equal(t, expected, code)
+func TestGenerateAwsHCL_ErrorsOnEmptyInput(t *testing.T) {
+	_, err := subject.GenerateAwsHCL(subject.AwsIntegration{})
+	if err == nil {
+		t.Fatal("expected error for empty AwsIntegration, got nil")
+	}
 }
