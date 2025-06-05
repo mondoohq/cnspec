@@ -79,8 +79,6 @@ var (
 		Or you can provide the AWS role ARN and external ID to assume a role in another account (this has precedence over the access key and secret key):
 
 			cnspec integrate aws --role-arn <role_arn> --external-id <external_id>
-
-		NOTE: access key id and secret access key are mutually exclusive with role ARN and external ID.
 		
 		Other flags are optional:
 
