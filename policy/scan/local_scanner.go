@@ -114,6 +114,13 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	return ls
 }
 
+// WithProviderAutoUpdate configures the AutoUpdate settings for the runtime.
+func WithProviderAutoUpdate(enabledAutoUpdate bool) ScannerOption {
+	return func(s *LocalScanner) {
+		s.runtime.SetProviderAutoUpdate(enabledAutoUpdate)
+	}
+}
+
 func (s *LocalScanner) EnableQueue() error {
 	var err error
 	s.queue, err = newDqueClient(defaultDqueConfig, func(job *Job) {
