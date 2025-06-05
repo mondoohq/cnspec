@@ -70,7 +70,13 @@ var serveApiCmd = &cobra.Command{
 			Creds:       serviceAccount,
 		}
 
+		enabledAutoUpdate := true
+		if viper.IsSet("auto_update") {
+			enabledAutoUpdate = viper.GetBool("auto_update")
+		}
+
 		scanner := scan.NewLocalScanner(
+			scan.WithAutoUpdate(enabledAutoUpdate),
 			scan.WithUpstream(&upstreamConfig),
 			scan.DisableProgressBar(),
 			scan.WithRecording(recording.Null{}),

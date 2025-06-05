@@ -215,8 +215,9 @@ type scanConfig struct {
 	IsIncognito    bool
 	ScoreThreshold int
 
-	DoRecord bool
-	AgentMrn string
+	DoRecord          bool
+	AgentMrn          string
+	EnabledAutoUpdate bool
 }
 
 func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) (*scanConfig, error) {
@@ -259,17 +260,23 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		log.Fatal().Err(err).Msg("failed to parse inventory")
 	}
 
+	enabledAutoUpdate := true
+	if viper.IsSet("auto_update") {
+		enabledAutoUpdate = viper.GetBool("auto_update")
+	}
+
 	conf := scanConfig{
-		Features:       opts.GetFeatures(),
-		IsIncognito:    viper.GetBool("incognito"),
-		Inventory:      inv,
-		PolicyPaths:    dedupe(viper.GetStringSlice("policy-bundle")),
-		PolicyNames:    viper.GetStringSlice("policies"),
-		ScoreThreshold: viper.GetInt("score-threshold"),
-		Props:          props,
-		runtime:        runtime,
-		AgentMrn:       opts.AgentMrn,
-		OutputTarget:   viper.GetString("output-target"),
+		Features:          opts.GetFeatures(),
+		IsIncognito:       viper.GetBool("incognito"),
+		Inventory:         inv,
+		PolicyPaths:       dedupe(viper.GetStringSlice("policy-bundle")),
+		PolicyNames:       viper.GetStringSlice("policies"),
+		ScoreThreshold:    viper.GetInt("score-threshold"),
+		Props:             props,
+		runtime:           runtime,
+		AgentMrn:          opts.AgentMrn,
+		OutputTarget:      viper.GetString("output-target"),
+		EnabledAutoUpdate: enabledAutoUpdate,
 	}
 
 	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
@@ -389,6 +396,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
+	opts = append(opts, scan.WithAutoUpdate(config.EnabledAutoUpdate))
 
 	scanner := scan.NewLocalScanner(opts...)
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
