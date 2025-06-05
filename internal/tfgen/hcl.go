@@ -228,7 +228,6 @@ func (m *HclModule) ToBlock() (*hclwrite.Block, error) {
 	}
 	if m.source != "" {
 		m.attributes["source"] = m.source
-
 	}
 	if m.version != "" {
 		m.attributes["version"] = m.version
@@ -320,11 +319,14 @@ type HclResource struct {
 
 	// Internal. The object type. Either Resource or Datasource.
 	object objectType
+
+	// Optional. Traversal references for variables or other resources.
+	traversalRefs map[string]map[string]hcl.Traversal
 }
 
 type HclResourceModifier func(p *HclResource)
 
-// NewResource Create a provider statement in the HCL output.
+// NewDataSource Create a provider statement in the HCL output.
 func NewDataSource(rType string, name string, mods ...HclResourceModifier) *HclResource {
 	resource := &HclResource{rType: rType, name: name, object: DataSource}
 	for _, m := range mods {
@@ -354,7 +356,8 @@ func (m *HclResource) TraverseRef(input ...string) hcl.Traversal {
 
 // HclResourceWithAttributesAndProviderDetails Used to set parameters within the resource usage.
 func HclResourceWithAttributesAndProviderDetails(attrs map[string]interface{},
-	providerDetails []string) HclResourceModifier {
+	providerDetails []string,
+) HclResourceModifier {
 	return func(p *HclResource) {
 		p.attributes = attrs
 		p.providerDetails = providerDetails
@@ -770,4 +773,115 @@ func CreateSimpleTraversal(input ...string) hcl.Traversal {
 // NewFuncCall wraps the function name around the traversal and returns hcl tokens
 func NewFuncCall(funcName string, traversal hcl.Traversal) hclwrite.Tokens {
 	return hclwrite.TokensForFunctionCall(funcName, hclwrite.TokensForTraversal(traversal))
+}
+
+type HclVariable struct {
+	// Required. Name of the variable.
+	name string
+
+	// Optional. Variable type - string, number, bool, etc.
+	varType string
+
+	// Optional. Description of the variable.
+	description string
+
+	// Optional. Default value for the variable.
+	defaultValue interface{}
+
+	// Optional. Whether the variable is sensitive.
+	sensitive bool
+}
+
+func (v *HclVariable) ToBlock() (*hclwrite.Block, error) {
+	block := hclwrite.NewBlock("variable", []string{v.name})
+
+	if v.varType != "" {
+		// Create type tokens that don't include quotes for type
+		typeTokens := hclwrite.Tokens{
+			{Type: hclsyntax.TokenIdent, Bytes: []byte(v.varType)},
+		}
+		block.Body().SetAttributeRaw("type", typeTokens)
+	}
+
+	if v.description != "" {
+		value, err := convertTypeToCty(v.description)
+		if err != nil {
+			return nil, err
+		}
+		block.Body().SetAttributeValue("description", value)
+	}
+
+	if v.defaultValue != nil {
+		value, err := convertTypeToCty(v.defaultValue)
+		if err != nil {
+			return nil, err
+		}
+		block.Body().SetAttributeValue("default", value)
+	}
+
+	if v.sensitive {
+		value, err := convertTypeToCty(v.sensitive)
+		if err != nil {
+			return nil, err
+		}
+		block.Body().SetAttributeValue("sensitive", value)
+	}
+
+	return block, nil
+}
+
+type HclVariableModifier func(v *HclVariable)
+
+// NewVariable creates a new Terraform variable declaration.
+func NewVariable(name string, mods ...HclVariableModifier) *HclVariable {
+	variable := &HclVariable{name: name}
+	for _, m := range mods {
+		m(variable)
+	}
+	return variable
+}
+
+// HclVariableWithType sets the type of the variable.
+func HclVariableWithType(varType string) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.varType = varType
+	}
+}
+
+// HclVariableWithDescription sets the description of the variable.
+func HclVariableWithDescription(description string) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.description = description
+	}
+}
+
+// HclVariableWithDefault sets the default value of the variable.
+func HclVariableWithDefault(defaultValue interface{}) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.defaultValue = defaultValue
+	}
+}
+
+// HclVariableWithSensitive marks the variable as sensitive.
+func HclVariableWithSensitive(sensitive bool) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.sensitive = sensitive
+	}
+}
+
+// CreateVariableReference creates a reference to a Terraform variable.
+// e.g. var.name
+func CreateVariableReference(name string) hcl.Traversal {
+	return CreateSimpleTraversal(name)
+}
+
+// HclResourceWithTraversalReferences used when you need to add references to variables or other resources.
+func HclResourceWithTraversalReferences(
+	attributes Attributes,
+	traversalRefs map[string]map[string]hcl.Traversal,
+) HclResourceModifier {
+	return func(r *HclResource) {
+		r.attributes = attributes
+		r.traversalRefs = traversalRefs
+	}
 }

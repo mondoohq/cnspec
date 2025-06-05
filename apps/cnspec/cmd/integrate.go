@@ -36,14 +36,8 @@ func init() {
 
 	// cnspec integrate aws
 	integrateCmd.AddCommand(integrateAwsCmd)
-	integrateAwsCmd.Flags().String("access-key", "", "AWS access key")
-	integrateAwsCmd.Flags().String("secret-key", "", "AWS secret key")
 	integrateAwsCmd.Flags().String("role-arn", "", "AWS role ARN")
 	integrateAwsCmd.Flags().String("external-id", "", "AWS external ID")
-	integrateAwsCmd.MarkFlagsMutuallyExclusive("role-arn", "access-key")
-	integrateAwsCmd.MarkFlagsMutuallyExclusive("external-id", "access-key")
-	integrateAwsCmd.MarkFlagsMutuallyExclusive("role-arn", "secret-key")
-	integrateAwsCmd.MarkFlagsMutuallyExclusive("external-id", "secret-key")
 
 	// cnspec integrate azure
 	integrateCmd.AddCommand(integrateAzureCmd)
@@ -86,8 +80,6 @@ var (
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
-				viper.BindPFlag("access-key", cmd.Flags().Lookup("access-key")),
-				viper.BindPFlag("secret-key", cmd.Flags().Lookup("secret-key")),
 				viper.BindPFlag("role-arn", cmd.Flags().Lookup("role-arn")),
 				viper.BindPFlag("external-id", cmd.Flags().Lookup("external-id")),
 			}
@@ -98,8 +90,8 @@ var (
 				space           = viper.GetString("space")
 				output          = viper.GetString("output")
 				integrationName = viper.GetString("integration-name")
-				accessKey       = viper.GetString("access-key")
-				secretKey       = viper.GetString("secret-key")
+				accessKey       = os.Getenv("TF_VAR_aws_access_key")
+				secretKey       = os.Getenv("TF_VAR_aws_secret_key")
 				roleArn         = viper.GetString("role-arn")
 				externalID      = viper.GetString("external-id")
 			)
