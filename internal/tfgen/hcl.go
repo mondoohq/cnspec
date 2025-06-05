@@ -370,9 +370,6 @@ type HclResource struct {
 
 	// Internal. The object type. Either Resource or Datasource.
 	object objectType
-
-	// Optional. Traversal references for variables or other resources.
-	traversalRefs map[string]map[string]hcl.Traversal
 }
 
 type HclResourceModifier func(p *HclResource)
@@ -513,6 +510,26 @@ func convertValueToTokens(value any) (hclwrite.Tokens, error) {
 		return elem, nil
 	case hcl.Traversal:
 		return hclwrite.TokensForTraversal(elem), nil
+	case map[string]interface{}:
+		// Handle maps that might contain hcl.Traversal values
+		var keys []string
+		for k := range elem {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		objects := []hclwrite.ObjectAttrTokens{}
+		for _, attrKey := range keys {
+			attrVal := elem[attrKey]
+			tokens, err := convertValueToTokens(attrVal)
+			if err != nil {
+				return nil, err
+			}
+			objects = append(objects, hclwrite.ObjectAttrTokens{
+				Name:  hclwrite.TokensForIdentifier(attrKey),
+				Value: tokens,
+			})
+		}
+		return hclwrite.TokensForObject(objects), nil
 	default:
 		value, err := convertTypeToCty(elem)
 		if err != nil {
@@ -539,25 +556,28 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val any) error {
 		}
 		block.Body().SetAttributeValue(key, value)
 	case []map[string]any:
-		values := []cty.Value{}
+		elems := []hclwrite.Tokens{}
 		for _, item := range v {
-			valueMap := map[string]cty.Value{}
-			for key, val := range item {
-				convertedValue, err := convertTypeToCty(val)
+			var keys []string
+			for k := range item {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			objects := []hclwrite.ObjectAttrTokens{}
+			for _, attrKey := range keys {
+				attrVal := item[attrKey]
+				tokens, err := convertValueToTokens(attrVal)
 				if err != nil {
 					return err
 				}
-				valueMap[key] = convertedValue
+				objects = append(objects, hclwrite.ObjectAttrTokens{
+					Name:  hclwrite.TokensForIdentifier(attrKey),
+					Value: tokens,
+				})
 			}
-			values = append(values, cty.ObjectVal(valueMap))
+			elems = append(elems, hclwrite.TokensForObject(objects))
 		}
-
-		if !cty.CanListVal(values) {
-			return errors.New(
-				"setBlockAttributeValue: Values can not be coalesced into a single List due to inconsistent element types",
-			)
-		}
-		block.Body().SetAttributeValue(key, cty.ListVal(values))
+		block.Body().SetAttributeRaw(key, hclwrite.TokensForTuple(elems))
 	case []any:
 		elems := []hclwrite.Tokens{}
 		for _, e := range v {
@@ -940,16 +960,5 @@ func HclVariableWithSensitive(sensitive bool) HclVariableModifier {
 // CreateVariableReference creates a reference to a Terraform variable.
 // e.g. var.name
 func CreateVariableReference(name string) hcl.Traversal {
-	return CreateSimpleTraversal(name)
-}
-
-// HclResourceWithTraversalReferences used when you need to add references to variables or other resources.
-func HclResourceWithTraversalReferences(
-	attributes Attributes,
-	traversalRefs map[string]map[string]hcl.Traversal,
-) HclResourceModifier {
-	return func(r *HclResource) {
-		r.attributes = attributes
-		r.traversalRefs = traversalRefs
-	}
+	return CreateSimpleTraversal("var", name)
 }
