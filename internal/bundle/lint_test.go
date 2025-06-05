@@ -175,9 +175,9 @@ func TestLinter_Fail(t *testing.T) {
 		results, err := Lint(schema, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
-		assert.Equal(t, "Query variant 'ubuntu-hard-2-1-var1' must not define 'impact'", results.Entries[0].Message)
+		assert.Equal(t, "Query variant 'ubuntu-hard-2-1-var1' should not define 'impact'", results.Entries[0].Message)
 		assert.Equal(t, "query-variant-uses-non-default-fields", results.Entries[0].RuleID)
-		assert.Equal(t, "error", results.Entries[0].Level)
+		assert.Equal(t, "warning", results.Entries[0].Level)
 	})
 
 	t.Run("fail-query-missing-mql", func(t *testing.T) {

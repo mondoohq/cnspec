@@ -227,13 +227,21 @@ func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServ
 	resources = append(resources, dataRMAllSubscriptions)
 	dependsOn = append(dependsOn, dataRMAllSubscriptions.TraverseRef())
 
+	// Filter only active subscriptions
+	varActiveSubscriptions := tfgen.NewLocal("active_subscriptions",
+		tfgen.CreateSimpleTraversal(
+			`[for sub in `+dataRMAllSubscriptions.TraverseRefString("subscriptions")+` : sub if sub.state == "Enabled" ]`,
+		),
+	)
+	resources = append(resources, varActiveSubscriptions)
+
 	// grant reader role to all subscriptions
 	resourceRMReaderRoleAssignment := tfgen.NewResource("azurerm_role_assignment", "reader",
 		tfgen.HclResourceWithAttributes(tfgen.Attributes{
 			"role_definition_name": "Reader",
 
-			"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
-			"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
+			"count":        tfgen.NewFuncCall("length", varActiveSubscriptions.TraverseRef()),
+			"scope":        varActiveSubscriptions.TraverseRef("[count.index]", "id"),
 			"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
 		}),
 	)
@@ -251,7 +259,7 @@ func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServ
 				"name":              "tf-mondoo-security-role",
 				"description":       "Allow Mondoo Security to use run commands for Virtual Machine scanning",
 				"scope":             fmt.Sprintf("/subscriptions/%s", integration.Primary),
-				"assignable_scopes": dataRMAllSubscriptions.TraverseRef("subscriptions[*]", "id"),
+				"assignable_scopes": varActiveSubscriptions.TraverseRef("[*]", "id"),
 			}),
 			tfgen.HclResourceWithGenericBlocks(customRolePermissionsBlock),
 		)
@@ -263,8 +271,8 @@ func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServ
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_definition_id": resourceRMCustomRoleDefinition.TraverseRef("role_definition_resource_id"),
 
-				"count":        tfgen.NewFuncCall("length", dataRMAllSubscriptions.TraverseRef("subscriptions")),
-				"scope":        dataRMAllSubscriptions.TraverseRef("subscriptions[count.index]", "id"),
+				"count":        tfgen.NewFuncCall("length", varActiveSubscriptions.TraverseRef()),
+				"scope":        varActiveSubscriptions.TraverseRef("[count.index]", "id"),
 				"principal_id": resourceADServicePrincipal.TraverseRef("object_id"),
 			}),
 		)

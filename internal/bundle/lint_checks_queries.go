@@ -177,32 +177,32 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []*Entry {
 	if q.Impact != nil {
 		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
-			Message:  fmt.Sprintf("Query variant '%s' must not define 'impact'", q.Uid),
-			Level:    LevelError,
+			Message:  fmt.Sprintf("Query variant '%s' should not define 'impact'", q.Uid),
+			Level:    LevelWarning,
 			Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
 		})
 	}
 	if q.Title != "" {
 		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
-			Message:  fmt.Sprintf("Query variant '%s' must not define 'title'", q.Uid),
-			Level:    LevelError,
+			Message:  fmt.Sprintf("Query variant '%s' should not define 'title'", q.Uid),
+			Level:    LevelWarning,
 			Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
 		})
 	}
 	if len(q.Tags) > 0 {
 		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
-			Message:  fmt.Sprintf("Query variant '%s' must not define 'tags'", q.Uid),
-			Level:    LevelError,
+			Message:  fmt.Sprintf("Query variant '%s' should not define 'tags'", q.Uid),
+			Level:    LevelWarning,
 			Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
 		})
 	}
 	if len(q.Variants) > 0 {
 		entries = append(entries, &Entry{
 			RuleID:   QueryVariantUsesNonDefaultFieldsRuleID,
-			Message:  fmt.Sprintf("Query variant '%s' must not define nested 'variants'", q.Uid),
-			Level:    LevelError,
+			Message:  fmt.Sprintf("Query variant '%s' should not define nested 'variants'", q.Uid),
+			Level:    LevelWarning,
 			Location: []Location{{File: ctx.FilePath, Line: q.FileContext.Line, Column: q.FileContext.Column}},
 		})
 	}
