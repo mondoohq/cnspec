@@ -13,8 +13,10 @@ import (
 
 func TestGenerateAwsHCL_KeyBased(t *testing.T) {
 	code, err := subject.GenerateAwsHCL(subject.AwsIntegration{
-		Name:  "test-key-integration",
-		Space: "space-123",
+		Name:      "test-key-integration",
+		Space:     "space-123",
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	})
 	assert.Nil(t, err)
 
@@ -27,6 +29,10 @@ func TestGenerateAwsHCL_KeyBased(t *testing.T) {
   }
 }
 
+provider "mondoo" {
+  space = "space-123"
+}
+
 variable "aws_access_key" {
   type        = string
   description = "AWS access key used for authentication"
@@ -37,10 +43,6 @@ variable "aws_secret_key" {
   type        = string
   description = "AWS secret key used for authentication"
   sensitive   = true
-}
-
-provider "mondoo" {
-  space = "space-123"
 }
 
 resource "mondoo_integration_aws" "this" {

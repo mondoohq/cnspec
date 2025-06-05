@@ -72,8 +72,8 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 			"name": integration.Name,
 			"credentials": tfgen.Attributes{
 				"key": map[string]interface{}{
-					"access_key": "var.aws_access_key",
-					"secret_key": "var.aws_secret_key",
+					"access_key": tfgen.CreateVariableReference("aws_access_key"),
+					"secret_key": tfgen.CreateVariableReference("aws_secret_key"),
 				},
 			},
 		}
