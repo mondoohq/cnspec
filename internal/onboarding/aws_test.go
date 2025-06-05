@@ -13,10 +13,8 @@ import (
 
 func TestGenerateAwsHCL_KeyBased(t *testing.T) {
 	code, err := subject.GenerateAwsHCL(subject.AwsIntegration{
-		Name:      "test-key-integration",
-		Space:     "space-123",
-		AccessKey: "AKIAXXXXXXXXXXXXXXXX",
-		SecretKey: "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+		Name:  "test-key-integration",
+		Space: "space-123",
 	})
 	assert.Nil(t, err)
 
@@ -29,6 +27,18 @@ func TestGenerateAwsHCL_KeyBased(t *testing.T) {
   }
 }
 
+variable "aws_access_key" {
+  type        = string
+  description = "AWS access key used for authentication"
+  sensitive   = true
+}
+
+variable "aws_secret_key" {
+  type        = string
+  description = "AWS secret key used for authentication"
+  sensitive   = true
+}
+
 provider "mondoo" {
   space = "space-123"
 }
@@ -36,8 +46,8 @@ provider "mondoo" {
 resource "mondoo_integration_aws" "this" {
   credentials = {
     key = {
-      access_key = "AKIAXXXXXXXXXXXXXXXX"
-      secret_key = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      access_key = var.aws_access_key
+      secret_key = var.aws_secret_key
     }
   }
   name = "test-key-integration"
@@ -79,9 +89,11 @@ resource "mondoo_integration_aws" "this" {
 	assert.Equal(t, expected, code)
 }
 
-func TestGenerateAwsHCL_ErrorsOnEmptyInput(t *testing.T) {
-	_, err := subject.GenerateAwsHCL(subject.AwsIntegration{})
+func TestGenerateAwsHCL_ErrorsOnNoAuthMethod(t *testing.T) {
+	_, err := subject.GenerateAwsHCL(subject.AwsIntegration{
+		Name: "test-integration",
+	})
 	if err == nil {
-		t.Fatal("expected error for empty AwsIntegration, got nil")
+		t.Fatal("expected error for no auth method selected, got nil")
 	}
 }

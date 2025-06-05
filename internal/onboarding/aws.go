@@ -57,12 +57,23 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 	var (
 		providerMondoo = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 
+		accessKeyVariable = tfgen.NewVariable("aws_access_key",
+			tfgen.HclVariableWithType("string"),
+			tfgen.HclVariableWithDescription("AWS access key used for authentication"),
+			tfgen.HclVariableWithSensitive(true),
+		)
+		secretKeyVariable = tfgen.NewVariable("aws_secret_key",
+			tfgen.HclVariableWithType("string"),
+			tfgen.HclVariableWithDescription("AWS secret key used for authentication"),
+			tfgen.HclVariableWithSensitive(true),
+		)
+
 		integrationKeyAttributes = tfgen.Attributes{
 			"name": integration.Name,
 			"credentials": tfgen.Attributes{
 				"key": map[string]interface{}{
-					"access_key": integration.AccessKey,
-					"secret_key": integration.SecretKey,
+					"access_key": "var.aws_access_key",
+					"secret_key": "var.aws_secret_key",
 				},
 			},
 		}
@@ -78,13 +89,13 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 	)
 
 	var resourceMondooIntegration *tfgen.HclResource
-	if integration.AccessKey != "" && integration.SecretKey != "" {
+	if integration.ExternalID != "" && integration.RoleArn != "" {
 		resourceMondooIntegration = tfgen.NewResource("mondoo_integration_aws", "this",
-			tfgen.HclResourceWithAttributes(integrationKeyAttributes),
+			tfgen.HclResourceWithAttributes(integrationRoleAttributes),
 		)
 	} else {
 		resourceMondooIntegration = tfgen.NewResource("mondoo_integration_aws", "this",
-			tfgen.HclResourceWithAttributes(integrationRoleAttributes),
+			tfgen.HclResourceWithAttributes(integrationKeyAttributes),
 		)
 	}
 
@@ -94,6 +105,18 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 	)
 	if err != nil {
 		return "", err
+	}
+
+	if integration.AccessKey != "" && integration.SecretKey != "" {
+		blocks, err = tfgen.ObjectsToBlocks(
+			providerMondoo,
+			accessKeyVariable,
+			secretKeyVariable,
+			resourceMondooIntegration,
+		)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	hclBlocks := tfgen.CombineHclBlocks(requiredProvidersBlock, blocks)
