@@ -65,11 +65,16 @@ var (
 		Short: "Onboard Amazon Web Services",
 		Long: `Use this command to connect your AWS environment into the Mondoo platform.
 		
-		To onboard your AWS account, you need to provide the AWS access key and secret key.
-		
-			cnspec integrate aws --access-key <access_key> --secret-key <secret_key>
+		To onboard your AWS account, you need to provide the AWS access key and secret key as environment variables:
 
-		Or you can provide the AWS role ARN and external ID to assume a role in another account:
+			export TF_VAR_aws_access_key=<access_key>
+			export TF_VAR_aws_secret_key=<secret
+		
+		Then run the command:
+		
+			cnspec integrate aws
+
+		Or you can provide the AWS role ARN and external ID to assume a role in another account (this has precedence over the access key and secret key):
 
 			cnspec integrate aws --role-arn <role_arn> --external-id <external_id>
 
