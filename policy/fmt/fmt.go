@@ -3,23 +3,16 @@
 
 package fmt
 
-import "go.mondoo.com/cnspec/v11/policy"
-import bundlefmt "go.mondoo.com/cnspec/v11/internal/bundle"
+import (
+	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v11/policy/tooling"
+)
 
+// Deprecated: use tooling.Format
 func ToFormattedYAML(p *policy.Bundle) ([]byte, error) {
 	data, err := p.ToYAML()
 	if err != nil {
 		return nil, err
 	}
-
-	b, err := bundlefmt.ParseYaml(data)
-	if err != nil {
-		return nil, err
-	}
-	fmtData, err := bundlefmt.FormatBundle(b, true)
-	if err != nil {
-		return nil, err
-	}
-
-	return fmtData, nil
+	return tooling.Format(data)
 }

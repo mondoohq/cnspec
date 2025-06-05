@@ -18,7 +18,61 @@ const (
 	sarifNone    = "none"
 )
 
+// Rule is used for SARIF output and listing available rules.
+// This structure matches the original LinterRules.
+type Rule struct {
+	ID          string
+	Name        string
+	Description string
+}
+
+// AllLinterRules dynamically generates the list of all linter rules
+// from registered checks and adds bundle-specific static rules.
+func sarifLinterRules() []Rule {
+	var rules []Rule
+
+	// Add rules from registered policy checks
+	for _, check := range GetPolicyLintChecks() {
+		rules = append(rules, Rule{
+			ID:          check.ID,
+			Name:        check.Name,
+			Description: check.Description,
+		})
+	}
+
+	// Add rules from registered query checks
+	for _, check := range GetQueryLintChecks() {
+		rules = append(rules, Rule{
+			ID:          check.ID,
+			Name:        check.Name,
+			Description: check.Description,
+		})
+	}
+
+	// Add bundle-level static rules (those not tied to a specific policy/query item)
+	// These were previously in LinterRules and are typically checked outside the item-loop.
+	rules = append(rules, Rule{
+		ID:          BundleCompileErrorRuleID, // Define these constants
+		Name:        "MQL compile error",
+		Description: "Could not compile the MQL bundle",
+	})
+	rules = append(rules, Rule{
+		ID:          BundleInvalidRuleID,
+		Name:        "Invalid bundle",
+		Description: "The bundle is not properly YAML formatted",
+	})
+	rules = append(rules, Rule{
+		ID:          BundleUnknownFieldRuleID,
+		Name:        "Bundle unknown field",
+		Description: "The bundle YAML contains fields not defined in the schema",
+	})
+	// Note: bundleInvalidUidRuleID is covered by specific policy/query UID checks.
+
+	return rules
+}
+
 func (r *Results) SarifReport(rootDir string) (*sarif.Report, error) {
+	linterRules := sarifLinterRules()
 	absRootPath, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, err
@@ -35,8 +89,8 @@ func (r *Results) SarifReport(rootDir string) (*sarif.Report, error) {
 
 	// create a new rule for each rule id
 	ruleIndex := map[string]int{}
-	for i := range LinterRules {
-		r := LinterRules[i]
+	for i := range linterRules {
+		r := linterRules[i]
 		run.AddRule(r.ID).
 			WithName(r.Name).
 			WithDescription(r.Description)

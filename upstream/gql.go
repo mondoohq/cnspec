@@ -33,6 +33,9 @@ func SearchPolicy(
 	includePublic,
 	includePrivate *bool,
 ) ([]*UpstreamPolicy, error) {
+	var policies []*UpstreamPolicy
+	var after *mondoogql.String = nil
+
 	var q struct {
 		Content struct {
 			TotalCount int `json:"totalCount"`
@@ -56,6 +59,7 @@ func SearchPolicy(
 		ScopeMrn:    mondoogql.String(scopeMrn),
 		CatalogType: mondoogql.CatalogType("POLICY"),
 	}
+
 	if assignedOnly != nil {
 		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
 	}
@@ -65,25 +69,43 @@ func SearchPolicy(
 	if includePrivate != nil {
 		input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
 	}
-	err := c.Query(ctx, &q, map[string]interface{}{
-		"input": input,
-	})
-	if err != nil {
-		return nil, err
+
+	for {
+		if after != nil {
+			input.After = after
+		} else {
+			input.After = nil
+		}
+
+		err := c.Query(ctx, &q, map[string]any{
+			"input": input,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, edge := range q.Content.Edges {
+			policies = append(policies, &UpstreamPolicy{
+				Policy: policy.Policy{
+					Mrn:  edge.Node.Policy.Mrn,
+					Name: edge.Node.Policy.Name,
+				},
+				TrustLevel: edge.Node.Policy.TrustLevel,
+				Action:     edge.Node.Policy.Action,
+				Assigned:   edge.Node.Policy.Assigned,
+			})
+		}
+
+		// Check if there are more pages
+		if !q.Content.PageInfo.HasNextPage {
+			break
+		}
+
+		// Set cursor for next page
+		afterCursor := mondoogql.String(q.Content.PageInfo.EndCursor)
+		after = &afterCursor
 	}
 
-	policies := make([]*UpstreamPolicy, 0, len(q.Content.Edges))
-	for _, edge := range q.Content.Edges {
-		policies = append(policies, &UpstreamPolicy{
-			Policy: policy.Policy{
-				Mrn:  edge.Node.Policy.Mrn,
-				Name: edge.Node.Policy.Name,
-			},
-			TrustLevel: edge.Node.Policy.TrustLevel,
-			Action:     edge.Node.Policy.Action,
-			Assigned:   edge.Node.Policy.Assigned,
-		})
-	}
 	return policies, nil
 }
 
