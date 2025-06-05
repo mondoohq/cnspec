@@ -4,6 +4,7 @@
 package providers
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,5 +73,18 @@ func TestScanFlags(t *testing.T) {
 		assert.Contains(t, string(r.Stderr()),
 			"could not read private key", // expected! it means we loaded the flags
 		)
+	})
+
+	t.Run("output contains no log messages", func(t *testing.T) {
+		r := test.NewCliTestRunner("./cnspec", "scan")
+		err := r.Run()
+		require.NoError(t, err)
+		assert.NotNil(t, r.Stdout())
+		assert.NotNil(t, r.Stderr())
+
+		// Verify that structured log entries (e.g., {"level": "debug", ...})
+		// are not leaked into the Stderr output
+		assert.NotContains(t, string(r.Stderr()), `"level":`,
+			fmt.Sprintf("output contains no log messages: %q\n", string(r.Stderr())))
 	})
 }
