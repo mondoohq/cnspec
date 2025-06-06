@@ -114,6 +114,9 @@ cnspec/dist/goreleaser/edge:
 
 test/lint: test/lint/golangci-lint/run
 
+test/lint/policies:
+	cnspec policies lint ./content
+
 test: test/go test/lint
 
 benchmark/go:

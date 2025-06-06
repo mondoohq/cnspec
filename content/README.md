@@ -162,4 +162,4 @@ Additional certified security and compliance policies can be found in the Policy
 
 ## License
 
-[Business Source License 1.1](LICENSE)
+[Business Source License 1.1](../LICENSE)
