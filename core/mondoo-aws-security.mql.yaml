@@ -4,7 +4,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 5.0.0
+    version: 5.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -18,19 +18,21 @@ policies:
 
         This policy provides security checks across key AWS services, uncovering misconfigurations that could put critical resources at risk, particularly those exposed to the public internet:
 
-        - Identity and Access Management (IAM)
-        - Lambda
-        - Simple Storage Service (S3)
-        - Virtual Private Cloud (VPCs)
+        - CloudTrail
+        - CloudWatch
         - DynamoDB
-        - Relational Database Service (RDS) & Redshift
         - Elastic Compute Cloud (EC2) instances & storage
         - Elastic File System (EFS)
-        - CloudWatch
+        - Elastic Kubernetes Service (EKS)
         - Elastic Load Balancers (ELBs)
         - Elasticsearch (OpenSearch Service)
+        - Identity and Access Management (IAM)
+        - Key Management Service (KMS)
+        - Lambda
+        - Relational Database Service (RDS) & Redshift
         - SageMaker
-        - CloudTrail
+        - Simple Storage Service (S3)
+        - Virtual Private Cloud (VPCs)
 
         ## Join the community!
 
@@ -116,8 +118,244 @@ policies:
         checks:
           - uid: mondoo-aws-security-cloud-trail-encryption-enabled
           - uid: mondoo-aws-security-cloud-trail-log-file-validation-enabled
+      - title: AWS EKS Cluster
+        checks:
+          - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
+          - uid: mondoo-aws-security-eks-cluster-private-controlplane
     scoring_system: highest impact
 queries:
+  - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
+    title: Ensure Amazon EKS clusters are configured to use AWS Key Management Service (KMS) for encryption of Kubernetes secrets
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-api
+      - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-hcl
+      - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-plan
+      - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon EKS clusters are configured to use AWS Key Management Service (KMS) for encryption of Kubernetes secrets. By default, EKS uses a default KMS key for encryption, but organizations can create and manage their own customer-managed keys (CMKs) for enhanced security and compliance.
+
+        **Why this matters**
+
+        Using KMS for encryption provides several benefits:
+
+        - **Data protection:** Secrets are encrypted at rest using strong encryption algorithms.
+        - **Access control:** Organizations can manage access to the KMS key using IAM policies.
+        - **Auditability:** AWS CloudTrail logs all KMS key usage, providing a detailed audit trail.
+
+        **Risk mitigation:**
+
+        - **Prevents unauthorized access:** Only authorized users and services can decrypt secrets.
+        - **Ensures compliance:** Meets regulatory requirements for data protection and encryption.
+        - **Enhances security posture:** Reduces the risk of data breaches and unauthorized access to sensitive information.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EKS Console.
+            2. Select the EKS cluster you want to configure.
+            3. In the Configuration tab, select Secrets Encryption.
+            4. Choose the option to use a custom KMS key.
+            5. Select or create a new KMS key for encryption.
+            6. Save the changes to apply the new configuration.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            To check if your EKS cluster is using a custom KMS key:
+
+            ```bash
+            aws eks describe-cluster --name <cluster_name> --query "cluster.encryptionConfig"
+            ```
+
+            If no custom KMS key is listed, you can update the cluster configuration:
+
+            ```bash
+            aws eks update-cluster-config --name <cluster_name> --resources-vpc-config <vpc_config> --encryption-config <kms_key_arn>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Define an EKS cluster with a custom KMS key in your Terraform configuration:
+
+            ```hcl
+            resource "aws_eks_cluster" "example" {
+              name     = "example-cluster"
+              role_arn = aws_iam_role.eks_role.arn
+
+              vpc_config {
+                subnet_ids = [aws_subnet.eks_subnet.id]
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Create an EKS cluster with a custom KMS key in your CloudFormation template:
+
+            ```yaml
+            Resources:
+              MyEKSCluster:
+                Type: AWS::EKS::Cluster
+                Properties:
+                  Name: example-cluster
+                  RoleArn: !GetAtt eksRole.Arn
+                  VpcConfig:
+                    SubnetIds:
+                      - !Ref eksSubnet
+                  EncryptionConfig:
+                    - Provider:
+                        KeyArn: !Ref myKmsKey
+                      Resources:
+                        - "*"
+            ```
+  - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-api
+    filters: asset.platform == "aws-eks-cluster"
+    mql: |
+      aws.eks.cluster.encryptionConfig != empty
+  - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ).any(
+        blocks.where( type == "encryption_config" ) {
+          blocks.where( type == "provider" ) {
+            arguments.key_arn != empty
+          }
+        }
+      )
+  - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
+    mql: |
+      eksPlan = terraform.plan.resourceChanges.where(type == "aws_eks_cluster").map(change.after.encryption_config).first
+      eksPlan.contains('provider') && eksPlan.contains('key_arn')
+  - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-state
+    filters: asset.platform == "terraform-state"
+    mql: |
+      eksState = terraform.state.resources.where(type == "aws_eks_cluster").map(values.encryption_config).first
+      eksState.contains('provider') && eksState.contains('key_arn')
+
+  - uid: mondoo-aws-security-eks-cluster-private-controlplane
+    title: Ensure Amazon EKS clusters are configured with private endpoint access only
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-eks-cluster-private-controlplane-api
+      - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-hcl
+      - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-plan
+      - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-state
+    docs:
+      refs:
+        - url: https://docs.aws.amazon.com/eks/latest/userguide/pod-networking.html
+          title: Amazon EKS - Pod networking
+        - url: https://docs.aws.amazon.com/eks/latest/userguide/networking-vpc.html
+          title: Amazon EKS - Networking in Amazon VPC
+      desc: |
+        This check ensures that Amazon EKS clusters are configured with private endpoint access. By default, EKS clusters are accessible over the public internet, which can expose them to potential attacks. Configuring private endpoint access restricts access to the cluster's API server to resources within the VPC.
+
+        **Why this matters**
+
+        - **Security:** Reduces the attack surface by preventing public access to the EKS control plane.
+        - **Compliance:** Meets security standards and best practices for cloud-native applications.
+        - **Network isolation:** Enhances network security by limiting access to trusted networks.
+
+        **Risk mitigation:**
+
+        - **Prevents unauthorized access:** Only resources within the VPC can communicate with the EKS control plane.
+        - **Enhances security posture:** Reduces the risk of data breaches and unauthorized access to sensitive information.
+        - **Improves compliance:** Aligns with security frameworks and regulations that require network isolation.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EKS Console.
+            2. Select the EKS cluster you want to configure.
+            3. In the Configuration tab, select Networking.
+            4. Under Cluster Endpoint Access, select Private and ensure Public access is disabled (unchecked).
+            5. Save the changes to apply the new configuration.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            To check if your EKS cluster is using private endpoint access and not public endpoint access:
+
+            ```bash
+            aws eks describe-cluster --name <cluster_name> --query "cluster.resourcesVpcConfig.{Private:endpointPrivateAccess, Public:endpointPublicAccess}"
+            ```
+
+            The output should show `"Private": true` and `"Public": false`.
+
+            If the output does not match, you can update the cluster configuration:
+
+            ```bash
+            aws eks update-cluster-config --name <cluster_name> --resources-vpc-config endpointPrivateAccess=true,endpointPublicAccess=false
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Define an EKS cluster with private endpoint access and public endpoint access disabled in your Terraform configuration:
+
+            ```hcl
+            resource "aws_eks_cluster" "example" {
+              name     = "example-cluster"
+              role_arn = aws_iam_role.eks_role.arn
+
+              vpc_config {
+                subnet_ids               = [aws_subnet.eks_subnet.id]
+                endpoint_private_access  = true
+                endpoint_public_access   = false
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Create an EKS cluster with private endpoint access in your CloudFormation template:
+
+            ```yaml
+            Resources:
+              MyEKSCluster:
+                Type: AWS::EKS::Cluster
+                Properties:
+                  Name: example-cluster
+                  RoleArn: !GetAtt eksRole.Arn
+                  VpcConfig:
+                    SubnetIds:
+                      - !Ref eksSubnet
+                    EndpointPrivateAccess: true
+                    EndpointPublicAccess: false
+            ```
+  - uid: mondoo-aws-security-eks-cluster-private-controlplane-api
+    filters: asset.platform == "aws-eks-cluster"
+    mql: |
+      aws.eks.cluster.resourcesVpcConfig.endpointPrivateAccess == true
+      aws.eks.cluster.resourcesVpcConfig.endpointPublicAccess == false
+  - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ).any(
+        blocks.where( type == "vpc_config" ) {
+          arguments.endpoint_private_access == false && arguments.endpoint_public_access == true
+          }
+        )
+  - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
+    mql: |
+      eksPlan = terraform.plan.resourceChanges.where(type == "aws_eks_cluster").map(change.after.vpc_config).flat
+      eksPlan.all(_['endpoint_private_access'] == true)
+      eksPlan.all(_['endpoint_public_access'] == false)
+  - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-state
+    filters: asset.platform == "terraform-state"
+    mql: |
+      eksState = terraform.state.resources.where(type == "aws_eks_cluster").map(values.vpc_config).flat
+      eksState.all(_['endpoint_private_access'] == true)
+      eksState.all(_['endpoint_public_access'] == false)
+
   - uid: mondoo-aws-security-iam-root-access-key-check
     title: Ensure no root user account access key exists
     impact: 85
@@ -243,8 +481,6 @@ queries:
       policyState = terraform.state.resources.where(type == "aws_iam_policy").map(values.policy).first
       policyState.contains('Action') && policyState.contains('iam:CreateAccessKey')
       policyState.contains('Effect') && policyState.contains('Deny')
-
-
 
   - uid: mondoo-aws-security-root-account-mfa-enabled
     title: Ensure MFA is enabled for the "root user" account
@@ -395,8 +631,6 @@ queries:
       policyState.contains('Effect') && policyState.contains('Deny')
       policyState.contains('Resource') && policyState.contains('"*"')
       policyState.contains('aws:MultiFactorAuthPresent') && policyState.contains('false')
-
-
 
   - uid: mondoo-aws-security-iam-password-policy
     title: Ensure strong account password policy requirements are used
@@ -592,8 +826,6 @@ queries:
         values.allow_users_to_change_password == true
       }
 
-
-
   - uid: mondoo-aws-security-access-keys-rotated
     title: Ensure IAM user access keys are rotated
     impact: 70
@@ -718,7 +950,6 @@ queries:
     mql: |
       creationDate = parse.date(terraform.state.resources.where(type == "aws_iam_access_key").map(values.create_date).first)
       time.now - creationDate
-
 
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access
     title: Ensure multi-factor authentication is enabled for all IAM users with console access
@@ -878,8 +1109,6 @@ queries:
         values.policy.contains('false')
       )
 
-
-
   - uid: mondoo-aws-security-iam-group-has-users-check
     title: Ensure IAM groups are utilized by assigning at least one user
     impact: 30
@@ -1024,8 +1253,6 @@ queries:
       terraform.state.resources.where(type == "aws_iam_group_membership").all(
         values.users != empty
       )
-
-
 
   - uid: mondoo-aws-security-iam-users-only-one-access-key
     title: Ensure there is only one active access key available for any single IAM user
@@ -1174,8 +1401,6 @@ queries:
         values.policy.contains('NumericGreaterThan') &&
         values.policy.contains('iam:AccessKeysCount')
       )
-
-
 
   - uid: mondoo-aws-security-iam-user-no-inline-policies-check
     title: Ensure IAM users receive permissions only through groups
@@ -1351,8 +1576,6 @@ queries:
     mql: |
       terraform.state.resources.none(type == "aws_iam_user_policy" || type == "aws_iam_user_policy_attachment")
 
-
-
   - uid: mondoo-aws-security-vpc-default-security-group-closed
     title: Ensure the default security group of every VPC restricts all traffic
     impact: 80
@@ -1488,7 +1711,6 @@ queries:
         values.ingress == empty && values.egress == empty
       )
 
-
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default
     title: Ensure EBS volume encryption is enabled by default
     impact: 90
@@ -1605,7 +1827,6 @@ queries:
       terraform.state.resources.where(type == "aws_ebs_encryption_by_default").all(
         values.enabled == true
       )
-
 
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access
     title: Ensure public access to S3 buckets is blocked at the account level
@@ -1735,8 +1956,6 @@ queries:
         values.block_public_policy == true &&
         values.restrict_public_buckets == true
       )
-
-
 
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited
     title: Ensure Amazon S3 buckets have public access restrictions enforced
@@ -1944,8 +2163,6 @@ queries:
       terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all( values.ignore_public_acls == true )
       terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all( values.restrict_public_buckets == true )
 
-
-
   - uid: mondoo-aws-security-ec2-instance-no-public-ip
     title: Ensure no public IPs are associated with EC2 instances
     impact: 80
@@ -2077,8 +2294,6 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_instance" )
     mql: terraform.state.resources.where( type == "aws_instance" ).none( values.associate_public_ip_address == true )
 
-
-
   - uid: mondoo-aws-security-ec2-imdsv2-check
     title: Ensure EC2 instances use IMDSv2 for metadata access
     impact: 90
@@ -2196,8 +2411,6 @@ queries:
   - uid: mondoo-aws-security-ec2-imdsv2-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_instance")
     mql: terraform.state.resources.where( type == "aws_instance" ).all( values.metadata_options[0].http_endpoint == "disabled" || values.metadata_options[0].http_tokens == "required" )
-
-
 
   - uid: mondoo-aws-security-vpc-bpa-enabled
     title: Ensure VPC Block Public Access (BPA) is enabled
@@ -2335,8 +2548,6 @@ queries:
     mql: |
       bpaState = terraform.state.resources.where( type == "aws_vpc_block_public_access_exclusion" )
       bpaState.any(values.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/)
-
-
 
   - uid: mondoo-aws-security-vpc-flow-logs-enabled
     title: Ensure VPC flow logging is enabled in all VPCs
@@ -2480,8 +2691,6 @@ queries:
       terraform.state.resources.where(type == "aws_flow_log").any(
         values.traffic_type == "ALL" || values.traffic_type == "REJECT" && values.log_destination_type ==  "cloud-watch-logs"
       )
-
-
 
   - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
     title: Ensure DynamoDB tables are encrypted with AWS Key Management Service (KMS)
@@ -2657,8 +2866,6 @@ queries:
         values.server_side_encryption.any(kms_key_arn != empty)
       )
 
-
-
   - uid: mondoo-aws-security-lambda-concurrency-check
     title: Ensure Lambda functions are configured with function-level concurrent execution limits
     impact: 60
@@ -2782,8 +2989,6 @@ queries:
         values.reserved_concurrent_executions > 0 &&
         values.reserved_concurrent_executions <= 100
       )
-
-
 
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited
     title: Ensure the attached policy attached to the lambda function prohibits public access
@@ -2926,8 +3131,6 @@ queries:
         values.principal == "*"
       )
 
-
-
   - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
     title: Ensure no pending OS upgrades are available for RDS instances
     impact: 90
@@ -3039,8 +3242,6 @@ queries:
   - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades-single
     filters: asset.platform == "aws-rds-dbinstance"
     mql: aws.rds.dbinstance.pendingMaintenanceActions == empty
-
-
 
   - uid: mondoo-aws-security-rds-instance-encryption-at-rest
     title: Ensure all RDS instances are enabled for encryption-at-rest
@@ -3195,8 +3396,6 @@ queries:
   - uid: mondoo-aws-security-rds-instance-encryption-at-rest-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_db_instance" )
     mql: terraform.state.resources.where( type == "aws_db_instance" ).all( values.storage_encrypted == true )
-
-
 
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl
     title: Ensure that encryption in transit is enabled for all RDS Clusters via cluster parameter groups
@@ -3383,9 +3582,6 @@ queries:
       terraform.state.resources.where(type == "aws_rds_cluster_parameter_group").where(values.family == /mysql/) {values.parameter.where(name == 'require_secure_transport') {value == "ON"} values.arn}
       terraform.state.resources.where(type == "aws_rds_cluster_parameter_group").where(values.family == /postgres/) {values.parameter.where(name == 'ssl') {value == 1} values.arn}
 
-
-
-
   - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
     title: Ensure no pending OS upgrades are available for RDS clusters
     impact: 90
@@ -3525,8 +3721,6 @@ queries:
     mql: |
       rdsArn = asset.ids.where(_ == /^arn/).first
       aws.rds.allPendingMaintenanceActions.where(resourceArn == rdsArn) == empty
-
-
 
   - uid: mondoo-aws-security-rds-cluster-encryption-at-rest
     title: Ensure all RDS clusters are set to be encrypted-at-rest
@@ -3720,8 +3914,6 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_rds_cluster" )
     mql: terraform.state.resources.where( type == "aws_rds_cluster" ).all( values.storage_encrypted == true )
 
-
-
   - uid: mondoo-aws-security-rds-cluster-public-access-check
     title: Ensure all RDS clusters are not publicly accessible
     impact: 100
@@ -3904,8 +4096,6 @@ queries:
         )
       )
 
-
-
   - uid: mondoo-aws-security-rds-instance-public-access-check
     title: Ensure all RDS instances are not publicly accessible
     impact: 100
@@ -4047,8 +4237,6 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_db_instance" )
     mql: terraform.state.resources.where( type == "aws_db_instance" ).all( values.publicly_accessible != true )
 
-
-
   - uid: mondoo-aws-security-redshift-cluster-public-access-check
     title: Ensure Redshift clusters are not publicly accessible
     impact: 95
@@ -4179,8 +4367,6 @@ queries:
   - uid: mondoo-aws-security-redshift-cluster-public-access-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_redshift_cluster" )
     mql: terraform.state.resources.where( type == "aws_redshift_cluster" ).all( values.publicly_accessible != true )
-
-
 
   - uid: mondoo-aws-security-ec2-volume-inuse-check
     title: Ensure EBS volumes attached to EC2 instances are configured for deletion on instance termination
@@ -4322,8 +4508,6 @@ queries:
         )
       )
 
-
-
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
     title: Ensure EBS snapshots are not publicly restorable
     impact: 80
@@ -4422,8 +4606,6 @@ queries:
         type == "aws_ebs_snapshot_block_public_access"
           && values.state == "block-all-sharing"
       )
-
-
 
   - uid: mondoo-aws-security-ebs-snapshot-encrypted
     title: Ensure EBS Snapshots are configured to be encrypted at-rest
@@ -4589,8 +4771,6 @@ queries:
       terraform.state.resources.where(type == "aws_ebs_snapshot").all(
         values.encrypted == true
       )
-
-
 
   - uid: mondoo-aws-security-ec2-encrypted-volumes
     title: Ensure attached EBS volumes are configured to be encrypted at-rest
@@ -4812,8 +4992,6 @@ queries:
         values.encrypted == true
       )
 
-
-
   - uid: mondoo-aws-security-efs-encrypted-check
     title: Ensure EFS is configured to encrypt file data using KMS
     impact: 75
@@ -4942,8 +5120,6 @@ queries:
         values.kms_key_id != empty
       )
 
-
-
   - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
     title: Ensure CloudWatch Logs are encrypted at rest using KMS CMKs
     impact: 70
@@ -5058,8 +5234,6 @@ queries:
       terraform.state.resources.where(type == "aws_cloudwatch_log_group").all(
         values.kms_key_id != empty
       )
-
-
 
   - uid: mondoo-aws-security-elb-security-policy-enabled
     title: Ensure Application Load Balancers have configured with a secure TLS security policy
@@ -5226,8 +5400,6 @@ queries:
       terraform.state.resources.where(type == "aws_lb_listener").all(
         values.ssl_policy.in(props.allowedTlsPoliciesAlb)
       )
-
-
 
   - uid: mondoo-aws-security-elb-ssl-listener
     title: Ensure Application Load Balancers are configured with HTTPS listeners
@@ -5418,8 +5590,6 @@ queries:
       terraform.state.resources.where(type == "aws_lb_listener").all(
         values.protocol == "HTTPS"
       )
-
-
 
   - uid: mondoo-aws-security-elb-logging-enabled
     title: Ensure Application Load Balancers have logging enabled
@@ -5627,8 +5797,6 @@ queries:
         )
       )
 
-
-
   - uid: mondoo-aws-security-elb-deletion-protection-enabled
     title: Ensure Application Load Balancers are configured with deletion protection enabled
     impact: 70
@@ -5750,8 +5918,6 @@ queries:
       terraform.state.resources.where(type == "aws_lb").all(
         values.enable_deletion_protection == true
       )
-
-
 
   - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
     title: Ensure Amazon OpenSearch Service domains are configured with encryption-at-rest
@@ -5882,8 +6048,6 @@ queries:
         )
       )
 
-
-
   - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
     title: Ensure rotation for customer-managed keys (CMKs) is enabled
     impact: 80
@@ -5988,8 +6152,6 @@ queries:
       terraform.state.resources.where(type == "aws_kms_key").all(
         values.enable_key_rotation == true
       )
-
-
 
   - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
     title: Ensure SageMaker notebook instances are configured to use KMS
@@ -6111,8 +6273,6 @@ queries:
       terraform.state.resources.where(type == "aws_sagemaker_notebook_instance").all(
         values.kms_key_id != empty
       )
-
-
 
   - uid: mondoo-aws-security-cloud-trail-log-file-validation-enabled
     title: Ensure CloudTrail log file validation is enabled
@@ -6294,8 +6454,6 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudtrail")
     mql: terraform.state.resources.where(type == "aws_cloudtrail").all(values.enable_log_file_validation == true)
 
-
-
   - uid: mondoo-aws-security-cloud-trail-encryption-enabled
     title: Ensure CloudTrail trails are configured to use the server-side encryption KMS
     impact: 70
@@ -6416,8 +6574,6 @@ queries:
       terraform.state.resources.where(type == "aws_cloudtrail").all(
         values.kms_key_id != empty
       )
-
-
 
   - uid: mondoo-aws-security-secgroup-restricted-ssh
     title: Ensure security groups restrict incoming SSH traffic
@@ -6555,8 +6711,6 @@ queries:
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_security_group")
     mql: terraform.state.resources.where( type == "aws_security_group" && values.ingress.contains( to_port == 22 ) ).none( values.ingress[0].cidr_blocks.contains("0.0.0.0/0") || values.ingress[0].cidr_blocks.contains("::/0"))
-
-
 
   - uid: mondoo-aws-security-secgroup-restricted-vnc
     title: Ensure security groups restrict incoming VNC traffic
@@ -6702,8 +6856,6 @@ queries:
         values.ingress[0].cidr_blocks.contains("0.0.0.0/0") || values.ingress[0].cidr_blocks.contains("::/0")
       )
 
-
-
   - uid: mondoo-aws-security-secgroup-restricted-rdp
     title: Ensure security groups restrict incoming RDP traffic
     impact: 90
@@ -6842,8 +6994,6 @@ queries:
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_security_group")
     mql: terraform.state.resources.where( type == "aws_security_group" && values.ingress.contains( to_port == 3389 ) ).none( values.ingress[0].cidr_blocks.contains("0.0.0.0/0") || values.ingress[0].cidr_blocks.contains("::/0"))
-
-
 
   - uid: mondoo-aws-security-secgroup-restrict-traffic
     title: Ensure security groups restrict access to specific IPs and ports
