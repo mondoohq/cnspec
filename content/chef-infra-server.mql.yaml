@@ -1,0 +1,493 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - uid: chef-infra-server
+    name: Chef Infra Server Policy
+    version: 1.2.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: linux
+    authors:
+      - name: Tim Smith
+        email: tim@mondoo.com
+    docs:
+      desc: |-
+        Chef Infra Server Policy identifies several misconfigurations and end of life components that allow attackers to expose node information:
+          - Insecure disk permissions on critical directories and configuration files.
+          - End of life components installed on the Chef Infra Server such as Push Jobs, Analytics, or Reporting, which no longer receive security updates.
+          - Insecure servers settings such non-secure TLS support or legacy add-on compatibility.
+
+        If you have questions, comments, or have identified ways to improve this policy, please write me at tim@mondoo.com, or reach out in the [Mondoo Slack Community](https://mondoo.link/slack).
+    groups:
+      - title: EOL components
+        filters: |
+          asset.family.contains('linux')
+          file("/opt/opscode").exists
+        checks:
+          - uid: eol-analytics-addon
+          - uid: eol-ha-addon
+          - uid: eol-push-jobs-addon
+          - uid: eol-reporting-addon
+          - uid: non-eol-infra-server
+      - title: Insecure configurations
+        filters: |
+          asset.family.contains('linux')
+          file("/opt/opscode").exists
+        checks:
+          - uid: disable-insecure-addon-compat
+          - uid: secure-tls-only
+      - title: Insecure permissions
+        filters: |
+          asset.family.contains('linux')
+          file("/opt/opscode").exists
+        checks:
+          - uid: chef-server-rb-permissions
+          - uid: webui-pem-permissions
+          - uid: etc-opscode-directory-permissions
+          - uid: pivotal-pem-permissions
+          - uid: secrets-file-permissions
+          - uid: remediate-cve-2023-28864
+queries:
+  - uid: etc-opscode-directory-permissions
+    title: Ensure /etc/opscode/ is owned by root:root with 755 permissions
+    impact: 80
+    mql: |
+      file("/etc/opscode") {
+        user.name == 'root'
+        group.name == 'root'
+        permissions.user_readable == true
+        permissions.user_writeable == true
+        permissions.user_executable == true
+        permissions.group_readable == true
+        permissions.group_writeable == false
+        permissions.group_executable == true
+        permissions.other_readable == true
+        permissions.other_writeable == false
+        permissions.other_executable == true
+      }
+    docs:
+      desc: |
+        The /etc/opscode directory contains sensitive files configuring Chef Infra Server should not be world writeable
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to set proper permissions on your /etc/opscode directory:
+
+            ```bash
+            chown root:root /etc/opscode
+            chmod 755 /etc/opscode
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to set the permissions on the /etc/opscode directory:
+
+            ```ruby
+            directory '/etc/opscode' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              action :create
+            end
+            ```
+  - uid: pivotal-pem-permissions
+    title: Ensure /etc/opscode/pivotal.pem is owned by opscode:root with 600 permissions
+    impact: 100
+    mql: |
+      file("/etc/opscode/pivotal.pem") {
+        user.name == 'opscode'
+        group.name == 'root'
+        permissions.user_readable == true
+        permissions.user_writeable == true
+        permissions.user_executable == false
+        permissions.group_readable == false
+        permissions.group_writeable == false
+        permissions.group_executable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+      }
+    docs:
+      desc: |
+        The /etc/opscode/pivotal.pem file gives super admin privileges on the Infra Server and should be properly secured.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to set proper permissions on your /etc/opscode/pivotal.pem file:
+
+            ```bash
+            chown opscode:root /etc/opscode/pivotal.pem
+            chmod 600 /etc/opscode/pivotal.pem
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to set the permissions on the /etc/opscode/pivotal.pem file:
+
+            ```ruby
+            file '/etc/opscode/pivotal.pem' do
+              owner 'opscode'
+              group 'root'
+              mode '0600'
+              action :create
+            end
+            ```
+  - uid: secrets-file-permissions
+    title: Ensure /etc/opscode/private-chef-secrets.json is owned by root:root with 600 permissions
+    impact: 100
+    mql: |
+      file("/etc/opscode/private-chef-secrets.json") {
+        user.name == 'root'
+        group.name == 'root'
+        permissions.user_readable == true
+        permissions.user_writeable == true
+        permissions.user_executable == false
+        permissions.group_readable == false
+        permissions.group_writeable == false
+        permissions.group_executable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+      }
+    docs:
+      desc: |
+        The /etc/opscode/private-chef-secrets.json stores all secrets for the running Infra Server configuration and should be properly secured.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to set proper permissions on your /etc/opscode/private-chef-secrets.json file:
+
+            ```bash
+            chown root:root /etc/opscode/private-chef-secrets.json
+            chmod 600 /etc/opscode/private-chef-secrets.json
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to set the permissions on the /etc/opscode/private-chef-secrets.json file:
+
+            ```ruby
+            file '/etc/opscode/private-chef-secrets.json' do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create
+            end
+            ```
+  - uid: webui-pem-permissions
+    title: Ensure /etc/opscode/webui_priv.pem is owned by opscode:root with 600 permissions
+    impact: 100
+    mql: |
+      if (file("/etc/opscode/webui_priv.pem").exists) {
+        file("/etc/opscode/webui_priv.pem") {
+          user.name == 'opscode'
+          group.name == 'root'
+          permissions.user_readable == true
+          permissions.user_writeable == true
+          permissions.user_executable == false
+          permissions.group_readable == false
+          permissions.group_writeable == false
+          permissions.group_executable == false
+          permissions.other_readable == false
+          permissions.other_writeable == false
+          permissions.other_executable == false
+        }
+      }
+    docs:
+      desc: |
+        The /etc/opscode/webui_priv.pem file gives super admin privileges on the Infra Server and should be properly secured.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to set proper permissions on your /etc/opscode/webui_priv.pem file:
+
+            ```bash
+            chown opscode:root /etc/opscode/webui_priv.pem
+            chmod 600 /etc/opscode/webui_priv.pem
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to set the permissions on the /etc/opscode/webui_priv.pem file:
+
+            ```ruby
+            file '/etc/opscode/webui_priv.pem' do
+              owner 'opscode'
+              group 'root'
+              mode '0600'
+              action :create
+            end
+            ```
+  - uid: chef-server-rb-permissions
+    title: Ensure /etc/opscode/chef-server.rb is owned by root:root with 640 permissions
+    impact: 100
+    mql: |
+      file("/etc/opscode/chef-server.rb") {
+        user.name == 'root'
+        group.name == 'root'
+        permissions.user_readable == true
+        permissions.user_writeable == true
+        permissions.user_executable == false
+        permissions.group_readable == true
+        permissions.group_writeable == false
+        permissions.group_executable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+      }
+    docs:
+      desc: The /etc/opscode/chef-server.rb configuration file contains sensitive Infra Server configuration information. It should be owned by root:root and permissions should be set to 640.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to set proper permissions on your /etc/opscode/chef-server.rb file:
+
+            ```bash
+            chown root:root /etc/opscode/chef-server.rb
+            chmod 640 /etc/opscode/chef-server.rb
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to set the permissions on the /etc/opscode/chef-server.rb file:
+
+            ```ruby
+            file '/etc/opscode/chef-server.rb' do
+              owner 'root'
+              group 'root'
+              mode '0640'
+              action :create
+            end
+            ```
+  - uid: non-eol-infra-server
+    title: Ensure a non-EOL Chef Infra Server release is used
+    impact: 100
+    mql: |
+      file("/opt/opscode/version-manifest.txt").content == /^chef-server (14|15|16|17)/
+    docs:
+      desc: Only the current major release of Chef Infra Server is supported. Prior releases do not receive security updates and should not be used in production environments.
+      remediation: Upgrade to a non-EOL release of Chef Infra Server. Note that this will require downtime for component upgrade processes.
+  - uid: eol-reporting-addon
+    title: Ensure EOL Reporting add-on package is not installed
+    impact: 80
+    mql: |
+      package("opscode-reporting").installed == false
+    docs:
+      desc: The Opscode Reporting add-on for Infra Server is EOL and no longer receives security updates.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to uninstall the Reporting package:
+
+            ```bash
+            chef-server-ctl uninstall opscode-reporting
+            chef-server-ctl reconfigure
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to uninstall the Reporting package:
+
+            ```ruby
+            package 'opscode-reporting' do
+              action :remove
+              notify :run, 'execute[reconfigure chef server]'
+            end
+
+            execute 'reconfigure chef server' do
+              command 'chef-server-ctl reconfigure'
+              action :nothing
+            end
+            ```
+  - uid: eol-push-jobs-addon
+    title: Ensure EOL Push Jobs Server add-on package is not installed
+    impact: 80
+    mql: |
+      package("opscode-push-jobs-server").installed == false
+    docs:
+      desc: Chef Push Jobs Server is EOL and no longer receives security updates.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to uninstall the Push Jobs Server package:
+
+            ```bash
+            chef-server-ctl uninstall opscode-push-jobs-server
+            chef-server-ctl reconfigure
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to uninstall the Push Jobs Server package:
+
+            ```ruby
+            package 'opscode-push-jobs-server' do
+              action :remove
+              notify :run, 'execute[reconfigure chef server]'
+            end
+
+            execute 'reconfigure chef server' do
+              command 'chef-server-ctl reconfigure'
+              action :nothing
+            end
+            ```
+  - uid: eol-analytics-addon
+    title: Ensure EOL Analytics add-on package is not installed
+    impact: 80
+    mql: |
+      package("opscode-analytics").installed == false
+    docs:
+      desc: Opscode Analytics is EOL and no longer receives security updates.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to uninstall the Opscode Analytics package:
+
+            ```bash
+            chef-server-ctl uninstall opscode-analytics
+            chef-server-ctl reconfigure
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to uninstall the Opscode Analytics package:
+
+            ```ruby
+            package 'opscode-analytics' do
+              action :remove
+              notify :run, 'execute[reconfigure chef server]'
+            end
+
+            execute 'reconfigure chef server' do
+              command 'chef-server-ctl reconfigure'
+              action :nothing
+            end
+            ```
+  - uid: eol-ha-addon
+    title: Ensure EOL Chef HA add-on package is not installed
+    impact: 80
+    mql: |
+      package("chef-ha").installed == false
+    docs:
+      desc: Chef HA is EOL and not longer receives security updates.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Run these commands to uninstall the Chef HA package:
+
+            ```bash
+            chef-server-ctl uninstall chef-ha
+            chef-server-ctl reconfigure
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to uninstall the Chef HA package:
+
+            ```ruby
+            package 'chef-ha' do
+              action :remove
+              notify :run, 'execute[reconfigure chef server]'
+            end
+
+            execute 'reconfigure chef server' do
+              command 'chef-server-ctl reconfigure'
+              action :nothing
+            end
+            ```
+  - uid: secure-tls-only
+    title: Ensure TLS versions before 1.2 are disabled
+    impact: 90
+    mql: |
+      file("/var/opt/opscode/nginx/etc/chef_https_lb.conf").content.contains("ssl_protocols TLSv1.2;")
+    docs:
+      desc: Chef Infra Server should be configured to only support modern TLS versions (currently 1.2 only as 1.3 is not supported)
+      remediation: Upgrade to Chef Infra Server 14.3.14 or later where this setting becomes the default.
+  - uid: disable-insecure-addon-compat
+    title: Disable insecure_addon_compat feature
+    impact: 90
+    mql: |
+      file("/etc/opscode/chef-server.rb").content.contains("insecure_addon_compat false")
+    docs:
+      desc: Chef Infra Server provides backwards compatibility for legacy Infra Server add-ons that require less secure secrets storage. All currently supported add-ons currently support secure secrets management.
+      remediation: Upgrade to Chef Manage 2.5 or later and set `insecure_addon_compat false` in the `chef-server.rb` config.
+  - uid: remediate-cve-2023-28864
+    title: Remediate against CVE-2023-28864
+    impact: 100
+    mql: |
+      file("/var/opt/opscode/local-mode-cache/backup") {
+        user.name == 'root'
+        group.name == 'root'
+        permissions.user_readable == true
+        permissions.user_writeable == true
+        permissions.group_readable == false
+        permissions.group_writeable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+      }
+    docs:
+      desc: |
+        Remediate against Chef Infra Server CVE-2023-28864 present in Chef Infra Server 12.0 - 15.6.2. This vulnerability allows a local attacker to exploit an insecure temporary backup path to access information that would otherwise be restricted, resulting in the disclosure of all indexed node data on the server.
+
+        If a Chef Infra Server admin runs `chef-server-ctl reconfigure` to change any setting in their server, Chef Infra Client is executed to make the change on disk. This execution of Chef Infra Client makes backups of configuration files that were updated as part of the configuration update. These backups are stored in a world-readable directory, retaining the original file permissions from their original, pre-backup, path. Chef Infra Server relies on parent directory permissions to secure the Erchef configuration file, which has 644 file permissions. When backed up, this file can be read by any user in the insecure backup directory.
+
+        The Erchef configuration file contains the credentials for the embedded Elasticsearch or OpenSearch servers used by Chef Infra Server to store information on all nodes under management. This data includes information on servers such as local users/groups, IP addresses, installed packages, running processes, and cloud metadata such as roles.
+      remediation:
+        - id: cli
+          desc: |
+            Run these commands to set proper permissions on your /var/opt/opscode/local-mode-cache/backup directory:
+
+            ```bash
+            sudo chown root:root /var/opt/opscode/local-mode-cache/backup
+            sudo chmod 700 /var/opt/opscode/local-mode-cache/backup
+            ```
+
+            Note: Chef Infra Server 15.7 and later automatically set the configuration backup path to `600` permissions on each `chef-server-ctl` execution.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this recipe code to set the permissions on the /var/opt/opscode/local-mode-cache/backup directory:
+
+            ```ruby
+            directory '/var/opt/opscode/local-mode-cache/backup' do
+              owner 'root'
+              group 'root'
+              mode '0700'
+              action :create
+            end
+            ```
+
+            Note: Chef Infra Server 15.7 and later automatically set the configuration backup path to `600` permissions on each `chef-server-ctl` execution.
+    refs:
+      - url: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-28864
+        title: CVE-2023-28864

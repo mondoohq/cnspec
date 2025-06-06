@@ -1,0 +1,2446 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-macos-security
+    name: Mondoo macOS Security
+    version: 1.3.1
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: macos
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |-
+        This policy provides prescriptive guidance for establishing a secure configuration posture for Apple macOS. This guide was tested against Apple macOS 10.15, 11, 12, 13, and 14.
+
+        ## Local scan
+
+        Local scan refer to scans of files and operating systems where cnspec is installed.
+
+        To scan the `localhost` against this policy:
+
+        ```bash
+        cnspec scan local
+        ```
+
+        ## Remote scan
+
+        Remote scans use cnspec providers to retrieve on-demand scan results without having to install any agents.
+
+        ### Prerequisites
+
+        Remote scans of macOS hosts requires **Remote login** to be enabled in the System Preferences, along with a suitable authentication method such as SSH keys.
+
+        ### Scan a remote macOS (SSH authentication)
+
+        ```bash
+        cnspec scan ssh <user>@<IP_ADDRESS> -i /path/to/ssh_key
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+        If you have any suggestions for how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
+    groups:
+      - title: Core
+        filters: |
+          asset.platform == "macos"
+        checks:
+          - uid: mondoo-macos-security-disable-bluetooth-sharing
+          - uid: mondoo-macos-security-disable-bonjour-advertising-service
+          - uid: mondoo-macos-security-disable-content-caching
+          - uid: mondoo-macos-security-disable-file-sharing
+          - uid: mondoo-macos-security-disable-internet-sharing
+          - uid: mondoo-macos-security-disable-media-sharing
+          - uid: mondoo-macos-security-disable-printer-sharing
+          - uid: mondoo-macos-security-disable-remote-apple-events
+          - uid: mondoo-macos-security-disable-remote-login
+          - uid: mondoo-macos-security-disable-remote-management
+          - uid: mondoo-macos-security-disable-screen-sharing
+          - uid: mondoo-macos-security-enable-filevault
+          - uid: mondoo-macos-security-enable-firewall
+          - uid: mondoo-macos-security-enable-firewall-stealth-mode
+          - uid: mondoo-macos-security-enable-gatekeeper
+          - uid: mondoo-macos-security-enable-show-wifi-status
+          - uid: mondoo-macos-security-ensure-airdrop-is-disabled
+          - uid: mondoo-macos-security-ensure-http-server-is-not-running
+          - uid: mondoo-macos-security-ensure-nfs-server-is-not-running
+          - uid: mondoo-macos-security-software-updates-automatic-check-enabled
+          - uid: mondoo-macos-security-software-updates-automatic-download
+          - uid: mondoo-macos-security-software-updates-install-critical-updates
+          - uid: mondoo-macos-security-ensure-macos-is-up-to-date
+      - title: Account Security
+        filters: |
+          asset.platform == "macos"
+        checks:
+          - uid: mondoo-macos-security-do-not-enable-the-root-account
+          - uid: mondoo-macos-security-password-age
+          - uid: mondoo-macos-security-password-history
+          - uid: mondoo-macos-security-reduce-the-sudo-timeout-period
+          - uid: mondoo-macos-security-set-a-minimum-password-length
+      - title: Logging
+        filters: |
+          asset.platform == "macos"
+        checks:
+          - uid: mondoo-macos-security-control-access-to-audit-records
+          - uid: mondoo-macos-security-enable-security-auditing
+          - uid: mondoo-macos-security-ensure-firewall-is-configured-to-log
+          - uid: mondoo-macos-security-ensure-security-auditing-retention
+          - uid: mondoo-macos-security-retain-install-log-for-365-or-more-days
+queries:
+  - uid: mondoo-macos-security-control-access-to-audit-records
+    title: Control access to audit records
+    impact: 40
+    mql: |
+      auditControlPath = [
+        "/etc/security/audit_control",
+      ]
+      auditControlPath.where(file(_).exists) {
+        file(_) {
+        path
+        permissions.user_readable
+        permissions.user_writeable
+        permissions.user_executable == false
+
+        permissions.group_writeable == false
+        permissions.group_executable == false
+
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+
+        user.name == "root"
+        group.name == "wheel"
+        }
+      }
+      files.find(from: "/var/audit/", type: "file,dir", xdev: false).all(user.name == "root" && group.name == "wheel" && permissions.other_readable == false && permissions.other_writeable == false && permissions.other_executable == false)
+    docs:
+      desc: |
+        This check ensures that the audit system on macOS is properly configured to protect critical operational and security information. The audit logs and configuration files should be owned by the root user and the wheel group, with strict read-only permissions to prevent unauthorized access or tampering.
+
+        **Why this matters**
+
+        The macOS audit system records important security and operational events, which can be valuable for detecting anomalies, investigating incidents, and maintaining system integrity. However, these logs can also be a target for attackers seeking to obfuscate their actions or gain unauthorized access.
+
+        By ensuring that the `/etc/security/audit_control` configuration file and the files in `/var/audit` are owned by root and the wheel group, with no access granted to other users, the risk of unauthorized access or tampering is minimized. This configuration supports a defense-in-depth strategy by safeguarding critical audit records.
+
+        Properly securing audit logs contributes to:
+          - Enhanced system integrity and trustworthiness
+          - Improved incident response and forensic capabilities
+          - Compliance with security best practices and standards
+
+        Without these protections, audit logs may be vulnerable to unauthorized changes, undermining their reliability and the overall security posture of the system.
+      remediation: |-
+        Perform the following steps to secure the audit logs and configuration files:
+
+        1. Set the ownership of the `/etc/security/audit_control` file to root and the wheel group:
+
+           ```bash
+           sudo chown root:wheel /etc/security/audit_control
+           ```
+
+        2. Restrict permissions on the `/etc/security/audit_control` file to read-only for the owner:
+
+           ```bash
+           sudo chmod 600 /etc/security/audit_control
+           ```
+
+        3. Set the ownership of the `/var/audit` directory and its contents to root and the wheel group:
+
+           ```bash
+           sudo chown -R root:wheel /var/audit/
+           ```
+
+        4. Restrict permissions on the `/var/audit` directory and its contents to read-only for the owner:
+
+           ```bash
+           sudo chmod -R 600 /var/audit/
+           ```
+
+        **Note:**
+        Before applying these changes, verify the current access controls and investigate any unexpected modifications to the audit logs. If unauthorized changes are detected and cannot be traced, consider reinstalling the system to ensure its integrity.
+
+        **Impact:**
+
+        Securing audit logs prevents unauthorized access and tampering, ensuring the reliability of audit records for security monitoring and forensic analysis. However, improper permissions may disrupt legitimate access for system processes, so changes should be tested in a controlled environment before deployment.
+  - uid: mondoo-macos-security-disable-bluetooth-sharing
+    title: Disable Bluetooth Sharing
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist"
+        filePathsLocations = [filePath1]
+        filePathsLocations.where(file(_).exists) {
+          parse.plist(_) {
+            params['PrefKeyServicesEnabled'] == false || params['PrefKeyServicesEnabled'] == null
+          }
+        }
+      }
+    docs:
+      desc: |-
+        This check ensures that Bluetooth Sharing is disabled on macOS systems. Bluetooth Sharing allows files to be exchanged with Bluetooth-enabled devices, which can pose a security risk if not properly managed.
+
+        **Why this matters**
+
+        Bluetooth Sharing enables file transfers between macOS devices and other Bluetooth-enabled devices. While this feature can be convenient, it also introduces potential vulnerabilities, such as unauthorized access to shared files or exploitation of Bluetooth-related security flaws.
+
+        Disabling Bluetooth Sharing reduces the attack surface of the system by preventing unauthorized file exchanges and mitigating risks associated with Bluetooth-based exploits. This is particularly important in environments where sensitive data is handled or where devices are exposed to untrusted networks.
+
+        By ensuring Bluetooth Sharing is disabled, organizations can enhance the security posture of macOS systems and align with best practices for minimizing unnecessary services and features that could be exploited by attackers.     remediation: |-
+
+      remediation: |-
+        Perform the following steps to disable Bluetooth Sharing:
+
+        _Graphical Method:_
+
+        1. Open System Preferences
+        2. Select Sharing
+        3. Uncheck Bluetooth Sharing
+
+        _Terminal Method:_
+
+        Run the following command to disable Bluetooth Sharing for a specific user:
+
+        ```bash
+        sudo -u <username> defaults -currentHost write com.apple.Bluetooth PrefKeyServicesEnabled -bool false
+        ```
+
+        _Example:_
+
+        ```bash
+        sudo -u firstuser defaults -currentHost write com.apple.Bluetooth PrefKeyServicesEnabled -bool false
+        ```
+  - uid: mondoo-macos-security-disable-bonjour-advertising-service
+    title: Disable Bonjour advertising service
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.mDNSResponder"]["NoMulticastAdvertisements"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.mDNSResponder.plist"
+        b = file(filePath2).exists && parse.plist(filePath2).params["com.apple.mDNSResponder"]["NoMulticastAdvertisements"]["value"] == true
+        filePath3 = "/Library/Managed Preferences/com.apple.mDNSResponder.plist"
+        c = file(filePath3).exists && parse.plist(filePath3).params["NoMulticastAdvertisements"] == true
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that the Bonjour advertising service is disabled on macOS systems to reduce unnecessary network traffic and potential exposure.
+
+        **Why this matters**
+
+        Bonjour is an auto-discovery mechanism for TCP/IP devices that enumerates devices and services within a local subnet. While DNS on macOS is integrated with Bonjour and should not be turned off, the Bonjour advertising service can be disabled to minimize risks.
+
+        Bonjour advertising allows macOS devices to broadcast their presence and services on a local network. While this can be useful in certain environments, it may also expose the system to unnecessary risks, such as unauthorized access or network enumeration by malicious actors.
+
+        By disabling Bonjour advertising, organizations can:
+          - Reduce the attack surface of the system
+          - Limit the visibility of services to other devices on the network
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Bonjour advertising may inadvertently expose the system to potential threats, undermining its overall security posture.     remediation: |-
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Bonjour advertising services:
+
+            ```bash
+            sudo defaults write /Library/Preferences/com.apple.mDNSResponder.plist NoMulticastAdvertisements -bool true
+            ```
+
+            **Impact:**
+
+            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if the `mDNSResponder` is turned off.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            Perform the following to disable Bonjour advertising services:
+
+            _Graphical Method:_
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Bonjour** or any related service that advertises via Bonjour
+
+            **Impact:**
+
+            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if the `mDNSResponder` is turned off.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Bonjour advertising services using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Bonjour advertising services
+              hosts: all
+              tasks:
+                - name: Disable Bonjour advertising
+                  command: defaults write /Library/Preferences/com.apple.mDNSResponder.plist NoMulticastAdvertisements -bool true
+            ```
+
+            **Impact:**
+
+            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if the `mDNSResponder` is turned off.
+  - uid: mondoo-macos-security-disable-content-caching
+    title: Disable Content Caching
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.applicationaccess"]["allowContentCaching"]["value"] == false &&
+            parse.plist(filePath1).params["com.apple.AssetCache"]["Activated"]["value"] == false
+        }
+        filePath2 = "/Library/Preferences/com.apple.AssetCache.plist"
+        filePath3 = "/Library/Preferences/com.apple.applicationaccess.plist"
+        b = file(filePath2).exists &&
+          parse.plist(filePath2).params["Activated"] == false &&
+            file(filePath3).exists &&
+              parse.plist(filePath3).params["allowContentCaching"] == false
+        a || b
+      }
+    docs:
+      desc: |
+        This check ensures that Content Caching is disabled on macOS systems to prevent unnecessary resource usage and potential security risks associated with local content distribution.
+
+        **Why this matters**
+
+        Content Caching is a service introduced in macOS High Sierra (10.13) to reduce bandwidth usage by caching software updates and other Apple-provided content on local networks. While this feature can be beneficial in specific scenarios, it may introduce unnecessary complexity and resource usage in environments where such caching is not required.
+
+        By disabling Content Caching, organizations can ensure that macOS devices do not act as local content distribution nodes unless explicitly required. This reduces the attack surface, minimizes resource overhead, and aligns with best practices for securing macOS systems.
+
+        Properly managing Content Caching contributes to:
+          - Reduced network complexity and resource usage
+          - Prevention of unauthorized content distribution
+          - Compliance with security best practices and organizational policies
+
+        Without these protections, Content Caching may inadvertently expose sensitive data or consume unnecessary resources, undermining the overall security and efficiency of the system.     remediation: |-
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Content Caching:
+
+            ```bash
+            sudo AssetCacheManagerUtil deactivate
+            ```
+
+            The output will include `Content caching deactivated`.
+
+            **Impact:**
+
+            Disabling Content Caching may increase bandwidth usage between local subnets and the internet, particularly when downloading large updates or content from Apple servers.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Content Caching**
+
+            **Impact:**
+
+            Disabling Content Caching may increase bandwidth usage between local subnets and the internet, particularly when downloading large updates or content from Apple servers.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Content Caching using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Content Caching
+              hosts: all
+              tasks:
+                - name: Disable Content Caching
+                  command: AssetCacheManagerUtil deactivate
+            ```
+
+            **Impact:**
+
+            Disabling Content Caching may increase bandwidth usage between local subnets and the internet, particularly when downloading large updates or content from Apple servers.
+  - uid: mondoo-macos-security-disable-file-sharing
+    title: Disable File Sharing
+    impact: 60
+    mql: services.where( name == 'com.apple.smbd' ).all( enabled == false && running == false )
+    docs:
+      desc: |
+        This check ensures that SMB file sharing is disabled on macOS systems to reduce the attack surface and enhance security.
+
+        **Why this matters**
+
+        SMB (Server Message Block) is a protocol used for file sharing, commonly utilized by Windows and Linux systems to access shared files on a Mac. While SMB can be convenient, it stores passwords in a less secure manner compared to AFP, potentially exposing sensitive information.
+
+        By disabling SMB file sharing, the system minimizes the risk of unauthorized access and mitigates potential vulnerabilities associated with the protocol. This aligns with best practices for reducing unnecessary services and features that could be exploited by attackers.
+
+        Disabling SMB file sharing contributes to:
+          - Enhanced system security by reducing the attack surface
+          - Prevention of unauthorized access to shared files
+          - Compliance with security best practices and organizational policies
+
+        Without these protections, SMB file sharing could expose sensitive data and increase the risk of exploitation, undermining the overall security posture of the system.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable SMB file sharing:
+
+            ```bash
+            sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist
+            ```
+
+            **Impact:**
+
+            Disabling File Sharing prevents the system from being used as a file server, reducing its visibility and potential attack surface. For environments requiring file sharing, hardened servers should be used instead of user endpoints.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **File Sharing**
+
+            **Impact:**
+
+            Disabling File Sharing prevents the system from being used as a file server, reducing its visibility and potential attack surface. For environments requiring file sharing, hardened servers should be used instead of user endpoints.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable File Sharing using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable File Sharing
+              hosts: all
+              tasks:
+                - name: Disable File Sharing
+                  command: launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist
+            ```
+
+            **Impact:**
+
+            Disabling File Sharing prevents the system from being used as a file server, reducing its visibility and potential attack surface. For environments requiring file sharing, hardened servers should be used instead of user endpoints.
+  - uid: mondoo-macos-security-disable-internet-sharing
+    title: Disable Internet Sharing
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Preferences/SystemConfiguration/com.apple.nat.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params['NAT']['Enabled'] == 0
+        }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+          parse.plist(filePath2).params["com.apple.MCX"]["forceInternetSharingOff"]["value"] == true
+        }
+        filePath3 = "/Library/Managed Preferences/com.apple.MCX.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['forceInternetSharingOff'] == true
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that Internet Sharing is disabled on macOS systems to prevent unauthorized devices from accessing the network through the Mac. Internet Sharing allows the Mac to function as a router, sharing its internet connection with other devices, which can pose security risks.
+
+        **Why this matters**
+
+        Internet Sharing uses the open source `natd` process to share an internet connection with other computers and devices on a local network. While this feature can be convenient in certain scenarios, it introduces potential vulnerabilities by exposing the Mac and its connected networks to unauthorized access.
+
+        By disabling Internet Sharing, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized devices from accessing the network
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Internet Sharing may inadvertently expose the system and its networks to potential threats, undermining their overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Internet Sharing:
+
+            ```bash
+            sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.nat NAT -dict Enabled -int 0
+            ```
+
+            **Impact:**
+
+            Disabling Internet Sharing prevents the system from being used as a router, reducing its visibility and potential attack surface. For environments requiring internet sharing, dedicated routers or firewalls should be used instead of user endpoints.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Internet Sharing**
+
+            **Impact:**
+
+            Disabling Internet Sharing prevents the system from being used as a router, reducing its visibility and potential attack surface. For environments requiring internet sharing, dedicated routers or firewalls should be used instead of user endpoints.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Internet Sharing using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Internet Sharing
+              hosts: all
+              tasks:
+                - name: Disable Internet Sharing
+                  command: defaults write /Library/Preferences/SystemConfiguration/com.apple.nat NAT -dict Enabled -int 0
+            ```
+
+            **Impact:**
+
+            Disabling Internet Sharing prevents the system from being used as a router, reducing its visibility and potential attack surface. For environments requiring internet sharing, dedicated routers or firewalls should be used instead of user endpoints.
+  - uid: mondoo-macos-security-disable-media-sharing
+    title: Disable Media Sharing
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath = home + '/Library/Preferences/com.apple.amp.mediasharingd.plist'
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+            parse.plist(filePath).params['home-sharing-enabled'] == 0
+          }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+            parse.plist(filePath2).params["com.apple.preferences.sharing.SharingPrefsExtension"]["homeSharingUIStatus"]["value"] == 0
+          }
+        filePath3 = "/Library/Managed Preferences/com.apple.preferences.sharing.SharingPrefsExtension.plist"
+        c = file(filePath3).exists && parse.plist(filePath3).params["homeSharingUIStatus"] == 0
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that Media Sharing is disabled on macOS systems to prevent unauthorized access to shared media content. Media Sharing allows a Mac to share downloaded content, such as movies, music, or TV shows, with other Apple devices signed in with the same Apple ID or on the same network.
+
+        **Why this matters**
+
+        Media Sharing enables a Mac to act as a server for Apple-downloaded content, allowing other devices to access pre-downloaded media. While this feature can be convenient, it introduces potential vulnerabilities by exposing media content to unauthorized devices on the same network.
+
+        By disabling Media Sharing, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized access to shared media
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Media Sharing may inadvertently expose sensitive content or allow unauthorized devices to access shared media, undermining the overall security posture of the system.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Media Sharing:
+
+            ```bash
+            sudo -u <username> defaults write com.apple.amp.mediasharingd home-sharing-enabled -int 0
+            ```
+
+            **Impact:**
+
+            Disabling Media Sharing prevents the system from being used as a media server, reducing its visibility and potential attack surface. For environments requiring media sharing, dedicated servers should be used instead of user endpoints.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Media Sharing**
+
+            **Impact:**
+
+            Disabling Media Sharing prevents the system from being used as a media server, reducing its visibility and potential attack surface. For environments requiring media sharing, dedicated servers should be used instead of user endpoints.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Media Sharing using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Media Sharing
+              hosts: all
+              tasks:
+                - name: Disable Media Sharing
+                  command: defaults write com.apple.amp.mediasharingd home-sharing-enabled -int 0
+            ```
+  - uid: mondoo-macos-security-disable-printer-sharing
+    title: Disable Printer Sharing
+    impact: 20
+    mql: command('cupsctl | grep _share_printers' ).stdout.contains("_share_printers=0")
+    docs:
+      desc: |
+        This check ensures that Printer Sharing is disabled on macOS systems to prevent the computer from being used as a print server. Printer Sharing allows other computers to send print jobs to the Mac, which can pose security risks and increase the attack surface.
+
+        **Why this matters**
+
+        By enabling Printer Sharing, the computer is set up as a print server to accept print jobs from other computers. While this feature can be useful in certain scenarios, it introduces potential vulnerabilities by exposing the system to unauthorized access or misuse.
+
+        Disabling Printer Sharing ensures that:
+          - The system is not unnecessarily exposed to network-based attacks
+          - Print jobs are handled by dedicated print servers or direct IP printing
+          - The overall security posture of the system is enhanced
+
+        Without these protections, Printer Sharing may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Printer Sharing:
+
+            ```bash
+            sudo cupsctl --no-share-printers
+            ```
+
+            **Impact:**
+
+            Disabling Printer Sharing prevents the system from being used as a print server. For environments requiring shared printing, dedicated print servers or direct IP printing should be used instead.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Printer Sharing**
+
+            **Impact:**
+
+            Disabling Printer Sharing prevents the system from being used as a print server. For environments requiring shared printing, dedicated print servers or direct IP printing should be used instead.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Printer Sharing using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Printer Sharing
+              hosts: all
+              tasks:
+                - name: Disable Printer Sharing
+                  command: cupsctl --no-share-printers
+            ```
+
+            **Impact:**
+
+            Disabling Printer Sharing prevents the system from being used as a print server. For environments requiring shared printing, dedicated print servers or direct IP printing should be used instead.
+  - uid: mondoo-macos-security-disable-remote-apple-events
+    title: Disable Remote Apple Events
+    impact: 50
+    mql: macos.systemsetup.remoteAppleEvents == "Off"
+    docs:
+      desc: |
+        This check ensures that Remote Apple Events are disabled on macOS systems to prevent unauthorized programs from interacting with the local computer. Remote Apple Events allow a program on one computer to communicate with a program on another computer, which can pose security risks.
+
+        **Why this matters**
+
+        Remote Apple Events enable AppleScript programs running on one Mac to interact with another Mac. While this feature can be useful in certain scenarios, it introduces potential vulnerabilities by exposing the system to unauthorized access or misuse.
+
+        By disabling Remote Apple Events, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized programs from interacting with the local computer
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Remote Apple Events may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Remote Apple Events:
+
+            ```bash
+            sudo systemsetup -setremoteappleevents off
+            ```
+
+            **Impact:**
+
+            With Remote Apple Events enabled, an AppleScript program running on another Mac can interact with the local computer, potentially leading to unauthorized access or misuse.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Remote Apple Events**
+
+            **Impact:**
+
+            With Remote Apple Events enabled, an AppleScript program running on another Mac can interact with the local computer, potentially leading to unauthorized access or misuse.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Remote Apple Events using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Remote Apple Events
+              hosts: all
+              tasks:
+                - name: Disable Remote Apple Events
+                  command: systemsetup -setremoteappleevents off
+            ```
+
+            **Impact:**
+
+            With Remote Apple Events enabled, an AppleScript program running on another Mac can interact with the local computer, potentially leading to unauthorized access or misuse.
+  - uid: mondoo-macos-security-disable-remote-login
+    title: Disable Remote Login
+    impact: 60
+    mql: macos.systemsetup.remoteLogin == "Off"
+    docs:
+      desc: |
+        This check ensures that Remote Login is disabled on macOS systems to prevent unauthorized access to the system via SSH.
+
+        **Why this matters**
+
+        Remote Login enables the SSH server built into macOS, allowing remote terminal connections to the computer. While this feature can be useful for administrative purposes, it introduces potential vulnerabilities by exposing the system to unauthorized access or brute force attacks.
+
+        By disabling Remote Login, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized remote access
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Remote Login may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Remote Login:
+
+            ```bash
+            sudo systemsetup -setremotelogin off
+            ```
+
+            **Impact:**
+
+            Disabling Remote Login prevents the use of the SSH server on macOS. For systems requiring SSH access, ensure proper hardening measures are in place, such as restricting access to trusted IP addresses and using secure authentication methods. Standard user computers should not act as servers, especially in environments where they frequently change locations or IP addresses.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Remote Login**
+
+            **Impact:**
+
+            Disabling Remote Login prevents the use of the SSH server on macOS. For systems requiring SSH access, ensure proper hardening measures are in place, such as restricting access to trusted IP addresses and using secure authentication methods. Standard user computers should not act as servers, especially in environments where they frequently change locations or IP addresses.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Remote Login using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Remote Login
+              hosts: all
+              tasks:
+                - name: Disable Remote Login
+                  command: systemsetup -setremotelogin off
+            ```
+
+            **Impact:**
+
+            Disabling Remote Login prevents the use of the SSH server on macOS. For systems requiring SSH access, ensure proper hardening measures are in place, such as restricting access to trusted IP addresses and using secure authentication methods. Standard user computers should not act as servers, especially in environments where they frequently change locations or IP addresses.
+  - uid: mondoo-macos-security-disable-remote-management
+    title: Disable Remote Management
+    impact: 50
+    mql: processes.none( command == /ARDAgent/)
+    docs:
+      desc: |
+        This check ensures that Remote Management is disabled on macOS systems to prevent unauthorized access and potential misuse of the Apple Remote Desktop (ARD) client.
+
+        **Why this matters**
+
+        Remote Management allows administrators to remotely view the current screen, install software, and manage client Macs. While this feature can be useful in managed environments, it introduces potential vulnerabilities by exposing the system to unauthorized access or untrusted hosts, especially on mobile systems.
+
+        By disabling Remote Management, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized remote access
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Remote Management may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Remote Management:
+
+            ```bash
+            sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop
+            ```
+
+            **Impact:**
+
+            Disabling Remote Management may affect organizations that rely on Apple Remote Desktop for client management. Ensure alternative management solutions are in place if required.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Remote Management**
+
+            **Impact:**
+
+            Disabling Remote Management may affect organizations that rely on Apple Remote Desktop for client management. Ensure alternative management solutions are in place if required.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Remote Management using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Remote Management
+              hosts: all
+              tasks:
+                - name: Disable Remote Management
+                  command: /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop
+            ```
+  - uid: mondoo-macos-security-disable-screen-sharing
+    title: Disable Screen Sharing
+    impact: 30
+    mql: services.where( name == "com.apple.screensharing" ).all( enabled == false && running == false )
+    docs:
+      desc: |
+        This check ensures that Screen Sharing is disabled on macOS systems to prevent unauthorized access and control of the system.
+
+        **Why this matters**
+
+        Screen Sharing allows a computer to connect to another computer on a network and display the computer's screen. While this feature can be useful for remote support or collaboration, it introduces potential vulnerabilities by exposing the system to unauthorized access or misuse.
+
+        By disabling Screen Sharing, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized remote control of the computer
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, Screen Sharing may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable Screen Sharing:
+
+            ```bash
+            sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+            ```
+
+            **Impact:**
+
+            Disabling Screen Sharing prevents remote access to the system's screen. For environments requiring remote support, ensure alternative secure methods are in place, such as using dedicated remote management tools with proper access controls.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Screen Sharing**
+
+            **Impact:**
+
+            Disabling Screen Sharing prevents remote access to the system's screen. For environments requiring remote support, ensure alternative secure methods are in place, such as using dedicated remote management tools with proper access controls.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable Screen Sharing using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable Screen Sharing
+              hosts: all
+              tasks:
+                - name: Disable Screen Sharing
+                  command: launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+            ```
+  - uid: mondoo-macos-security-do-not-enable-the-root-account
+    title: Do not enable the "root" account
+    impact: 85
+    mql: |
+      command("dscl . -read /Users/root AuthenticationAuthority").stderr.contains("No such key: AuthenticationAuthority")
+    docs:
+      desc: |
+        This check ensures that the root account is disabled on macOS systems to prevent unauthorized access and misuse of superuser privileges.
+
+        **Why this matters**
+
+        The root account is a superuser account with unrestricted access to all files and system functions. While it can be useful for administrative tasks, enabling the root account introduces significant security risks, such as unauthorized access, privilege escalation, and potential misuse.
+
+        By disabling the root account, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized access to sensitive system functions
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, an enabled root account may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable the root account:
+
+            ```bash
+            sudo dsenableroot -d
+            ```
+
+            **Impact:**
+
+            Disabling the root account may affect legacy POSIX software that expects an available root account. Ensure alternative administrative methods are in place if required.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **/System/Library/CoreServices/Applications/Directory Utility**
+            2. Select the lock icon to unlock the service
+            3. Select **Edit**
+            4. Select **Disable Root User**
+
+            **Impact:**
+
+            Disabling the root account may affect legacy POSIX software that expects an available root account. Ensure alternative administrative methods are in place if required.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable the root account using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable root account
+              hosts: all
+              tasks:
+                - name: Disable root account
+                  command: dsenableroot -d
+            ```
+
+            **Impact:**
+
+            Disabling the root account may affect legacy POSIX software that expects an available root account. Ensure alternative administrative methods are in place if required.
+  - uid: mondoo-macos-security-enable-filevault
+    title: Enable FileVault
+    impact: 80
+    mql: |
+      command('fdesetup status').stdout.contains('FileVault is On')
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+            parse.plist(filePath).params["com.apple.MCX"]["dontAllowFDEDisable"]["value"] == true
+          }
+        filePath2 = "/Library/Managed Preferences/com.apple.MCX.plist"
+        b = file(filePath2).exists && parse.plist(filePath2).params['dontAllowFDEDisable'] == true
+        a || b
+      }
+    docs:
+      desc: |-
+        This check ensures that FileVault is enabled on macOS systems to secure the system's data by encrypting its boot volume and requiring a password or recovery key to access it.
+
+        **Why this matters**
+
+        FileVault provides full-disk encryption to protect sensitive data on macOS systems. By encrypting the boot volume, FileVault ensures that unauthorized users cannot access the system's data, even if the physical device is compromised. This is particularly important for devices that are frequently used in untrusted environments or contain sensitive information.
+
+        Enabling FileVault contributes to:
+          - Enhanced data security and privacy
+          - Protection against unauthorized access in case of device theft or loss
+          - Compliance with security best practices and organizational policies
+
+        Without FileVault, the system's data is vulnerable to unauthorized access, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable FileVault:
+
+            ```bash
+            sudo fdesetup enable
+            ```
+
+            You will be prompted to provide a password for the user account and will receive a recovery key. Store the recovery key securely, as it will be required to unlock the disk if the password is forgotten.
+
+            Note: To pass this check and make sure encryption cannot be turned off by the system, you need to [make sure that the Device Management Profile property `dontAllowFDEDisable` is set to 'true'.](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions). To do so you can use an macOS configuration profile [similar to this one.](https://github.com/gregneagle/profiles/blob/master/cant_disable_filevault.mobileconfig)
+
+            **Impact:**
+
+            Enabling FileVault may impact system performance during encryption and decryption processes. However, the security benefits of full-disk encryption outweigh the potential performance impact, especially for devices handling sensitive data.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            Perform the following to enable FileVault:
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **FileVault**
+            4. Select **Turn on FileVault**
+
+            Note: To pass this check and make sure encryption cannot be turned off by the system, you need to [make sure that the Device Management Profile property `dontAllowFDEDisable` is set to 'true'.](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions). To do so you can use an macOS configuration profile [similar to this one.](https://github.com/gregneagle/profiles/blob/master/cant_disable_filevault.mobileconfig)
+
+            **Impact:**
+
+            Enabling FileVault may impact system performance during encryption and decryption processes. However, the security benefits of full-disk encryption outweigh the potential performance impact, especially for devices handling sensitive data.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable FileVault using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable FileVault
+              hosts: all
+              tasks:
+                - name: Enable FileVault
+                  command: fdesetup enable
+            ```
+
+            Note: To pass this check and make sure encryption cannot be turned off by the system, you need to [make sure that the Device Management Profile property `dontAllowFDEDisable` is set to 'true'.](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions). To do so you can use an macOS configuration profile [similar to this one.](https://github.com/gregneagle/profiles/blob/master/cant_disable_filevault.mobileconfig)
+
+
+            **Impact:**
+
+            Enabling FileVault may impact system performance during encryption and decryption processes. However, the security benefits of full-disk encryption outweigh the potential performance impact, especially for devices handling sensitive data.
+  - uid: mondoo-macos-security-enable-firewall
+    title: Enable Firewall
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.security.firewall"]["EnableFirewall"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.alf.plist"
+        b = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['globalstate'] == 1
+        c = macos.alf.globalState == 1
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that the firewall is enabled on macOS systems to block unwanted incoming connections and enhance system security.
+
+        **Why this matters**
+
+        A firewall acts as a barrier between the system and external networks, preventing unauthorized access and mitigating potential threats. By enabling the firewall, organizations can:
+          - Reduce the attack surface of the system
+          - Block unwanted or malicious incoming connections
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, the system may be vulnerable to unauthorized access, compromising its overall security posture.
+
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable the firewall:
+
+            ```bash
+            sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+            ```
+
+            **Impact:**
+
+            Enabling the firewall may block legitimate traffic. Unsigned applications may require special handling to function properly.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **Firewall**
+            4. Select **Turn On Firewall**
+
+            **Impact:**
+
+            Enabling the firewall may block legitimate traffic. Unsigned applications may require special handling to function properly.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable the firewall using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable Firewall
+              hosts: all
+              tasks:
+                - name: Enable Firewall
+                  command: /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+            ```
+
+            **Impact:**
+
+            Enabling the firewall may block legitimate traffic. Unsigned applications may require special handling to function properly.
+  - uid: mondoo-macos-security-enable-firewall-stealth-mode
+    title: Enable Firewall Stealth Mode
+    impact: 60
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.security.firewall"]["EnableStealthMode"]["value"] == true
+        }
+        b = command('/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode').stdout.trim == "Stealth mode enabled"
+        c = macos.alf.stealthEnabled == 1
+        a || b || c
+      }
+    docs:
+      desc: |-
+        This check ensures that Firewall Stealth Mode is enabled on macOS systems to prevent the computer from responding to unsolicited network probes, enhancing security in untrusted environments.
+
+        **Why this matters**
+
+        Stealth Mode prevents the system from responding to ping requests and other unsolicited network traffic, effectively hiding it from network scans and reducing its visibility to potential attackers. This is particularly important for devices frequently connected to untrusted networks, such as public Wi-Fi.
+
+        By enabling Stealth Mode, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized network discovery
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, the system may inadvertently expose itself to potential threats, undermining its overall security posture.
+
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable Stealth Mode:
+
+            ```bash
+            sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
+            ```
+
+            **Impact:**
+
+            Enabling Stealth Mode may prevent traditional network discovery tools like ping from succeeding. However, approved applications and other network tools will function as expected. This setting is particularly useful for laptops frequently connected to untrusted networks, but it may not be necessary for devices on trusted LANs with static IP addresses.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **Firewall Options**
+            4. Turn on **Enable stealth mode**
+
+            **Impact:**
+
+            Enabling Stealth Mode may prevent traditional network discovery tools like ping from succeeding. However, approved applications and other network tools will function as expected. This setting is particularly useful for laptops frequently connected to untrusted networks, but it may not be necessary for devices on trusted LANs with static IP addresses.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable Stealth Mode using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable Firewall Stealth Mode
+              hosts: all
+              tasks:
+                - name: Enable Firewall Stealth Mode
+                  command: /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
+            ```
+
+            **Impact:**
+
+            Enabling Stealth Mode may prevent traditional network discovery tools like ping from succeeding. However, approved applications and other network tools will function as expected. This setting is particularly useful for laptops frequently connected to untrusted networks, but it may not be necessary for devices on trusted LANs with static IP addresses.
+  - uid: mondoo-macos-security-enable-gatekeeper
+    title: Enable Gatekeeper
+    impact: 50
+    mql: |
+      command('spctl --status').stdout.contains("assessments enabled")
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.systempolicy.control"]["AllowIdentifiedDevelopers"]["value"] == true
+          parse.plist(filePath1).params["com.apple.systempolicy.control"]["EnableAssessment"]["value"] == true
+        }
+        filePath2 = "/Library/Managed Preferences/com.apple.systempolicy.control.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+          parse.plist(filePath2).params["AllowIdentifiedDevelopers"] == true
+          parse.plist(filePath2).params["EnableAssessment"] == true
+        }
+        a || b
+      }
+    docs:
+      desc: |
+        This check ensures that Gatekeeper is enabled on macOS systems to restrict downloaded applications from launching unless they are from verified sources.
+
+        **Why this matters**
+
+        Gatekeeper is Apple's application allow-listing control that limits applications from unverified sources from running without authorization. By enabling Gatekeeper, organizations can:
+          - Reduce the risk of running malicious or unauthorized applications
+          - Enhance security posture by enforcing application verification
+          - Prevent accidental execution of potentially harmful software
+
+        Without these protections, macOS systems may inadvertently run unverified applications, increasing the risk of malware infections and unauthorized access.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable Gatekeeper:
+
+            ```bash
+            sudo spctl --master-enable
+            ```
+
+            **Impact:**
+
+            Enabling Gatekeeper may block applications from unverified sources. Ensure that any required applications are properly signed or explicitly allowed by the user.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **General**
+            4. Set **Allow apps downloaded from** to **App Store and identified developers**
+
+            **Impact:**
+
+            Enabling Gatekeeper may block applications from unverified sources. Ensure that any required applications are properly signed or explicitly allowed by the user.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable Gatekeeper using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable Gatekeeper
+              hosts: all
+              tasks:
+                - name: Enable Gatekeeper
+                  command: spctl --master-enable
+            ```
+
+            **Impact:**
+
+            Enabling Gatekeeper may block applications from unverified sources. Ensure that any required applications are properly signed or explicitly allowed by the user.
+  - uid: mondoo-macos-security-enable-security-auditing
+    title: Enable security auditing
+    impact: 50
+    mql: |
+      service('com.apple.auditd').enabled == true
+    docs:
+      desc: |
+        This check ensures that the macOS audit facility, `auditd`, is enabled to capture and log critical system events for security and operational purposes.
+
+        **Why this matters**
+
+        The `auditd` service receives notifications from the kernel for specific system calls, such as `open`, `fork`, and `exit`, and writes these events to an audit log. Enabling `auditd` ensures that important security and operational events are recorded, which can be valuable for detecting anomalies, investigating incidents, and maintaining system integrity.
+
+        By enabling `auditd`, organizations can:
+          - Enhance system monitoring and accountability
+          - Support forensic investigations and incident response
+          - Comply with security best practices and standards
+
+        Without these protections, critical system events may go unrecorded, reducing visibility into potential security incidents and undermining the overall security posture of the system.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable `auditd`:
+
+            ```bash
+            sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist
+            ```
+
+            **Impact:**
+
+            Enabling `auditd` may increase system resource usage due to logging. Ensure sufficient storage is available for audit logs, and regularly review and archive logs to maintain system performance.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **Privacy**
+            4. Select **Auditd**
+            5. Enable **Enable auditing**
+
+            **Impact:**
+
+            Enabling `auditd` may increase system resource usage due to logging. Ensure sufficient storage is available for audit logs, and regularly review and archive logs to maintain system performance.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable `auditd` using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable security auditing
+              hosts: all
+              tasks:
+                - name: Enable security auditing
+                  command: launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist
+            ```
+
+            **Impact:**
+
+            Enabling `auditd` may increase system resource usage due to logging. Ensure sufficient storage is available for audit logs, and regularly review and archive logs to maintain system performance.
+  - uid: mondoo-macos-security-enable-show-wifi-status
+    title: Enable "Show Wi-Fi status in menu bar"
+    impact: 20
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = home + "/Library/Preferences/ByHost/com.apple.controlcenter." + os.machineid.upcase + ".plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["WiFi"] == 18
+          || parse.plist(filePath1).params["WiFi"] == 2
+        }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+          parse.plist(filePath2).params["com.apple.controlcenter"]["WiFi"]["value"] == 18
+            || parse.plist(filePath2).params["com.apple.controlcenter"]["WiFi"]["value"] == 2
+        }
+        filePath3 = "/Library/Managed Preferences/com.apple.controlcenter.plist"
+        c = file(filePath3).exists == true && [filePath3].where(file(_).exists) {
+          parse.plist(filePath3).params["WiFi"] == 18
+            || parse.plist(filePath3).params["WiFi"] == 2
+        }
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that the Wi-Fi status is displayed in the menu bar on macOS systems, providing users with a quick and visible indication of their wireless network status.
+
+        **Why this matters**
+
+        Displaying the Wi-Fi status in the menu bar allows users to easily monitor their wireless network connectivity. This is particularly important for systems with wireless network capabilities, as it provides a convenient way to check the status of the connection and troubleshoot any issues.
+
+        By enabling the Wi-Fi status in the menu bar, organizations can:
+          - Improve user awareness of network connectivity
+          - Facilitate quick troubleshooting of wireless network issues
+          - Enhance usability for systems with wireless network interfaces
+
+        Without this feature enabled, users may have to navigate through system settings to check their Wi-Fi status, which can be less efficient and inconvenient.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable the Wi-Fi status in the menu bar:
+
+            ```bash
+            sudo -u <username> defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
+            ```
+
+            _Example:_
+
+            ```bash
+            sudo -u firstuser defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
+            ```
+
+            _Note: Both `18` and `2` are valid values for this parameter._
+
+            **Impact:**
+
+            Enabling the Wi-Fi status in the menu bar provides users with a quick and visible way to monitor their wireless network connectivity.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Network**
+            3. Select **Wi-Fi**
+            4. Enable **Show Wi-Fi status in menu bar**
+
+            **Impact:**
+
+            Enabling the Wi-Fi status in the menu bar provides users with a quick and visible way to monitor their wireless network connectivity.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable the Wi-Fi status in the menu bar using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable Wi-Fi status in menu bar
+              hosts: all
+              tasks:
+                - name: Enable Wi-Fi status in menu bar
+                  command: defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
+            ```
+
+            _Example:_
+
+            ```yaml
+            ---
+            - name: Enable Wi-Fi status in menu bar for firstuser
+              hosts: all
+              tasks:
+                - name: Enable Wi-Fi status in menu bar for firstuser
+                  command: sudo -u firstuser defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
+            ```
+
+            _Note: Both `18` and `2` are valid values for this parameter._
+
+            **Impact:**
+
+            Enabling the Wi-Fi status in the menu bar provides users with a quick and visible way to monitor their wireless network connectivity.
+  - uid: mondoo-macos-security-ensure-airdrop-is-disabled
+    title: Ensure AirDrop Is Disabled
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = home + "/Library/Preferences/com.apple.NetworkBrowser.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+            parse.plist(filePath1).params["allowAirDrop"]["value"] == false
+          }
+        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
+            parse.plist(filePath2).params["com.apple.applicationaccess"]["allowAirDrop"]["value"] == false
+          }
+        filePath3 = "/Library/Managed Preferences/com.apple.NetworkBrowser.plist"
+        c = file(filePath3).exists && parse.plist(filePath3).params['DisableAirDrop'] == true
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that AirDrop is disabled on macOS systems to prevent unauthorized file sharing and mitigate privacy concerns.
+
+        **Why this matters**
+
+        AirDrop is Apple's built-in ad hoc file exchange system that uses Bluetooth LE for discovery and TLS encryption for file transfers. While it offers secure and convenient file sharing, it also introduces potential privacy risks by exposing personal information and allowing file sharing with nearby devices.
+
+        By disabling AirDrop, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized file sharing
+          - Enhance privacy and security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, AirDrop may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable AirDrop:
+
+            ```bash
+            sudo -u <username> defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+            ```
+
+            _Example:_
+
+            ```bash
+            sudo -u firstuser defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+            ```
+
+            **Impact:**
+
+            Disabling AirDrop can limit the ability to move files quickly over the network without using file shares.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **Finder**
+            2. Select **Go**
+            3. Select **AirDrop**
+            4. Set **Allow me to be discovered by:** to **No One**
+
+            **Impact:**
+
+            Disabling AirDrop can limit the ability to move files quickly over the network without using file shares.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable AirDrop using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable AirDrop
+              hosts: all
+              tasks:
+                - name: Disable AirDrop
+                  command: defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+            ```
+
+            _Example:_
+
+            ```yaml
+            ---
+            - name: Disable AirDrop for firstuser
+              hosts: all
+              tasks:
+                - name: Disable AirDrop for firstuser
+                  command: sudo -u firstuser defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+            ```
+  - uid: mondoo-macos-security-ensure-firewall-is-configured-to-log
+    title: Ensure Firewall is configured to log
+    impact: 20
+    mql: macos.alf.loggingEnabled == 1
+    docs:
+      desc: |
+        This check ensures that the firewall is configured to log activity on macOS systems, providing visibility into allowed and denied network connections.
+
+        **Why this matters**
+
+        The socketfilter firewall is used when the firewall is enabled in the Security Preference Pane. Enabling logging ensures that all access attempts, both allowed and denied, are recorded. This information is critical for monitoring network activity, detecting potential threats, and troubleshooting connectivity issues.
+
+        By enabling firewall logging, organizations can:
+          - Gain visibility into network access attempts
+          - Detect unauthorized or suspicious activity
+          - Enhance security posture by monitoring and analyzing firewall logs
+
+        Without logging enabled, critical information about network activity may be lost, reducing the ability to detect and respond to potential threats.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable logging for the firewall:
+
+            ```bash
+            sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setloggingmode on
+            ```
+
+            **Impact:**
+
+            Enabling detailed logging may result in increased storage usage. Regular log review and archiving are recommended to manage disk space effectively.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **Firewall**
+            4. Select **Firewall Options**
+            5. Enable **Enable logging**
+
+            **Impact:**
+
+            Enabling detailed logging may result in increased storage usage. Regular log review and archiving are recommended to manage disk space effectively.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable firewall logging using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable Firewall logging
+              hosts: all
+              tasks:
+                - name: Enable Firewall logging
+                  command: /usr/libexec/ApplicationFirewall/socketfilterfw --setloggingmode on
+            ```
+
+            **Impact:**
+
+            Enabling detailed logging may result in increased storage usage. Regular log review and archiving are recommended to manage disk space effectively.
+  - uid: mondoo-macos-security-ensure-http-server-is-not-running
+    title: Ensure http server is not running
+    impact: 50
+    mql: |
+      service('org.apache.httpd') {
+        enabled == false
+        running == false
+      }
+    docs:
+      desc: |
+        This check ensures that the HTTP server is disabled on macOS systems to prevent unauthorized access and misuse of the embedded Apache web server.
+
+        **Why this matters**
+
+        macOS includes an embedded Apache web server that can be easily enabled to share files or provide remote connectivity. While this feature can be useful in specific scenarios, enabling the HTTP server introduces potential vulnerabilities by exposing the system to unauthorized access or misuse. Apple has removed the graphical front-end for enabling this feature, but the underlying service remains accessible.
+
+        By disabling the HTTP server, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized file sharing or remote access
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, the HTTP server may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable the HTTP server services:
+
+            ```bash
+            sudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist
+            ```
+
+            **Impact:**
+
+            Disabling the HTTP server prevents the system from being used as a web server, reducing its visibility and potential attack surface. For environments requiring web services, hardened web servers or appropriate cloud services should be used instead.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **Web Sharing**
+
+            **Impact:**
+
+            Disabling the HTTP server prevents the system from being used as a web server, reducing its visibility and potential attack surface. For environments requiring web services, hardened web servers or appropriate cloud services should be used instead.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable the HTTP server using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable HTTP server
+              hosts: all
+              tasks:
+                - name: Disable HTTP server
+                  command: launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist
+            ```
+
+            **Impact:**
+
+            Disabling the HTTP server prevents the system from being used as a web server, reducing its visibility and potential attack surface. For environments requiring web services, hardened web servers or appropriate cloud services should be used instead.
+  - uid: mondoo-macos-security-ensure-nfs-server-is-not-running
+    title: Ensure NFS server is not running
+    impact: 50
+    mql: |
+      service('com.apple.nfsd') {
+        enabled == false
+        running == false
+      }
+    docs:
+      desc: |
+        This check ensures that the NFS server is disabled on macOS systems to prevent unauthorized file sharing and mitigate security risks.
+
+        **Why this matters**
+
+        macOS can act as an NFS file server, allowing other computers to mount shares and access information from the user's system. While this feature can be useful in specific scenarios, enabling NFS sharing introduces potential vulnerabilities by exposing the system to unauthorized access or misuse. Apple has removed the GUI capability for enabling NFS sharing, but the underlying service remains accessible.
+
+        By disabling the NFS server, organizations can:
+          - Reduce the attack surface of the system
+          - Prevent unauthorized file transfers
+          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+
+        Without these protections, the NFS server may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to disable the NFS server services:
+
+            ```bash
+            sudo nfsd disable
+            ```
+
+            **Impact:**
+
+            Disabling the NFS server prevents the system from being used as a file server, reducing its visibility and potential attack surface. For environments requiring file sharing, hardened servers should be used instead of user endpoints.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Sharing**
+            3. Uncheck **File Sharing**
+            4. Uncheck **NFS Sharing**
+
+            **Impact:**
+
+            Disabling the NFS server prevents the system from being used as a file server, reducing its visibility and potential attack surface. For environments requiring file sharing, hardened servers should be used instead of user endpoints.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To disable the NFS server using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Disable NFS server
+              hosts: all
+              tasks:
+                - name: Disable NFS server
+                  command: nfsd disable
+            ```
+  - uid: mondoo-macos-security-ensure-security-auditing-retention
+    title: Ensure security auditing retention
+    impact: 40
+    mql: |
+      file("/etc/security/audit_control").exists;
+      ["/etc/security/audit_control"].where(file(_).exists) {
+        file(_).content.lines.where( _ == /^expire-after/) {
+          _.split(":")[1] == /[6-9]\dd|\d{3,}d/ || _.split(":")[1] == /\d+0G|[1-9G]/
+        }
+      }
+    docs:
+      desc: |
+        This check ensures that the macOS audit capability retains sufficient records to investigate security or operational issues effectively.
+
+        **Why this matters**
+
+        The macOS audit capability contains critical information for identifying the root cause of anomalies and investigating security or operational issues. Retaining audit records for an adequate duration ensures that technical staff can access the necessary data for analysis.
+
+        By setting appropriate retention policies, organizations can:
+          - Ensure sufficient audit records are available for troubleshooting and forensic analysis
+          - Support compliance with security best practices and standards
+          - Enhance system monitoring and accountability
+
+        Without these protections, critical audit records may be lost, reducing visibility into potential security incidents and undermining the overall security posture of the system.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to set the audit retention length:
+
+            ```bash
+            sudo defaults write /etc/security/audit_control expire-after -int <value>
+            ```
+
+            _Example:_
+
+            ```bash
+            sudo defaults write /etc/security/audit_control expire-after -int 60d
+            ```
+
+            **Impact:**
+
+            Retaining at least 60 days or 1 gigabyte of audit records ensures sufficient data for analysis. Systems with limited disk space may encounter issues retaining the recommended amount of data.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Security & Privacy**
+            3. Select **Audit**
+            4. Set **Audit retention length** to at least **60 days or 1 gigabyte**
+
+            **Impact:**
+
+            Retaining at least 60 days or 1 gigabyte of audit records ensures sufficient data for analysis. Systems with limited disk space may encounter issues retaining the recommended amount of data.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To set the audit retention length using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Set audit retention length
+              hosts: all
+              tasks:
+                - name: Set audit retention length
+                  command: defaults write /etc/security/audit_control expire-after -int <value>
+            ```
+
+            _Example:_
+
+            ```yaml
+            ---
+            - name: Set audit retention length to 60 days
+              hosts: all
+              tasks:
+                - name: Set audit retention length to 60 days
+                  command: defaults write /etc/security/audit_control expire-after -int 60d
+            ```
+
+            **Impact:**
+
+            Retaining at least 60 days or 1 gigabyte of audit records ensures sufficient data for analysis. Systems with limited disk space may encounter issues retaining the recommended amount of data.
+  - uid: mondoo-macos-security-password-age
+    title: Password Age
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+          parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["maxPINAgeInDays"]["value"] != empty &&
+            parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["maxPINAgeInDays"]["value"] <= 365
+        }
+        b = macos.globalAccountPolicies['policyCategoryPasswordChange'] != empty &&
+          macos.globalAccountPolicies['policyCategoryPasswordChange'].any(_['policyParameters']['policyAttributeDaysUntilExpiration'] <= 365)
+        filePath2 = "/Library/Managed Preferences/com.apple.mobiledevice.passwordpolicy.plist"
+        c = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['maxPINAgeInDays'] <= 365
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that passwords are set to expire after a maximum of 365 days on macOS systems to mitigate the risks associated with password reuse and prolonged exposure.
+
+        **Why this matters**
+
+        Over time, passwords can be compromised through phishing attacks, third-party breaches, or brute force attacks. Regularly expiring passwords reduces the risk of exposure and encourages users to create new, unique passwords. This check uses 365 days as the acceptable maximum value, though organizations may choose to be more or less restrictive based on their security policies.
+
+        By enforcing password expiration, organizations can:
+          - Reduce the risk of password reuse across multiple systems
+          - Mitigate the impact of compromised credentials
+          - Enhance overall security posture by ensuring periodic password updates
+
+        Without these protections, attackers may exploit exposed or reused passwords, increasing the likelihood of unauthorized access and compromising the system's security.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to require that passwords expire after at most 365 days:
+
+            ```bash
+            sudo pwpolicy -n /Local/Default -setglobalpolicy "maxMinutesUntilChangePassword=<value≤525600>"
+            ```
+
+            _Example:_
+
+            ```bash
+            sudo pwpolicy -n /Local/Default -setglobalpolicy "maxMinutesUntilChangePassword=43200"
+            ```
+
+            **Impact:**
+
+            Enforcing password expiration may lead to some locked computers requiring administrative assistance. Ensure users are informed of the policy to minimize disruptions.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Users & Groups**
+            3. Select **Login Options**
+            4. Set **Password expiration** to **365 days**
+
+            **Impact:**
+
+            Enforcing password expiration may lead to some locked computers requiring administrative assistance. Ensure users are informed of the policy to minimize disruptions.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To set a maximum password age of 365 days using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Set maximum password age
+              hosts: all
+              tasks:
+                - name: Set maximum password age to 365 days
+                  command: pwpolicy -n /Local/Default -setglobalpolicy "maxMinutesUntilChangePassword=43200"
+            ```
+
+            **Impact:**
+
+            Enforcing password expiration may lead to some locked computers requiring administrative assistance. Ensure users are informed of the policy to minimize disruptions.
+  - uid: mondoo-macos-security-password-history
+    title: Password History
+    impact: 50
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
+          parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["pinHistory"]["value"] != empty &&
+            parse.plist(filePath).params["com.apple.mobiledevice.passwordpolicy"]["pinHistory"]["value"] >= 15
+          }
+        b = macos.globalAccountPolicies['policyCategoryPasswordContent'] != empty &&
+          macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['policyAttributePasswordHistoryDepth'] >= 15 )
+        filePath2 = "/Library/Managed Preferences/com.apple.mobiledevice.passwordpolicy.plist"
+        c = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['pinHistory'] != empty &&
+            parse.plist(filePath2).params['pinHistory'] >= 15
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that password history is enforced on macOS systems to prevent the reuse of previous passwords, enhancing security by requiring unique passwords for each change.
+
+        **Why this matters**
+
+        Over time, passwords can be compromised through phishing attacks, third-party breaches, or brute force attacks. Enforcing password history ensures that users cannot reuse recently used passwords, reducing the risk of predictable password patterns and enhancing overall security.
+
+        By enforcing password history, organizations can:
+          - Mitigate the risk of password reuse across multiple systems
+          - Reduce the likelihood of attackers exploiting predictable password changes
+          - Enhance security posture by ensuring unique passwords for each change
+
+        Without these protections, users may reuse old passwords, increasing the risk of unauthorized access and compromising the system's security.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to require that the password must be different from at least the last 15 passwords:
+
+            ```bash
+            sudo pwpolicy -n /Local/Default -setglobalpolicy "usingHistory=<value≥15>"
+            ```
+
+            _Example:_
+
+            ```bash
+            sudo pwpolicy -n /Local/Default -setglobalpolicy "usingHistory=15"
+            ```
+
+            **Impact:**
+
+            Enforcing password history may lead to some locked computers requiring administrative assistance. Ensure users are informed of the policy to minimize disruptions.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **Users & Groups**
+            3. Select **Login Options**
+            4. Set **Password history** to **15 passwords**
+
+            **Impact:**
+
+            Enforcing password history may lead to some locked computers requiring administrative assistance. Ensure users are informed of the policy to minimize disruptions.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To set a password history of 15 passwords using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Set password history
+              hosts: all
+              tasks:
+                - name: Set password history to 15 passwords
+                  command: pwpolicy -n /Local/Default -setglobalpolicy "usingHistory=15"
+            ```
+
+            **Impact:**
+
+            Enforcing password history may lead to some locked computers requiring administrative assistance. Ensure users are informed of the policy to minimize disruptions.
+  - uid: mondoo-macos-security-reduce-the-sudo-timeout-period
+    title: Reduce the sudo timeout period
+    impact: 40
+    mql: |
+      command("sudo -V").stdout.contains("Authentication timestamp timeout: 0.0 minutes") ||
+        command("sudo -V").stdout.contains("Authentication timestamp timeout: 0,0 minutes")
+    docs:
+      desc: |
+        This check ensures that the sudo timeout period is reduced to zero on macOS systems to minimize the risk of unauthorized access during the sudo grace period.
+
+        **Why this matters**
+
+        The sudo command allows users to execute commands with elevated privileges. By default, sudo retains the user's authentication for a grace period, during which no password is required for subsequent sudo commands. While this feature is convenient, it introduces potential security risks, as an attacker or unauthorized process could exploit the grace period to execute commands with elevated privileges.
+
+        By reducing the sudo timeout period to zero, organizations can:
+          - Minimize the window of opportunity for unauthorized access
+          - Enhance security posture by requiring re-authentication for each sudo command
+          - Prevent misuse of elevated privileges in environments handling sensitive data
+
+        Without these protections, the sudo grace period may inadvertently expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to reduce the sudo timeout period:
+
+            ```bash
+            sudo visudo
+            ```
+
+            Add the following line under the `Override built-in defaults` section:
+
+            ```bash
+            Defaults timestamp_timeout=0
+            ```
+
+            **Impact:**
+
+            Reducing the sudo timeout period to zero may inconvenience users who frequently use sudo commands, as they will need to re-enter their password for each command. Organizations should weigh the security benefits against the potential impact on user productivity and consider alternative measures if necessary.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To reduce the sudo timeout period using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Reduce sudo timeout period
+              hosts: all
+              tasks:
+                - name: Reduce sudo timeout period to 0
+                  command: visudo
+                  args:
+                    creates: /etc/sudoers
+                  with_items:
+                    - Defaults timestamp_timeout=0
+            ```
+
+            **Impact:**
+
+            Reducing the sudo timeout period to zero may inconvenience users who frequently use sudo commands, as they will need to re-enter their password for each command. Organizations should weigh the security benefits against the potential impact on user productivity and consider alternative measures if necessary.
+  - uid: mondoo-macos-security-retain-install-log-for-365-or-more-days
+    title: Retain install.log for 365 or more days with no maximum size
+    impact: 40
+    mql: |
+      file('/etc/asl/com.apple.install') {
+        content != /all_max/
+        content == /ttl/
+      }
+    docs:
+      desc: |
+        This check ensures that the install logs are retained for at least 365 days on macOS systems to support system maintenance and security forensics.
+
+        **Why this matters**
+
+        macOS writes system-related event information to `/var/log/install.log` and uses a configurable retention policy for this file. The default logging settings limit the file size and maximum size for all logs, which may not enforce sufficient log retention. Without proper retention, critical log data may be lost, hindering the ability to investigate incidents or perform audits.
+
+        By ensuring that install logs are retained for at least 365 days, organizations can:
+          - Maintain sufficient historical data for troubleshooting and forensic analysis
+          - Support compliance with security best practices and standards
+          - Enhance system monitoring and accountability
+
+        Without these protections, critical log data may be lost, reducing visibility into potential security incidents and undermining the overall security posture of the system.
+
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to set the install log retention policy:
+
+            ```bash
+            sudo vi /etc/asl/com.apple.install
+            ```
+
+            Add or modify the `ttl` value to `365` or greater on the `file` line, and remove the `all_max=` setting and value from the `file` line.
+
+            **Impact:**
+
+            Without proper log retention, system maintenance and security forensics cannot be effectively performed. Ensure sufficient storage is available to accommodate the extended retention period.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To set the install log retention policy using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Set install log retention policy
+              hosts: all
+              tasks:
+                - name: Set install log retention policy to 365 days
+                  ansible.builtin.replace:
+                    path: /etc/asl/com.apple.install
+                    regexp: '(^\* file .*)ttl=\d+(\s*)$'
+                    replace: '\1ttl=365\2'
+                    backup: yes
+                - name: Remove any all_max= entries from the file
+                  ansible.builtin.replace:
+                    path: /etc/asl/com.apple.install
+                    regexp: '\s*all_max=[^\s]+'
+                    replace: ''
+            ```
+
+            **Impact:**
+
+            Without proper log retention, system maintenance and security forensics cannot be effectively performed. Ensure sufficient storage is available to accommodate the extended retention period.
+  - uid: mondoo-macos-security-set-a-minimum-password-length
+    title: Set a minimum password length
+    impact: 80
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.mobiledevice.passwordpolicy"]["minLength"]["value"] != empty &&
+            parse.plist(filePath1).params["com.apple.mobiledevice.passwordpolicy"]["minLength"]["value"] >= 15
+        }
+        b = macos.globalAccountPolicies['policyCategoryPasswordContent'] != empty &&
+          macos.globalAccountPolicies['policyCategoryPasswordContent'].any(_['policyParameters']['minimumLength'] >= 15)
+        filePath2 = "/Library/Managed Preferences/com.apple.mobiledevice.passwordpolicy.plist"
+        c = file(filePath2).exists == true &&
+          parse.plist(filePath2).params["minLength"] >= 15
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that a minimum password length is enforced on macOS systems to enhance security by requiring sufficiently complex passwords.
+
+        **Why this matters**
+
+        A minimum password length reduces the risk of weak passwords that can be easily guessed or brute-forced. Longer passwords provide greater entropy, making them more resistant to attacks. By enforcing a minimum password length of 15 characters, organizations can:
+          - Enhance the security of user accounts
+          - Mitigate the risk of unauthorized access
+          - Align with best practices for password policies
+
+        Without these protections, short passwords may expose the system to potential threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to set a minimum password length of 15 characters:
+
+            ```bash
+            sudo pwpolicy -n /Local/Default -setglobalpolicy "minChars=15"
+            ```
+
+            **Impact:**
+
+            Enforcing a minimum password length may inconvenience users accustomed to shorter passwords. However, the security benefits outweigh the potential inconvenience, especially in environments handling sensitive data.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To set a minimum password length of 15 characters using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Set minimum password length
+              hosts: all
+              tasks:
+                - name: Set minimum password length to 15 characters
+                  command: pwpolicy -n /Local/Default -setglobalpolicy "minChars=15"
+            ```
+
+            **Impact:**
+
+            Enforcing a minimum password length may inconvenience users accustomed to shorter passwords. However, the security benefits outweigh the potential inconvenience, especially in environments handling sensitive data.
+  - uid: mondoo-macos-security-software-updates-automatic-check-enabled
+    title: Ensure automatic checking of software updates enabled
+    impact: 80
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["AutomaticCheckEnabled"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
+        b = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['AutomaticCheckEnabled'] != false
+        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['AutomaticCheckEnabled'] != false
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that automatic checking for software updates is enabled on macOS systems to keep the system up to date with the latest patches and security updates.
+
+        **Why this matters**
+
+        Enabling automatic checking for software updates ensures that the system regularly checks for available updates, reducing the risk of vulnerabilities caused by outdated software. This is critical for maintaining system security and stability.
+
+        By enabling automatic update checks, organizations can:
+          - Ensure timely awareness of available updates
+          - Reduce the risk of exploitation of known vulnerabilities
+          - Enhance overall system security and compliance with best practices
+
+        Without these protections, the system may remain vulnerable to known threats, undermining its overall security posture.
+
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable automatic update checks:
+
+            ```bash
+            sudo /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true
+            ```
+
+            **Impact:**
+
+            Enabling automatic update checks ensures that the system stays informed about available updates. However, users must still manually approve or install updates unless additional automatic update settings are enabled.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **General**
+            3. Select **Software Update**
+            4. Select **Advanced**
+            5. Enable **Check for updates**
+
+            **Impact:**
+
+            Enabling automatic update checks ensures that the system stays informed about available updates. However, users must still manually approve or install updates unless additional automatic update settings are enabled.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable automatic update checks using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable automatic update checks
+              hosts: all
+              tasks:
+                - name: Enable automatic update checks
+                  command: /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true
+            ```
+
+            **Impact:**
+
+            Enabling automatic update checks ensures that the system stays informed about available updates. However, users must still manually approve or install updates unless additional automatic update settings are enabled.
+  - uid: mondoo-macos-security-software-updates-automatic-download
+    title: Ensure automatic download of software updates enabled
+    impact: 80
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["AutomaticDownload"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
+        b = file(filePath2).exists == true &&
+          parse.plist(filePath2).params['AutomaticDownload'] != false
+        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['AutomaticDownload'] != false
+        a || b || c
+      }
+    docs:
+      desc: |
+        This check ensures that automatic downloads of software updates are enabled on macOS systems to keep the system up to date with the latest patches and security updates.
+
+        **Why this matters**
+
+        Enabling automatic downloads of software updates ensures that the system regularly downloads available updates, reducing the risk of vulnerabilities caused by outdated software. This is critical for maintaining system security and stability.
+
+        By enabling automatic update downloads, organizations can:
+          - Ensure timely availability of updates for installation
+          - Reduce the risk of exploitation of known vulnerabilities
+          - Enhance overall system security and compliance with best practices
+
+        Without these protections, the system may remain vulnerable to known threats, undermining its overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to enable automatic downloads:
+
+            ```bash
+            sudo /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true
+            ```
+
+            **Impact:**
+
+            Enabling automatic downloads ensures that updates are readily available for installation. However, users must still manually approve or install updates unless additional automatic update settings are enabled.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **General**
+            3. Select **Software Update**
+            4. Select **Advanced**
+            5. Enable **Download new updates when available**
+
+            **Impact:**
+
+            Enabling automatic downloads ensures that updates are readily available for installation. However, users must still manually approve or install updates unless additional automatic update settings are enabled.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To enable automatic downloads using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Enable automatic downloads of software updates
+              hosts: all
+              tasks:
+                - name: Enable automatic downloads of software updates
+                  command: /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true
+            ```
+  - uid: mondoo-macos-security-software-updates-install-critical-updates
+    title: Ensure critical updates are installed automatically
+    impact: 80
+    mql: |
+      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
+        name
+        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
+        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["ConfigDataInstall"]["value"] == true
+          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["CriticalUpdateInstall"]["value"] == true
+        }
+        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
+        b = file(filePath2).exists &&
+          parse.plist(filePath2).params['ConfigDataInstall'] == true &&
+            parse.plist(filePath2).params['CriticalUpdateInstall'] == true
+        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
+        c = file(filePath3).exists == true &&
+          parse.plist(filePath3).params['ConfigDataInstall'] == true &&
+            parse.plist(filePath3).params['CriticalUpdateInstall'] == true
+        a || b || c
+      }
+    docs:
+        desc: |
+          This check ensures that critical software updates are installed automatically on macOS systems to maintain system security and stability.
+
+          **Why this matters**
+
+          Automatic installation of critical updates ensures that macOS systems remain protected against known vulnerabilities and exploits. Critical updates often address security flaws, stability issues, and other high-priority concerns that could compromise the system if left unpatched.
+
+          By enabling automatic installation of critical updates, organizations can:
+            - Reduce the risk of exploitation of known vulnerabilities
+            - Ensure timely application of essential patches
+            - Enhance overall system security and compliance with best practices
+
+          Without these protections, macOS systems may remain vulnerable to known threats, undermining their overall security posture.
+
+        remediation:
+          - id: cli
+            desc: |
+              **Using the CLI**
+
+              Run this command to enable automatic installation of critical updates:
+
+              ```bash
+              sudo /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
+              ```
+
+              **Impact:**
+
+              Enabling automatic installation of critical updates ensures that essential patches are applied without user intervention. However, users should monitor update logs to verify successful installations and address any issues promptly.
+          - id: gui
+            desc: |
+              **Using the GUI**
+
+              1. Open **System Preferences**
+              2. Select **General**
+              3. Select **Software Update**
+              4. Select **Advanced**
+              5. Enable **Install system data files and security updates**
+
+              **Impact:**
+
+              Enabling automatic installation of critical updates ensures that essential patches are applied without user intervention. However, users should monitor update logs to verify successful installations and address any issues promptly.
+          - id: ansible
+            desc: |
+              **Using Ansible**
+
+              To enable automatic installation of critical updates using Ansible, you can use the following playbook:
+
+              ```yaml
+              - name: Enable automatic installation of critical updates
+                hosts: all
+                tasks:
+                  - name: Enable automatic installation of critical updates
+                    command: /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
+              ```
+
+              **Impact:**
+
+              Enabling automatic installation of critical updates ensures that essential patches are applied without user intervention. However, users should monitor update logs to verify successful installations and address any issues promptly.
+  - uid: mondoo-macos-security-ensure-macos-is-up-to-date
+    title: Ensure macOS is up to date
+    impact: 100
+    mql: |
+      parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['RecommendedUpdates'] == empty
+    docs:
+      desc: |
+        This check ensures that macOS is up to date with the latest patches to mitigate vulnerabilities and enhance system security.
+
+        **Why this matters**
+
+        Keeping macOS updated ensures that known vulnerabilities are patched, reducing the risk of exploitation by attackers. Regular updates address security flaws, improve system stability, and provide new features that enhance the overall user experience.
+
+        By ensuring macOS is up to date, organizations can:
+          - Mitigate risks associated with known vulnerabilities
+          - Enhance system stability and performance
+          - Align with security best practices and compliance requirements
+
+        Without these protections, outdated macOS systems may remain vulnerable to known threats, undermining their overall security posture.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to check for available updates:
+
+            ```bash
+            softwareupdate -l
+            ```
+
+            To install all available updates, run:
+
+            ```bash
+            softwareupdate -i -a
+            ```
+
+            **Impact:**
+
+            Updating macOS ensures that the system is protected against known vulnerabilities. However, updates may require a system restart and could temporarily disrupt workflows. Plan updates during maintenance windows to minimize impact.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Preferences**
+            2. Select **General**
+            3. Select **Software Update**
+            4. Select **Update Now**
+
+            **Impact:**
+
+            Updating macOS ensures that the system is protected against known vulnerabilities. However, updates may require a system restart and could temporarily disrupt workflows. Plan updates during maintenance windows to minimize impact.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            To check for available updates using Ansible, you can use the following playbook:
+
+            ```yaml
+            ---
+            - name: Check for available updates
+              hosts: all
+              tasks:
+                - name: Check for available updates
+                  command: softwareupdate -l
+            ```
+
+            To install all available updates, run:
+
+            ```yaml
+            ---
+            - name: Install all available updates
+              hosts: all
+              tasks:
+                - name: Install all available updates
+                  command: softwareupdate -i -a
+            ```
+
+            **Impact:**
+
+            Updating macOS ensures that the system is protected against known vulnerabilities. However, updates may require a system restart and could temporarily disrupt workflows. Plan updates during maintenance windows to minimize impact.

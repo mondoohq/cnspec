@@ -1,0 +1,561 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - uid: mondoo-terraform-aws-security
+    name: Mondoo Terraform HCL Security Static Analysis for AWS
+    version: 1.2.1
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: aws,cloud,terraform
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        This policy checks for security misconfigurations in Terraform for Amazon Web Services.
+
+        ## Local scan
+
+        Local scan refer to scans of files and operating systems where cnspec is installed.
+
+        ### Scan a Terraform project
+
+        Open a terminal and run this command:
+
+        ```bash
+        cnspec scan terraform /path/to/terraform/directory
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+        If you have any suggestions for how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
+    groups:
+      - title: AWS General
+        filters: |
+          asset.platform == "terraform" || asset.platform == "terraform-hcl"
+          terraform.providers.any(nameLabel == "aws")
+        checks:
+          - uid: terraform-aws-security-no-static-credentials-in-providers
+      - title: Amazon API Gateway
+        filters: |
+          asset.platform == "terraform" || asset.platform == "terraform-hcl"
+          terraform.providers.any(nameLabel == "aws")
+        checks:
+          - uid: terraform-aws-security-api-gw-cache-enabled-and-encrypted
+          - uid: terraform-aws-security-api-gw-execution-logging-enabled
+          - uid: terraform-aws-security-api-gw-require-authentication
+          - uid: terraform-aws-security-api-gw-tls
+          - uid: terraform-aws-security-api-gw-xray-enabled
+      - title: Amazon Elastic Compute Cloud (Amazon EC2)
+        filters: |
+          asset.platform == "terraform" || asset.platform == "terraform-hcl"
+          terraform.providers.any(nameLabel == "aws")
+        checks:
+          - uid: terraform-aws-security-ec2-ebs-encryption-by-default
+          - uid: terraform-aws-security-ec2-imdsv2
+          - uid: terraform-aws-security-ec2-user-data-no-secrets
+      - title: AWS Identity and Access Management (IAM)
+        filters: |
+          asset.platform == "terraform" || asset.platform == "terraform-hcl"
+          terraform.providers.any(nameLabel == "aws")
+        checks:
+          - uid: terraform-aws-security-iam-no-wildcards-policies
+      - title: Amazon Simple Storage Service (Amazon S3)
+        filters: |
+          asset.platform == "terraform" || asset.platform == "terraform-hcl"
+          terraform.providers.any(nameLabel == "aws")
+        checks:
+          - uid: terraform-aws-security-s3-bucket-level-public-access-prohibited
+          - uid: terraform-aws-security-s3-bucket-logging-enabled
+          - uid: terraform-aws-security-s3-bucket-public-read-and-write-prohibited
+          - uid: terraform-aws-security-s3-bucket-server-side-encryption-enabled
+          - uid: terraform-aws-security-s3-bucket-versioning-enabled
+      - title: AWS Elastic Kubernetes Service (EKS) Security for Terraform
+        filters: |
+          asset.platform == "terraform" || asset.platform == "terraform-hcl"
+          terraform.providers.any(nameLabel == "aws")
+        checks:
+          - uid: terraform-aws-security-eks-encrypt-secrets
+          - uid: terraform-aws-security-eks-no-public-cluster-access-to-cidr
+queries:
+  - uid: terraform-aws-security-no-static-credentials-in-providers
+    title: Providers should not contain hard-coded credentials
+    mql: |
+      terraform.providers.where( nameLabel == "aws" ) {
+        arguments["access_key"] == null || arguments["access_key"].find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        arguments["secret_key"] == null || arguments["secret_key"].find(/([A-Za-z0-9\\\/+\\]{40})/).all( "wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+      }
+    docs:
+      desc: |
+        Hard-coded credentials are not recommended in any Terraform configuration, and risks secret leakage should this file ever be committed to a public version control system.
+      audit: |
+        Check for the existence of hard-coded credentials in the AWS provider
+
+        ```hcl
+        provider "aws" {
+          region     = "us-west-2"
+          access_key = "my-access-key"
+          secret_key = "my-secret-key"
+        }
+        ```
+      remediation: |
+        The following are more secure alternatives for configuring the AWS provider:
+
+        __Environment Variables__
+        You can provide your credentials via the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables representing your AWS Access Key and AWS Secret Key, respectively. Note that setting your AWS credentials using either these (or legacy) environment variables will override the use of `AWS_SHARED_CREDENTIALS_FILE` and `AWS_PROFILE`. The `AWS_DEFAULT_REGION` and `AWS_SESSION_TOKEN` environment variables are also used, if applicable:
+
+        ```bash
+        $ export AWS_ACCESS_KEY_ID="an_accesskey"
+        $ export AWS_SECRET_ACCESS_KEY="a_secretkey"
+        $ export AWS_DEFAULT_REGION="us-west-2"
+        $ terraform plan
+        ```
+
+        ```hcl
+        provider "aws" {}
+        ```
+
+        __Assumed Role__
+        If provided with a role ARN, Terraform will attempt to assume this role using the supplied credentials.
+
+        ```hcl
+        provider "aws" {
+          assume_role {
+            role_arn     = "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+            session_name = "SESSION_NAME"
+            external_id  = "EXTERNAL_ID"
+          }
+        }
+        ```
+  - uid: terraform-aws-security-api-gw-cache-enabled-and-encrypted
+    title: API Gateway must have cache enabled
+    mql: |
+      terraform.resources.where( nameLabel  == "aws_api_gateway_method_settings") {
+        blocks.one(type == "settings" && arguments["cache_data_encrypted"] == true)
+      }
+    docs:
+      desc: Ensure that all methods in Amazon API Gateway stages have cache enabled and cache encrypted
+      audit: |
+        Check if `cache_data_encrypted` is set to `false`
+
+        ```hcl
+        resource "aws_api_gateway_method_settings" "fail_example" {
+          rest_api_id = aws_api_gateway_rest_api.example.id
+          stage_name  = aws_api_gateway_stage.example.stage_name
+          method_path = "path1/GET"
+
+          settings {
+            metrics_enabled = true
+            logging_level   = "INFO"
+            cache_data_encrypted = false
+          }
+        }
+        ```
+      remediation: |
+        Enable cache encryption by setting `cache_data_encrypted` to `true`
+
+        ```hcl
+        resource "aws_api_gateway_method_settings" "good_example" {
+          rest_api_id = aws_api_gateway_rest_api.example.id
+          stage_name  = aws_api_gateway_stage.example.stage_name
+          method_path = "path1/GET"
+
+          settings {
+            metrics_enabled = true
+            logging_level   = "INFO"
+            cache_data_encrypted = true
+          }
+        }
+        ```
+  - uid: terraform-aws-security-api-gw-execution-logging-enabled
+    title: Ensure that all methods in Amazon API Gateway stage have logging enabled
+    mql: |
+      terraform.resources.where( nameLabel  == "aws_api_gateway_stage") {
+        blocks.one(type == "access_log_settings" && arguments["destination_arn"] != "" )
+      }
+
+      terraform.resources.where( nameLabel  == "aws_apigatewayv2_stage") {
+        blocks.one(type == "access_log_settings" && arguments["destination_arn"] != "" )
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/api-gw-execution-logging-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method_settings#cache_data_encrypted
+        title: Terraform Documentation - api_gateway_method_settings Resource
+  - uid: terraform-aws-security-api-gw-xray-enabled
+    title: Ensure AWS X-Ray tracing is enabled on Amazon API Gateway REST APIs
+    mql: |
+      terraform.resources.where( nameLabel  == "aws_api_gateway_stage") {
+        arguments["xray_tracing_enabled"] == true
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/api-gw-xray-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_stage#xray_tracing_enabled
+        title: Terraform Documentation - api_gateway_stage Resource
+  - uid: terraform-aws-security-api-gw-require-authentication
+    title: Ensure Authentication for API Gateway methods is activated
+    mql: |
+      terraform.resources
+        .where( nameLabel  == "aws_api_gateway_method" && arguments["authorization"].upcase == "NONE" && arguments["http_method"].upcase != "OPTION" )
+        .all(arguments["api_key_required"] == true )
+    refs:
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method#authorization
+        title: Terraform Documentation - api_gateway_method Resource
+  - uid: terraform-aws-security-api-gw-tls
+    title: Ensure that the API Gateway uses a secure SSL/TLS configuration
+    mql: |
+      terraform.resources.where( nameLabel  == "aws_api_gateway_domain_name") {
+        arguments["security_policy"] == "TLS-1-2"
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-custom-domain-tls-version.html
+        title: Choosing a minimum TLS version for a custom domain in API Gateway
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/api-gw-ssl-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_domain_name#security_policy
+        title: Terraform Documentation - api_gateway_domain_name Resource
+  - uid: terraform-aws-security-ec2-ebs-encryption-by-default
+    title: Ensure that Amazon Elastic Block Store (EBS) encryption is enabled by default
+    mql: |
+      terraform.resources.where( nameLabel == "aws_ebs_volume").all(arguments["encrypted"] == true) ||
+      terraform.resources.one( nameLabel == "aws_ebs_encryption_by_default" && arguments["enabled"] == true )
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/ec2-ebs-encryption-by-default.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ebs_volume#encrypted
+        title: Terraform Documentation - ebs_volume Resource
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ebs_encryption_by_default
+        title: Terraform Documentation - ebs_encryption_by_default Resource
+  - uid: terraform-aws-security-ec2-imdsv2
+    title: Ensure Instance Metadata Service Version 2 (IMDSv2) with session authentication tokens is active
+    mql: |
+      terraform.resources.where( nameLabel  == "aws_instance") {
+        blocks.one(type == "metadata_options")
+        blocks.where(type == "metadata_options") {
+          arguments["http_tokens"] == "required" || arguments["http_endpoint"] == "disabled"
+        }
+      }
+    refs:
+      - url: https://aws.amazon.com/blogs/security/defense-in-depth-open-firewalls-reverse-proxies-ssrf-vulnerabilities-ec2-instance-metadata-service/
+        title: Add defense in depth against open firewalls, reverse proxies, and SSRF vulnerabilities with enhancements to the EC2 Instance Metadata Service
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/ec2-imdsv2-check.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance#metadata-options
+        title: Terraform Documentation - Metadata Options
+  - uid: terraform-aws-security-ec2-user-data-no-secrets
+    title: Ensure EC2 instance user data does not contain secrets
+    mql: |
+      terraform.resources.where( nameLabel  == "aws_instance" && arguments["user_data"] != empty ) {
+        # ensure that all used AWS_ACCESS_KEY_ID are the sample key
+        arguments["user_data"] {
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        }
+
+        # ensure that all used secret keys are the sample key
+        arguments["user_data"] {
+          _.find(/([A-Za-z0-9\\\/+\\]{40})/).all( "wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+        }
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-add-user-data.html
+        title: Work with instance user data
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html
+        title: Run commands on your Linux instance at launch
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/WindowsGuide/ec2-windows-user-data.html
+        title: Run commands on your Windows instance at launch
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance#user_data
+        title: Terraform Documentation - aws_instance Resource
+  - uid: terraform-aws-security-iam-no-wildcards-policies
+    title: Ensure IAM policy do not use wildcards and instead apply the principle of least privilege
+    mql: |
+      # verify aws_iam_policy
+      terraform.resources.where( nameLabel  == "aws_iam_policy" && arguments["policy"] != empty  ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            # Resource is either not * or DENY is used (where wildcard is great)
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+
+      # verify aws_iam_user_policy
+      terraform.resources.where( nameLabel  == "aws_iam_user_policy" && arguments["policy"] != empty  ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            # Resource is either not * or DENY is used (where wildcard is great)
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+
+      # verify iam_role_policy
+      terraform.resources.where( nameLabel  == "iam_role_policy" && arguments["policy"] != empty  ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            # Resource is either not * or DENY is used (where wildcard is great)
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+
+      # verify iam_group_policy
+      terraform.resources.where( nameLabel  == "iam_group_policy" && arguments["policy"] != empty  ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            # Resource is either not * or DENY is used (where wildcard is great)
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+        title: Security best practices in IAM
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy
+        title: Terraform Documentation - iam_policy Resource
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy
+        title: Terraform Documentation - iam_user_policy Resource
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy
+        title: Terraform Documentation - iam_role_policy Resource
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_group_policy
+        title: Terraform Documentation - iam_group_policy Resource
+  - uid: terraform-aws-security-s3-bucket-versioning-enabled
+    title: Ensure that versioning is enabled for your S3 buckets
+    mql: |
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+3\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket') {
+          blocks.one(type == 'versioning')
+          blocks.where(type == 'versioning') {
+            arguments['enabled'] == true
+          }
+        }
+      }
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+4\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket').map(labels.last) {
+          bucketnames = _
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_versioning' && arguments['bucket'].split('.')[1] == bucketnames ) != []
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_versioning' && arguments['bucket'].split('.')[1] == bucketnames ) {
+            blocks.one( type.downcase == 'versioning_configuration' )
+            blocks.where( type.downcase == 'versioning_configuration' ) {
+              arguments['status'].downcase == 'enabled'
+            }
+          }
+        }
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-versioning-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket
+        title: Terraform Documentation - s3_bucket Resource
+  - uid: terraform-aws-security-s3-bucket-logging-enabled
+    title: Ensure logging is enabled for your S3 buckets
+    mql: |
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+3\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket') {
+          blocks.one( type == 'logging')
+          blocks.where(type == 'logging') {
+            arguments['target_bucket'] != empty
+          }
+        }
+      }
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+4\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket').map(labels.last) {
+          bucketnames = _
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_logging' && arguments['bucket'].split('.')[1] == bucketnames ) != []
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_logging' && arguments['bucket'].split('.')[1] == bucketnames ) {
+            arguments['target_bucket'] != empty
+          }
+        }
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-logging-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket
+        title: Terraform Documentation - s3_bucket Resource
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html
+        title: Logging requests using server access logging
+  - uid: terraform-aws-security-s3-bucket-level-public-access-prohibited
+    title: Ensure Amazon Simple Storage Service (Amazon S3) buckets are not publicly accessible
+    mql: |
+      terraform.resources.where( nameLabel == 'aws_s3_bucket').map(labels.last) {
+        bucketnames = _
+        terraform.resources.where( nameLabel == 'aws_s3_bucket_public_access_block' && arguments['bucket'].split('.')[1] == bucketnames ) != []
+        terraform.resources.where( nameLabel == 'aws_s3_bucket_public_access_block' && arguments['bucket'].split('.')[1] == bucketnames ) {
+          arguments['block_public_acls'] == true
+          arguments['block_public_policy'] == true
+          arguments['ignore_public_acls'] == true
+          arguments['restrict_public_buckets'] == true
+        }
+      }
+    docs:
+      desc: |
+        [Blocking public access to your Amazon S3 storage](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html) provides very specific documentation about the various settings for s3 bucket policies.
+
+         - `block_public_acls` - By blocking `public` ACLs, PUT requests will fail if the object has any public ACL defined
+         - `ignore_public_acls` - By ignoring the bucket ACL, PUT calls with public ACLs will still work, but public ACL will be ignored
+         - `block_public_policy` - Prevents users from putting a policy that enable public access
+         - `restrict_public_buckets` - Restricts access to the bucket owner and AWS Services if the bucket has a public policy
+      remediation: ""
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+        title: Blocking public access to your Amazon S3 storage
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-level-public-access-prohibited.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket
+        title: Terraform Documentation - s3_bucket Resource
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block#restrict_public_buckets
+        title: Terraform Documentation - s3_bucket Resource - restrict_public_buckets Argument
+  - uid: terraform-aws-security-s3-bucket-server-side-encryption-enabled
+    title: Ensure S3 buckets has the Amazon S3 default encryption enabled
+    mql: |
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+3\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket') {
+          blocks.one( type == "server_side_encryption_configuration" )
+          blocks.where( type == "server_side_encryption_configuration" ) {
+            blocks.one( _.type == "rule" && _.blocks.one( type == 'apply_server_side_encryption_by_default' ))
+          }
+        }
+      }
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+4\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket_server_side_encryption_configuration') {
+          blocks.one( type == "rule" )
+          blocks.where( type == "rule" ) {
+            blocks.one( _.type == 'apply_server_side_encryption_by_default' )
+          }
+        }
+      }
+    docs:
+      desc: |
+        Amazon S3 default encryption is an optional configuration that sets the default encryption behavior for an S3 bucket. Enabling default SSE configures S3 buckets so that all new objects are encrypted when they are stored in the bucket. The objects are encrypted using server-side encryption with either Amazon S3-managed keys (SSE-S3) or AWS KMS keys stored in AWS Key Management Service (AWS KMS) (SSE-KMS).
+
+        Enabling SSE by default reduces the risk of unauthorized access to objects stored in the bucket.
+      remediation: ""
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-encryption.html
+        title: Setting default server-side encryption behavior for Amazon S3 buckets
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket
+        title: Terraform Documentation - s3_bucket Resource
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-server-side-encryption-enabled.html
+        title: AWS Config Managed Rules
+  - uid: terraform-aws-security-s3-bucket-public-read-and-write-prohibited
+    title: Ensure Amazon S3 buckets do not allow public read access
+    mql: |
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+3\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket') {
+          arguments['acl'] != /public-read/
+        }
+      }
+      if ( terraform.settings.requiredProviders["aws"]["version"] == /[~><=\s]+4\./ ) {
+        terraform.resources.where( nameLabel == 'aws_s3_bucket').map(labels.last) {
+          bucketnames = _
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_acl' && arguments['bucket'].split('.')[1] == bucketnames ) != []
+          terraform.resources.where( nameLabel == 'aws_s3_bucket_acl' && arguments['bucket'].split('.')[1] == bucketnames ) {
+            arguments['acl'].downcase != /public-read/
+          }
+        }
+      }
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-public-read-prohibited.html
+        title: AWS Config Managed Rules - public read
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-public-write-prohibited.html
+        title: AWS Config Managed Rules - public write
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket#acl
+        title: Terraform Documentation - s3_bucket Resource - acl Argument
+  - uid: terraform-aws-security-eks-encrypt-secrets
+    title: EKS should have the encryption of secrets enabled
+    mql: |
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ) {
+        blocks.one( type == "encryption_config" )
+      }
+    docs:
+      desc: |
+        EKS cluster resources should have the encryption_config block set with protection of the secrets resource.
+
+        __Possible Impact__
+
+        EKS secrets could be read if compromised
+
+        __Suggested Resolution__
+
+        Enable encryption of EKS secrets
+      audit: |
+        The following example will fail the `eks-encrypt-secrets` check:
+
+        ```hcl
+        resource "aws_eks_cluster" "bad_example" {
+          name = "bad_example_cluster"
+
+          role_arn = var.cluster_arn
+          vpc_config {
+              endpoint_public_access = false
+          }
+        }
+        ```
+      remediation: |
+        The following example will pass the `eks-encrypt-secrets` check:
+
+        ```hcl
+        resource "aws_eks_cluster" "good_example" {
+          encryption_config {
+              resources = [ "secrets" ]
+              provider {
+                  key_arn = var.kms_arn
+              }
+          }
+
+          name = "good_example_cluster"
+          role_arn = var.cluster_arn
+          vpc_config {
+              endpoint_public_access = false
+          }
+        }
+        ```
+  - uid: terraform-aws-security-eks-no-public-cluster-access-to-cidr
+    title: EKS Clusters should restrict access to public API server
+    mql: |-
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ) {
+        blocks.where( type == "vpc_config" ) {
+          arguments['endpoint_public_access'] == false || arguments['public_access_cidrs'].none( "0.0.0.0/0")
+        }
+      }
+    docs:
+      desc: |
+        EKS Clusters have public access CIDRs set to 0.0.0.0/0 by default which is wide open to the internet. This should be explicitly set to a more specific private CIDR range.
+
+        __Possible Impact__
+
+        EKS can be accessed from the internet
+
+        __Suggested Resolution__
+
+        Don't enable public access to EKS Clusters.
+      audit: |
+        The following example will fail the eks-no-public-cluster-access-to-cidr check.
+
+        ```hcl
+        resource "aws_eks_cluster" "bad_example" {
+
+          name = "bad_example_cluster"
+          role_arn = var.cluster_arn
+          vpc_config {
+            endpoint_public_access = true
+          }
+        }
+        ```
+      remediation: |
+        The following example will pass the eks-no-public-cluster-access-to-cidr check:
+
+        ```hcl
+        resource "aws_eks_cluster" "good_example" {
+          name = "good_example_cluster"
+          role_arn = var.cluster_arn
+          vpc_config {
+            endpoint_public_access = true
+            public_access_cidrs = ["10.2.0.0/8"]
+          }
+        }
+        ```
