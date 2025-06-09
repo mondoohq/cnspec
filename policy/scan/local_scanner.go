@@ -114,6 +114,17 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	return ls
 }
 
+// WithRuntimeAutoUpdate configures the AutoUpdate settings for the runtime.
+func WithRuntimeAutoUpdate(cfg providers.UpdateProvidersConfig) ScannerOption {
+	return func(s *LocalScanner) {
+		if r, ok := s.runtime.(*providers.Runtime); ok {
+			r.AutoUpdate = cfg
+		} else {
+			log.Warn().Msg("runtime is not of expected type *providers.Runtime; cannot set AutoUpdate config.")
+		}
+	}
+}
+
 func (s *LocalScanner) EnableQueue() error {
 	var err error
 	s.queue, err = newDqueClient(defaultDqueConfig, func(job *Job) {
