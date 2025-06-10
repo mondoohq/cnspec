@@ -1,7 +1,5 @@
-
 # Copyright (c) Mondoo, Inc.
 # SPDX-License-Identifier: BUSL-1.1
-
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
@@ -409,10 +407,10 @@ queries:
             ```
   - uid: mondoo-linux-security-core-dumps-are-restricted
     title: Ensure core dumps are restricted
+    impact: 75
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-    impact: 75
     mql: |
       file("/etc/security/limits.conf").content.lines.where( _ == /^[^#]/ ).where( _.contains("core") ) {
         _ == /\*\s+hard\s+core\s+0/
@@ -599,22 +597,48 @@ queries:
           - It increases the system's attack surface by introducing complexity and modifying binaries in ways that may be exploited or misunderstood by defenders.
 
         Removing prelink eliminates this unnecessary risk, ensures compatibility with file integrity monitoring tools, and supports consistent enforcement of modern memory protection strategies.
-      remediation: |-
-        Run these commands to restore binaries to normal and uninstall `prelink`:
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI***
 
-        ### RHEL/Fedora/Amazon Linux and derivatives
+            Run this command to remove the prelink package:
 
-        ```bash
-        prelink -ua
-        yum remove prelink
-        ```
+            ### RHEL/Fedora/Amazon Linux and derivatives
 
-        ### Debian/Ubuntu and derivatives
+            ```bash
+            yum remove prelink
+            ```
 
-        ```bash
-        prelink -ua
-        apt-get purge prelink
-        ```
+            ### Debian/Ubuntu and derivatives
+
+            ```bash
+            apt-get purge prelink
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible***
+
+            Use this Ansible playbook to remove the prelink package:
+
+            ```yaml
+            ---
+            - name: Remove prelink package
+              hosts: all
+              become: true
+              tasks:
+                - name: Remove prelink on RHEL/Fedora/Amazon Linux
+                  ansible.builtin.yum:
+                    name: prelink
+                    state: absent
+                  when: ansible_os_family == "RedHat"
+
+                - name: Remove prelink on Debian/Ubuntu
+                  ansible.builtin.apt:
+                    name: prelink
+                    state: absent
+                  when: ansible_os_family == "Debian"
+            ```
   - uid: mondoo-linux-security-window-system-is-not-installed
     title: Ensure X Window System is not installed
     impact: 100
@@ -1442,37 +1466,91 @@ queries:
           - Introduce compliance concerns if email flows are not properly audited or encrypted.
 
         Configuring the MTA to listen only on the loopback interface (127.0.0.1) ensures it serves only local applications and users. This reduces exposure, limits attack vectors, and aligns with security best practices for systems that are not intended to function as full email servers.
-      remediation: |-
-        **For Postfix**
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        Edit `/etc/postfix/main.cf` and add the following line to the RECEIVING MAIL section. If the line already exists, change it to look like the line below:
+            1. For Postfix, edit the main configuration file `/etc/postfix/main.cf`
+            2. Find the line that starts with `inet_interfaces` and change it to:
 
-        ```
-        inet_interfaces = loopback-only
-        ```
+            ```
+            inet_interfaces = loopback-only
+            ```
 
-        Restart postfix:
+            3. Restart Postfix:
 
-        ```bash
-        systemctl restart postfix
-        ```
+            ```bash
+            sudo systemctl restart postfix
+            ```
 
-        **For Exim4 (Debian/Ubuntu)**
+            4. For Exim4, edit the Exim4 configuration file:
 
-        Edit the Exim4 configuration file, typically located at `/etc/exim4/update-exim4.conf.conf``. Find the line that sets `dc_local_interfaces` and modify it to the following:
+            ```bash
+            sudo nano /etc/exim4/update-exim4.conf.conf
+            ```
 
-        ```
-        dc_local_interfaces='127.0.0.1 ; ::1'
-        ```
+            5. Find the line that sets `dc_local_interfaces` and modify it to:
 
-        This configuration limits Exim4 to listening only on the loopback IPv4 and IPv6 interfaces.
+            ```
+            dc_local_interfaces='127.0.0.1 ; ::1'
+            ```
+            6. Regenerate the Exim4 runtime configuration and restart the service:
 
-        After making the change, regenerate the Exim4 runtime configuration and restart the service:
+            ```bash
+            sudo update-exim4.conf
+            sudo systemctl restart exim4
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
 
-        ```bash
-        update-exim4.conf
-        systemctl restart exim4
-        ```
+            Use this Ansible playbook to ensure the Postfix is configured for local-only mode:
+
+            ```yaml
+            ---
+            - name: Ensure mail transfer agent is configured for local-only mode
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Configure Postfix for local-only mode
+                  ansible.builtin.lineinfile:
+                    path: /etc/postfix/main.cf
+                    regexp: '^inet_interfaces'
+                    line: 'inet_interfaces = loopback-only'
+                    state: present
+
+                - name: Restart Postfix
+                  ansible.builtin.systemd:
+                    name: postfix
+                    state: restarted
+            ```
+
+            Use this Ansible playbook to ensure the Exim4 is configured for local-only mode:
+            ```yaml
+            ---
+            - name: Ensure Exim4 is configured for local-only mode
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Configure Exim4 for local-only mode
+                  ansible.builtin.lineinfile:
+                    path: /etc/exim4/update-exim4.conf.conf
+                    regexp: '^dc_local_interfaces'
+                    line: 'dc_local_interfaces=\'127.0.0.1 ; ::1\''
+                    state: present
+
+                - name: Regenerate Exim4 configuration
+                  ansible.builtin.command:
+                    cmd: update-exim4.conf
+
+                - name: Restart Exim4
+                  ansible.builtin.systemd:
+                    name: exim4
+                    state: restarted
+            ```
   - uid: mondoo-linux-security-nis-server-is-not-enabled
     title: Ensure NIS server is stopped and not enabled
     impact: 75
@@ -1911,21 +1989,50 @@ queries:
           - It increases the complexity and unpredictability of network traffic flow, complicating security monitoring and enforcement.
 
         Disabling the ability to send ICMP redirects on non-router systems prevents unauthorized route manipulation and supports secure, well-defined network behavior. This reduces the risk of traffic interception or redirection by adversaries.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.conf.all.send_redirects = 0
-        net.ipv4.conf.default.send_redirects = 0
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.conf.all.send_redirects = 0
+            net.ipv4.conf.default.send_redirects = 0
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.conf.all.send_redirects=0
-        sysctl -w net.ipv4.conf.default.send_redirects=0
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            2. Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv4.conf.all.send_redirects=0
+            sysctl -w net.ipv4.conf.default.send_redirects=0
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable packet redirect sending
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure packet redirect sending is disabled in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-packet-redirect.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
+                    - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-source-routed-packets-are-not-accepted
     title: Ensure source routed packets are not accepted
     impact: 75
@@ -1955,27 +2062,59 @@ queries:
           - It undermines network segmentation and isolation policies.
 
         Disabling acceptance of source-routed packets ensures that the system only processes packets routed according to the network's standard path selection, reducing the risk of exploitation and reinforcing a secure network posture.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.conf.all.accept_source_route = 0
-        net.ipv4.conf.default.accept_source_route = 0
-        net.ipv6.conf.all.accept_source_route = 0
-        net.ipv6.conf.default.accept_source_route = 0
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.conf.all.accept_source_route = 0
+            net.ipv4.conf.default.accept_source_route = 0
+            net.ipv6.conf.all.accept_source_route = 0
+            net.ipv6.conf.default.accept_source_route = 0
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.conf.all.accept_source_route=0
-        sysctl -w net.ipv4.conf.default.accept_source_route=0
-        sysctl -w net.ipv4.route.flush=1
+            2. Run these commands to set the active kernel parameters:
 
-        sysctl -w net.ipv6.conf.all.accept_source_route=0
-        sysctl -w net.ipv6.conf.default.accept_source_route=0
-        sysctl -w net.ipv6.route.flush=1
-        ```
+            ```bash
+            sysctl -w net.ipv4.conf.all.accept_source_route=0
+            sysctl -w net.ipv4.conf.default.accept_source_route=0
+            sysctl -w net.ipv4.route.flush=1
+
+            sysctl -w net.ipv6.conf.all.accept_source_route=0
+            sysctl -w net.ipv6.conf.default.accept_source_route=0
+            sysctl -w net.ipv6.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable source routed packets acceptance
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure source routed packets are not accepted in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-source-routing.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+                    - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+                    - { name: 'net.ipv6.conf.all.accept_source_route', value: '0' }
+                    - { name: 'net.ipv6.conf.default.accept_source_route', value: '0' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+                    - { name: 'net.ipv6.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-icmp-redirects-are-not-accepted
     title: Ensure ICMP redirects are not accepted
     impact: 75
@@ -2005,27 +2144,59 @@ queries:
           - It makes network traffic paths unpredictable and harder to audit or monitor effectively.
 
         Disabling ICMP redirect acceptance ensures that the system maintains static and trusted routing behavior, helping to preserve network integrity and defend against unauthorized routing changes.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.conf.all.accept_redirects = 0
-        net.ipv4.conf.default.accept_redirects = 0
-        net.ipv6.conf.all.accept_redirects = 0
-        net.ipv6.conf.default.accept_redirects = 0
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.conf.all.accept_redirects = 0
+            net.ipv4.conf.default.accept_redirects = 0
+            net.ipv6.conf.all.accept_redirects = 0
+            net.ipv6.conf.default.accept_redirects = 0
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.conf.all.accept_redirects=0
-        sysctl -w net.ipv4.conf.default.accept_redirects=0
-        sysctl -w net.ipv4.route.flush=1
+            2. Run these commands to set the active kernel parameters:
 
-        sysctl -w net.ipv6.conf.all.accept_redirects=0
-        sysctl -w net.ipv6.conf.default.accept_redirects=0
-        sysctl -w net.ipv6.route.flush=1
-        ```
+            ```bash
+            sysctl -w net.ipv4.conf.all.accept_redirects=0
+            sysctl -w net.ipv4.conf.default.accept_redirects=0
+            sysctl -w net.ipv4.route.flush=1
+
+            sysctl -w net.ipv6.conf.all.accept_redirects=0
+            sysctl -w net.ipv6.conf.default.accept_redirects=0
+            sysctl -w net.ipv6.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable ICMP redirects acceptance
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure ICMP redirects are not accepted in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-icmp-redirects.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+                    - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+                    - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
+                    - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+                    - { name: 'net.ipv6.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-secure-icmp-redirects-are-not-accepted
     title: Ensure secure ICMP redirects are not accepted
     impact: 75
@@ -2051,21 +2222,50 @@ queries:
           - It undermines the reliability of static routing configurations and may conflict with security controls or monitoring systems.
 
         Disabling acceptance of secure ICMP redirects ensures that routing updates are not accepted dynamically from potentially compromised gateways. This strengthens network security by enforcing a more predictable and tightly controlled routing posture.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.conf.all.secure_redirects = 0
-        net.ipv4.conf.default.secure_redirects = 0
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.conf.all.secure_redirects = 0
+            net.ipv4.conf.default.secure_redirects = 0
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.conf.all.secure_redirects=0
-        sysctl -w net.ipv4.conf.default.secure_redirects=0
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            2. Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv4.conf.all.secure_redirects=0
+            sysctl -w net.ipv4.conf.default.secure_redirects=0
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable secure ICMP redirects acceptance
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure secure ICMP redirects are not accepted in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-secure-icmp-redirects.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+                    - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-suspicious-packets-are-logged
     title: Ensure suspicious packets are logged
     impact: 60
@@ -2089,23 +2289,50 @@ queries:
           - Incident response and forensic analysis capabilities are weakened due to lack of log data.
 
         Enabling logging for martian packets provides valuable insights into unusual traffic patterns and supports early detection of threats or misconfigurations. This improves network observability and supports a proactive security posture.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` or in /etc/ufw/sysctl.conf file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.conf.all.log_martians = 1
-        net.ipv4.conf.default.log_martians = 1
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Hint: If you're using Ubuntu's UFW, please check the for the above configuration in the file /etc/ufw/sysctl.conf in addition, because these settings will overwrite the kernel parameters on UFW startup.
+            ```
+            net.ipv4.conf.all.log_martians = 1
+            net.ipv4.conf.default.log_martians = 1
+            ```
 
-        Run these commands to set the active kernel parameters:
+            2. Run these commands to set the active kernel parameters:
 
-        ```bash
-        sysctl -w net.ipv4.conf.all.log_martians=1
-        sysctl -w net.ipv4.conf.default.log_martians=1
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            ```bash
+            sysctl -w net.ipv4.conf.all.log_martians=1
+            sysctl -w net.ipv4.conf.default.log_martians=1
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Enable logging of suspicious packets
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure suspicious packets are logged in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-log-suspicious-packets.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
+                    - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-broadcast-icmp-requests-are-ignored
     title: Ensure broadcast ICMP requests are ignored
     impact: 60
@@ -2128,19 +2355,47 @@ queries:
           - Attackers can use broadcast ICMP traffic to map networks or identify live hosts.
 
         Ignoring broadcast ICMP requests reduces the likelihood that the system can be leveraged in amplification attacks and helps maintain the integrity and availability of the network. This is particularly important in environments where network resources are limited or where systems are exposed to untrusted networks.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.icmp_echo_ignore_broadcasts = 1
-        ```
+            Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.icmp_echo_ignore_broadcasts = 1
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable ICMP echo broadcasts
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure ICMP echo broadcasts are ignored in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-icmp-echo-broadcasts.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-bogus-icmp-responses-are-ignored
     title: Ensure bogus ICMP responses are ignored
     impact: 75
@@ -2163,19 +2418,47 @@ queries:
           - It may lead to resource exhaustion or degradation of network performance in environments with high volumes of invalid traffic.
 
         By ignoring bogus ICMP error responses, the system avoids reacting to malformed or irrelevant network messages, helping to maintain cleaner logs and more stable network operations.
-      remediation: |-
-        Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.icmp_ignore_bogus_error_responses = 1
-        ```
+            1. Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.icmp_ignore_bogus_error_responses = 1
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            2. Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable bogus ICMP responses
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure bogus ICMP responses are ignored in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-bogus-icmp-responses.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-reverse-path-filtering-is-enabled
     title: Ensure Reverse Path Filtering is enabled
     impact: 75
@@ -2199,21 +2482,50 @@ queries:
           - It undermines the reliability of source-based filtering and complicates network traffic analysis.
 
         Enabling reverse path filtering ensures the system performs sanity checks on incoming traffic, which helps prevent IP spoofing and enhances the integrity of network communications. It is an important safeguard in both perimeter and internal network environments.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.conf.all.rp_filter = 1
-        net.ipv4.conf.default.rp_filter = 1
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.conf.all.rp_filter = 1
+            net.ipv4.conf.default.rp_filter = 1
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.conf.all.rp_filter=1
-        sysctl -w net.ipv4.conf.default.rp_filter=1
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            2. Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv4.conf.all.rp_filter=1
+            sysctl -w net.ipv4.conf.default.rp_filter=1
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Enable Reverse Path Filtering
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure Reverse Path Filtering is enabled in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-enable-reverse-path-filtering.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
+                    - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-tcp-syn-cookies-is-enabled
     title: Ensure TCP SYN Cookies is enabled
     impact: 75
@@ -2236,19 +2548,47 @@ queries:
           - It helps maintain availability and resilience under high connection request loads or malicious activity.
 
         Without SYN cookies, systems are more susceptible to resource exhaustion during a SYN flood. Enabling this feature strengthens the host's ability to withstand network-based denial-of-service attempts and helps ensure reliable TCP service availability.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv4.tcp_syncookies = 1
-        ```
+            Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv4.tcp_syncookies = 1
+            ```
 
-        ```bash
-        sysctl -w net.ipv4.tcp_syncookies=1
-        sysctl -w net.ipv4.route.flush=1
-        ```
+            Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv4.tcp_syncookies=1
+            sysctl -w net.ipv4.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Enable TCP SYN Cookies
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure TCP SYN Cookies is enabled in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-enable-tcp-syncookies.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv4.tcp_syncookies', value: '1' }
+                    - { name: 'net.ipv4.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-ipv6-router-advertisements-are-not-accepted
     title: Ensure IPv6 router advertisements are not accepted
     impact: 75
@@ -2274,21 +2614,50 @@ queries:
           - It undermines predictable network configuration and may conflict with security policies that rely on static or managed routing.
 
         Disabling acceptance of IPv6 router advertisements helps ensure that routing configuration is controlled explicitly, reducing the likelihood of unauthorized or harmful route changes on the host.
-      remediation: |-
-        Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        net.ipv6.conf.all.accept_ra = 0
-        net.ipv6.conf.default.accept_ra = 0
-        ```
+            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
-        Run these commands to set the active kernel parameters:
+            ```
+            net.ipv6.conf.all.accept_ra = 0
+            net.ipv6.conf.default.accept_ra = 0
+            ```
 
-        ```bash
-        sysctl -w net.ipv6.conf.all.accept_ra=0
-        sysctl -w net.ipv6.conf.default.accept_ra=0
-        sysctl -w net.ipv6.route.flush=1
-        ```
+            2. Run these commands to set the active kernel parameters:
+
+            ```bash
+            sysctl -w net.ipv6.conf.all.accept_ra=0
+            sysctl -w net.ipv6.conf.default.accept_ra=0
+            sysctl -w net.ipv6.route.flush=1
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the kernel parameters:
+
+            ```yaml
+            ---
+            - name: Disable IPv6 router advertisements acceptance
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure IPv6 router advertisements are not accepted in sysctl configuration
+                  ansible.builtin.sysctl:
+                    name: "{{ item.name }}"
+                    value: "{{ item.value }}"
+                    sysctl_file: /etc/sysctl.d/99-disable-ipv6-router-advertisements.conf
+                    state: present
+                    reload: yes
+                  loop:
+                    - { name: 'net.ipv6.conf.all.accept_ra', value: '0' }
+                    - { name: 'net.ipv6.conf.default.accept_ra', value: '0' }
+                    - { name: 'net.ipv6.route.flush', value: '1' }
+            ```
   - uid: mondoo-linux-security-auditd-is-installed-and-running
     title: Ensure auditd is installed, enabled, and running
     impact: 50
@@ -2317,32 +2686,77 @@ queries:
           - The system may fall out of compliance with standards that require audit functionality.
 
         By installing and enabling auditd, organizations ensure consistent audit logging is in place, improving accountability and strengthening overall system security.
-      remediation: |-
-        ### Install auditd
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        **RHEL/Fedora/Amazon Linux and derivatives**
+            1. Install the auditd package:
 
-        ```bash
-        dnf install audit audit-libs
-        ```
+            **RHEL/Fedora/Amazon Linux and derivatives**
 
-        **Debian/Ubuntu and derivatives**
+            ```bash
+            dnf install audit audit-libs
+            ```
 
-        ```bash
-        apt-get install auditd audispd-plugins
-        ```
+            **Debian/Ubuntu and derivatives**
 
-        **SLES and openSUSE**
+            ```bash
+            apt-get install auditd audispd-plugins
+            ```
 
-        ```bash
-        zypper install audit
-        ```
+            **SLES and openSUSE**
 
-        ### Enable auditd
+            ```bash
+            zypper install audit
+            ```
 
-        ```bash
-        systemctl --now enable auditd
-        ```
+            2. Enable and start the auditd service:
+
+            ```bash
+            systemctl --now enable auditd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to ensure auditd is installed, enabled, and running:
+
+            ```yaml
+            ---
+            - name: Ensure auditd is installed and running
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Install auditd on RHEL/Fedora/Amazon Linux
+                  package:
+                    name:
+                      - audit
+                      - audit-libs
+                    state: present
+                  when: ansible_facts['os_family'] == "RedHat"
+
+                - name: Install auditd on Debian/Ubuntu
+                  package:
+                    name:
+                      - auditd
+                      - audispd-plugins
+                    state: present
+                  when: ansible_facts['os_family'] == "Debian"
+
+                - name: Install auditd on SLES/openSUSE
+                  package:
+                    name: audit
+                    state: present
+                  when: ansible_facts['os_family'] == "Suse"
+
+                - name: Enable and start auditd service
+                  systemd:
+                    name: auditd
+                    enabled: yes
+                    state: started
+            ```
   - uid: mondoo-linux-security-auditing-for-processes-that-start-prior-to-auditd-is-enabled
     title: Ensure auditing for processes that start prior to auditd is enabled
     impact: 50
@@ -2689,9 +3103,9 @@ queries:
         Capturing session initiation information—such as user logins and terminal access—is essential for establishing a complete record of user activity. These events mark the beginning of user interactions with the system and provide vital context for analyzing subsequent actions.
 
         If session initiation is not logged:
-          •	User activity cannot be reliably correlated to specific sessions, weakening audit trails.
-          •	Security incidents such as unauthorized access or lateral movement may go undetected.
-          •	Compliance with security standards and regulatory frameworks that require session logging may be compromised.
+          •  User activity cannot be reliably correlated to specific sessions, weakening audit trails.
+          •  Security incidents such as unauthorized access or lateral movement may go undetected.
+          •  Compliance with security standards and regulatory frameworks that require session logging may be compromised.
 
         By ensuring session start events are audited, organizations gain visibility into who accessed the system and when, supporting effective monitoring, incident investigation, and user accountability. This forms a foundational element of audit-based security controls.
       remediation: |-
@@ -2756,9 +3170,9 @@ queries:
         Accurate system time is critical for security auditing, log correlation, and incident investigation. If an attacker or unauthorized user alters the system time, it can obscure malicious activity, disrupt monitoring tools, and compromise the integrity of audit logs.
 
         If changes to date and time settings are not audited:
-          •	Malicious modifications may go unnoticed, allowing attackers to hide their tracks.
-          •	Log timestamps may become unreliable, complicating forensic analysis.
-          •	Compliance with standards that require time synchronization and audit log integrity may be violated.
+          •  Malicious modifications may go unnoticed, allowing attackers to hide their tracks.
+          •  Log timestamps may become unreliable, complicating forensic analysis.
+          •  Compliance with standards that require time synchronization and audit log integrity may be violated.
 
         By auditing all date and time modifications, administrators can detect tampering attempts, verify system integrity, and maintain a trustworthy timeline of system events. This ensures that audit logs remain a reliable source of truth during security reviews and investigations.
       remediation: |-
@@ -2874,8 +3288,8 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     variants:
-    - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-debian-rhel
-    - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-other
+      - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-debian-rhel
+      - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-other
   - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-debian-rhel
     filters: asset.family.contains(/redhat|debian/) == true
     mql: |
@@ -2927,9 +3341,9 @@ queries:
         Changes to the system's hostname, domain name, or core network-related files can alter how the system identifies itself and interacts with other hosts. These modifications may indicate reconfiguration, misconfiguration, or unauthorized tampering.
 
         If these events are not audited:
-          •	Changes to system identity (via sethostname or setdomainname) may go untracked, affecting asset management and security visibility.
-          •	Modifications to files like `/etc/hosts`, `/etc/issue`, or `/etc/sysconfig/network` could enable social engineering, redirect network traffic, or disrupt connectivity.
-          •	Attackers may exploit these files to mask their activity or persist on the system.
+          •  Changes to system identity (via sethostname or setdomainname) may go untracked, affecting asset management and security visibility.
+          •  Modifications to files like `/etc/hosts`, `/etc/issue`, or `/etc/sysconfig/network` could enable social engineering, redirect network traffic, or disrupt connectivity.
+          •  Attackers may exploit these files to mask their activity or persist on the system.
 
         By auditing the sethostname and setdomainname system calls and monitoring changes to `/etc/issue`, `/etc/issue.net`, `/etc/hosts`, and `/etc/sysconfig/network`, administrators can detect critical network and identity changes. This supports system integrity, operational consistency, and incident investigation efforts.
       remediation: |-
@@ -4142,7 +4556,6 @@ queries:
   - uid: mondoo-linux-security-ssh-protocol-is-set-to-2
     title: Ensure SSH Protocol is set to 2
     impact: 80
-    # openssh-server 7.6 and later remove support for protocol v1
     filters: package('openssh-server').version  >= semver("6") && package('openssh-server').version < semver("7.6")
     mql: |
       sshd.config.params["Protocol"] == 2
@@ -5279,8 +5692,7 @@ queries:
         - System integrity and compliance with security policies could be jeopardized.
 
         By ensuring that the `shadow` group is empty, organizations can protect critical account data and maintain a secure system configuration.
-      remediation: |-
-        Remove all users from the `shadow` group in `/etc/group`, and change the primary group of any users with `shadow` as their primary group.
+      remediation: Remove all users from the `shadow` group in `/etc/group`, and change the primary group of any users with `shadow` as their primary group.
   - uid: mondoo-linux-security-root-group-is-empty
     title: Ensure root group is empty
     impact: 100
@@ -5299,8 +5711,7 @@ queries:
         - System integrity and compliance with security policies could be jeopardized.
 
         By ensuring that only the `root` user is assigned to the `root` group, organizations can maintain a secure and well-functioning system configuration.
-      remediation: |-
-        Remove all users from the `root` group in `/etc/group`, and change the primary group of any users with `root` as their primary group, except the `root` user.
+      remediation: Remove all users from the `root` group in `/etc/group`, and change the primary group of any users with `root` as their primary group, except the `root` user.
   - uid: mondoo-linux-security-system-accounts-are-non-login
     title: Ensure system accounts are non-login
     impact: 70
