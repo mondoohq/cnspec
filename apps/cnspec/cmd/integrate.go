@@ -54,14 +54,14 @@ var (
 		Use:     "integrate",
 		Aliases: []string{"onboard"},
 		Hidden:  true,
-		Short:   "Onboard integrations for continuous scanning into the Mondoo platform",
+		Short:   "Onboard integrations for continuous scanning into the Mondoo Platform",
 		Long:    "Run automation code to onboard your account and deploy Mondoo into various environments.",
 	}
 	integrateAzureCmd = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
 		Short:   "Onboard Microsoft Azure",
-		Long: `Use this command to connect your Azure environment into the Mondoo platform.
+		Long: `Use this command to connect your Azure environment into the Mondoo Platform.
 
 By default, all subscriptions will be discovered and integrated for continuous scanning.
 
@@ -204,7 +204,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 	integrateMs365Cmd = &cobra.Command{
 		Use:   "ms365",
 		Short: "Onboard Microsoft 365",
-		Long: `Use this command to connect your Microsoft 365 environment into the Mondoo platform.
+		Long: `Use this command to connect your Microsoft 365 environment into the Mondoo Platform.
 
 Flags are optional:
 
@@ -228,7 +228,7 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 				integrationName = viper.GetString("integration-name")
 			)
 
-			// Verify if space exists, which verifies we have access to the Mondoo platform
+			// Verify if space exists, which verifies we have access to the Mondoo Platform
 			opts, err := config.Read()
 			if err != nil {
 				return err

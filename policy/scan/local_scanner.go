@@ -236,7 +236,7 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 		}
 
 		// - pass in bundle via file
-		// - use Mondoo platform upstream with/without incognito
+		// - use Mondoo Platform upstream with/without incognito
 		// - bundles fetched from public registry (not covered here, but in ensureBundle)
 		//
 		// if we use upstream with/without incognito, we want to fetch the bundle here to ensure we only fetch it once
