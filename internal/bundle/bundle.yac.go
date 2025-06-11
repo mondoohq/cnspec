@@ -424,7 +424,7 @@ func (d Evidence) MarshalYAML() (interface{}, error) {
 }
 
 type Filters struct {
-	Items       map[string]*Mquery `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"items,omitempty"`
+	Items       map[string]*Mquery `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"items,omitempty"`
 	FileContext FileContext        `json:"-" yaml:"-"`
 	Comments    Comments           `json:"-" yaml:"-"`
 }
@@ -959,7 +959,7 @@ type Mquery struct {
 	Title       string            `protobuf:"bytes,20,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
 	Impact      *Impact           `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
 	Filters     *Filters          `protobuf:"bytes,37,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
-	Tags        map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Tags        map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
 	Props       []*Property       `protobuf:"bytes,38,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
 	Mql         string            `protobuf:"bytes,1,opt,name=mql,proto3" json:"mql,omitempty" yaml:"mql,omitempty"`
 	Variants    []*ObjectRef      `protobuf:"bytes,39,rep,name=variants,proto3" json:"variants,omitempty" yaml:"variants,omitempty"`
@@ -1124,7 +1124,7 @@ func (d MqueryRef) MarshalYAML() (interface{}, error) {
 type ObjectRef struct {
 	Uid         string            `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string            `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Tags        map[string]string `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Tags        map[string]string `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
 	Comments    Comments          `json:"-" yaml:"-"`
 }
@@ -1638,7 +1638,7 @@ type QueryPack struct {
 	License                string            `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
 	Filters                *Filters          `protobuf:"bytes,48,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
 	Props                  []*Property       `protobuf:"bytes,35,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
-	Tags                   map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Tags                   map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
 	Queries                []*Mquery         `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
 	Authors                []*Author         `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
 	Docs                   *QueryPackDocs    `protobuf:"bytes,22,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
@@ -2035,7 +2035,7 @@ func (d SoftwareSelector) MarshalYAML() (interface{}, error) {
 }
 
 type TypedDoc struct {
-	Tags        map[string]string `protobuf:"bytes,22,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3" yaml:"tags,omitempty"`
+	Tags        map[string]string `protobuf:"bytes,22,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
 	Id          string            `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
 	Desc        string            `protobuf:"bytes,2,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	Language    string            `protobuf:"bytes,3,opt,name=language,proto3" json:"language,omitempty" yaml:"language,omitempty"`

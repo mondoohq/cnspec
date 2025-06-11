@@ -4,7 +4,7 @@ go 1.24.0
 
 toolchain go1.24.1
 
-// replace go.mondoo.com/cnquery/v11 => ../cnquery
+replace go.mondoo.com/cnquery/v11 => ../cnquery
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.0
