@@ -43,7 +43,7 @@ func addQuerySpacing(data []byte) ([]byte, error) {
 	lines := strings.Split(string(data), "\n")
 	var result []string
 	inQueries := false
-	indentLevel := 0
+	queriesIndentLevel := 0
 	firstQuery := true
 
 	for _, line := range lines {
@@ -52,24 +52,27 @@ func addQuerySpacing(data []byte) ([]byte, error) {
 			inQueries = true
 			firstQuery = true
 			// Determine the indent level of queries
-			indentLevel = len(line) - len(strings.TrimLeft(line, " "))
+			queriesIndentLevel = len(line) - len(strings.TrimLeft(line, " "))
 			result = append(result, line)
 			continue
 		}
 
 		// If we're in queries section
 		if inQueries {
-			// Check if we're leaving queries section (new top-level key)
+			// Check if we're leaving queries section (new top-level key at same level as "queries:")
 			trimmed := strings.TrimSpace(line)
-			if trimmed != "" && !strings.HasPrefix(line, strings.Repeat(" ", indentLevel+2)) &&
-				strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(line, strings.Repeat(" ", indentLevel+4)) {
+			currentIndent := len(line) - len(strings.TrimLeft(line, " "))
+
+			if trimmed != "" && currentIndent == queriesIndentLevel && strings.HasSuffix(trimmed, ":") {
 				inQueries = false
 				result = append(result, line)
 				continue
 			}
 
-			// Check if this is the start of a new query (- uid: pattern)
-			if strings.HasPrefix(strings.TrimLeft(line, " "), "- uid:") {
+			// Check if this is the start of a new query at the correct indentation level
+			// Query items should be at queriesIndentLevel + 2 (for the list indentation)
+			expectedQueryIndent := queriesIndentLevel + 2
+			if currentIndent == expectedQueryIndent && strings.HasPrefix(strings.TrimLeft(line, " "), "- uid:") {
 				if firstQuery {
 					// Don't add extra newlines before the first query
 					firstQuery = false
