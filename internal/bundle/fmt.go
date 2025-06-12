@@ -139,8 +139,24 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 		return err
 	}
 
-	// First parse and format using the existing logic
-	b, err := ParseYaml(data)
+	// Parse as raw YAML to handle both string and array titles
+	var rawBundle map[string]interface{}
+	err = yaml.Unmarshal(data, &rawBundle)
+	if err != nil {
+		return err
+	}
+
+	// Normalize all titles to arrays
+	normalizeTitlesToArrays(rawBundle)
+
+	// Convert back to YAML for processing
+	normalizedData, err := yaml.Marshal(rawBundle)
+	if err != nil {
+		return err
+	}
+
+	// Now parse into Bundle struct (with titles temporarily stored as first array element)
+	b, err := parseYamlWithArrayTitles(normalizedData)
 	if err != nil {
 		return err
 	}
@@ -151,8 +167,8 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 		return err
 	}
 
-	// Now post-process the formatted YAML to convert titles to arrays
-	fmtData, err = convertTitlesToArraysInYAML(fmtData)
+	// Post-process to ensure titles are arrays
+	fmtData, err = ensureTitlesAreArrays(fmtData)
 	if err != nil {
 		return err
 	}
@@ -165,8 +181,96 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 	return nil
 }
 
-// convertTitlesToArraysInYAML post-processes formatted YAML to convert title fields to arrays
-func convertTitlesToArraysInYAML(data []byte) ([]byte, error) {
+// normalizeTitlesToArrays ensures all title fields are arrays in the raw YAML structure
+func normalizeTitlesToArrays(data map[string]interface{}) {
+	if queries, ok := data["queries"].([]interface{}); ok {
+		for _, q := range queries {
+			if query, ok := q.(map[string]interface{}); ok {
+				// Handle title field
+				if title, exists := query["title"]; exists {
+					switch t := title.(type) {
+					case string:
+						if t != "" {
+							query["title"] = []interface{}{t}
+						}
+					case []interface{}:
+						// Already an array, keep as is
+					default:
+						// Handle other cases by converting to string first
+						if str, ok := title.(string); ok && str != "" {
+							query["title"] = []interface{}{str}
+						}
+					}
+				}
+
+				// Handle props if they exist
+				if props, ok := query["props"].([]interface{}); ok {
+					for _, p := range props {
+						if prop, ok := p.(map[string]interface{}); ok {
+							if propTitle, exists := prop["title"]; exists {
+								switch pt := propTitle.(type) {
+								case string:
+									if pt != "" {
+										prop["title"] = []interface{}{pt}
+									}
+								case []interface{}:
+									// Already an array, keep as is
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// parseYamlWithArrayTitles parses YAML where titles are arrays, extracting first element as string
+func parseYamlWithArrayTitles(data []byte) (*Bundle, error) {
+	// First parse as generic structure
+	var raw map[string]interface{}
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert array titles back to strings temporarily for Bundle parsing
+	if queries, ok := raw["queries"].([]interface{}); ok {
+		for _, q := range queries {
+			if query, ok := q.(map[string]interface{}); ok {
+				if titleArray, ok := query["title"].([]interface{}); ok && len(titleArray) > 0 {
+					if titleStr, ok := titleArray[0].(string); ok {
+						query["title"] = titleStr
+					}
+				}
+
+				// Handle props
+				if props, ok := query["props"].([]interface{}); ok {
+					for _, p := range props {
+						if prop, ok := p.(map[string]interface{}); ok {
+							if propTitleArray, ok := prop["title"].([]interface{}); ok && len(propTitleArray) > 0 {
+								if propTitleStr, ok := propTitleArray[0].(string); ok {
+									prop["title"] = propTitleStr
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Marshal back and parse as Bundle
+	modifiedData, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	return ParseYaml(modifiedData)
+}
+
+// ensureTitlesAreArrays post-processes formatted YAML to ensure title fields are arrays
+func ensureTitlesAreArrays(data []byte) ([]byte, error) {
 	var doc yaml.Node
 	err := yaml.Unmarshal(data, &doc)
 	if err != nil {
@@ -201,18 +305,21 @@ func convertTitlesInNode(node *yaml.Node) {
 			value := node.Content[i+1]
 
 			// Convert title fields to arrays
-			if key.Value == "title" && value.Kind == yaml.ScalarNode && value.Value != "" {
-				// Replace scalar with sequence
-				node.Content[i+1] = &yaml.Node{
-					Kind: yaml.SequenceNode,
-					Content: []*yaml.Node{
-						{
-							Kind:  yaml.ScalarNode,
-							Value: value.Value,
-							Style: value.Style,
+			if key.Value == "title" {
+				if value.Kind == yaml.ScalarNode && value.Value != "" {
+					// Replace scalar with sequence
+					node.Content[i+1] = &yaml.Node{
+						Kind: yaml.SequenceNode,
+						Content: []*yaml.Node{
+							{
+								Kind:  yaml.ScalarNode,
+								Value: value.Value,
+								Style: value.Style,
+							},
 						},
-					},
+					}
 				}
+				// If already a sequence, leave it as is
 			} else if key.Value == "queries" || key.Value == "props" {
 				// Recursively process queries and props
 				convertTitlesInNode(value)
