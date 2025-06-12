@@ -46,7 +46,7 @@ func addQuerySpacing(data []byte) ([]byte, error) {
 	indentLevel := 0
 	firstQuery := true
 
-	for i, line := range lines {
+	for _, line := range lines {
 		// Check if we're entering queries section
 		if strings.TrimSpace(line) == "queries:" {
 			inQueries = true
