@@ -82,13 +82,6 @@ func ParseYaml(data []byte) (*Bundle, error) {
 	return &baseline, err
 }
 
-// ParseYamlWithQueryTitleArray loads a yaml file and parses it, preserving title arrays
-func ParseYamlWithQueryTitleArray(data []byte) (map[string]interface{}, error) {
-	var result map[string]interface{}
-	err := yaml.Unmarshal(data, &result)
-	return result, err
-}
-
 // sanitizeStringForYaml is here to help generating literal style yaml strings
 // if a string has a trailing space in a line, it is automatically converted into quoted style
 func sanitizeStringForYaml(s string) string {
@@ -138,6 +131,7 @@ func FormatFile(filename string, sort bool) error {
 	return nil
 }
 
+// FormatFileWithQueryTitleArray formats a file with query titles as arrays
 func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 	log.Info().Str("file", filename).Msg("format file with query title arrays")
 	data, err := os.ReadFile(filename)
@@ -145,57 +139,25 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 		return err
 	}
 
-	// Parse as raw YAML to preserve structure
-	var rawBundle map[string]interface{}
-	err = yaml.Unmarshal(data, &rawBundle)
+	// First parse and format using the existing logic
+	b, err := ParseYaml(data)
 	if err != nil {
 		return err
 	}
 
-	// Convert query titles to arrays
-	convertQueryTitlesToArraysInMap(rawBundle)
-
-	// If sort is requested, we need to parse into proper structure
-	if sort {
-		// Marshal back to YAML
-		tempData, err := yaml.Marshal(rawBundle)
-		if err != nil {
-			return err
-		}
-
-		// Parse into Bundle for sorting
-		b, err := ParseYaml(tempData)
-		if err != nil {
-			return err
-		}
-
-		b.SortContents()
-
-		// Convert back to raw format and ensure titles are arrays
-		tempData2, err := FormatBundle(b, false)
-		if err != nil {
-			return err
-		}
-
-		// Parse again and convert titles
-		err = yaml.Unmarshal(tempData2, &rawBundle)
-		if err != nil {
-			return err
-		}
-
-		convertQueryTitlesToArraysInMap(rawBundle)
-	}
-
-	// Format and write
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	err = enc.Encode(rawBundle)
+	// Format using existing FormatBundle to get proper formatting and sorting
+	fmtData, err := FormatBundle(b, sort)
 	if err != nil {
 		return err
 	}
 
-	err = os.WriteFile(filename, buf.Bytes(), 0o644)
+	// Now post-process the formatted YAML to convert titles to arrays
+	fmtData, err = convertTitlesToArraysInYAML(fmtData)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filename, fmtData, 0o644)
 	if err != nil {
 		return err
 	}
@@ -203,64 +165,65 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 	return nil
 }
 
-// convertQueryTitlesToArraysInMap converts query titles to arrays in a raw YAML map
-func convertQueryTitlesToArraysInMap(bundle map[string]interface{}) {
-	// Handle queries
-	if queries, ok := bundle["queries"]; ok {
-		if queryList, ok := queries.([]interface{}); ok {
-			for _, q := range queryList {
-				if query, ok := q.(map[string]interface{}); ok {
-					// Convert title to array if it's a string
-					if title, ok := query["title"]; ok {
-						switch t := title.(type) {
-						case string:
-							if t != "" {
-								query["title"] = []string{t}
-							}
-						case []interface{}:
-							// Already an array, ensure it's string array
-							strArray := make([]string, 0, len(t))
-							for _, item := range t {
-								if str, ok := item.(string); ok {
-									strArray = append(strArray, str)
-								}
-							}
-							if len(strArray) > 0 {
-								query["title"] = strArray
-							}
-						}
-					}
+// convertTitlesToArraysInYAML post-processes formatted YAML to convert title fields to arrays
+func convertTitlesToArraysInYAML(data []byte) ([]byte, error) {
+	var doc yaml.Node
+	err := yaml.Unmarshal(data, &doc)
+	if err != nil {
+		return nil, err
+	}
 
-					// Handle props within queries
-					if props, ok := query["props"]; ok {
-						if propList, ok := props.([]interface{}); ok {
-							for _, p := range propList {
-								if prop, ok := p.(map[string]interface{}); ok {
-									if propTitle, ok := prop["title"]; ok {
-										switch pt := propTitle.(type) {
-										case string:
-											if pt != "" {
-												prop["title"] = []string{pt}
-											}
-										case []interface{}:
-											// Already an array, ensure it's string array
-											strArray := make([]string, 0, len(pt))
-											for _, item := range pt {
-												if str, ok := item.(string); ok {
-													strArray = append(strArray, str)
-												}
-											}
-											if len(strArray) > 0 {
-												prop["title"] = strArray
-											}
-										}
-									}
-								}
-							}
-						}
-					}
+	// Process the document to convert titles
+	convertTitlesInNode(&doc)
+
+	// Marshal back to YAML
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	err = enc.Encode(&doc)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// convertTitlesInNode recursively processes YAML nodes to convert title fields to arrays
+func convertTitlesInNode(node *yaml.Node) {
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			convertTitlesInNode(child)
+		}
+	case yaml.MappingNode:
+		for i := 0; i < len(node.Content)-1; i += 2 {
+			key := node.Content[i]
+			value := node.Content[i+1]
+
+			// Convert title fields to arrays
+			if key.Value == "title" && value.Kind == yaml.ScalarNode && value.Value != "" {
+				// Replace scalar with sequence
+				node.Content[i+1] = &yaml.Node{
+					Kind: yaml.SequenceNode,
+					Content: []*yaml.Node{
+						{
+							Kind:  yaml.ScalarNode,
+							Value: value.Value,
+							Style: value.Style,
+						},
+					},
 				}
+			} else if key.Value == "queries" || key.Value == "props" {
+				// Recursively process queries and props
+				convertTitlesInNode(value)
+			} else {
+				// Recursively process other nodes
+				convertTitlesInNode(value)
 			}
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			convertTitlesInNode(child)
 		}
 	}
 }
