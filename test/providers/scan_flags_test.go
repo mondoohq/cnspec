@@ -27,7 +27,7 @@ func TestScanFlags(t *testing.T) {
 		err = r.Json(&c)
 		assert.NoError(t, err)
 
-		// Assest must be found
+		// Assert must be found
 		assert.NotEmpty(t, c.Assets)
 	})
 	t.Run("github scan WITHOUT flags", func(t *testing.T) {
