@@ -44,15 +44,16 @@ func addQuerySpacing(data []byte) ([]byte, error) {
 	var result []string
 	inQueries := false
 	indentLevel := 0
+	firstQuery := true
 
 	for i, line := range lines {
-		result = append(result, line)
-
 		// Check if we're entering queries section
 		if strings.TrimSpace(line) == "queries:" {
 			inQueries = true
+			firstQuery = true
 			// Determine the indent level of queries
 			indentLevel = len(line) - len(strings.TrimLeft(line, " "))
+			result = append(result, line)
 			continue
 		}
 
@@ -63,38 +64,23 @@ func addQuerySpacing(data []byte) ([]byte, error) {
 			if trimmed != "" && !strings.HasPrefix(line, strings.Repeat(" ", indentLevel+2)) &&
 				strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(line, strings.Repeat(" ", indentLevel+4)) {
 				inQueries = false
+				result = append(result, line)
 				continue
 			}
 
 			// Check if this is the start of a new query (- uid: pattern)
 			if strings.HasPrefix(strings.TrimLeft(line, " "), "- uid:") {
-				// Check if there's another query after this one
-				if i+1 < len(lines) {
-					// Look ahead to see when this query ends
-					j := i + 1
-					queryIndent := len(line) - len(strings.TrimLeft(line, " "))
-					for j < len(lines) {
-						nextLine := lines[j]
-						if nextLine == "" {
-							j++
-							continue
-						}
-						nextIndent := len(nextLine) - len(strings.TrimLeft(nextLine, " "))
-						// If we find another query at the same level
-						if strings.HasPrefix(strings.TrimLeft(nextLine, " "), "- ") && nextIndent == queryIndent {
-							// Add extra newlines before the next query
-							result = append(result, "", "")
-							break
-						}
-						// If we find a top-level key, we're done with queries
-						if nextIndent < queryIndent && strings.HasSuffix(strings.TrimSpace(nextLine), ":") {
-							break
-						}
-						j++
-					}
+				if firstQuery {
+					// Don't add extra newlines before the first query
+					firstQuery = false
+				} else {
+					// Add extra newlines before subsequent queries
+					result = append(result, "", "")
 				}
 			}
 		}
+
+		result = append(result, line)
 	}
 
 	return []byte(strings.Join(result, "\n")), nil
