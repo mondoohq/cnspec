@@ -50,12 +50,43 @@ func FormatRecursive(mqlBundlePath string, sort bool) error {
 	return nil
 }
 
+// FormatRecursiveWithQueryTitleArray iterates recursively through all .mql.yaml files and formats them
+// with query titles as arrays
+func FormatRecursiveWithQueryTitleArray(mqlBundlePath string, sort bool) error {
+	log.Info().Str("file", mqlBundlePath).Msg("format policy bundle(s) with query title arrays")
+	_, err := os.Stat(mqlBundlePath)
+	if err != nil {
+		return errors.New("file " + mqlBundlePath + " does not exist")
+	}
+
+	files, err := policy.WalkPolicyBundleFiles(mqlBundlePath)
+	if err != nil {
+		return err
+	}
+
+	for i := range files {
+		f := files[i]
+		err := FormatFileWithQueryTitleArray(f, sort)
+		if err != nil {
+			return errors.Wrap(err, "could not format file: "+f)
+		}
+	}
+	return nil
+}
+
 // ParseYaml loads a yaml file and parse it into the go struct
 func ParseYaml(data []byte) (*Bundle, error) {
 	baseline := Bundle{}
 
 	err := yaml.Unmarshal([]byte(data), &baseline)
 	return &baseline, err
+}
+
+// ParseYamlWithQueryTitleArray loads a yaml file and parses it, preserving title arrays
+func ParseYamlWithQueryTitleArray(data []byte) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	err := yaml.Unmarshal(data, &result)
+	return result, err
 }
 
 // sanitizeStringForYaml is here to help generating literal style yaml strings
@@ -105,6 +136,133 @@ func FormatFile(filename string, sort bool) error {
 	}
 
 	return nil
+}
+
+func FormatFileWithQueryTitleArray(filename string, sort bool) error {
+	log.Info().Str("file", filename).Msg("format file with query title arrays")
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	// Parse as raw YAML to preserve structure
+	var rawBundle map[string]interface{}
+	err = yaml.Unmarshal(data, &rawBundle)
+	if err != nil {
+		return err
+	}
+
+	// Convert query titles to arrays
+	convertQueryTitlesToArraysInMap(rawBundle)
+
+	// If sort is requested, we need to parse into proper structure
+	if sort {
+		// Marshal back to YAML
+		tempData, err := yaml.Marshal(rawBundle)
+		if err != nil {
+			return err
+		}
+
+		// Parse into Bundle for sorting
+		b, err := ParseYaml(tempData)
+		if err != nil {
+			return err
+		}
+
+		b.SortContents()
+
+		// Convert back to raw format and ensure titles are arrays
+		tempData2, err := FormatBundle(b, false)
+		if err != nil {
+			return err
+		}
+
+		// Parse again and convert titles
+		err = yaml.Unmarshal(tempData2, &rawBundle)
+		if err != nil {
+			return err
+		}
+
+		convertQueryTitlesToArraysInMap(rawBundle)
+	}
+
+	// Format and write
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	err = enc.Encode(rawBundle)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filename, buf.Bytes(), 0o644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// convertQueryTitlesToArraysInMap converts query titles to arrays in a raw YAML map
+func convertQueryTitlesToArraysInMap(bundle map[string]interface{}) {
+	// Handle queries
+	if queries, ok := bundle["queries"]; ok {
+		if queryList, ok := queries.([]interface{}); ok {
+			for _, q := range queryList {
+				if query, ok := q.(map[string]interface{}); ok {
+					// Convert title to array if it's a string
+					if title, ok := query["title"]; ok {
+						switch t := title.(type) {
+						case string:
+							if t != "" {
+								query["title"] = []string{t}
+							}
+						case []interface{}:
+							// Already an array, ensure it's string array
+							strArray := make([]string, 0, len(t))
+							for _, item := range t {
+								if str, ok := item.(string); ok {
+									strArray = append(strArray, str)
+								}
+							}
+							if len(strArray) > 0 {
+								query["title"] = strArray
+							}
+						}
+					}
+
+					// Handle props within queries
+					if props, ok := query["props"]; ok {
+						if propList, ok := props.([]interface{}); ok {
+							for _, p := range propList {
+								if prop, ok := p.(map[string]interface{}); ok {
+									if propTitle, ok := prop["title"]; ok {
+										switch pt := propTitle.(type) {
+										case string:
+											if pt != "" {
+												prop["title"] = []string{pt}
+											}
+										case []interface{}:
+											// Already an array, ensure it's string array
+											strArray := make([]string, 0, len(pt))
+											for _, item := range pt {
+												if str, ok := item.(string); ok {
+													strArray = append(strArray, str)
+												}
+											}
+											if len(strArray) > 0 {
+												prop["title"] = strArray
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 // Format formats the Bundle
