@@ -101,7 +101,7 @@ func BundleExecutionChecksum(ctx context.Context, policy *Policy, framework *Fra
 	}
 	// So far the checksum only includes the policy and the framework
 	// It does not change if any of the jobs changes, only if the policy or the framework changes
-	// To update the resolved policy, when we change how it is generated, change the incoporated version of the resolver
+	// To update the resolved policy, when we change how it is generated, change the incorporated version of the resolver
 	res = res.Add(RESOLVER_VERSION)
 
 	return res.String()

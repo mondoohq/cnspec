@@ -147,7 +147,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		if _, ok := reportingJobsByQrId[rj.QrId]; ok {
 			// We should never have multiple reporting jobs with the same qr id. Scores are stored
 			// by qr id, not by uuid. This would cause issues where scores would flop around
-			log.Error().Str("qr_id", rj.QrId).Msg("multipe reporting jobs with the same qr id")
+			log.Error().Str("qr_id", rj.QrId).Msg("multiple reporting jobs with the same qr id")
 			return nil, errors.New("multiple reporting jobs with the same qr id")
 		}
 		reportingJobsByQrId[rj.QrId] = rj

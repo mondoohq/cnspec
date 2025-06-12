@@ -888,7 +888,7 @@ framework_maps:
 		rpTester.ReportingJobByMrn(queryMrn("check-fail")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check-pass-1")).Notifies(queryMrn("check-pass-1"))
-		// This is a limitaion of the test framework. We lookup the code id from check-pass-1 because
+		// This is a limitation of the test framework. We lookup the code id from check-pass-1 because
 		// we need 1 tester that has all the notifies
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check-pass-1")).Notifies(queryMrn("check-overlap"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check-pass-1")).Notifies(controlMrn("control1"))
@@ -1333,7 +1333,7 @@ policies:
 		rpTester.ExecutesQuery(queryMrn("check2"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
-		// This is a limitaion of the test framework. We lookup the code id from check-pass-1 because
+		// This is a limitation of the test framework. We lookup the code id from check-pass-1 because
 		// we need 1 tester that has all the notifies
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check2"))
 
@@ -1434,7 +1434,7 @@ policies:
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(queryMrn("active-query"))
-		// This is a limitaion of the test framework. We lookup the code id from active-query because
+		// This is a limitation of the test framework. We lookup the code id from active-query because
 		// we need 1 tester that has all the notifies
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(queryMrn("active-query-2"))
 

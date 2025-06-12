@@ -1800,7 +1800,7 @@ type RiskFactor struct {
 	//     Users, often with elevated privileges, that are at risk
 	//
 	//   - Sensitive data   [sensitive-data]
-	//     The asset contains sensitivie data, which an attacker may access if
+	//     The asset contains sensitive data, which an attacker may access if
 	//     they manage to breach it.
 	//
 	//   - Credential risks   [credentials]
@@ -1808,7 +1808,7 @@ type RiskFactor struct {
 	//     their privileges or breach other systems.
 	//
 	//   - Containers or Kubernetes   [containers]
-	//     Containers or Kuberenetes environments are found ont he asset. Attackers
+	//     Containers or Kubernetes environments are found ont he asset. Attackers
 	//     may expand their attacks to these virtual systems.
 	//
 	// 3. Misc
@@ -3562,7 +3562,7 @@ func (x *DataQueryInfo) GetNotify() []string {
 // 1. When a query score arrives, it is first reported to the CollectorJob.
 // 2. It picks the first reportingJob and fills the result in, no additional
 // specs need to be called. However, it notifies all other reporting jobs.
-// 3. Once a notified reporting job runs, it looks at alal the specs and collects
+// 3. Once a notified reporting job runs, it looks at all the specs and collects
 // their values and scores them. Repeat this step for all notified reports.
 // - uuid specifies the query or policy
 // - spec has all the other results that need to be pulled and their scorings
@@ -4339,7 +4339,7 @@ func (x *CvssStats) GetWorst() uint32 {
 	return 0
 }
 
-// Scores are numeric values with weith that provide a summary about the asset
+// Scores are numeric values with weight that provide a summary about the asset
 type Score struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	RiskScore       uint32                 `protobuf:"varint,1,opt,name=risk_score,json=riskScore,proto3" json:"risk_score,omitempty"`
@@ -6446,7 +6446,7 @@ type Source struct {
 	LastUpdatedAt string `protobuf:"bytes,4,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"`
 	// RFC3339 timestamp when this source marked the score as fixed
 	FixedAt string `protobuf:"bytes,5,opt,name=fixed_at,json=fixedAt,proto3" json:"fixed_at,omitempty"`
-	// Optinal. Version of the source scanner
+	// Optional. Version of the source scanner
 	Version string `protobuf:"bytes,6,opt,name=version,proto3" json:"version,omitempty"`
 	// Optional. Vendor of the source scanner
 	Vendor        Source_Vendor `protobuf:"varint,7,opt,name=vendor,proto3,enum=cnspec.policy.v1.Source_Vendor" json:"vendor,omitempty"`
