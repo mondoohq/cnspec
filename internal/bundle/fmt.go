@@ -27,6 +27,79 @@ func Format(bundle *Bundle) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// FormatWithQuerySpacing formats bundle with extra newlines between queries
+func FormatWithQuerySpacing(bundle *Bundle) ([]byte, error) {
+	data, err := Format(bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add extra newlines between queries
+	return addQuerySpacing(data)
+}
+
+// addQuerySpacing adds 3 newlines between queries
+func addQuerySpacing(data []byte) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+	var result []string
+	inQueries := false
+	indentLevel := 0
+
+	for i, line := range lines {
+		result = append(result, line)
+
+		// Check if we're entering queries section
+		if strings.TrimSpace(line) == "queries:" {
+			inQueries = true
+			// Determine the indent level of queries
+			indentLevel = len(line) - len(strings.TrimLeft(line, " "))
+			continue
+		}
+
+		// If we're in queries section
+		if inQueries {
+			// Check if we're leaving queries section (new top-level key)
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.HasPrefix(line, strings.Repeat(" ", indentLevel+2)) &&
+				strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(line, strings.Repeat(" ", indentLevel+4)) {
+				inQueries = false
+				continue
+			}
+
+			// Check if this is the start of a new query (- uid: pattern)
+			if strings.HasPrefix(strings.TrimLeft(line, " "), "- uid:") {
+				// Check if there's another query after this one
+				if i+1 < len(lines) {
+					// Look ahead to see when this query ends
+					j := i + 1
+					queryIndent := len(line) - len(strings.TrimLeft(line, " "))
+					for j < len(lines) {
+						nextLine := lines[j]
+						if nextLine == "" {
+							j++
+							continue
+						}
+						nextIndent := len(nextLine) - len(strings.TrimLeft(nextLine, " "))
+						// If we find another query at the same level
+						if strings.HasPrefix(strings.TrimLeft(nextLine, " "), "- ") && nextIndent == queryIndent {
+							// Add extra newlines before the next query
+							result = append(result, "", "")
+							break
+						}
+						// If we find a top-level key, we're done with queries
+						if nextIndent < queryIndent && strings.HasSuffix(strings.TrimSpace(nextLine), ":") {
+							break
+						}
+						j++
+					}
+				}
+			}
+		}
+	}
+
+	return []byte(strings.Join(result, "\n")), nil
+}
+
 // FormatRecursive iterates recursively through all .mql.yaml files and formats them
 func FormatRecursive(mqlBundlePath string, sort bool) error {
 	log.Info().Str("file", mqlBundlePath).Msg("format policy bundle(s)")
@@ -119,6 +192,12 @@ func FormatFile(filename string, sort bool) error {
 		return err
 	}
 	fmtData, err := FormatBundle(b, sort)
+	if err != nil {
+		return err
+	}
+
+	// Add query spacing
+	fmtData, err = addQuerySpacing(fmtData)
 	if err != nil {
 		return err
 	}
@@ -289,7 +368,15 @@ func ensureTitlesAreArrays(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	result := buf.Bytes()
+
+	// Add query spacing
+	result, err = addQuerySpacing(result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // convertTitlesInNode recursively processes YAML nodes to convert title fields to arrays
