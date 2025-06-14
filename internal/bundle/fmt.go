@@ -497,8 +497,14 @@ func reorderQueryFields(content []*yaml.Node, currentUID string, titlesByUID map
 	// Build reordered content in the desired order
 	var reordered []*yaml.Node
 
-	// Define the desired field order
-	fieldOrder := []string{"uid", "title", "impact", "mql", "variants", "props", "docs", "refs", "tags"}
+	// Define the desired field order:
+	// 1. uid
+	// 2. title
+	// 3. impact
+	// 4. filters
+	// 5. props
+	// 6. mql or variants
+	fieldOrder := []string{"uid", "title", "impact", "filters", "props", "mql", "variants"}
 
 	// Add fields in the specified order
 	for _, fieldName := range fieldOrder {
@@ -512,6 +518,19 @@ func reorderQueryFields(content []*yaml.Node, currentUID string, titlesByUID map
 	}
 
 	// Add any remaining fields that weren't in our predefined order
+	// (like docs, refs, tags, etc.)
+	remainingFieldOrder := []string{"docs", "refs", "tags"}
+	for _, fieldName := range remainingFieldOrder {
+		if value, ok := fields[fieldName]; ok {
+			reordered = append(reordered, &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Value: fieldName,
+			}, value)
+			delete(fields, fieldName)
+		}
+	}
+
+	// Add any other fields that might exist
 	for key, value := range fields {
 		reordered = append(reordered, &yaml.Node{
 			Kind:  yaml.ScalarNode,
