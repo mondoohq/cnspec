@@ -352,7 +352,7 @@ func normalizeTitlesToSingle(data map[string]interface{}) {
 	}
 }
 
-// restoreTitleArrays post-processes formatted YAML to restore title arrays
+// restoreTitleArrays post-processes formatted YAML to restore title arrays and fix formatting
 func restoreTitleArrays(data []byte, titlesByUID map[string][]string, propTitlesByUID map[string]map[string][]string) ([]byte, error) {
 	var doc yaml.Node
 	err := yaml.Unmarshal(data, &doc)
@@ -360,7 +360,7 @@ func restoreTitleArrays(data []byte, titlesByUID map[string][]string, propTitles
 		return nil, err
 	}
 
-	// Process the document to restore titles
+	// Process the document to restore titles and fix formatting
 	restoreTitlesInNode(&doc, titlesByUID, propTitlesByUID)
 
 	// Marshal back to YAML
@@ -383,7 +383,7 @@ func restoreTitleArrays(data []byte, titlesByUID map[string][]string, propTitles
 	return result, nil
 }
 
-// restoreTitlesInNode recursively processes YAML nodes to restore title arrays
+// restoreTitlesInNode recursively processes YAML nodes to restore title arrays and fix query formatting
 func restoreTitlesInNode(node *yaml.Node, titlesByUID map[string][]string, propTitlesByUID map[string]map[string][]string) {
 	switch node.Kind {
 	case yaml.DocumentNode:
@@ -403,41 +403,37 @@ func restoreTitlesInNode(node *yaml.Node, titlesByUID map[string][]string, propT
 			}
 		}
 
-		// Second pass: process fields
+		// Check if this is a query node (has uid and mql/variants)
+		isQueryNode := false
+		hasUID := false
+		hasMql := false
 		for i := 0; i < len(node.Content)-1; i += 2 {
 			key := node.Content[i]
-			value := node.Content[i+1]
+			if key.Value == "uid" {
+				hasUID = true
+			} else if key.Value == "mql" || key.Value == "variants" {
+				hasMql = true
+			}
+		}
+		isQueryNode = hasUID && hasMql
 
-			if key.Value == "title" && currentUID != "" {
-				// Check if we have stored titles for this UID
-				if titles, ok := titlesByUID[currentUID]; ok && len(titles) > 0 {
-					// Replace with array of titles
-					titleArray := &yaml.Node{
-						Kind:    yaml.SequenceNode,
-						Content: make([]*yaml.Node, 0, len(titles)),
-					}
-					for _, title := range titles {
-						titleArray.Content = append(titleArray.Content, &yaml.Node{
-							Kind:  yaml.ScalarNode,
-							Value: title,
-							Style: value.Style,
-						})
-					}
-					node.Content[i+1] = titleArray
+		// If this is a query node, reorder fields
+		if isQueryNode {
+			reorderedContent := reorderQueryFields(node.Content, currentUID, titlesByUID, propTitlesByUID)
+			node.Content = reorderedContent
+		} else {
+			// For non-query nodes, process normally
+			for i := 0; i < len(node.Content)-1; i += 2 {
+				key := node.Content[i]
+				value := node.Content[i+1]
+
+				if key.Value == "queries" {
+					// Recursively process queries
+					restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
+				} else {
+					// Recursively process other nodes
+					restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
 				}
-			} else if key.Value == "props" && currentUID != "" {
-				// Process props to restore their titles
-				if propTitles, ok := propTitlesByUID[currentUID]; ok {
-					restorePropsInNode(value, propTitles)
-				}
-				// Also recursively process props
-				restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
-			} else if key.Value == "queries" {
-				// Recursively process queries
-				restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
-			} else {
-				// Recursively process other nodes
-				restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
 			}
 		}
 	case yaml.SequenceNode:
@@ -445,6 +441,85 @@ func restoreTitlesInNode(node *yaml.Node, titlesByUID map[string][]string, propT
 			restoreTitlesInNode(child, titlesByUID, propTitlesByUID)
 		}
 	}
+}
+
+// reorderQueryFields reorders fields in a query node to match the desired format
+func reorderQueryFields(content []*yaml.Node, currentUID string, titlesByUID map[string][]string, propTitlesByUID map[string]map[string][]string) []*yaml.Node {
+	// Create a map of all fields
+	fields := make(map[string]*yaml.Node)
+	for i := 0; i < len(content)-1; i += 2 {
+		key := content[i]
+		value := content[i+1]
+		fields[key.Value] = value
+
+		// Fix impact structure if needed
+		if key.Value == "impact" && value.Kind == yaml.MappingNode {
+			// Check if it's in the nested format { value: X }
+			for j := 0; j < len(value.Content)-1; j += 2 {
+				impactKey := value.Content[j]
+				impactValue := value.Content[j+1]
+				if impactKey.Value == "value" {
+					// Replace the mapping node with the scalar value
+					fields["impact"] = impactValue
+					break
+				}
+			}
+		}
+	}
+
+	// Restore title arrays if we have them
+	if titleValue, ok := fields["title"]; ok && currentUID != "" {
+		if titles, ok := titlesByUID[currentUID]; ok && len(titles) > 0 {
+			titleArray := &yaml.Node{
+				Kind:    yaml.SequenceNode,
+				Content: make([]*yaml.Node, 0, len(titles)),
+			}
+			for _, title := range titles {
+				titleArray.Content = append(titleArray.Content, &yaml.Node{
+					Kind:  yaml.ScalarNode,
+					Value: title,
+					Style: titleValue.Style,
+				})
+			}
+			fields["title"] = titleArray
+		}
+	}
+
+	// Process props if they exist
+	if propsValue, ok := fields["props"]; ok && currentUID != "" {
+		if propTitles, ok := propTitlesByUID[currentUID]; ok {
+			restorePropsInNode(propsValue, propTitles)
+		}
+		// Also recursively process props
+		restoreTitlesInNode(propsValue, titlesByUID, propTitlesByUID)
+	}
+
+	// Build reordered content in the desired order
+	var reordered []*yaml.Node
+
+	// Define the desired field order
+	fieldOrder := []string{"uid", "title", "impact", "mql", "variants", "props", "docs", "refs", "tags"}
+
+	// Add fields in the specified order
+	for _, fieldName := range fieldOrder {
+		if value, ok := fields[fieldName]; ok {
+			reordered = append(reordered, &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Value: fieldName,
+			}, value)
+			delete(fields, fieldName)
+		}
+	}
+
+	// Add any remaining fields that weren't in our predefined order
+	for key, value := range fields {
+		reordered = append(reordered, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Value: key,
+		}, value)
+	}
+
+	return reordered
 }
 
 // restorePropsInNode processes props to restore their title arrays
