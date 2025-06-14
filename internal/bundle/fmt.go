@@ -207,36 +207,104 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 		return err
 	}
 
-	// Parse as raw YAML to handle both string and array titles
+	// First, parse as raw YAML to extract all titles
 	var rawBundle map[string]interface{}
 	err = yaml.Unmarshal(data, &rawBundle)
 	if err != nil {
 		return err
 	}
 
-	// Normalize all titles to arrays
-	normalizeTitlesToArrays(rawBundle)
+	// Extract and store all titles by UID
+	titlesByUID := make(map[string][]string)
+	propTitlesByUID := make(map[string]map[string][]string) // uid -> prop_uid -> titles
 
-	// Convert back to YAML for processing
+	if queries, ok := rawBundle["queries"].([]interface{}); ok {
+		for _, q := range queries {
+			if query, ok := q.(map[string]interface{}); ok {
+				uid, hasUID := query["uid"].(string)
+				if !hasUID {
+					continue
+				}
+
+				// Extract all titles for the query
+				var titles []string
+				switch t := query["title"].(type) {
+				case string:
+					if t != "" {
+						titles = []string{t}
+					}
+				case []interface{}:
+					for _, title := range t {
+						if titleStr, ok := title.(string); ok && titleStr != "" {
+							titles = append(titles, titleStr)
+						}
+					}
+				}
+
+				if len(titles) > 0 {
+					titlesByUID[uid] = titles
+				}
+
+				// Extract prop titles
+				if props, ok := query["props"].([]interface{}); ok {
+					propTitles := make(map[string][]string)
+					for _, p := range props {
+						if prop, ok := p.(map[string]interface{}); ok {
+							propUID, hasPropUID := prop["uid"].(string)
+							if !hasPropUID {
+								continue
+							}
+
+							var propTitleList []string
+							switch pt := prop["title"].(type) {
+							case string:
+								if pt != "" {
+									propTitleList = []string{pt}
+								}
+							case []interface{}:
+								for _, title := range pt {
+									if titleStr, ok := title.(string); ok && titleStr != "" {
+										propTitleList = append(propTitleList, titleStr)
+									}
+								}
+							}
+
+							if len(propTitleList) > 0 {
+								propTitles[propUID] = propTitleList
+							}
+						}
+					}
+					if len(propTitles) > 0 {
+						propTitlesByUID[uid] = propTitles
+					}
+				}
+			}
+		}
+	}
+
+	// Normalize to single title for Bundle parsing
+	normalizeTitlesToSingle(rawBundle)
+
+	// Convert back to YAML for Bundle parsing
 	normalizedData, err := yaml.Marshal(rawBundle)
 	if err != nil {
 		return err
 	}
 
-	// Now parse into Bundle struct (with titles temporarily stored as first array element)
-	b, err := parseYamlWithArrayTitles(normalizedData)
+	// Parse into Bundle struct
+	b, err := ParseYaml(normalizedData)
 	if err != nil {
 		return err
 	}
 
-	// Format using existing FormatBundle to get proper formatting and sorting
+	// Format using existing FormatBundle
 	fmtData, err := FormatBundle(b, sort)
 	if err != nil {
 		return err
 	}
 
-	// Post-process to ensure titles are arrays
-	fmtData, err = ensureTitlesAreArrays(fmtData)
+	// Post-process to restore all titles as arrays
+	fmtData, err = restoreTitleArrays(fmtData, titlesByUID, propTitlesByUID)
 	if err != nil {
 		return err
 	}
@@ -247,6 +315,184 @@ func FormatFileWithQueryTitleArray(filename string, sort bool) error {
 	}
 
 	return nil
+}
+
+// normalizeTitlesToSingle converts array titles to single strings for Bundle parsing
+func normalizeTitlesToSingle(data map[string]interface{}) {
+	if queries, ok := data["queries"].([]interface{}); ok {
+		for _, q := range queries {
+			if query, ok := q.(map[string]interface{}); ok {
+				// Handle title field
+				switch t := query["title"].(type) {
+				case []interface{}:
+					if len(t) > 0 {
+						if titleStr, ok := t[0].(string); ok {
+							query["title"] = titleStr
+						}
+					}
+				}
+
+				// Handle props if they exist
+				if props, ok := query["props"].([]interface{}); ok {
+					for _, p := range props {
+						if prop, ok := p.(map[string]interface{}); ok {
+							switch pt := prop["title"].(type) {
+							case []interface{}:
+								if len(pt) > 0 {
+									if propTitleStr, ok := pt[0].(string); ok {
+										prop["title"] = propTitleStr
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// restoreTitleArrays post-processes formatted YAML to restore title arrays
+func restoreTitleArrays(data []byte, titlesByUID map[string][]string, propTitlesByUID map[string]map[string][]string) ([]byte, error) {
+	var doc yaml.Node
+	err := yaml.Unmarshal(data, &doc)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process the document to restore titles
+	restoreTitlesInNode(&doc, titlesByUID, propTitlesByUID)
+
+	// Marshal back to YAML
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	err = enc.Encode(&doc)
+	if err != nil {
+		return nil, err
+	}
+
+	result := buf.Bytes()
+
+	// Add query spacing
+	result, err = addQuerySpacing(result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// restoreTitlesInNode recursively processes YAML nodes to restore title arrays
+func restoreTitlesInNode(node *yaml.Node, titlesByUID map[string][]string, propTitlesByUID map[string]map[string][]string) {
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			restoreTitlesInNode(child, titlesByUID, propTitlesByUID)
+		}
+	case yaml.MappingNode:
+		var currentUID string
+
+		// First pass: find UID if present
+		for i := 0; i < len(node.Content)-1; i += 2 {
+			key := node.Content[i]
+			value := node.Content[i+1]
+			if key.Value == "uid" && value.Kind == yaml.ScalarNode {
+				currentUID = value.Value
+				break
+			}
+		}
+
+		// Second pass: process fields
+		for i := 0; i < len(node.Content)-1; i += 2 {
+			key := node.Content[i]
+			value := node.Content[i+1]
+
+			if key.Value == "title" && currentUID != "" {
+				// Check if we have stored titles for this UID
+				if titles, ok := titlesByUID[currentUID]; ok && len(titles) > 0 {
+					// Replace with array of titles
+					titleArray := &yaml.Node{
+						Kind:    yaml.SequenceNode,
+						Content: make([]*yaml.Node, 0, len(titles)),
+					}
+					for _, title := range titles {
+						titleArray.Content = append(titleArray.Content, &yaml.Node{
+							Kind:  yaml.ScalarNode,
+							Value: title,
+							Style: value.Style,
+						})
+					}
+					node.Content[i+1] = titleArray
+				}
+			} else if key.Value == "props" && currentUID != "" {
+				// Process props to restore their titles
+				if propTitles, ok := propTitlesByUID[currentUID]; ok {
+					restorePropsInNode(value, propTitles)
+				}
+				// Also recursively process props
+				restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
+			} else if key.Value == "queries" {
+				// Recursively process queries
+				restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
+			} else {
+				// Recursively process other nodes
+				restoreTitlesInNode(value, titlesByUID, propTitlesByUID)
+			}
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			restoreTitlesInNode(child, titlesByUID, propTitlesByUID)
+		}
+	}
+}
+
+// restorePropsInNode processes props to restore their title arrays
+func restorePropsInNode(node *yaml.Node, propTitles map[string][]string) {
+	if node.Kind != yaml.SequenceNode {
+		return
+	}
+
+	for _, propNode := range node.Content {
+		if propNode.Kind != yaml.MappingNode {
+			continue
+		}
+
+		var propUID string
+
+		// Find prop UID
+		for i := 0; i < len(propNode.Content)-1; i += 2 {
+			key := propNode.Content[i]
+			value := propNode.Content[i+1]
+			if key.Value == "uid" && value.Kind == yaml.ScalarNode {
+				propUID = value.Value
+				break
+			}
+		}
+
+		// Restore title if we have it
+		if propUID != "" && len(propTitles[propUID]) > 0 {
+			for i := 0; i < len(propNode.Content)-1; i += 2 {
+				key := propNode.Content[i]
+				if key.Value == "title" {
+					// Replace with array of titles
+					titleArray := &yaml.Node{
+						Kind:    yaml.SequenceNode,
+						Content: make([]*yaml.Node, 0, len(propTitles[propUID])),
+					}
+					for _, title := range propTitles[propUID] {
+						titleArray.Content = append(titleArray.Content, &yaml.Node{
+							Kind:  yaml.ScalarNode,
+							Value: title,
+							Style: propNode.Content[i+1].Style,
+						})
+					}
+					propNode.Content[i+1] = titleArray
+					break
+				}
+			}
+		}
+	}
 }
 
 // normalizeTitlesToArrays ensures all title fields are arrays in the raw YAML structure
