@@ -10,6 +10,7 @@ import (
 
 	cmdtest "github.com/google/go-cmdtest"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v11/apps/cnspec/cmd"
 )
@@ -47,5 +48,19 @@ func TestCompare(t *testing.T) {
 		}
 		return 0
 	})
+	tmpDirs := []string{}
+	ts.Setup = func(t string) error {
+		// Use a different providers dir for every test
+		providersDir, err := os.MkdirTemp(os.TempDir(), "providers-*")
+		if err != nil {
+			return err
+		}
+		tmpDirs = append(tmpDirs, providersDir)
+		return os.Setenv("PROVIDERS_PATH", providersDir)
+	}
 	ts.Run(t, false) // set to true to update test files
+	for _, dir := range tmpDirs {
+		err := os.RemoveAll(dir)
+		assert.NoError(t, err, "failed to remove temporary providers dir %s", dir)
+	}
 }
