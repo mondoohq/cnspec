@@ -93,8 +93,9 @@ func WithReportType(reportType ReportType) ScannerOption {
 	}
 }
 
-func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
+func NewLocalScanner(autoUpdateConfig providers.UpdateProvidersConfig, opts ...ScannerOption) *LocalScanner {
 	runtime := providers.DefaultRuntime()
+	runtime.AutoUpdate = autoUpdateConfig
 
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
@@ -112,13 +113,6 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	}
 
 	return ls
-}
-
-// WithProviderAutoUpdate configures the AutoUpdate settings for the runtime.
-func WithProviderAutoUpdate(enabledAutoUpdate bool) ScannerOption {
-	return func(s *LocalScanner) {
-		s.runtime.SetProviderAutoUpdate(enabledAutoUpdate)
-	}
 }
 
 func (s *LocalScanner) EnableQueue() error {
