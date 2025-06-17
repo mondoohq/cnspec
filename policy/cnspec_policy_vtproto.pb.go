@@ -25,6 +25,2270 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+func (m *PolicyGroup) CloneVT() *PolicyGroup {
+	if m == nil {
+		return (*PolicyGroup)(nil)
+	}
+	r := new(PolicyGroup)
+	r.Type = m.Type
+	r.Uid = m.Uid
+	r.StartDate = m.StartDate
+	r.EndDate = m.EndDate
+	r.ReminderDate = m.ReminderDate
+	r.Title = m.Title
+	r.Docs = m.Docs.CloneVT()
+	r.ReviewStatus = m.ReviewStatus
+	r.Created = m.Created
+	r.Modified = m.Modified
+	if rhs := m.Policies; rhs != nil {
+		tmpContainer := make([]*PolicyRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Policies = tmpContainer
+	}
+	if rhs := m.Checks; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Checks = tmpContainer
+	}
+	if rhs := m.Queries; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Queries = tmpContainer
+	}
+	if rhs := m.Filters; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *explorer.Filters }); ok {
+			r.Filters = vtpb.CloneVT()
+		} else {
+			r.Filters = proto.Clone(rhs).(*explorer.Filters)
+		}
+	}
+	if rhs := m.Authors; rhs != nil {
+		tmpContainer := make([]*explorer.Author, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Author }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Author)
+			}
+		}
+		r.Authors = tmpContainer
+	}
+	if rhs := m.Reviewers; rhs != nil {
+		tmpContainer := make([]*explorer.Author, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Author }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Author)
+			}
+		}
+		r.Reviewers = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyGroup) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PolicyRef) CloneVT() *PolicyRef {
+	if m == nil {
+		return (*PolicyRef)(nil)
+	}
+	r := new(PolicyRef)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Action = m.Action
+	r.ScoringSystem = m.ScoringSystem
+	r.LastApplied = m.LastApplied
+	r.Checksum = m.Checksum
+	if rhs := m.Impact; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *explorer.Impact }); ok {
+			r.Impact = vtpb.CloneVT()
+		} else {
+			r.Impact = proto.Clone(rhs).(*explorer.Impact)
+		}
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyRef) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Policy) CloneVT() *Policy {
+	if m == nil {
+		return (*Policy)(nil)
+	}
+	r := new(Policy)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Name = m.Name
+	r.Version = m.Version
+	r.OwnerMrn = m.OwnerMrn
+	r.License = m.License
+	r.Docs = m.Docs.CloneVT()
+	r.Summary = m.Summary
+	r.ScoringSystem = m.ScoringSystem
+	r.Created = m.Created
+	r.Modified = m.Modified
+	r.LocalContentChecksum = m.LocalContentChecksum
+	r.GraphContentChecksum = m.GraphContentChecksum
+	r.LocalExecutionChecksum = m.LocalExecutionChecksum
+	r.GraphExecutionChecksum = m.GraphExecutionChecksum
+	r.QueryCounts = m.QueryCounts.CloneVT()
+	if rhs := m.Groups; rhs != nil {
+		tmpContainer := make([]*PolicyGroup, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Groups = tmpContainer
+	}
+	if rhs := m.Authors; rhs != nil {
+		tmpContainer := make([]*explorer.Author, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Author }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Author)
+			}
+		}
+		r.Authors = tmpContainer
+	}
+	if rhs := m.Tags; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Tags = tmpContainer
+	}
+	if rhs := m.Props; rhs != nil {
+		tmpContainer := make([]*explorer.Property, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Property }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Property)
+			}
+		}
+		r.Props = tmpContainer
+	}
+	if rhs := m.RiskFactors; rhs != nil {
+		tmpContainer := make([]*RiskFactor, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.RiskFactors = tmpContainer
+	}
+	if rhs := m.ComputedFilters; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *explorer.Filters }); ok {
+			r.ComputedFilters = vtpb.CloneVT()
+		} else {
+			r.ComputedFilters = proto.Clone(rhs).(*explorer.Filters)
+		}
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Policy) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Policies) CloneVT() *Policies {
+	if m == nil {
+		return (*Policies)(nil)
+	}
+	r := new(Policies)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]*Policy, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Policies) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *QueryCounts) CloneVT() *QueryCounts {
+	if m == nil {
+		return (*QueryCounts)(nil)
+	}
+	r := new(QueryCounts)
+	r.ScoringCount = m.ScoringCount
+	r.DataCount = m.DataCount
+	r.TotalCount = m.TotalCount
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *QueryCounts) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Bundle) CloneVT() *Bundle {
+	if m == nil {
+		return (*Bundle)(nil)
+	}
+	r := new(Bundle)
+	r.OwnerMrn = m.OwnerMrn
+	r.Docs = m.Docs.CloneVT()
+	if rhs := m.Policies; rhs != nil {
+		tmpContainer := make([]*Policy, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Policies = tmpContainer
+	}
+	if rhs := m.Packs; rhs != nil {
+		tmpContainer := make([]*explorer.QueryPack, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.QueryPack }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.QueryPack)
+			}
+		}
+		r.Packs = tmpContainer
+	}
+	if rhs := m.Props; rhs != nil {
+		tmpContainer := make([]*explorer.Property, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Property }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Property)
+			}
+		}
+		r.Props = tmpContainer
+	}
+	if rhs := m.Queries; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Queries = tmpContainer
+	}
+	if rhs := m.Frameworks; rhs != nil {
+		tmpContainer := make([]*Framework, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Frameworks = tmpContainer
+	}
+	if rhs := m.FrameworkMaps; rhs != nil {
+		tmpContainer := make([]*FrameworkMap, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.FrameworkMaps = tmpContainer
+	}
+	if rhs := m.MigrationGroups; rhs != nil {
+		tmpContainer := make([]*MigrationGroup, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.MigrationGroups = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Bundle) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *MigrationGroup) CloneVT() *MigrationGroup {
+	if m == nil {
+		return (*MigrationGroup)(nil)
+	}
+	r := new(MigrationGroup)
+	r.Policy = m.Policy.CloneVT()
+	if rhs := m.Migrations; rhs != nil {
+		tmpContainer := make([]*Migration, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Migrations = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *MigrationGroup) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Migration) CloneVT() *Migration {
+	if m == nil {
+		return (*Migration)(nil)
+	}
+	r := new(Migration)
+	r.Match = m.Match.CloneVT()
+	r.Target = m.Target.CloneVT()
+	r.Action = m.Action
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Migration) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *MigrationMatch) CloneVT() *MigrationMatch {
+	if m == nil {
+		return (*MigrationMatch)(nil)
+	}
+	r := new(MigrationMatch)
+	r.Uid = m.Uid
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *MigrationMatch) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *MigrationDelta) CloneVT() *MigrationDelta {
+	if m == nil {
+		return (*MigrationDelta)(nil)
+	}
+	r := new(MigrationDelta)
+	r.Uid = m.Uid
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *MigrationDelta) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *SoftwareSelector) CloneVT() *SoftwareSelector {
+	if m == nil {
+		return (*SoftwareSelector)(nil)
+	}
+	r := new(SoftwareSelector)
+	r.Type = m.Type
+	r.Namespace = m.Namespace
+	r.Name = m.Name
+	r.Version = m.Version
+	r.MqlMrn = m.MqlMrn
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *SoftwareSelector) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ResourceSelector) CloneVT() *ResourceSelector {
+	if m == nil {
+		return (*ResourceSelector)(nil)
+	}
+	r := new(ResourceSelector)
+	r.Name = m.Name
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ResourceSelector) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *RiskMagnitude) CloneVT() *RiskMagnitude {
+	if m == nil {
+		return (*RiskMagnitude)(nil)
+	}
+	r := new(RiskMagnitude)
+	r.Value = m.Value
+	r.IsToxic = m.IsToxic
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *RiskMagnitude) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *RiskFactor) CloneVT() *RiskFactor {
+	if m == nil {
+		return (*RiskFactor)(nil)
+	}
+	r := new(RiskFactor)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Checksum = m.Checksum
+	r.Title = m.Title
+	r.Docs = m.Docs.CloneVT()
+	r.Scope = m.Scope
+	r.DeprecatedV11Magnitude = m.DeprecatedV11Magnitude
+	r.DeprecatedV11IsAbsolute = m.DeprecatedV11IsAbsolute
+	r.Magnitude = m.Magnitude.CloneVT()
+	r.Indicator = m.Indicator
+	r.Action = m.Action
+	if rhs := m.Filters; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *explorer.Filters }); ok {
+			r.Filters = vtpb.CloneVT()
+		} else {
+			r.Filters = proto.Clone(rhs).(*explorer.Filters)
+		}
+	}
+	if rhs := m.Checks; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Checks = tmpContainer
+	}
+	if rhs := m.Software; rhs != nil {
+		tmpContainer := make([]*SoftwareSelector, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Software = tmpContainer
+	}
+	if rhs := m.Resources; rhs != nil {
+		tmpContainer := make([]*ResourceSelector, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Resources = tmpContainer
+	}
+	if rhs := m.Tags; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Tags = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *RiskFactor) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *RiskFactorDocs) CloneVT() *RiskFactorDocs {
+	if m == nil {
+		return (*RiskFactorDocs)(nil)
+	}
+	r := new(RiskFactorDocs)
+	r.Active = m.Active
+	r.Inactive = m.Inactive
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *RiskFactorDocs) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PolicyGroupDocs) CloneVT() *PolicyGroupDocs {
+	if m == nil {
+		return (*PolicyGroupDocs)(nil)
+	}
+	r := new(PolicyGroupDocs)
+	r.Desc = m.Desc
+	r.Justification = m.Justification
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyGroupDocs) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PolicyDocs) CloneVT() *PolicyDocs {
+	if m == nil {
+		return (*PolicyDocs)(nil)
+	}
+	r := new(PolicyDocs)
+	r.Desc = m.Desc
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyDocs) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Framework) CloneVT() *Framework {
+	if m == nil {
+		return (*Framework)(nil)
+	}
+	r := new(Framework)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Name = m.Name
+	r.Version = m.Version
+	r.OwnerMrn = m.OwnerMrn
+	r.License = m.License
+	r.Docs = m.Docs.CloneVT()
+	r.Summary = m.Summary
+	r.Created = m.Created
+	r.Modified = m.Modified
+	r.LocalContentChecksum = m.LocalContentChecksum
+	r.GraphContentChecksum = m.GraphContentChecksum
+	r.LocalExecutionChecksum = m.LocalExecutionChecksum
+	r.GraphExecutionChecksum = m.GraphExecutionChecksum
+	if rhs := m.Groups; rhs != nil {
+		tmpContainer := make([]*FrameworkGroup, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Groups = tmpContainer
+	}
+	if rhs := m.Authors; rhs != nil {
+		tmpContainer := make([]*explorer.Author, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Author }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Author)
+			}
+		}
+		r.Authors = tmpContainer
+	}
+	if rhs := m.Tags; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Tags = tmpContainer
+	}
+	if rhs := m.Dependencies; rhs != nil {
+		tmpContainer := make([]*FrameworkRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Dependencies = tmpContainer
+	}
+	if rhs := m.FrameworkMaps; rhs != nil {
+		tmpContainer := make([]*FrameworkMap, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.FrameworkMaps = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Framework) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Frameworks) CloneVT() *Frameworks {
+	if m == nil {
+		return (*Frameworks)(nil)
+	}
+	r := new(Frameworks)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]*Framework, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Frameworks) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *FrameworkGroup) CloneVT() *FrameworkGroup {
+	if m == nil {
+		return (*FrameworkGroup)(nil)
+	}
+	r := new(FrameworkGroup)
+	r.Type = m.Type
+	r.Uid = m.Uid
+	r.StartDate = m.StartDate
+	r.EndDate = m.EndDate
+	r.ReminderDate = m.ReminderDate
+	r.Title = m.Title
+	r.Docs = m.Docs.CloneVT()
+	r.ReviewStatus = m.ReviewStatus
+	r.Created = m.Created
+	r.Modified = m.Modified
+	if rhs := m.Controls; rhs != nil {
+		tmpContainer := make([]*Control, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Controls = tmpContainer
+	}
+	if rhs := m.Authors; rhs != nil {
+		tmpContainer := make([]*explorer.Author, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Author }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Author)
+			}
+		}
+		r.Authors = tmpContainer
+	}
+	if rhs := m.Reviewers; rhs != nil {
+		tmpContainer := make([]*explorer.Author, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Author }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Author)
+			}
+		}
+		r.Reviewers = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *FrameworkGroup) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *FrameworkRef) CloneVT() *FrameworkRef {
+	if m == nil {
+		return (*FrameworkRef)(nil)
+	}
+	r := new(FrameworkRef)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Action = m.Action
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *FrameworkRef) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Evidence) CloneVT() *Evidence {
+	if m == nil {
+		return (*Evidence)(nil)
+	}
+	r := new(Evidence)
+	r.Title = m.Title
+	r.Desc = m.Desc
+	r.Uid = m.Uid
+	r.Mrn = m.Mrn
+	if rhs := m.Checks; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Checks = tmpContainer
+	}
+	if rhs := m.Queries; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Queries = tmpContainer
+	}
+	if rhs := m.Controls; rhs != nil {
+		tmpContainer := make([]*ControlRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Controls = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Evidence) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Control) CloneVT() *Control {
+	if m == nil {
+		return (*Control)(nil)
+	}
+	r := new(Control)
+	r.Checksum = m.Checksum
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Title = m.Title
+	r.Docs = m.Docs.CloneVT()
+	r.Action = m.Action
+	r.Manual = m.Manual
+	if rhs := m.Tags; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Tags = tmpContainer
+	}
+	if rhs := m.Evidence; rhs != nil {
+		tmpContainer := make([]*Evidence, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Evidence = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Control) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *FrameworkMap) CloneVT() *FrameworkMap {
+	if m == nil {
+		return (*FrameworkMap)(nil)
+	}
+	r := new(FrameworkMap)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.LocalContentChecksum = m.LocalContentChecksum
+	r.LocalExecutionChecksum = m.LocalExecutionChecksum
+	if rhs := m.FrameworkDependencies; rhs != nil {
+		tmpContainer := make([]*explorer.ObjectRef, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.ObjectRef }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.ObjectRef)
+			}
+		}
+		r.FrameworkDependencies = tmpContainer
+	}
+	if rhs := m.PolicyDependencies; rhs != nil {
+		tmpContainer := make([]*explorer.ObjectRef, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.ObjectRef }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.ObjectRef)
+			}
+		}
+		r.PolicyDependencies = tmpContainer
+	}
+	if rhs := m.QueryPackDependencies; rhs != nil {
+		tmpContainer := make([]*explorer.ObjectRef, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.ObjectRef }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.ObjectRef)
+			}
+		}
+		r.QueryPackDependencies = tmpContainer
+	}
+	if rhs := m.Controls; rhs != nil {
+		tmpContainer := make([]*ControlMap, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Controls = tmpContainer
+	}
+	if rhs := m.FrameworkOwner; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *explorer.ObjectRef }); ok {
+			r.FrameworkOwner = vtpb.CloneVT()
+		} else {
+			r.FrameworkOwner = proto.Clone(rhs).(*explorer.ObjectRef)
+		}
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *FrameworkMap) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ControlMap) CloneVT() *ControlMap {
+	if m == nil {
+		return (*ControlMap)(nil)
+	}
+	r := new(ControlMap)
+	r.Uid = m.Uid
+	r.Mrn = m.Mrn
+	if rhs := m.Checks; rhs != nil {
+		tmpContainer := make([]*ControlRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Checks = tmpContainer
+	}
+	if rhs := m.Policies; rhs != nil {
+		tmpContainer := make([]*ControlRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Policies = tmpContainer
+	}
+	if rhs := m.Controls; rhs != nil {
+		tmpContainer := make([]*ControlRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Controls = tmpContainer
+	}
+	if rhs := m.Queries; rhs != nil {
+		tmpContainer := make([]*ControlRef, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Queries = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ControlMap) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ControlDocs) CloneVT() *ControlDocs {
+	if m == nil {
+		return (*ControlDocs)(nil)
+	}
+	r := new(ControlDocs)
+	r.Desc = m.Desc
+	if rhs := m.Refs; rhs != nil {
+		tmpContainer := make([]*explorer.MqueryRef, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.MqueryRef }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.MqueryRef)
+			}
+		}
+		r.Refs = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ControlDocs) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ControlRef) CloneVT() *ControlRef {
+	if m == nil {
+		return (*ControlRef)(nil)
+	}
+	r := new(ControlRef)
+	r.Mrn = m.Mrn
+	r.Uid = m.Uid
+	r.Action = m.Action
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ControlRef) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Asset) CloneVT() *Asset {
+	if m == nil {
+		return (*Asset)(nil)
+	}
+	r := new(Asset)
+	r.Mrn = m.Mrn
+	r.Name = m.Name
+	r.Url = m.Url
+	if rhs := m.Platform; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *inventory.Platform }); ok {
+			r.Platform = vtpb.CloneVT()
+		} else {
+			r.Platform = proto.Clone(rhs).(*inventory.Platform)
+		}
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Asset) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ResolvedPolicy) CloneVT() *ResolvedPolicy {
+	if m == nil {
+		return (*ResolvedPolicy)(nil)
+	}
+	r := new(ResolvedPolicy)
+	r.ExecutionJob = m.ExecutionJob.CloneVT()
+	r.CollectorJob = m.CollectorJob.CloneVT()
+	r.GraphExecutionChecksum = m.GraphExecutionChecksum
+	r.FiltersChecksum = m.FiltersChecksum
+	r.ReportingJobUuid = m.ReportingJobUuid
+	if rhs := m.Filters; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Filters = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ResolvedPolicy) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ExecutionJob) CloneVT() *ExecutionJob {
+	if m == nil {
+		return (*ExecutionJob)(nil)
+	}
+	r := new(ExecutionJob)
+	r.Checksum = m.Checksum
+	if rhs := m.Queries; rhs != nil {
+		tmpContainer := make(map[string]*ExecutionQuery, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Queries = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ExecutionJob) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ExecutionQuery) CloneVT() *ExecutionQuery {
+	if m == nil {
+		return (*ExecutionQuery)(nil)
+	}
+	r := new(ExecutionQuery)
+	r.Query = m.Query
+	r.Checksum = m.Checksum
+	if rhs := m.Properties; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Properties = tmpContainer
+	}
+	if rhs := m.Datapoints; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Datapoints = tmpContainer
+	}
+	if rhs := m.Code; rhs != nil {
+		if vtpb, ok := interface{}(rhs).(interface{ CloneVT() *llx.CodeBundle }); ok {
+			r.Code = vtpb.CloneVT()
+		} else {
+			r.Code = proto.Clone(rhs).(*llx.CodeBundle)
+		}
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ExecutionQuery) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *CollectorJob) CloneVT() *CollectorJob {
+	if m == nil {
+		return (*CollectorJob)(nil)
+	}
+	r := new(CollectorJob)
+	r.Checksum = m.Checksum
+	if rhs := m.ReportingJobs; rhs != nil {
+		tmpContainer := make(map[string]*ReportingJob, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.ReportingJobs = tmpContainer
+	}
+	if rhs := m.ReportingQueries; rhs != nil {
+		tmpContainer := make(map[string]*StringArray, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.ReportingQueries = tmpContainer
+	}
+	if rhs := m.Datapoints; rhs != nil {
+		tmpContainer := make(map[string]*DataQueryInfo, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Datapoints = tmpContainer
+	}
+	if rhs := m.RiskMrns; rhs != nil {
+		tmpContainer := make(map[string]*StringArray, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.RiskMrns = tmpContainer
+	}
+	if rhs := m.RiskFactors; rhs != nil {
+		tmpContainer := make(map[string]*RiskFactor, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.RiskFactors = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *CollectorJob) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *StringArray) CloneVT() *StringArray {
+	if m == nil {
+		return (*StringArray)(nil)
+	}
+	r := new(StringArray)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *StringArray) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *DataQueryInfo) CloneVT() *DataQueryInfo {
+	if m == nil {
+		return (*DataQueryInfo)(nil)
+	}
+	r := new(DataQueryInfo)
+	r.Type = m.Type
+	if rhs := m.Notify; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Notify = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *DataQueryInfo) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ReportingJob) CloneVT() *ReportingJob {
+	if m == nil {
+		return (*ReportingJob)(nil)
+	}
+	r := new(ReportingJob)
+	r.DeprecatedV8IsData = m.DeprecatedV8IsData
+	r.Checksum = m.Checksum
+	r.QrId = m.QrId
+	r.Uuid = m.Uuid
+	r.ScoringSystem = m.ScoringSystem
+	r.Type = m.Type
+	if rhs := m.Notify; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Notify = tmpContainer
+	}
+	if rhs := m.Datapoints; rhs != nil {
+		tmpContainer := make(map[string]bool, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Datapoints = tmpContainer
+	}
+	if rhs := m.ChildJobs; rhs != nil {
+		tmpContainer := make(map[string]*explorer.Impact, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Impact }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Impact)
+			}
+		}
+		r.ChildJobs = tmpContainer
+	}
+	if rhs := m.Mrns; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Mrns = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ReportingJob) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Report) CloneVT() *Report {
+	if m == nil {
+		return (*Report)(nil)
+	}
+	r := new(Report)
+	r.ScoringMrn = m.ScoringMrn
+	r.EntityMrn = m.EntityMrn
+	r.Score = m.Score.CloneVT()
+	r.Stats = m.Stats.CloneVT()
+	r.Risks = m.Risks.CloneVT()
+	r.Created = m.Created
+	r.Modified = m.Modified
+	r.IgnoredStats = m.IgnoredStats.CloneVT()
+	r.CvssScore = m.CvssScore.CloneVT()
+	r.CvssStats = m.CvssStats.CloneVT()
+	r.ResolvedPolicyVersion = m.ResolvedPolicyVersion
+	r.Url = m.Url
+	if rhs := m.Scores; rhs != nil {
+		tmpContainer := make(map[string]*Score, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Scores = tmpContainer
+	}
+	if rhs := m.Data; rhs != nil {
+		tmpContainer := make(map[string]*llx.Result, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *llx.Result }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*llx.Result)
+			}
+		}
+		r.Data = tmpContainer
+	}
+	if rhs := m.CvssScores; rhs != nil {
+		tmpContainer := make(map[string]*Cvss, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.CvssScores = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Report) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Reports) CloneVT() *Reports {
+	if m == nil {
+		return (*Reports)(nil)
+	}
+	r := new(Reports)
+	if rhs := m.Reports; rhs != nil {
+		tmpContainer := make([]*Report, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Reports = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Reports) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ReportCollection) CloneVT() *ReportCollection {
+	if m == nil {
+		return (*ReportCollection)(nil)
+	}
+	r := new(ReportCollection)
+	r.Bundle = m.Bundle.CloneVT()
+	if rhs := m.Assets; rhs != nil {
+		tmpContainer := make(map[string]*inventory.Asset, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *inventory.Asset }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*inventory.Asset)
+			}
+		}
+		r.Assets = tmpContainer
+	}
+	if rhs := m.Reports; rhs != nil {
+		tmpContainer := make(map[string]*Report, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Reports = tmpContainer
+	}
+	if rhs := m.Errors; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Errors = tmpContainer
+	}
+	if rhs := m.ResolvedPolicies; rhs != nil {
+		tmpContainer := make(map[string]*ResolvedPolicy, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.ResolvedPolicies = tmpContainer
+	}
+	if rhs := m.VulnReports; rhs != nil {
+		tmpContainer := make(map[string]*mvd.VulnReport, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *mvd.VulnReport }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*mvd.VulnReport)
+			}
+		}
+		r.VulnReports = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ReportCollection) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *FrameworkReport) CloneVT() *FrameworkReport {
+	if m == nil {
+		return (*FrameworkReport)(nil)
+	}
+	r := new(FrameworkReport)
+	r.ScoringMrn = m.ScoringMrn
+	r.EntityMrn = m.EntityMrn
+	r.Score = m.Score.CloneVT()
+	if rhs := m.Controls; rhs != nil {
+		tmpContainer := make([]*ControlScore, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Controls = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *FrameworkReport) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ControlScore) CloneVT() *ControlScore {
+	if m == nil {
+		return (*ControlScore)(nil)
+	}
+	r := new(ControlScore)
+	r.Mrn = m.Mrn
+	r.Completion = m.Completion
+	r.Compliant = m.Compliant
+	r.Failed = m.Failed
+	r.Total = m.Total
+	r.AssetCount = m.AssetCount
+	r.CompliantAssetsCount = m.CompliantAssetsCount
+	r.FailedAssetsCount = m.FailedAssetsCount
+	r.Manual = m.Manual
+	if rhs := m.Assets; rhs != nil {
+		tmpContainer := make([]*ControlScore, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Assets = tmpContainer
+	}
+	if rhs := m.Scores; rhs != nil {
+		tmpContainer := make([]*ScoreDistribution, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Scores = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ControlScore) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Cvss) CloneVT() *Cvss {
+	if m == nil {
+		return (*Cvss)(nil)
+	}
+	r := new(Cvss)
+	r.Id = m.Id
+	r.Checksum = m.Checksum
+	r.Score = m.Score
+	r.Vector = m.Vector
+	r.Source = m.Source
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Cvss) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *CvssStats) CloneVT() *CvssStats {
+	if m == nil {
+		return (*CvssStats)(nil)
+	}
+	r := new(CvssStats)
+	r.Total = m.Total
+	r.Critical = m.Critical
+	r.High = m.High
+	r.Medium = m.Medium
+	r.Low = m.Low
+	r.None = m.None
+	r.Unscored = m.Unscored
+	r.Worst = m.Worst
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *CvssStats) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Score) CloneVT() *Score {
+	if m == nil {
+		return (*Score)(nil)
+	}
+	r := new(Score)
+	r.RiskScore = m.RiskScore
+	r.QrId = m.QrId
+	r.Type = m.Type
+	r.Value = m.Value
+	r.Weight = m.Weight
+	r.ScoreCompletion = m.ScoreCompletion
+	r.DataTotal = m.DataTotal
+	r.DataCompletion = m.DataCompletion
+	r.Message = m.Message
+	r.ValueModifiedTime = m.ValueModifiedTime
+	r.FailureTime = m.FailureTime
+	r.RiskFactors = m.RiskFactors.CloneVT()
+	r.Source = m.Source.CloneVT()
+	r.Sources = m.Sources.CloneVT()
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Score) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ScoreDelta) CloneVT() *ScoreDelta {
+	if m == nil {
+		return (*ScoreDelta)(nil)
+	}
+	r := new(ScoreDelta)
+	r.RiskScore = m.RiskScore
+	r.QrId = m.QrId
+	r.Type = m.Type
+	r.Weight = m.Weight
+	r.Time = m.Time
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ScoreDelta) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ScoredRiskFactor) CloneVT() *ScoredRiskFactor {
+	if m == nil {
+		return (*ScoredRiskFactor)(nil)
+	}
+	r := new(ScoredRiskFactor)
+	r.Mrn = m.Mrn
+	r.Risk = m.Risk
+	r.IsToxic = m.IsToxic
+	r.IsDetected = m.IsDetected
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ScoredRiskFactor) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ScoredRiskFactors) CloneVT() *ScoredRiskFactors {
+	if m == nil {
+		return (*ScoredRiskFactors)(nil)
+	}
+	r := new(ScoredRiskFactors)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]*ScoredRiskFactor, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ScoredRiskFactors) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *RiskFactorStats) CloneVT() *RiskFactorStats {
+	if m == nil {
+		return (*RiskFactorStats)(nil)
+	}
+	r := new(RiskFactorStats)
+	r.Mrn = m.Mrn
+	r.Affected = m.Affected
+	r.Total = m.Total
+	r.Indicator = m.Indicator
+	r.Title = m.Title
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *RiskFactorStats) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *RiskFactorsStats) CloneVT() *RiskFactorsStats {
+	if m == nil {
+		return (*RiskFactorsStats)(nil)
+	}
+	r := new(RiskFactorsStats)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]*RiskFactorStats, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *RiskFactorsStats) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Stats) CloneVT() *Stats {
+	if m == nil {
+		return (*Stats)(nil)
+	}
+	r := new(Stats)
+	r.Total = m.Total
+	r.Incomplete = m.Incomplete
+	r.Skipped = m.Skipped
+	r.Worst = m.Worst
+	r.Unknown = m.Unknown
+	r.Failed = m.Failed.CloneVT()
+	r.Passed = m.Passed.CloneVT()
+	r.Errors = m.Errors.CloneVT()
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Stats) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ScoreDistribution) CloneVT() *ScoreDistribution {
+	if m == nil {
+		return (*ScoreDistribution)(nil)
+	}
+	r := new(ScoreDistribution)
+	r.Total = m.Total
+	r.A = m.A
+	r.B = m.B
+	r.C = m.C
+	r.D = m.D
+	r.F = m.F
+	r.Error = m.Error
+	r.Unrated = m.Unrated
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ScoreDistribution) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ScoreStats) CloneVT() *ScoreStats {
+	if m == nil {
+		return (*ScoreStats)(nil)
+	}
+	r := new(ScoreStats)
+	r.Assets = m.Assets
+	r.Critical = m.Critical
+	r.High = m.High
+	r.Medium = m.Medium
+	r.Low = m.Low
+	r.None = m.None
+	r.Pass = m.Pass
+	r.Unknown = m.Unknown
+	r.Error = m.Error
+	r.Disabled = m.Disabled
+	r.Snoozed = m.Snoozed
+	r.FirstFailureTime = m.FirstFailureTime
+	r.OldestScanTime = m.OldestScanTime
+	r.NewestScanTime = m.NewestScanTime
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ScoreStats) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *AssetFindingsStats) CloneVT() *AssetFindingsStats {
+	if m == nil {
+		return (*AssetFindingsStats)(nil)
+	}
+	r := new(AssetFindingsStats)
+	r.Asset = m.Asset
+	r.Finding = m.Finding
+	r.BaseScore = m.BaseScore
+	r.RiskScore = m.RiskScore
+	r.Weight = m.Weight
+	r.ScoreStats = m.ScoreStats.CloneVT()
+	r.RiskFactors = m.RiskFactors.CloneVT()
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *AssetFindingsStats) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Empty) CloneVT() *Empty {
+	if m == nil {
+		return (*Empty)(nil)
+	}
+	r := new(Empty)
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Empty) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Mrn) CloneVT() *Mrn {
+	if m == nil {
+		return (*Mrn)(nil)
+	}
+	r := new(Mrn)
+	r.Mrn = m.Mrn
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Mrn) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Mqueries) CloneVT() *Mqueries {
+	if m == nil {
+		return (*Mqueries)(nil)
+	}
+	r := new(Mqueries)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Mqueries) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ListReq) CloneVT() *ListReq {
+	if m == nil {
+		return (*ListReq)(nil)
+	}
+	r := new(ListReq)
+	r.OwnerMrn = m.OwnerMrn
+	r.Name = m.Name
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ListReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *DefaultPoliciesReq) CloneVT() *DefaultPoliciesReq {
+	if m == nil {
+		return (*DefaultPoliciesReq)(nil)
+	}
+	r := new(DefaultPoliciesReq)
+	r.Kind = m.Kind
+	r.Platform = m.Platform
+	r.Runtime = m.Runtime
+	r.Version = m.Version
+	if rhs := m.Family; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Family = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *DefaultPoliciesReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *URLs) CloneVT() *URLs {
+	if m == nil {
+		return (*URLs)(nil)
+	}
+	r := new(URLs)
+	if rhs := m.Urls; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Urls = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *URLs) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PolicyAssignment) CloneVT() *PolicyAssignment {
+	if m == nil {
+		return (*PolicyAssignment)(nil)
+	}
+	r := new(PolicyAssignment)
+	r.AssetMrn = m.AssetMrn
+	r.Action = m.Action
+	r.ScoringSystem = m.ScoringSystem
+	if rhs := m.PolicyMrns; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.PolicyMrns = tmpContainer
+	}
+	if rhs := m.FrameworkMrns; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.FrameworkMrns = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyAssignment) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PolicyMutationDelta) CloneVT() *PolicyMutationDelta {
+	if m == nil {
+		return (*PolicyMutationDelta)(nil)
+	}
+	r := new(PolicyMutationDelta)
+	r.PolicyMrn = m.PolicyMrn
+	r.Action = m.Action
+	if rhs := m.PolicyDeltas; rhs != nil {
+		tmpContainer := make(map[string]*PolicyDelta, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.PolicyDeltas = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyMutationDelta) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PolicyDelta) CloneVT() *PolicyDelta {
+	if m == nil {
+		return (*PolicyDelta)(nil)
+	}
+	r := new(PolicyDelta)
+	r.PolicyMrn = m.PolicyMrn
+	r.Action = m.Action
+	r.ScoringSystem = m.ScoringSystem
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PolicyDelta) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *ResolveReq) CloneVT() *ResolveReq {
+	if m == nil {
+		return (*ResolveReq)(nil)
+	}
+	r := new(ResolveReq)
+	r.PolicyMrn = m.PolicyMrn
+	if rhs := m.AssetFilters; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.AssetFilters = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *ResolveReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *UpdateAssetJobsReq) CloneVT() *UpdateAssetJobsReq {
+	if m == nil {
+		return (*UpdateAssetJobsReq)(nil)
+	}
+	r := new(UpdateAssetJobsReq)
+	r.AssetMrn = m.AssetMrn
+	if rhs := m.AssetFilters; rhs != nil {
+		tmpContainer := make([]*explorer.Mquery, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *explorer.Mquery }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*explorer.Mquery)
+			}
+		}
+		r.AssetFilters = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *UpdateAssetJobsReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *StoreResultsReq) CloneVT() *StoreResultsReq {
+	if m == nil {
+		return (*StoreResultsReq)(nil)
+	}
+	r := new(StoreResultsReq)
+	r.AssetMrn = m.AssetMrn
+	r.IsPreprocessed = m.IsPreprocessed
+	r.IsLastBatch = m.IsLastBatch
+	if rhs := m.Scores; rhs != nil {
+		tmpContainer := make([]*Score, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Scores = tmpContainer
+	}
+	if rhs := m.Data; rhs != nil {
+		tmpContainer := make(map[string]*llx.Result, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *llx.Result }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*llx.Result)
+			}
+		}
+		r.Data = tmpContainer
+	}
+	if rhs := m.Resources; rhs != nil {
+		tmpContainer := make(map[string]*llx.ResourceRecording, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *llx.ResourceRecording }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*llx.ResourceRecording)
+			}
+		}
+		r.Resources = tmpContainer
+	}
+	if rhs := m.Risks; rhs != nil {
+		tmpContainer := make([]*ScoredRiskFactor, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Risks = tmpContainer
+	}
+	if rhs := m.CvssScores; rhs != nil {
+		tmpContainer := make([]*Cvss, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.CvssScores = tmpContainer
+	}
+	if rhs := m.NotifyUpdates; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.NotifyUpdates = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *StoreResultsReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *EntityScoreReq) CloneVT() *EntityScoreReq {
+	if m == nil {
+		return (*EntityScoreReq)(nil)
+	}
+	r := new(EntityScoreReq)
+	r.EntityMrn = m.EntityMrn
+	r.ScoreMrn = m.ScoreMrn
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *EntityScoreReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *SynchronizeAssetsReq) CloneVT() *SynchronizeAssetsReq {
+	if m == nil {
+		return (*SynchronizeAssetsReq)(nil)
+	}
+	r := new(SynchronizeAssetsReq)
+	r.SpaceMrn = m.SpaceMrn
+	if rhs := m.List; rhs != nil {
+		tmpContainer := make([]*inventory.Asset, len(rhs))
+		for k, v := range rhs {
+			if vtpb, ok := interface{}(v).(interface{ CloneVT() *inventory.Asset }); ok {
+				tmpContainer[k] = vtpb.CloneVT()
+			} else {
+				tmpContainer[k] = proto.Clone(v).(*inventory.Asset)
+			}
+		}
+		r.List = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *SynchronizeAssetsReq) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *SynchronizeAssetsRespAssetDetail) CloneVT() *SynchronizeAssetsRespAssetDetail {
+	if m == nil {
+		return (*SynchronizeAssetsRespAssetDetail)(nil)
+	}
+	r := new(SynchronizeAssetsRespAssetDetail)
+	r.PlatformMrn = m.PlatformMrn
+	r.AssetMrn = m.AssetMrn
+	r.Url = m.Url
+	r.ProjectId = m.ProjectId
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *SynchronizeAssetsRespAssetDetail) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *SynchronizeAssetsResp) CloneVT() *SynchronizeAssetsResp {
+	if m == nil {
+		return (*SynchronizeAssetsResp)(nil)
+	}
+	r := new(SynchronizeAssetsResp)
+	if rhs := m.Details; rhs != nil {
+		tmpContainer := make(map[string]*SynchronizeAssetsRespAssetDetail, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Details = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *SynchronizeAssetsResp) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PurgeAssetsRequest) CloneVT() *PurgeAssetsRequest {
+	if m == nil {
+		return (*PurgeAssetsRequest)(nil)
+	}
+	r := new(PurgeAssetsRequest)
+	r.SpaceMrn = m.SpaceMrn
+	r.PurgeAll = m.PurgeAll
+	r.DateFilter = m.DateFilter.CloneVT()
+	r.ManagedBy = m.ManagedBy
+	r.PlatformRuntime = m.PlatformRuntime
+	if rhs := m.AssetMrns; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.AssetMrns = tmpContainer
+	}
+	if rhs := m.Labels; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Labels = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PurgeAssetsRequest) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *DateFilter) CloneVT() *DateFilter {
+	if m == nil {
+		return (*DateFilter)(nil)
+	}
+	r := new(DateFilter)
+	r.Timestamp = m.Timestamp
+	r.Comparison = m.Comparison
+	r.Field = m.Field
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *DateFilter) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *PurgeAssetsConfirmation) CloneVT() *PurgeAssetsConfirmation {
+	if m == nil {
+		return (*PurgeAssetsConfirmation)(nil)
+	}
+	r := new(PurgeAssetsConfirmation)
+	if rhs := m.AssetMrns; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.AssetMrns = tmpContainer
+	}
+	if rhs := m.Errors; rhs != nil {
+		tmpContainer := make(map[string]string, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v
+		}
+		r.Errors = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *PurgeAssetsConfirmation) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Sources) CloneVT() *Sources {
+	if m == nil {
+		return (*Sources)(nil)
+	}
+	r := new(Sources)
+	if rhs := m.Items; rhs != nil {
+		tmpContainer := make([]*Source, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Items = tmpContainer
+	}
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Sources) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
+func (m *Source) CloneVT() *Source {
+	if m == nil {
+		return (*Source)(nil)
+	}
+	r := new(Source)
+	r.Name = m.Name
+	r.Url = m.Url
+	r.FirstDetectedAt = m.FirstDetectedAt
+	r.LastUpdatedAt = m.LastUpdatedAt
+	r.FixedAt = m.FixedAt
+	r.Version = m.Version
+	r.Vendor = m.Vendor
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *Source) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
 func (m *PolicyGroup) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
