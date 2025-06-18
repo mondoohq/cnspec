@@ -93,8 +93,9 @@ func WithReportType(reportType ReportType) ScannerOption {
 	}
 }
 
-func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
+func NewLocalScanner(autoUpdateConfig providers.UpdateProvidersConfig, opts ...ScannerOption) *LocalScanner {
 	runtime := providers.DefaultRuntime()
+	runtime.AutoUpdate = autoUpdateConfig
 
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),

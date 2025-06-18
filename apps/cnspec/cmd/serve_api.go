@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnquery/v11/cli/config"
 	"go.mondoo.com/cnquery/v11/logger"
+	"go.mondoo.com/cnquery/v11/providers"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/recording"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"
 	cnspec_config "go.mondoo.com/cnspec/v11/apps/cnspec/cmd/config"
@@ -70,7 +71,15 @@ var serveApiCmd = &cobra.Command{
 			Creds:       serviceAccount,
 		}
 
+		enabledAutoUpdate := true
+		if viper.IsSet("auto_update") {
+			enabledAutoUpdate = viper.GetBool("auto_update")
+		}
+
 		scanner := scan.NewLocalScanner(
+			providers.UpdateProvidersConfig{
+				Enabled: enabledAutoUpdate,
+			},
 			scan.WithUpstream(&upstreamConfig),
 			scan.DisableProgressBar(),
 			scan.WithRecording(recording.Null{}),

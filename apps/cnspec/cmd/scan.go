@@ -390,7 +390,9 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 	}
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
 
-	scanner := scan.NewLocalScanner(opts...)
+	scanner := scan.NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, opts...)
 	ctx := cnquery.SetFeatures(context.Background(), config.Features)
 
 	var res *scan.ScanResult
