@@ -75,7 +75,7 @@ cnspec scan github repo <org/repo>
 
 ### Policies
 
-cnspec policies are built on the concept of policy as code. cnspec comes with default security policies configured for all supported targets. The default policies are available in the [cnspec-policies](https://github.com/mondoohq/cnspec-policies) GitHub repo.
+cnspec policies are built on the concept of policy as code. cnspec comes with default security policies configured for all supported targets. The default policies are available in the `content` directory of this repository.
 
 ## Vulnerability scan
 
@@ -255,7 +255,6 @@ There are so many things cnspec can do, from testing your entire fleet for vulne
 Explore our:
 
 - [cnspec docs](https://mondoo.com/docs/cnspec/home)
-- [Policy bundles](https://github.com/mondoohq/cnspec-policies)
 - [Policy as code](https://mondoo.com/docs/cnspec/cnspec-policies/write/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources/)
