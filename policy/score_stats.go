@@ -63,4 +63,5 @@ func (s *ScoreStats) Add(other *ScoreStats) {
 	s.FirstFailureTime += other.FirstFailureTime
 	s.OldestScanTime += other.OldestScanTime
 	s.NewestScanTime += other.NewestScanTime
+	s.Exceptions += other.Exceptions
 }
