@@ -1720,6 +1720,7 @@ func (m *ScoreStats) CloneVT() *ScoreStats {
 	r.FirstFailureTime = m.FirstFailureTime
 	r.OldestScanTime = m.OldestScanTime
 	r.NewestScanTime = m.NewestScanTime
+	r.Exceptions = m.Exceptions
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -7133,6 +7134,13 @@ func (m *ScoreStats) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.Exceptions != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Exceptions))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x80
+	}
 	if m.None != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.None))
 		i--
@@ -10735,6 +10743,9 @@ func (m *ScoreStats) SizeVT() (n int) {
 	}
 	if m.None != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.None))
+	}
+	if m.Exceptions != 0 {
+		n += 2 + protohelpers.SizeOfVarint(uint64(m.Exceptions))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -25035,6 +25046,25 @@ func (m *ScoreStats) UnmarshalVT(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.None |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 16:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Exceptions", wireType)
+			}
+			m.Exceptions = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Exceptions |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
