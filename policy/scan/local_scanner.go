@@ -384,6 +384,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 						asset.Mrn = details.AssetMrn
 						asset.Url = details.Url
 						asset.Labels["mondoo.com/project-id"] = details.ProjectId
+
+						if asset.Annotations == nil {
+							asset.Annotations = make(map[string]string)
+						}
+						for k, v := range details.Annotations {
+							if _, ok := asset.Annotations[k]; !ok {
+								asset.Annotations[k] = v
+							}
+						}
+
 						err = cur.Runtime.SetRecording(s.recording)
 						if err != nil {
 							// we do not want to stop the scan if we cannot set the recording
