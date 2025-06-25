@@ -65,7 +65,9 @@ func TestGetUpstreamConfig(t *testing.T) {
 				},
 			},
 		}
-		scanner := NewLocalScanner(opts...)
+		scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+			Enabled: true,
+		}, opts...)
 		_, err = scanner.getUpstreamConfig(false, job)
 		require.NoError(t, err)
 
@@ -76,7 +78,9 @@ func TestGetUpstreamConfig(t *testing.T) {
 
 func TestDefaultConfig(t *testing.T) {
 	t.Run("without opts", func(t *testing.T) {
-		scanner := NewLocalScanner()
+		scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+			Enabled: true,
+		})
 		require.NotNil(t, scanner)
 
 		require.Equal(t, recording.Null{}, scanner.recording)
@@ -142,7 +146,9 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -186,7 +192,9 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	s.job.PolicyFilters = []string{"asset-policy"}
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -252,7 +260,9 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	bundleMap := bundle.ToMap()
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -316,7 +326,9 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 	s.job.PolicyFilters = []string{"asset-policy"}
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -365,7 +377,9 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 	s.job.PolicyFilters = []string{"asset-policy"}
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -426,7 +440,9 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks() {
 	s.job.Bundle = bundle
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -466,7 +482,9 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_Deactivate() 
 	s.job.Bundle = bundle
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
@@ -506,7 +524,9 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	s.job.Bundle = bundle
 
 	ctx := context.Background()
-	scanner := NewLocalScanner(DisableProgressBar())
+	scanner := NewLocalScanner(providers.UpdateProvidersConfig{
+		Enabled: true,
+	}, DisableProgressBar())
 	res, err := scanner.RunIncognito(ctx, s.job)
 	s.Require().NoError(err)
 	s.Require().NotNil(res)
