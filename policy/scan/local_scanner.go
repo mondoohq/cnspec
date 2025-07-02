@@ -1014,7 +1014,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := cnquery.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
+	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
 		return nil, err
 	}

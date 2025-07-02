@@ -4,6 +4,7 @@
 package executor
 
 import (
+	"context"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -20,7 +21,7 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
+func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressReporter progress.Progress,
 ) error {
 	var opts []internal.BufferedCollectorOpt
@@ -33,6 +34,7 @@ func ExecuteResolvedPolicy(runtime llx.Runtime, collectorSvc policy.PolicyResolv
 	}
 
 	collector := internal.NewBufferedCollector(
+		ctx,
 		internal.NewPolicyServiceCollector(assetMrn, collectorSvc),
 		opts...,
 	)

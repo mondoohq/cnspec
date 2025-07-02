@@ -41,6 +41,7 @@ type Collector interface {
 }
 
 type BufferedCollector struct {
+	ctx            context.Context
 	results        map[string]*llx.RawResult
 	scores         map[string]*policy.Score
 	lock           sync.Mutex
@@ -90,8 +91,9 @@ func WithResolvedPolicy(resolved *policy.ResolvedPolicy) (BufferedCollectorOpt, 
 	}, nil
 }
 
-func NewBufferedCollector(collector *PolicyServiceCollector, opts ...BufferedCollectorOpt) *BufferedCollector {
+func NewBufferedCollector(ctx context.Context, collector *PolicyServiceCollector, opts ...BufferedCollectorOpt) *BufferedCollector {
 	c := &BufferedCollector{
+		ctx:       ctx,
 		results:   map[string]*llx.RawResult{},
 		scores:    map[string]*policy.Score{},
 		duration:  5 * time.Second,
@@ -155,14 +157,14 @@ func (c *BufferedCollector) run() {
 			c.lock.Unlock()
 
 			if len(results) > 0 {
-				c.collector.Sink(results, nil, nil, false)
+				c.collector.Sink(c.ctx, results, nil, nil, false)
 				results = results[:0]
 			}
 
 			if done {
 				risks := listScoredRisks(risksIdx)
 				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
-				c.collector.Sink(nil, scores, risks, done)
+				c.collector.Sink(c.ctx, nil, scores, risks, done)
 				scores = scores[:0]
 				risksIdx = map[string]bool{}
 			}
@@ -299,7 +301,7 @@ func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.Resolve
 	}
 }
 
-func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy.Score, risks []*policy.ScoredRiskFactor, isDone bool) {
+func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawResult, scores []*policy.Score, risks []*policy.ScoredRiskFactor, isDone bool) {
 	// If we have nothing to send and also this is not the last batch, we just skip
 	if len(results) == 0 && len(scores) == 0 && len(risks) == 0 && !isDone {
 		return
@@ -316,7 +318,7 @@ func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy
 			for _, rr := range chunk {
 				resultsToSend[rr.CodeId] = rr
 			}
-			_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
+			_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
 				AssetMrn:       c.assetMrn,
 				Data:           resultsToSend,
 				IsPreprocessed: true,
@@ -336,7 +338,7 @@ func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy
 
 	if len(scores) > 0 || len(risks) > 0 {
 		log.Debug().Msg("Sending scores")
-		_, err := c.resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
+		_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
 			AssetMrn:       c.assetMrn,
 			Scores:         scores,
 			Risks:          risks,
@@ -347,7 +349,6 @@ func (c *PolicyServiceCollector) Sink(results []*llx.RawResult, scores []*policy
 			log.Error().Err(err).Msg("failed to send datapoints and scores")
 		}
 	}
-
 }
 
 type FuncCollector struct {
