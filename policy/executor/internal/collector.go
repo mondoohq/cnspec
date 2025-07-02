@@ -15,7 +15,6 @@ import (
 	"go.mondoo.com/cnquery/v11/utils/iox"
 	"go.mondoo.com/cnspec/v11"
 	"go.mondoo.com/cnspec/v11/policy"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -217,7 +216,7 @@ func (c *BufferedCollector) SinkScore(scores []*policy.Score) {
 	for _, s := range scores {
 		// We are making a clone of s. This safe-guards us is a
 		// consumer of s decides to mutate it
-		c.scores[s.QrId] = proto.Clone(s).(*policy.Score)
+		c.scores[s.QrId] = s.CloneVT()
 	}
 }
 

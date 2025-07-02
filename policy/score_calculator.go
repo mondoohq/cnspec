@@ -9,7 +9,6 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v11/explorer"
-	"google.golang.org/protobuf/proto"
 )
 
 // ScoreCalculator interface for calculating scores
@@ -58,7 +57,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 		return
 	}
 
-	score := proto.Clone(s).(*Score)
+	score := s.CloneVT()
 	if impact != nil && impact.Value != nil {
 		floor := 100 - uint32(impact.Value.Value)
 		if floor > score.Value {

@@ -103,7 +103,7 @@ func (db *Db) GetRawPolicy(ctx context.Context, mrn string) (*policy.Policy, err
 	if !ok {
 		return nil, errors.New("policy '" + mrn + "' not found")
 	}
-	return proto.Clone((q.(wrapPolicy)).Policy).(*policy.Policy), nil
+	return (q.(wrapPolicy)).Policy.CloneVT(), nil
 }
 
 // GetPolicyFilters retrieves the list of asset filters for a policy (fast)
@@ -472,7 +472,7 @@ func (db *Db) GetValidatedBundle(ctx context.Context, mrn string) (*policy.Bundl
 		return nil, errors.New("failed to save bundle for '" + mrn + "' to cache")
 	}
 
-	return proto.Clone(bundle).(*policy.Bundle), nil
+	return bundle.CloneVT(), nil
 }
 
 // GetValidatedPolicy retrieves and if necessary updates the policy
@@ -491,7 +491,7 @@ func (db *Db) GetValidatedPolicy(ctx context.Context, mrn string) (*policy.Polic
 		}
 	}
 
-	return proto.Clone(p.Policy).(*policy.Policy), nil
+	return p.Policy.CloneVT(), nil
 }
 
 // entityGraphExecutionChecksum retrieves the execution checksum for a given entity.
@@ -624,7 +624,7 @@ func (db *Db) GetFramework(ctx context.Context, mrn string) (*policy.Framework, 
 		return nil, errors.New("framework '" + mrn + "' not found")
 	}
 
-	return proto.Clone(raw.(wrapFramework).Framework).(*policy.Framework), nil
+	return raw.(wrapFramework).Framework.CloneVT(), nil
 }
 
 // GetFrameworkMaps retrieves a set of framework maps for a given framework
