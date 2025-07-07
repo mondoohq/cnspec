@@ -12,9 +12,8 @@ import (
 
 func TestGenerateMs365HCL_Basic(t *testing.T) {
 	code, err := subject.GenerateMs365HCL(subject.Ms365Integration{
-		Name:    "test-ms365-integration",
-		Space:   "space-xyz",
-		Primary: "00000000-0000-0000-0000-000000000000",
+		Name:  "test-ms365-integration",
+		Space: "space-xyz",
 	})
 	assert.Nil(t, err)
 
@@ -32,13 +31,6 @@ provider "mondoo" {
 }
 
 provider "azuread" {
-}
-
-provider "azurerm" {
-  subscription_id = "00000000-0000-0000-0000-000000000000"
-
-  features {
-  }
 }
 
 data "azuread_client_config" "current" {
@@ -116,6 +108,9 @@ resource "mondoo_integration_ms365" "this" {
 }
 
 func TestGenerateMs365HCL_Minimal(t *testing.T) {
+	subject.UuidGenerator = func() string {
+		return "bcb6e112-30f8-434a-926b-88afcea5fb91"
+	}
 	code, err := subject.GenerateMs365HCL(subject.Ms365Integration{})
 	assert.Nil(t, err)
 
@@ -132,12 +127,6 @@ provider "mondoo" {
 }
 
 provider "azuread" {
-}
-
-provider "azurerm" {
-
-  features {
-  }
 }
 
 data "azuread_client_config" "current" {
@@ -207,7 +196,7 @@ resource "mondoo_integration_ms365" "this" {
     pem_file = join("\n", [tls_self_signed_cert.credential.cert_pem, tls_private_key.credential.private_key_pem])
   }
   depends_on = [azuread_service_principal.mondoo, azuread_application_certificate.mondoo, azuread_directory_role_assignment.global_reader]
-  name       = "subscription-"
+  name       = "subscription-88afcea5fb91"
   tenant_id  = data.azuread_client_config.current.tenant_id
 }
 `

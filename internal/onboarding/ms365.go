@@ -5,6 +5,7 @@ package onboarding
 
 import (
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
 	"go.mondoo.com/cnquery/v11/cli/theme"
@@ -13,16 +14,20 @@ import (
 
 // Ms365Integration represents the configuration of a Microsoft 365 integration to be created.
 type Ms365Integration struct {
-	Name    string
-	Space   string
-	Primary string
+	Name  string
+	Space string
+}
+
+// function wrapper to mock during testing
+var UuidGenerator func() string = func() string {
+	return uuid.New().String()
 }
 
 // GenerateMs365HCL generates automation code to create a Microsoft 365 integration.
 func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 	// Validate integration name is not empty, if it is, generate a random one
 	if integration.Name == "" {
-		integration.Name = generateAzureIntegrationName(integration.Primary)
+		integration.Name = generateAzureIntegrationName(UuidGenerator())
 		log.Info().Msgf(
 			"integration name not provided, using %s",
 			theme.DefaultTheme.Primary(integration.Name),
@@ -40,10 +45,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		return "", errors.Wrap(err, "failed to generate required providers")
 	}
 
-	featuresBlock, err := tfgen.HclCreateGenericBlock("features", []string{}, nil)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to append features block to azurerm provider")
-	}
 	selfSignedCertSubjectBlock, err := tfgen.HclCreateGenericBlock("subject", nil,
 		tfgen.Attributes{"common_name": "mondoo"},
 	)
@@ -58,18 +59,8 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		))
 	}
 
-	azurermProviderHclModifier := []tfgen.HclProviderModifier{
-		tfgen.HclProviderWithGenericBlocks(featuresBlock),
-	}
-	if integration.Primary != "" {
-		azurermProviderHclModifier = append(azurermProviderHclModifier,
-			tfgen.HclProviderWithAttributes(tfgen.Attributes{"subscription_id": integration.Primary}),
-		)
-	}
-
 	var (
 		providerAzureAD       = tfgen.NewProvider("azuread")
-		providerAzureRM       = tfgen.NewProvider("azurerm", azurermProviderHclModifier...)
 		providerMondoo        = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 		dataADClientConfig    = tfgen.NewDataSource("azuread_client_config", "current")
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
@@ -162,7 +153,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 	blocks, err := tfgen.ObjectsToBlocks(
 		providerMondoo,
 		providerAzureAD,
-		providerAzureRM,
 		dataADClientConfig,
 		resourceTLSPrivateKey,
 		resourceTLSSelfSignedCert,
