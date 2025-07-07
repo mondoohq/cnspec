@@ -12,7 +12,7 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/abiosoft/colima v0.8.1
 	github.com/aws/aws-sdk-go-v2/config v1.29.17
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.82.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.83.0
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.5
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -44,7 +44,7 @@ require (
 	github.com/zclconf/go-cty v1.16.3
 	go.mondoo.com/cnquery/v11 v11.61.0
 	go.mondoo.com/mondoo-go v0.0.0-20250625000441-f66825318b05
-	go.mondoo.com/ranger-rpc v0.6.6
+	go.mondoo.com/ranger-rpc v0.7.0
 	go.opentelemetry.io/otel v1.37.0
 	gocloud.dev v0.42.0
 	golang.org/x/sys v0.33.0
