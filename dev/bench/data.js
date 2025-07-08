@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751978017836,
+  "lastUpdate": 1751981864695,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -208,6 +208,78 @@ window.BENCHMARK_DATA = {
             "value": 108431,
             "unit": "allocs/op",
             "extra": "32 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "salim@afiunemaya.com.mx",
+            "name": "Salim Afiune Maya",
+            "username": "afiune"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7393da96a8ab3b9b28f3a6f0cc6c2c40d5be2048",
+          "message": "🐛 onboarding: ms365 does not depend on a subscription (#1722)",
+          "timestamp": "2025-07-08T06:37:11-07:00",
+          "tree_id": "4a90cc9550386d78afc20c8d74e8a37b94d13dce",
+          "url": "https://github.com/mondoohq/cnspec/commit/7393da96a8ab3b9b28f3a6f0cc6c2c40d5be2048"
+        },
+        "date": 1751981864068,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 18821,
+            "unit": "ns/op\t    4895 B/op\t      71 allocs/op",
+            "extra": "60248 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 18821,
+            "unit": "ns/op",
+            "extra": "60248 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4895,
+            "unit": "B/op",
+            "extra": "60248 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "60248 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 20228,
+            "unit": "ns/op\t    4895 B/op\t      71 allocs/op",
+            "extra": "54308 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 20228,
+            "unit": "ns/op",
+            "extra": "54308 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4895,
+            "unit": "B/op",
+            "extra": "54308 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "54308 times\n4 procs"
           }
         ]
       }
