@@ -36,12 +36,18 @@ var Ms365AppPermissions = Permissions{
 				ID:   "SecurityEvents.Read.All",
 				Type: "Role",
 			},
+			{
+				// Allows the app to read organization-wide Microsoft Forms settings on behalf of the signed-in user.
+				ID:   "OrgSettings-Forms.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
 		ResourceID: "Office365SharePointOnline",
 		Access: []ResourceAccess{
 			{
+				// Allows the application to have full control of all site collections on behalf of the signed-in user.
 				ID:   "Sites.FullControl.All",
 				Type: "Role",
 			},
