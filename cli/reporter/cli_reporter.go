@@ -84,20 +84,22 @@ func defaultChecksum(code mqlCode, schema resources.ResourcesSchema) (string, er
 
 // note: implements the OutputHandler interface
 type Reporter struct {
-	Conf        *PrintConfig
-	Printer     *printer.Printer
-	Colors      *colors.Theme
-	IsIncognito bool
-	out         io.Writer
+	Conf           *PrintConfig
+	Printer        *printer.Printer
+	Colors         *colors.Theme
+	IsIncognito    bool
+	ScoreThreshold int
+	out            io.Writer
 }
 
-func NewReporter(conf *PrintConfig, incognito bool) *Reporter {
+func NewReporter(conf *PrintConfig, incognito bool, scoreThreshold int) *Reporter {
 	return &Reporter{
-		Conf:        conf,
-		Printer:     &printer.DefaultPrinter,
-		Colors:      &colors.DefaultColorTheme,
-		IsIncognito: incognito,
-		out:         os.Stdout,
+		Conf:           conf,
+		Printer:        &printer.DefaultPrinter,
+		Colors:         &colors.DefaultColorTheme,
+		IsIncognito:    incognito,
+		ScoreThreshold: scoreThreshold,
+		out:            os.Stdout,
 	}
 }
 
