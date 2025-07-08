@@ -45,8 +45,6 @@ func init() {
 
 	// cnspec integrate ms365
 	integrateCmd.AddCommand(integrateMs365Cmd)
-
-	integrateMs365Cmd.Flags().String("subscription-id", "", "Azure tenant ID for MS365 integration")
 }
 
 var (
@@ -208,7 +206,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 
 Flags are optional:
 
-	cnspec integrate ms365 --space <space_id> --subscription-id <tenant_id> --output <output_dir> --integration-name <name>
+	cnspec integrate ms365 --space <space_id> --output <output_dir> --integration-name <name>
 
 Ensure that the Azure account used for execution has the Azure AD Role "Global Reader".`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -216,14 +214,12 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
-				viper.BindPFlag("subscription-id", cmd.Flags().Lookup("subscription-id")),
 			}
 			return errors.Join(errs...)
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			var (
 				space           = viper.GetString("space")
-				subscriptionID  = viper.GetString("subscription-id")
 				output          = viper.GetString("output")
 				integrationName = viper.GetString("integration-name")
 			)
@@ -255,39 +251,6 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
 			}
 
-			// Discover the subscription used to create resources in the cloud, if it wasn't specified. Note
-			// that this will also verify that we have access to Azure. If we fail, we shouldn't try to continue.
-			if subscriptionID == "" {
-				azAccountJSON, err := exec.Command("az", "account", "list", "-o", "json").Output()
-				if err != nil {
-					return errors.Wrap(err, "unable to detect Azure subscriptions")
-				}
-				var azAccounts []onboarding.AzAccount
-				if err := json.Unmarshal(azAccountJSON, &azAccounts); err != nil {
-					return err
-				}
-
-				isTTY := isatty.IsTerminal(os.Stdout.Fd())
-				if isTTY {
-					selected := components.Select(
-						"Select the primary subscription where resources will be created",
-						azAccounts,
-					)
-					if selected >= 0 {
-						subscriptionID = azAccounts[selected].ID
-					}
-				} else {
-					fmt.Println(components.List(theme.OperatingSystemTheme, azAccounts))
-					log.Fatal().
-						Msg("cannot continue, missing subscription id, use --subscription-id to select a subscription")
-				}
-			}
-
-			if subscriptionID == "" {
-				log.Error().Msg("no subscription selected")
-				os.Exit(1)
-			}
-
 			// Verify that the user has the right role assignments to onboard an Azure environment
 			log.Info().Msg("verifying role assignments for the currently logged-in user")
 			if err := onboarding.VerifyUserRoleAssignments(); err != nil {
@@ -297,9 +260,8 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 			// Generate HCL for MS365 deployment
 			log.Info().Msg("generating automation code")
 			hcl, err := onboarding.GenerateMs365HCL(onboarding.Ms365Integration{
-				Name:    integrationName,
-				Space:   space,
-				Primary: subscriptionID,
+				Name:  integrationName,
+				Space: space,
 			})
 			if err != nil {
 				return errors.Wrap(err, "unable to generate automation code")
