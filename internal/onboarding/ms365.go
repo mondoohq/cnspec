@@ -38,6 +38,15 @@ var Ms365AppPermissions = Permissions{
 			},
 		},
 	},
+	{
+		ResourceID: "Office365SharePointOnline",
+		Access: []ResourceAccess{
+			{
+				ID:   "Sites.FullControl.All",
+				Type: "Role",
+			},
+		},
+	},
 }
 
 // function wrapper to mock during testing
