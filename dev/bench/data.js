@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751983665086,
+  "lastUpdate": 1751984106356,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -348,6 +348,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "66261 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "salim@afiunemaya.com.mx",
+            "name": "Salim Afiune Maya",
+            "username": "afiune"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2d0db013b7a56c2ff3dd331b6af38ee7e065c6ac",
+          "message": "🐛 onboarding: ms365 requires `Policy.Read.All` in MsGraph (#1723)\n\nA few queries that were failing:\n\n```\nquery=h2/skzZUdl0=\nmicrosoft.conditionalAccess.policies.where(conditions.users.includeRoles.length > 0) {\n  grantControls.authenticationStrength.displayName == 'Phishing-resistant MFA'\n}\n\nquery=deTFR6B+GS4=\nmicrosoft.conditionalAccess.policies.where(conditions.applications.includeApplications.contains('Microsoft Intune Enrollment')) {\n  sessionControls.signInFrequency.frequencyInterval == 'everyTime' &&\n  sessionControls.signInFrequency.isEnabled == true &&\n  state == 'enabled'\n}\n\nquery=RFe235yOM3g=\nmicrosoft.conditionalAccess.policies.where(conditions.signInRiskLevels == 'high' || conditions.signInRiskLevels == 'medium') {\n  grantControls.builtInControls.contains('mfa')\n  sessionControls.signInFrequency.frequencyInterval == 'everyTime'\n  state == 'enabled'\n}\n\nquery=keqGtCd5aLY=\nmicrosoft.conditionalAccess.policies.where(conditions.userRiskLevels.contains('high')) {\n  grantControls.builtInControls.contains('mfa')\n  grantControls.builtInControls.contains('passwordChange')\n  sessionControls.signInFrequency.frequencyInterval == 'everyTime'\n  state == 'enabled'\n}\n```\n\n---------\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>",
+          "timestamp": "2025-07-08T07:14:29-07:00",
+          "tree_id": "a950eb97087851a8c864ff7a6f5f1ee6cfe4ebaf",
+          "url": "https://github.com/mondoohq/cnspec/commit/2d0db013b7a56c2ff3dd331b6af38ee7e065c6ac"
+        },
+        "date": 1751984105720,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 20423,
+            "unit": "ns/op\t    4898 B/op\t      71 allocs/op",
+            "extra": "62812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 20423,
+            "unit": "ns/op",
+            "extra": "62812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4898,
+            "unit": "B/op",
+            "extra": "62812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "62812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 19709,
+            "unit": "ns/op\t    4899 B/op\t      71 allocs/op",
+            "extra": "54590 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 19709,
+            "unit": "ns/op",
+            "extra": "54590 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4899,
+            "unit": "B/op",
+            "extra": "54590 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "54590 times\n4 procs"
           }
         ]
       }
