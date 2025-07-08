@@ -27,7 +27,13 @@ var Ms365AppPermissions = Permissions{
 		ResourceID: "MicrosoftGraph",
 		Access: []ResourceAccess{
 			{
+				// Allows the app to read all organization's policies without a signed-in user.
 				ID:   "Policy.Read.All",
+				Type: "Role",
+			},
+			{
+				// Allows the app to read organization's security events without a signed-in user.
+				ID:   "SecurityEvents.Read.All",
 				Type: "Role",
 			},
 		},

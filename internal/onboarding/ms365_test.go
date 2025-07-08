@@ -78,6 +78,10 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
+      type = "Role"
+    }
   }
 }
 
@@ -122,6 +126,12 @@ resource "azuread_service_principal" "MicrosoftGraph" {
 
 resource "azuread_app_role_assignment" "Policy_Read_All" {
   app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "SecurityEvents_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
@@ -196,6 +206,10 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
+      type = "Role"
+    }
   }
 }
 
@@ -240,6 +254,12 @@ resource "azuread_service_principal" "MicrosoftGraph" {
 
 resource "azuread_app_role_assignment" "Policy_Read_All" {
   app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "SecurityEvents_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
