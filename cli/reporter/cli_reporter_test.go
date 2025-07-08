@@ -41,11 +41,12 @@ func TestCompactReporter(t *testing.T) {
 	}
 	rr.print()
 
-	assert.Contains(t, buf.String(), "✕ Fail:       Ensure")
-	assert.Contains(t, buf.String(), ". Skipped:    Set")
-	assert.Contains(t, buf.String(), "! Error:      Set")
-	assert.Contains(t, buf.String(), "✓ Pass:  100  Ensure")
-	assert.Contains(t, buf.String(), "✕ Fail:    0  Ensure")
+	strData := buf.String()
+	assert.Contains(t, strData, "✕ HIGH (30):      Ensure")
+	assert.Contains(t, strData, ". Skipped:        Set")
+	assert.Contains(t, strData, "! Error:          Set")
+	assert.Contains(t, strData, "✓ Ensure rsyslog is installed")
+	assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
 }
 
 func TestVulnReporter(t *testing.T) {
@@ -62,7 +63,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=summary", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatSummary)
-		r := NewReporter(conf, false)
+		r := NewReporter(conf, false, 0)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)
@@ -71,7 +72,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=compact", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatCompact)
-		r := NewReporter(conf, false)
+		r := NewReporter(conf, false, 0)
 		r.out = &writer
 		err = r.PrintVulns(report, target)
 		require.NoError(t, err)
@@ -81,7 +82,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=full", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatFull)
-		r := NewReporter(conf, false)
+		r := NewReporter(conf, false, 0)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)
@@ -92,7 +93,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=yaml", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatYAMLv1)
-		r := NewReporter(conf, false)
+		r := NewReporter(conf, false, 0)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)

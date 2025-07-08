@@ -557,6 +557,10 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 	}
 }
 
+func checkStatus(symbol string, status string) string {
+	return fmt.Sprintf("%s %-16s", symbol, status+":")
+}
+
 // only works with type == policy.ScoreType_Result
 func (r *defaultReporter) printScore(title string, score simpleScore, query *explorer.Mquery) string {
 	color := cnspecComponents.DefaultRatingColors.Color(score.Rating)
@@ -570,10 +574,10 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *exp
 			scoreIndicator = " (" + strconv.Itoa(int(score.Value)) + ")"
 		}
 		scoreSymbol := "✕"
-		if score.Value > uint32(r.ScoreThreshold) {
+		if r.ScoreThreshold > 0 && score.Value > uint32(r.ScoreThreshold) {
 			scoreSymbol = "!"
 		}
-		passfail = termenv.String(fmt.Sprintf("%s %-17s", scoreSymbol, score.Rating.Text()+scoreIndicator+":")).Foreground(color).String()
+		passfail = termenv.String(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()
 	}
 
 	return passfail + title + NewLineCharacter
@@ -587,7 +591,7 @@ func (r *defaultReporter) printCheck(score simpleScore, query *explorer.Mquery, 
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out(termenv.String("! Error:      ").Foreground(r.Colors.Error).String())
+		r.out(termenv.String(checkStatus("!", "Error")).Foreground(r.Colors.Error).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 		if !r.Conf.isCompact {
@@ -596,12 +600,12 @@ func (r *defaultReporter) printCheck(score simpleScore, query *explorer.Mquery, 
 			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out(termenv.String(". Unknown:    ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(checkStatus(".", "Unknown")).Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out(termenv.String(". Skipped:    ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(checkStatus(".", "Skipped")).Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
