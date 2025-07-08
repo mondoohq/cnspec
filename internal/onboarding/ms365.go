@@ -4,8 +4,11 @@
 package onboarding
 
 import (
+	"strings"
+
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/rs/zerolog/log"
 
 	"go.mondoo.com/cnquery/v11/cli/theme"
@@ -16,6 +19,19 @@ import (
 type Ms365Integration struct {
 	Name  string
 	Space string
+}
+
+// The full list of permissions required by Mondoo to scan a Microsoft 365 tenant
+var Ms365AppPermissions = Permissions{
+	{
+		ResourceID: "MicrosoftGraph",
+		Access: []ResourceAccess{
+			{
+				ID:   "Policy.Read.All",
+				Type: "Role",
+			},
+		},
+	},
 }
 
 // function wrapper to mock during testing
@@ -59,30 +75,13 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		))
 	}
 
-	dataADPublishedAppIDs := tfgen.NewDataSource("azuread_application_published_app_ids", "well_known")
-
-	// Microsoft Graph Service Principal (well-known appId)
-	resourceADMicrosoftGraphSvcPrincipal := tfgen.NewResource("azuread_service_principal", "msgraph",
-		tfgen.HclResourceWithAttributes(tfgen.Attributes{
-			"client_id":    dataADPublishedAppIDs.TraverseRef("result", "MicrosoftGraph"),
-			"use_existing": true,
-		}),
-	)
-
-	// Blocks used inside the AzureAD Application to build the required resource access block
-	resourceAccessBlock, err := tfgen.HclCreateGenericBlock("resource_access", nil, map[string]any{
-		"id":   resourceADMicrosoftGraphSvcPrincipal.TraverseRef("app_role_ids[\"Policy.Read.All\"]"),
-		"type": "Role",
-	})
-	if err != nil {
-		return "", errors.Wrap(err, "failed to create resource_access block")
-	}
-	requiredResourceAccessBlock, err := tfgen.HclCreateGenericBlock("required_resource_access", nil,
-		map[string]any{"resource_app_id": dataADPublishedAppIDs.TraverseRef("result", "MicrosoftGraph")},
-		resourceAccessBlock,
-	)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to create required_resource_access block")
+	permissionsBlocks := []*hclwrite.Block{}
+	for _, permission := range Ms365AppPermissions {
+		block, err := permission.HclBlock()
+		if err != nil {
+			return "", errors.Wrap(err, "failed to generate ms365 permissions block")
+		}
+		permissionsBlocks = append(permissionsBlocks, block)
 	}
 
 	var (
@@ -95,7 +94,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 				"owners":        []interface{}{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),
-			tfgen.HclResourceWithGenericBlocks(requiredResourceAccessBlock),
+			tfgen.HclResourceWithGenericBlocks(permissionsBlocks...),
 		)
 		resourceTLSPrivateKey = tfgen.NewResource("tls_private_key", "credential",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
@@ -129,15 +128,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 				"client_id":                    resourceAdApplication.TraverseRef("client_id"),
 				"app_role_assignment_required": false,
 				"owners":                       []interface{}{dataADClientConfig.TraverseRef("object_id")},
-			}),
-		)
-		// This resource is used to grant admin consent for application permissions
-		// https://registry.terraform.io/providers/hashicorp/azuread/latest/docs/resources/app_role_assignment
-		resourceADAppRoleAssignment = tfgen.NewResource("azuread_app_role_assignment", "graph_policy_read",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"app_role_id":         resourceADMicrosoftGraphSvcPrincipal.TraverseRef("app_role_ids[\"Policy.Read.All\"]"),
-				"resource_object_id":  resourceADMicrosoftGraphSvcPrincipal.TraverseRef("object_id"),
-				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
 			}),
 		)
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "global_reader",
@@ -190,9 +180,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		providerMondoo,
 		providerAzureAD,
 		dataADClientConfig,
-		dataADPublishedAppIDs,
-		resourceADMicrosoftGraphSvcPrincipal,
-		resourceADAppRoleAssignment,
+		dataMicrosoftPublishedAppIDs(),
 		resourceTLSPrivateKey,
 		resourceTLSSelfSignedCert,
 		resourceADApplicationCertificate,
@@ -210,5 +198,153 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 	}
 	hclBlocks := tfgen.CombineHclBlocks(requiredProvidersBlock, blocks)
 
+	// App Registration Permissions Blocks
+	blocks, err = tfgen.ObjectsToBlocks(Ms365AppPermissions.HclResources(resourceADServicePrincipal)...)
+	if err != nil {
+		return "", err
+	}
+	hclBlocks = tfgen.CombineHclBlocks(hclBlocks, blocks)
+
 	return tfgen.CreateHclStringOutput(hclBlocks...), nil
+}
+
+// Permissions are a collection of access and permissions to multiple Microsoft resources (e.g. MicrosoftGraph, SharePoint, etc.)
+type Permissions []Permission
+
+// HclBlocks returns all the hcl blocks for all the defined permissions for a Microsoft 365 integration
+func (p *Permissions) HclBlocks() (blocks []*hclwrite.Block, err error) {
+	for _, permission := range Ms365AppPermissions {
+		block, err := permission.HclBlock()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to generate ms365 permissions block")
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
+}
+
+// HclResources returns all the hcl resources (service principals) for all the defined permissions for a Microsoft 365 integration
+func (p *Permissions) HclResources(mondooServicePrincipal *tfgen.HclResource) (resources []tfgen.Object) {
+	for _, permission := range Ms365AppPermissions {
+		resources = append(resources, permission.HclResource())
+		for _, access := range permission.Access {
+			resources = append(resources, access.HclResource(mondooServicePrincipal, permission.HclResource()))
+		}
+	}
+	return resources
+}
+
+// Permission represents access and permissions to a single Microsoft resource (e.g. MicrosoftGraph, SharePoint, etc.)
+type Permission struct {
+	ResourceID string
+	Access     []ResourceAccess
+
+	hclResource *tfgen.HclResource
+	hclBlock    *hclwrite.Block
+}
+
+// HclResource returns the service principal resource of the Microsoft resource we are granting permissions
+func (p *Permission) HclResource() *tfgen.HclResource {
+	if p.hclResource == nil {
+		p.hclResource = tfgen.NewResource("azuread_service_principal", p.ResourceID,
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"client_id":    dataMicrosoftPublishedAppIDs().TraverseRef("result", p.ResourceID),
+				"use_existing": true,
+			}),
+		)
+	}
+	return p.hclResource
+}
+
+// HclBlock returns the hcl block for a single permission of an App Registration
+func (p *Permission) HclBlock() (*hclwrite.Block, error) {
+	if p.hclBlock == nil {
+		resourceAccessBlocks, err := p.ResourceAccessBlocks()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create required_resource_access block")
+		}
+
+		p.hclBlock, err = tfgen.HclCreateGenericBlock("required_resource_access", nil,
+			map[string]any{"resource_app_id": dataMicrosoftPublishedAppIDs().TraverseRef("result", p.ResourceID)},
+			resourceAccessBlocks...,
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create required_resource_access block")
+		}
+	}
+
+	return p.hclBlock, nil
+}
+
+// ResourceAccessBlocks returns hcl blocks for all defined access of a single resource
+func (p *Permission) ResourceAccessBlocks() (blocks []*hclwrite.Block, err error) {
+	var block *hclwrite.Block
+	for _, access := range p.Access {
+		block, err = access.HclBlock(p.HclResource())
+		if err != nil {
+			return
+		}
+
+		blocks = append(blocks, block)
+	}
+	return
+}
+
+// ResourceAccess defines a single access to a resource
+type ResourceAccess struct {
+	ID   string
+	Type string
+
+	hclResource *tfgen.HclResource
+	hclBlock    *hclwrite.Block
+}
+
+func (r *ResourceAccess) AppRoleID() string {
+	return `app_role_ids["` + r.ID + `"]`
+}
+
+// The hcl resource name, we expect IDs like 'Policy.Read.All' which will translate into 'Policy_Read_All'
+func (r *ResourceAccess) ResourceName() string {
+	return strings.ReplaceAll(r.ID, ".", "_")
+}
+
+// These resources are used to grant admin consent for application permissions
+// https://registry.terraform.io/providers/hashicorp/azuread/latest/docs/resources/app_role_assignment
+func (r *ResourceAccess) HclResource(mondooServicePrincipal, resourceServicePrincipal *tfgen.HclResource) *tfgen.HclResource {
+	if r.hclResource == nil {
+		r.hclResource = tfgen.NewResource("azuread_app_role_assignment", r.ResourceName(),
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"app_role_id":         resourceServicePrincipal.TraverseRef(r.AppRoleID()),
+				"resource_object_id":  resourceServicePrincipal.TraverseRef("object_id"),
+				"principal_object_id": mondooServicePrincipal.TraverseRef("object_id"),
+			}),
+		)
+	}
+	return r.hclResource
+}
+
+// These hcl blocks are used to generate the required resource access of the App Registration
+func (r *ResourceAccess) HclBlock(resourceServicePrincipal *tfgen.HclResource) (*hclwrite.Block, error) {
+	var err error
+	if r.hclBlock == nil {
+		r.hclBlock, err = tfgen.HclCreateGenericBlock("resource_access", nil, map[string]any{
+			"id":   resourceServicePrincipal.TraverseRef(r.AppRoleID()),
+			"type": r.Type,
+		})
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create resource_access block")
+	}
+	return r.hclBlock, nil
+}
+
+// Used to discover application IDs for APIs published by Microsoft
+var dataADPublishedAppIDs *tfgen.HclResource
+
+// https://registry.terraform.io/providers/hashicorp/azuread/latest/docs/data-sources/application_published_app_ids
+func dataMicrosoftPublishedAppIDs() *tfgen.HclResource {
+	if dataADPublishedAppIDs == nil {
+		dataADPublishedAppIDs = tfgen.NewDataSource("azuread_application_published_app_ids", "well_known")
+	}
+	return dataADPublishedAppIDs
 }

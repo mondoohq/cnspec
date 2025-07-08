@@ -39,17 +39,6 @@ data "azuread_client_config" "current" {
 data "azuread_application_published_app_ids" "well_known" {
 }
 
-resource "azuread_service_principal" "msgraph" {
-  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
-  use_existing = true
-}
-
-resource "azuread_app_role_assignment" "graph_policy_read" {
-  app_role_id         = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
-  principal_object_id = azuread_service_principal.mondoo.object_id
-  resource_object_id  = azuread_service_principal.msgraph.object_id
-}
-
 resource "tls_private_key" "credential" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -86,7 +75,7 @@ resource "azuread_application" "mondoo" {
   required_resource_access {
     resource_app_id = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
     resource_access {
-      id   = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
       type = "Role"
     }
   }
@@ -125,6 +114,17 @@ resource "mondoo_integration_ms365" "this" {
   name       = "test-ms365-integration"
   tenant_id  = data.azuread_client_config.current.tenant_id
 }
+
+resource "azuread_service_principal" "MicrosoftGraph" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
 `
 	assert.Equal(t, expected, code)
 }
@@ -155,17 +155,6 @@ data "azuread_client_config" "current" {
 }
 
 data "azuread_application_published_app_ids" "well_known" {
-}
-
-resource "azuread_service_principal" "msgraph" {
-  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
-  use_existing = true
-}
-
-resource "azuread_app_role_assignment" "graph_policy_read" {
-  app_role_id         = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
-  principal_object_id = azuread_service_principal.mondoo.object_id
-  resource_object_id  = azuread_service_principal.msgraph.object_id
 }
 
 resource "tls_private_key" "credential" {
@@ -204,7 +193,7 @@ resource "azuread_application" "mondoo" {
   required_resource_access {
     resource_app_id = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
     resource_access {
-      id   = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
       type = "Role"
     }
   }
@@ -242,6 +231,17 @@ resource "mondoo_integration_ms365" "this" {
   depends_on = [azuread_service_principal.mondoo, azuread_application_certificate.mondoo, azuread_directory_role_assignment.global_reader]
   name       = "subscription-88afcea5fb91"
   tenant_id  = data.azuread_client_config.current.tenant_id
+}
+
+resource "azuread_service_principal" "MicrosoftGraph" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
 `
 	assert.Equal(t, expected, code)
