@@ -601,7 +601,7 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 }
 
 // HclCreateGenericBlock Helper to create various types of new hclwrite.Block using generic inputs.
-func HclCreateGenericBlock(hcltype string, labels []string, attr map[string]interface{}) (*hclwrite.Block, error) {
+func HclCreateGenericBlock(hcltype string, labels []string, attr map[string]any, blocks ...*hclwrite.Block) (*hclwrite.Block, error) {
 	block := hclwrite.NewBlock(hcltype, labels)
 
 	// Source and version require some special handling, should go at the top of a block declaration
@@ -639,6 +639,10 @@ func HclCreateGenericBlock(hcltype string, labels []string, attr map[string]inte
 		if err := setBlockAttributeValue(block, key, val); err != nil {
 			return nil, err
 		}
+	}
+
+	for _, customBlock := range blocks {
+		block.Body().AppendBlock(customBlock)
 	}
 
 	return block, nil
