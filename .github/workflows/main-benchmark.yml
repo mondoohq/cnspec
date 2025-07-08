@@ -1,6 +1,6 @@
-name: Benchmark main
+name: Benchmark
 
-## Only trigger tests if source is changing
+# Run on push to main to update the baseline, and on pull requests to check for regressions.
 on:
   push:
     branches:
@@ -10,57 +10,62 @@ on:
       - '**.mod'
       - 'go.sum'
       - .github/workflows/main-benchmark.yml
+  pull_request:
+    paths:
+      - '**.go'
+      - '**.mod'
+      - 'go.sum'
+      - .github/workflows/main-benchmark.yml
 
 permissions:
-  # deployments permission to deploy GitHub pages website
-  deployments: write
-  # contents permission to update benchmark contents in gh-pages branch
+  # Required to push to the gh-pages branch
   contents: write
+  # Required to comment on pull requests
+  pull-requests: write
+  # Required to deploy GitHub Pages (if you use it for charts)
+  deployments: write
 
 jobs:
   go-bench:
     runs-on: ubuntu-latest
-    env:
-      BRANCH_NAME: ${{ github.head_ref || github.ref_name }} 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
+        
       - name: Install Go
         uses: actions/setup-go@v5
         with:
           go-version: ">=${{ env.golang-version }}"
-          cache: false
+          
       - name: Run benchmark
         run: make benchmark/go | tee benchmark.txt
 
-        # Remove log statements and leave just the benchmark results
       - name: Cleanup benchmark file
         run: sed -i -n '/goos:/,$p' benchmark.txt
 
-      # Download previous benchmark result from cache (if exists)
-      - name: Download previous benchmark data
-        uses: actions/cache/restore@v4
-        with:
-          path: ./cache
-          key: ${{ runner.os }}-benchmark-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-benchmark-
-      # Run `github-action-benchmark` action
-      - name: Store benchmark result
+      # This is the key change. We now use the recommended gh-pages strategy.
+      - name: Store benchmark result and compare
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          # What benchmark tool the output.txt came from
           tool: 'go'
-          # Where the output from the benchmark tool is stored
           output-file-path: benchmark.txt
-          # Where the previous data file is stored
-          external-data-json-path: ./cache/benchmark-data.json
-          save-data-file: true
-
-      - name: Save benchmark data
-        uses: actions/cache/save@v4
-        with:
-          path: ./cache
-          key: ${{ runner.os }}-benchmark-${{ github.run_id }} 
+          
+          # Use a dedicated branch to store historical data.
+          gh-pages-branch: gh-pages
+          
+          # On pushes to 'main', this will update the baseline data.
+          # On pull requests, it will fetch the baseline from 'main' to compare against.
+          auto-push: true
+                    
+          # Fail the workflow if a regression is detected.
+          fail-on-alert: true
+          
+          # Leave a comment on the PR if a regression is detected.
+          # This only runs on pull_request events.
+          comment-on-alert: true
+          
+          # Required for commenting on PRs and pushing to the gh-pages branch.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
