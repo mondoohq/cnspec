@@ -42,8 +42,8 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/zclconf/go-cty v1.16.3
-	go.mondoo.com/cnquery/v11 v11.61.0
-	go.mondoo.com/mondoo-go v0.0.0-20250625000441-f66825318b05
+	go.mondoo.com/cnquery/v11 v11.62.0
+	go.mondoo.com/mondoo-go v0.0.0-20250702005123-23558fe8001c
 	go.mondoo.com/ranger-rpc v0.7.0
 	go.opentelemetry.io/otel v1.37.0
 	gocloud.dev v0.42.0
@@ -89,7 +89,7 @@ require (
 	github.com/agext/levenshtein v1.2.3 // indirect
 	github.com/alecthomas/participle v0.3.0 // indirect
 	github.com/alecthomas/participle/v2 v2.1.4 // indirect
-	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
+	github.com/anchore/go-struct-converter v0.0.0-20230627203149-c72ef8859ca9 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go v1.55.6 // indirect
@@ -101,7 +101,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.36 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.36 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.227.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.230.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.28.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.45.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.33.2 // indirect
@@ -112,7 +112,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.35.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.34.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.59.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.60.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.25.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.34.0 // indirect
@@ -145,9 +145,9 @@ require (
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/cli v28.3.0+incompatible // indirect
+	github.com/docker/cli v28.3.1+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
-	github.com/docker/docker v28.3.0+incompatible // indirect
+	github.com/docker/docker v28.3.1+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -263,6 +263,7 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/protobom/protobom v0.5.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -312,7 +313,7 @@ require (
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.34.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/api v0.239.0 // indirect
+	google.golang.org/api v0.240.0 // indirect
 	google.golang.org/genproto v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/grpc v1.73.0 // indirect
@@ -333,5 +334,6 @@ require (
 	modernc.org/sqlite v1.38.0 // indirect
 	moul.io/http2curl v1.0.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
+	sigs.k8s.io/release-utils v0.11.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 )
