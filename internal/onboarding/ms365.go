@@ -59,6 +59,32 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		))
 	}
 
+	dataADPublishedAppIDs := tfgen.NewDataSource("azuread_application_published_app_ids", "well_known")
+
+	// Microsoft Graph Service Principal (well-known appId)
+	resourceADMicrosoftGraphSvcPrincipal := tfgen.NewResource("azuread_service_principal", "msgraph",
+		tfgen.HclResourceWithAttributes(tfgen.Attributes{
+			"client_id":    dataADPublishedAppIDs.TraverseRef("result", "MicrosoftGraph"),
+			"use_existing": true,
+		}),
+	)
+
+	// Blocks used inside the AzureAD Application to build the required resource access block
+	resourceAccessBlock, err := tfgen.HclCreateGenericBlock("resource_access", nil, map[string]any{
+		"id":   resourceADMicrosoftGraphSvcPrincipal.TraverseRef("app_role_ids[\"Policy.Read.All\"]"),
+		"type": "Role",
+	})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create resource_access block")
+	}
+	requiredResourceAccessBlock, err := tfgen.HclCreateGenericBlock("required_resource_access", nil,
+		map[string]any{"resource_app_id": dataADPublishedAppIDs.TraverseRef("result", "MicrosoftGraph")},
+		resourceAccessBlock,
+	)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create required_resource_access block")
+	}
+
 	var (
 		providerAzureAD       = tfgen.NewProvider("azuread")
 		providerMondoo        = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
@@ -69,6 +95,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 				"owners":        []interface{}{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),
+			tfgen.HclResourceWithGenericBlocks(requiredResourceAccessBlock),
 		)
 		resourceTLSPrivateKey = tfgen.NewResource("tls_private_key", "credential",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
@@ -102,6 +129,15 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 				"client_id":                    resourceAdApplication.TraverseRef("client_id"),
 				"app_role_assignment_required": false,
 				"owners":                       []interface{}{dataADClientConfig.TraverseRef("object_id")},
+			}),
+		)
+		// This resource is used to grant admin consent for application permissions
+		// https://registry.terraform.io/providers/hashicorp/azuread/latest/docs/resources/app_role_assignment
+		resourceADAppRoleAssignment = tfgen.NewResource("azuread_app_role_assignment", "graph_policy_read",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"app_role_id":         resourceADMicrosoftGraphSvcPrincipal.TraverseRef("app_role_ids[\"Policy.Read.All\"]"),
+				"resource_object_id":  resourceADMicrosoftGraphSvcPrincipal.TraverseRef("object_id"),
+				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
 			}),
 		)
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "global_reader",
@@ -154,6 +190,9 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		providerMondoo,
 		providerAzureAD,
 		dataADClientConfig,
+		dataADPublishedAppIDs,
+		resourceADMicrosoftGraphSvcPrincipal,
+		resourceADAppRoleAssignment,
 		resourceTLSPrivateKey,
 		resourceTLSSelfSignedCert,
 		resourceADApplicationCertificate,
