@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752048796707,
+  "lastUpdate": 1752058610044,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -1104,6 +1104,78 @@ window.BENCHMARK_DATA = {
             "value": 108430,
             "unit": "allocs/op",
             "extra": "31 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dominik.richter@gmail.com",
+            "name": "Dominik Richter",
+            "username": "arlimus"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "108d43d865643d35ffead90857e44d697e25e6c8",
+          "message": "⭐ group reporting in CLI (#1726)\n\n* ⭐ group reporting in CLI\n\nThis new reporting style groups the output by failing and non-failing\nscan results. Previously you couldn't tell which result caused the\nerror-code of a scan with a score-threshold to be non-zero. Now you\nclearly see what causes it:\n\n```\n> cnspec scan [...] --score-threshold 10\n...\n\nPassing:\n✓ A check that succeeds\n\nWarning - above score threshold:\n! MEDIUM (45):     A medium check that fails\n! HIGH (20):       A high check that fails\n\nFailing - below score threshold:\n✕ CRITICAL (0):    A critical check that fails\n```\n\nEven without score-threshold, we now get much better output:\n\n```\n> cnspec scan [...]\n...\n\nPassing:\n✓ A check that succeeds\n\nFailing:\n! MEDIUM (45):     A medium check that fails\n! HIGH (20):       A high check that fails\n✕ CRITICAL (0):    A critical check that fails\n```\n\nAs you can see, failing checks are grouped together and sorted by their\nscore now.\n\nWith v12 we will further improve this by switching to risk scoring. Stay\ntuned.\n\nSigned-off-by: Dominik Richter <dominik.richter@gmail.com>\n\n* 🟢 fix tests\n\n---------\n\nSigned-off-by: Dominik Richter <dominik.richter@gmail.com>",
+          "timestamp": "2025-07-09T03:56:15-07:00",
+          "tree_id": "4723e34e60186ec8325582ebff7a0ab94136961d",
+          "url": "https://github.com/mondoohq/cnspec/commit/108d43d865643d35ffead90857e44d697e25e6c8"
+        },
+        "date": 1752058609607,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19671,
+            "unit": "ns/op\t    4899 B/op\t      71 allocs/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19671,
+            "unit": "ns/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4899,
+            "unit": "B/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 19180,
+            "unit": "ns/op\t    4890 B/op\t      71 allocs/op",
+            "extra": "58238 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 19180,
+            "unit": "ns/op",
+            "extra": "58238 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4890,
+            "unit": "B/op",
+            "extra": "58238 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "58238 times\n4 procs"
           }
         ]
       }
