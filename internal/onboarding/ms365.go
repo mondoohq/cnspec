@@ -37,8 +37,13 @@ var Ms365AppPermissions = Permissions{
 				Type: "Role",
 			},
 			{
-				// Allows the app to read organization-wide Microsoft Forms settings on behalf of the signed-in user.
+				// Allows the app to read organization-wide Microsoft Forms settings without a signed-in user.
 				ID:   "OrgSettings-Forms.Read.All",
+				Type: "Role",
+			},
+			{
+				// Allows the app to read Microsoft Intune device configuration and policies without a signed-in user.
+				ID:   "DeviceManagementConfiguration.Read.All",
 				Type: "Role",
 			},
 		},
