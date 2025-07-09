@@ -90,6 +90,14 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
+      type = "Role"
+    }
   }
 
   required_resource_access {
@@ -168,6 +176,18 @@ resource "azuread_app_role_assignment" "OrgSettings-Forms_Read_All" {
 
 resource "azuread_app_role_assignment" "DeviceManagementConfiguration_Read_All" {
   app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementManagedDevices_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementServiceConfig_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
@@ -276,6 +296,14 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
+      type = "Role"
+    }
   }
 
   required_resource_access {
@@ -354,6 +382,18 @@ resource "azuread_app_role_assignment" "OrgSettings-Forms_Read_All" {
 
 resource "azuread_app_role_assignment" "DeviceManagementConfiguration_Read_All" {
   app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementManagedDevices_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementServiceConfig_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }

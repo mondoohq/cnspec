@@ -46,6 +46,16 @@ var Ms365AppPermissions = Permissions{
 				ID:   "DeviceManagementConfiguration.Read.All",
 				Type: "Role",
 			},
+			{
+				// Allows the app to read the properties of devices managed by Microsoft Intune
+				ID:   "DeviceManagementManagedDevices.Read.All",
+				Type: "Role",
+			},
+			{
+				// Allows the app to read Microsoft Intune service properties including device enrollment and third party service connection configuration
+				ID:   "DeviceManagementServiceConfig.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
