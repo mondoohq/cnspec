@@ -64,7 +64,10 @@ func BenchmarkScan_SingleAsset(b *testing.B) {
 
 	job.Bundle = bundle
 
-	scanner := scan.NewLocalScanner(scan.DisableProgressBar())
+	scanner := scan.NewLocalScanner(
+		scan.DisableProgressBar(),
+		scan.WithRuntime(runtime.(*providers.Runtime)),
+	)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -113,7 +116,10 @@ func BenchmarkScan_MultipleAssets(b *testing.B) {
 
 	job.Bundle = bundle
 
-	scanner := scan.NewLocalScanner(scan.DisableProgressBar())
+	scanner := scan.NewLocalScanner(
+		scan.DisableProgressBar(),
+		scan.WithRuntime(runtime.(*providers.Runtime)),
+	)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
