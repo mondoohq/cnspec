@@ -525,3 +525,64 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 func TestLocalScannerSuite(t *testing.T) {
 	suite.Run(t, new(LocalScannerSuite))
 }
+
+func TestNewLocalScannerWithOptions(t *testing.T) {
+	t.Run("default values", func(t *testing.T) {
+		scanner := NewLocalScanner()
+		require.NotNil(t, scanner)
+
+		assert.True(t, scanner.autoUpdate)
+		assert.Zero(t, scanner.refreshInterval)
+
+		rt, ok := scanner.runtime.(*providers.Runtime)
+		require.True(t, ok)
+		assert.True(t, rt.AutoUpdate.Enabled)
+		assert.Equal(t, defaultRefreshInterval, rt.AutoUpdate.RefreshInterval)
+	})
+
+	t.Run("with auto update disabled", func(t *testing.T) {
+		scanner := NewLocalScanner(WithAutoUpdate(false))
+		require.NotNil(t, scanner)
+
+		require.NotNil(t, scanner.autoUpdate)
+		assert.False(t, scanner.autoUpdate)
+		assert.Zero(t, scanner.refreshInterval)
+
+		rt, ok := scanner.runtime.(*providers.Runtime)
+		require.True(t, ok)
+		assert.False(t, rt.AutoUpdate.Enabled)
+		assert.Equal(t, defaultRefreshInterval, rt.AutoUpdate.RefreshInterval)
+	})
+
+	t.Run("with custom refresh interval", func(t *testing.T) {
+		scanner := NewLocalScanner(WithRefreshInterval(1234))
+		require.NotNil(t, scanner)
+
+		assert.True(t, scanner.autoUpdate)
+		assert.Equal(t, 1234, scanner.refreshInterval)
+
+		rt, ok := scanner.runtime.(*providers.Runtime)
+		require.True(t, ok)
+		assert.True(t, rt.AutoUpdate.Enabled)
+		assert.Equal(t, 1234, rt.AutoUpdate.RefreshInterval)
+	})
+
+	t.Run("with custom runtime ignores auto-update option", func(t *testing.T) {
+		// Create a new runtime instance for this test to ensure isolation.
+		customRuntime := &providers.Runtime{
+			AutoUpdate: providers.UpdateProvidersConfig{
+				RefreshInterval: 9999,
+				Enabled:         false,
+			},
+		}
+		scanner := NewLocalScanner(WithRuntime(customRuntime), WithAutoUpdate(true), WithRefreshInterval(123))
+		require.NotNil(t, scanner)
+
+		assert.Same(t, customRuntime, scanner.runtime)
+
+		rt, ok := scanner.runtime.(*providers.Runtime)
+		require.True(t, ok)
+		assert.Equal(t, 9999, rt.AutoUpdate.RefreshInterval)
+		assert.False(t, rt.AutoUpdate.Enabled, "should not be modified if a custom runtime is provided")
+	})
+}
