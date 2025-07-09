@@ -352,6 +352,15 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 	}
 }
 
+// FIXME v12: This is a temporary workaround to deal with the fact that scores don't carry information about success or failure
+type simpleScore struct {
+	Value   uint32
+	Type    uint32
+	Message string
+	Success bool
+	Rating  policy.ScoreRating
+}
+
 func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
@@ -377,26 +386,117 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 	}
 
 	if r.Conf.printChecks {
-		foundChecks := map[string]*policy.Score{}
+		foundChecks := map[string]simpleScore{}
+		sortedPassed := []string{}
+		sortedWarnings := []string{}
+		sortedFailed := []string{}
+
 		for id, score := range report.Scores {
 			_, ok := resolved.CollectorJob.ReportingQueries[id]
 			if !ok {
 				continue
 			}
-			foundChecks[id] = score
-		}
-		if len(foundChecks) > 0 {
-			r.out("Checks:" + NewLineCharacter)
-			for id, score := range foundChecks {
-				query, ok := queries[id]
-				if !ok {
-					r.out("Couldn't find any queries for incoming value for " + id)
-					continue
-				}
 
-				r.printCheck(score, query, resolved, report, results)
+			query, ok := queries[id]
+			if !ok {
+				r.out("Couldn't find any queries for score of " + id)
+				continue
+			}
+
+			// FIXME v12: this is only a workaround for a deeper bug with the score value
+			if query.Impact != nil && query.Impact.Value != nil {
+				floor := 100 - uint32(query.Impact.Value.Value)
+				if floor > score.Value {
+					score.Value = floor
+				}
+			}
+
+			score := simpleScore{
+				Value:   score.Value,
+				Type:    score.Type,
+				Message: score.Message,
+				Rating:  score.Rating(),
+				// FIXME v12: this is incorrect because the score value is 100 for failing checks whose impact is 0
+				Success: score.Value == 100,
+			}
+			foundChecks[id] = score
+
+			if score.Success {
+				sortedPassed = append(sortedPassed, id)
+			} else if score.Value >= uint32(r.ScoreThreshold) {
+				sortedWarnings = append(sortedWarnings, id)
+			} else {
+				sortedFailed = append(sortedFailed, id)
 			}
 		}
+
+		if r.ScoreThreshold == 0 {
+			sortedFailed = append(sortedFailed, sortedWarnings...)
+			sortedWarnings = []string{}
+		}
+
+		sort.Slice(sortedPassed, func(i, j int) bool {
+			return queries[sortedPassed[i]].Title < queries[sortedPassed[j]].Title
+		})
+
+		sort.Slice(sortedWarnings, func(i, j int) bool {
+			ida := sortedWarnings[i]
+			idb := sortedWarnings[j]
+			a := foundChecks[ida].Value
+			b := foundChecks[idb].Value
+			if a == b {
+				return queries[ida].Title < queries[idb].Title
+			}
+			return a > b
+		})
+
+		sort.Slice(sortedFailed, func(i, j int) bool {
+			ida := sortedFailed[i]
+			idb := sortedFailed[j]
+			a := foundChecks[ida].Value
+			b := foundChecks[idb].Value
+			if a == b {
+				return queries[ida].Title < queries[idb].Title
+			}
+			return a > b
+		})
+
+		prevPrinted := false
+		if len(sortedPassed) != 0 {
+			r.out("Passing:" + NewLineCharacter)
+			for _, id := range sortedPassed {
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+			}
+			prevPrinted = true
+		}
+
+		if len(sortedWarnings) != 0 {
+			if prevPrinted {
+				r.out(NewLineCharacter)
+			}
+			// FIXME v12: rename to risk threshold
+			r.out("Warning - above score threshold:" + NewLineCharacter)
+			for _, id := range sortedWarnings {
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+			}
+			prevPrinted = true
+		}
+
+		if len(sortedFailed) != 0 {
+			if prevPrinted {
+				r.out(NewLineCharacter)
+			}
+			if r.ScoreThreshold > 0 {
+				// FIXME v12: rename to risk threshold
+				r.out("Failing - below score threshold:" + NewLineCharacter)
+			} else {
+				r.out("Failing:" + NewLineCharacter)
+			}
+			for _, id := range sortedFailed {
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+			}
+		}
+
 	}
 }
 
@@ -457,36 +557,33 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 	}
 }
 
-// only works with type == policy.ScoreType_Result
-func (r *defaultReporter) printScore(title string, score *policy.Score, query *explorer.Mquery) string {
-	// FIXME: this is only a workaround for a deeper bug with the score value
-	if query.Impact != nil && query.Impact.Value != nil {
-		floor := 100 - uint32(query.Impact.Value.Value)
-		if floor > score.Value {
-			score.Value = floor
-		}
-	}
-	rating := score.Rating()
-	color := cnspecComponents.DefaultRatingColors.Color(rating)
-
-	var passfail string
-	if score.Value == 100 {
-		passfail = termenv.String("✓ Pass:  ").Foreground(r.Colors.Success).String()
-	} else {
-		passfail = termenv.String("✕ Fail:  ").Foreground(color).String()
-	}
-
-	scoreIndicator := "     "
-	if query.Impact != nil {
-		scoreIndicator = termenv.String(
-			fmt.Sprintf("%3d  ", score.Value),
-		).Foreground(color).String()
-	}
-
-	return passfail + scoreIndicator + title + NewLineCharacter
+func checkStatus(symbol string, status string) string {
+	return fmt.Sprintf("%s %-16s", symbol, status+":")
 }
 
-func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+// only works with type == policy.ScoreType_Result
+func (r *defaultReporter) printScore(title string, score simpleScore, query *explorer.Mquery) string {
+	color := cnspecComponents.DefaultRatingColors.Color(score.Rating)
+
+	var passfail string
+	if score.Success {
+		passfail = termenv.String("✓ ").Foreground(r.Colors.Success).String()
+	} else {
+		scoreIndicator := ""
+		if query.Impact != nil {
+			scoreIndicator = " (" + strconv.Itoa(int(score.Value)) + ")"
+		}
+		scoreSymbol := "✕"
+		if r.ScoreThreshold > 0 && score.Value > uint32(r.ScoreThreshold) {
+			scoreSymbol = "!"
+		}
+		passfail = termenv.String(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()
+	}
+
+	return passfail + title + NewLineCharacter
+}
+
+func (r *defaultReporter) printCheck(score simpleScore, query *explorer.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	title := query.Title
 	if title == "" {
 		title = query.Mrn
@@ -494,7 +591,7 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out(termenv.String("! Error:      ").Foreground(r.Colors.Error).String())
+		r.out(termenv.String(checkStatus("!", "Error")).Foreground(r.Colors.Error).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 		if !r.Conf.isCompact {
@@ -503,12 +600,12 @@ func (r *defaultReporter) printCheck(score *policy.Score, query *explorer.Mquery
 			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out(termenv.String(". Unknown:    ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(checkStatus(".", "Unknown")).Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out(termenv.String(". Skipped:    ").Foreground(r.Colors.Disabled).String())
+		r.out(termenv.String(checkStatus(".", "Skipped")).Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
 

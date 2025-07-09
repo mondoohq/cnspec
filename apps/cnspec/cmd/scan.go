@@ -163,9 +163,10 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	logger.DebugDumpJSON("report", report)
 
 	handlerConf := reporter.HandlerConfig{
-		Format:       conf.OutputFormat,
-		OutputTarget: conf.OutputTarget,
-		Incognito:    conf.IsIncognito,
+		Format:         conf.OutputFormat,
+		OutputTarget:   conf.OutputTarget,
+		Incognito:      conf.IsIncognito,
+		ScoreThreshold: conf.ScoreThreshold,
 	}
 	outputHandler, err := reporter.NewOutputHandler(handlerConf)
 	if err != nil {

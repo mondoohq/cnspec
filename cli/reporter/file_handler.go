@@ -26,7 +26,7 @@ func (h *localFileHandler) WriteReport(ctx context.Context, report *policy.Repor
 		return err
 	}
 	defer f.Close() //nolint: errcheck
-	reporter := NewReporter(h.conf, false)
+	reporter := NewReporter(h.conf, false, 0)
 	reporter.out = f
 	err = reporter.WriteReport(ctx, report)
 	if err != nil {

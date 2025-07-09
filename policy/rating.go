@@ -35,7 +35,7 @@ func (s *Score) Rating() ScoreRating {
 	switch {
 	// None (100) - we are merging none with low for now
 
-	// Low (61-99)
+	// Low (61-99) - risk of 1 - 39
 	case s.Value >= 95:
 		return ScoreRating_aPlus
 	case s.Value >= 85:
@@ -49,7 +49,7 @@ func (s *Score) Rating() ScoreRating {
 	case s.Value >= 61:
 		return ScoreRating_bMinus
 
-	// Medium (31-60)
+	// Medium (31-60) - risk of 40 - 69
 	case s.Value >= 50:
 		return ScoreRating_cPlus
 	case s.Value >= 40:
@@ -57,7 +57,7 @@ func (s *Score) Rating() ScoreRating {
 	case s.Value >= 31:
 		return ScoreRating_cMinus
 
-	// High (11-30)
+	// High (11-30) - risk of 70 - 89
 	case s.Value >= 25:
 		return ScoreRating_dPlus
 	case s.Value >= 15:
@@ -65,7 +65,7 @@ func (s *Score) Rating() ScoreRating {
 	case s.Value >= 11:
 		return ScoreRating_dMinus
 
-	// Critical (0-10)
+	// Critical (0-10) - risk of 90-100
 	case s.Value <= 10:
 		return ScoreRating_failed
 	}
