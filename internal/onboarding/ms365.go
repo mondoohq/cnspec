@@ -56,6 +56,11 @@ var Ms365AppPermissions = Permissions{
 				ID:   "DeviceManagementServiceConfig.Read.All",
 				Type: "Role",
 			},
+			{
+				// Allows the app to read organization-wide apps and services settings on behalf of the signed-in user
+				ID:   "OrgSettings-AppsAndServices.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
