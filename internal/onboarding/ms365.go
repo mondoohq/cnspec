@@ -53,6 +53,16 @@ var Ms365AppPermissions = Permissions{
 			},
 		},
 	},
+	{
+		ResourceID: "Office365ExchangeOnline",
+		Access: []ResourceAccess{
+			{
+				// Allows the application to run Exchange Online cmdlets with the same level of access as an administrator.
+				ID:   "Exchange.ManageAsApp",
+				Type: "Role",
+			},
+		},
+	},
 }
 
 // function wrapper to mock during testing

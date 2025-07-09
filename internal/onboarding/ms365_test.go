@@ -95,6 +95,14 @@ resource "azuread_application" "mondoo" {
       type = "Role"
     }
   }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+    resource_access {
+      id   = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+      type = "Role"
+    }
+  }
 }
 
 resource "azuread_directory_role" "global_reader" {
@@ -163,6 +171,17 @@ resource "azuread_app_role_assignment" "Sites_FullControl_All" {
   app_role_id         = azuread_service_principal.Office365SharePointOnline.app_role_ids["Sites.FullControl.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.Office365SharePointOnline.object_id
+}
+
+resource "azuread_service_principal" "Office365ExchangeOnline" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Exchange_ManageAsApp" {
+  app_role_id         = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365ExchangeOnline.object_id
 }
 `
 	assert.Equal(t, expected, code)
@@ -252,6 +271,14 @@ resource "azuread_application" "mondoo" {
       type = "Role"
     }
   }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+    resource_access {
+      id   = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+      type = "Role"
+    }
+  }
 }
 
 resource "azuread_directory_role" "global_reader" {
@@ -320,6 +347,17 @@ resource "azuread_app_role_assignment" "Sites_FullControl_All" {
   app_role_id         = azuread_service_principal.Office365SharePointOnline.app_role_ids["Sites.FullControl.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.Office365SharePointOnline.object_id
+}
+
+resource "azuread_service_principal" "Office365ExchangeOnline" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Exchange_ManageAsApp" {
+  app_role_id         = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365ExchangeOnline.object_id
 }
 `
 	assert.Equal(t, expected, code)
