@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752128150226,
+  "lastUpdate": 1752189299450,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -2064,6 +2064,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "66879 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "salim@afiunemaya.com.mx",
+            "name": "Salim Afiune Maya",
+            "username": "afiune"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b5620922c53b260f4c2659eac8d766bbbe30d70d",
+          "message": "⚙️  onboarding: refactor ms365 permissions (#1728)\n\n* ⚙️  onboarding: refactor ms365 permissions\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 permission `SecurityEvents.Read.All`\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 SharePoint permission `Sites.FullControl.All`\n\nThe resource implementation uses three PnP PowerShell commands:\n```\nGet-PnPTenant\n\nGet-PnPTenantSyncClientRestriction\n\nGet-PnPTenantSite\n```\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 permission `OrgSettings-Forms.Read.All`\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 ExchangeOnline permission `Exchange.ManageAsApp`\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 permission `DeviceManagementConfiguration.Read.All`\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 more `DeviceManagement` permissions\n\nThe resources that need these permissions are:\n```\nmicrosoft.devicemanagement.deviceEnrollmentConfigurations\nmicrosoft.devicemanagement.managedDevices\n```\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n* 🔐 onboarding: ms365 permission `OrgSettings-AppsAndServices.Read.All`\n\nFixes `microsoft.tenant.settings` introduced with https://github.com/mondoohq/cnquery/pull/5655\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>\n\n---------\n\nSigned-off-by: Salim Afiune Maya <afiune@mondoo.com>",
+          "timestamp": "2025-07-10T17:14:12-06:00",
+          "tree_id": "ece3b8a5bd306e28a3ce9aca504894332e36099e",
+          "url": "https://github.com/mondoohq/cnspec/commit/b5620922c53b260f4c2659eac8d766bbbe30d70d"
+        },
+        "date": 1752189298510,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 21803,
+            "unit": "ns/op\t    4890 B/op\t      71 allocs/op",
+            "extra": "55766 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 21803,
+            "unit": "ns/op",
+            "extra": "55766 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4890,
+            "unit": "B/op",
+            "extra": "55766 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "55766 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 21037,
+            "unit": "ns/op\t    4894 B/op\t      71 allocs/op",
+            "extra": "55831 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 21037,
+            "unit": "ns/op",
+            "extra": "55831 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4894,
+            "unit": "B/op",
+            "extra": "55831 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "55831 times\n4 procs"
           }
         ]
       }
