@@ -45,6 +45,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	defaultRefreshInterval = 3600
+)
+
 type LocalScanner struct {
 	resolvedPolicyCache *inmemory.ResolvedPolicyCache
 	queue               *diskQueueClient
@@ -59,6 +63,8 @@ type LocalScanner struct {
 	allowJobCredentials bool
 	disableProgressBar  bool
 	reportType          ReportType
+	autoUpdate          bool
+	refreshInterval     int
 }
 
 type ScannerOption func(*LocalScanner)
@@ -93,14 +99,32 @@ func WithReportType(reportType ReportType) ScannerOption {
 	}
 }
 
-func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
-	runtime := providers.DefaultRuntime()
+func WithAutoUpdate(onoff bool) ScannerOption {
+	return func(s *LocalScanner) {
+		s.autoUpdate = onoff
+	}
+}
 
+func WithRefreshInterval(refreshInterval int) ScannerOption {
+	return func(s *LocalScanner) {
+		s.refreshInterval = refreshInterval
+	}
+}
+
+func WithRuntime(r *providers.Runtime) ScannerOption {
+	return func(s *LocalScanner) {
+		s.runtime = r
+	}
+}
+
+func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	ls := &LocalScanner{
 		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
-		runtime:             runtime,
 		fetcher:             newFetcher(),
 		ctx:                 context.Background(),
+		// By default, auto-update is enabled. It can be explicitly disabled
+		// by passing WithAutoUpdate(false)
+		autoUpdate: true,
 	}
 
 	for i := range opts {
@@ -109,6 +133,20 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 
 	if ls.recording == nil {
 		ls.recording = recording.Null{}
+	}
+
+	if ls.runtime == nil {
+		runtime := providers.DefaultRuntime()
+		refreshInterval := defaultRefreshInterval
+		if ls.refreshInterval > 0 {
+			refreshInterval = ls.refreshInterval
+		}
+
+		runtime.AutoUpdate = providers.UpdateProvidersConfig{
+			Enabled:         ls.autoUpdate,
+			RefreshInterval: refreshInterval,
+		}
+		ls.runtime = runtime
 	}
 
 	return ls
