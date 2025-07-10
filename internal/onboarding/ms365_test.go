@@ -39,17 +39,6 @@ data "azuread_client_config" "current" {
 data "azuread_application_published_app_ids" "well_known" {
 }
 
-resource "azuread_service_principal" "msgraph" {
-  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
-  use_existing = true
-}
-
-resource "azuread_app_role_assignment" "graph_policy_read" {
-  app_role_id         = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
-  principal_object_id = azuread_service_principal.mondoo.object_id
-  resource_object_id  = azuread_service_principal.msgraph.object_id
-}
-
 resource "tls_private_key" "credential" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -86,7 +75,47 @@ resource "azuread_application" "mondoo" {
   required_resource_access {
     resource_app_id = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
     resource_access {
-      id   = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-Forms.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-AppsAndServices.Read.All"]
+      type = "Role"
+    }
+  }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365SharePointOnline
+    resource_access {
+      id   = azuread_service_principal.Office365SharePointOnline.app_role_ids["Sites.FullControl.All"]
+      type = "Role"
+    }
+  }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+    resource_access {
+      id   = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
       type = "Role"
     }
   }
@@ -125,6 +154,75 @@ resource "mondoo_integration_ms365" "this" {
   name       = "test-ms365-integration"
   tenant_id  = data.azuread_client_config.current.tenant_id
 }
+
+resource "azuread_service_principal" "MicrosoftGraph" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "SecurityEvents_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "OrgSettings-Forms_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-Forms.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementConfiguration_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementManagedDevices_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementServiceConfig_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "OrgSettings-AppsAndServices_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-AppsAndServices.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_service_principal" "Office365SharePointOnline" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365SharePointOnline
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Sites_FullControl_All" {
+  app_role_id         = azuread_service_principal.Office365SharePointOnline.app_role_ids["Sites.FullControl.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365SharePointOnline.object_id
+}
+
+resource "azuread_service_principal" "Office365ExchangeOnline" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Exchange_ManageAsApp" {
+  app_role_id         = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365ExchangeOnline.object_id
+}
 `
 	assert.Equal(t, expected, code)
 }
@@ -155,17 +253,6 @@ data "azuread_client_config" "current" {
 }
 
 data "azuread_application_published_app_ids" "well_known" {
-}
-
-resource "azuread_service_principal" "msgraph" {
-  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
-  use_existing = true
-}
-
-resource "azuread_app_role_assignment" "graph_policy_read" {
-  app_role_id         = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
-  principal_object_id = azuread_service_principal.mondoo.object_id
-  resource_object_id  = azuread_service_principal.msgraph.object_id
 }
 
 resource "tls_private_key" "credential" {
@@ -204,7 +291,47 @@ resource "azuread_application" "mondoo" {
   required_resource_access {
     resource_app_id = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
     resource_access {
-      id   = azuread_service_principal.msgraph.app_role_ids["Policy.Read.All"]
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-Forms.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-AppsAndServices.Read.All"]
+      type = "Role"
+    }
+  }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365SharePointOnline
+    resource_access {
+      id   = azuread_service_principal.Office365SharePointOnline.app_role_ids["Sites.FullControl.All"]
+      type = "Role"
+    }
+  }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+    resource_access {
+      id   = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
       type = "Role"
     }
   }
@@ -242,6 +369,75 @@ resource "mondoo_integration_ms365" "this" {
   depends_on = [azuread_service_principal.mondoo, azuread_application_certificate.mondoo, azuread_directory_role_assignment.global_reader]
   name       = "subscription-88afcea5fb91"
   tenant_id  = data.azuread_client_config.current.tenant_id
+}
+
+resource "azuread_service_principal" "MicrosoftGraph" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "SecurityEvents_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityEvents.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "OrgSettings-Forms_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-Forms.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementConfiguration_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementConfiguration.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementManagedDevices_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementManagedDevices.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "DeviceManagementServiceConfig_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["DeviceManagementServiceConfig.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "OrgSettings-AppsAndServices_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["OrgSettings-AppsAndServices.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_service_principal" "Office365SharePointOnline" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365SharePointOnline
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Sites_FullControl_All" {
+  app_role_id         = azuread_service_principal.Office365SharePointOnline.app_role_ids["Sites.FullControl.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365SharePointOnline.object_id
+}
+
+resource "azuread_service_principal" "Office365ExchangeOnline" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "Exchange_ManageAsApp" {
+  app_role_id         = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365ExchangeOnline.object_id
 }
 `
 	assert.Equal(t, expected, code)
