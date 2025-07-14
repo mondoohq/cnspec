@@ -909,25 +909,54 @@ func (s *localAssetScanner) prepareAsset() error {
 	}
 
 	if len(s.job.Props) != 0 {
-		propsReq := explorer.PropsReq{
-			EntityMrn: s.job.Asset.Mrn,
-			Props:     make([]*explorer.Property, len(s.job.Props)),
-		}
-		i := 0
-		for k, v := range s.job.Props {
-			propsReq.Props[i] = &explorer.Property{
-				Uid: k,
-				Mql: v,
-			}
-			i++
+		propsReq, err := s.mapPropOverrides()
+		if err != nil {
+			return fmt.Errorf("failed to map property overrides: %w", err)
 		}
 
-		_, err = resolver.SetProps(s.job.Ctx, &propsReq)
+		_, err = resolver.SetProps(s.job.Ctx, propsReq)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *localAssetScanner) mapPropOverrides() (*explorer.PropsReq, error) {
+	exposedProps := make(map[string][]string, len(s.job.Props))
+	for _, pol := range s.job.Bundle.Policies {
+		for _, prop := range pol.Props {
+			propUid, err := explorer.GetPropName(prop.Mrn)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get property name for %s: %w", prop.Mrn, err)
+			}
+			exposedProps[propUid] = append(exposedProps[propUid], prop.Mrn)
+		}
+	}
+
+	propsReq := explorer.PropsReq{
+		EntityMrn: s.job.Asset.Mrn,
+		Props:     make([]*explorer.Property, 0, len(s.job.Props)),
+	}
+	for k, v := range s.job.Props {
+		newProp := &explorer.Property{
+			Uid: k,
+			Mql: v,
+		}
+		forProps := exposedProps[k]
+		if len(forProps) == 0 {
+			continue
+		}
+		for _, propMrn := range forProps {
+			newProp.For = append(newProp.For, &explorer.ObjectRef{
+				Mrn: propMrn,
+			})
+		}
+		newProp.RefreshMRN(s.job.Asset.Mrn)
+		propsReq.Props = append(propsReq.Props, newProp)
+	}
+
+	return &propsReq, nil
 }
 
 var assetDetectBundle = ee.MustCompile("asset { kind platform runtime version family }")
