@@ -33,6 +33,7 @@ const (
 	MRN_RESOURCE_FRAMEWORKMAP = "frameworkmaps"
 	MRN_RESOURCE_CONTROL      = "controls"
 	MRN_RESOURCE_RISK         = "risks"
+	MRN_RESOURCE_PROPERTY     = "properties"
 )
 
 type BundleResolver interface {
@@ -798,26 +799,15 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		}
 	}
 
-	// TODO: Make this compatible as a store for shared properties across queries.
-	// Also pre-compile as many as possible before returning any errors.
+	// TODO: This is deprecated and should be removed in the future.
+	// We do not want to support properties on the bundle level anymore.
+	// Properties are now only allowed on policies and queries.
 	for i := range p.Props {
-		np, err := cache.compileProp(p.Props[i])
+		np, err := cache.compileProp(ownerMrn, p.Props[i])
 		if err != nil {
 			return nil, err
 		}
 		p.Props[i] = np
-	}
-
-	for i := range p.Policies {
-		policy := p.Policies[i]
-		// Properties
-		for i := range policy.Props {
-			np, err := cache.compileProp(policy.Props[i])
-			if err != nil {
-				return nil, err
-			}
-			policy.Props[i] = np
-		}
 	}
 
 	if err := cache.compileQueries(p.Queries, nil); err != nil {
@@ -837,6 +827,14 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		err := policy.RefreshMRN(ownerMrn)
 		if err != nil {
 			return nil, errors.New("failed to refresh policy " + policy.Mrn + ": " + err.Error())
+		}
+
+		for i := range policy.Props {
+			np, err := cache.compileProp(policy.Mrn, policy.Props[i])
+			if err != nil {
+				return nil, err
+			}
+			policy.Props[i] = np
 		}
 
 		if policyUID != "" {
@@ -937,6 +935,10 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 			return nil, errors.New("received null policy")
 		}
 
+		if err := LiftPropertiesToPolicy(policy, cache.lookupQuery); err != nil {
+			return nil, errors.New("failed to lift properties to policy: " + err.Error())
+		}
+
 		err := translateGroupUIDs(ownerMrn, policy, cache.uid2mrn)
 		if err != nil {
 			return nil, errors.New("failed to validate policy: " + err.Error())
@@ -949,6 +951,97 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	}
 
 	return bundleMap, cache.error()
+}
+
+func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mquery) error {
+	if len(policy.Props) != 0 {
+		// If these properties are defined by uid, we need to lift the MRNs
+		// into the for field of the property.
+		propsByUid := map[string][]string{}
+		for _, g := range policy.Groups {
+			for _, arr := range [][]*explorer.Mquery{g.Queries, g.Checks} {
+				for _, q := range arr {
+					resolvedQuery := lookupQuery[q.Mrn]
+					if resolvedQuery == nil {
+						return fmt.Errorf("failed to resolve query %s in policy %s", q.Mrn, policy.Mrn)
+					}
+					for _, prop := range resolvedQuery.Props {
+						propUid, err := explorer.GetPropName(prop.Mrn)
+						if err != nil {
+							return fmt.Errorf("failed to get property name for property %s in policy %s: %w", prop.Mrn, policy.Mrn, err)
+						}
+						propsByUid[propUid] = append(propsByUid[propUid], prop.Mrn)
+					}
+				}
+			}
+		}
+		for _, prop := range policy.Props {
+			if len(prop.For) == 0 {
+				continue
+			}
+			newFor := []*explorer.ObjectRef{}
+			for _, pFor := range prop.For {
+				if pFor.Mrn != "" {
+					newFor = append(newFor, pFor)
+					continue
+				}
+
+				mrns := propsByUid[pFor.Uid]
+				for _, mrn := range mrns {
+					newFor = append(newFor, &explorer.ObjectRef{
+						Mrn: mrn,
+					})
+				}
+			}
+			prop.For = newFor
+		}
+		return nil
+	}
+	newPolicyProps := map[string]*explorer.Property{}
+	for _, g := range policy.Groups {
+		for _, arr := range [][]*explorer.Mquery{g.Queries, g.Checks} {
+			for _, q := range arr {
+				resolvedQuery := lookupQuery[q.Mrn]
+				if resolvedQuery == nil {
+					return fmt.Errorf("failed to resolve query %s in policy %s", q.Mrn, policy.Mrn)
+				}
+				if len(resolvedQuery.Props) == 0 {
+					continue
+				}
+				for _, prop := range resolvedQuery.Props {
+					propUid, err := explorer.GetPropName(prop.Mrn)
+					if err != nil {
+						return fmt.Errorf("failed to get property name for query %s in policy %s: %w", resolvedQuery.Mrn, policy.Mrn, err)
+					}
+
+					policyProp := newPolicyProps[propUid]
+					if policyProp == nil {
+						policyProp = &explorer.Property{
+							Uid:  propUid,
+							Type: prop.Type,
+						}
+						newPolicyProps[propUid] = policyProp
+					}
+					policyProp.For = append(policyProp.For, &explorer.ObjectRef{
+						Mrn: prop.Mrn,
+					})
+				}
+			}
+		}
+	}
+	keys := make([]string, 0, len(newPolicyProps))
+	for k := range newPolicyProps {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		prop := newPolicyProps[k]
+		if err := prop.RefreshMRN(policy.Mrn); err != nil {
+			return fmt.Errorf("failed to refresh MRN for property %s in policy %s: %w", prop.Mrn, policy.Mrn, err)
+		}
+		policy.Props = append(policy.Props, prop)
+	}
+	return nil
 }
 
 // this uses a subset of the calls of Mquery.AddBase(), because we don't want
@@ -1092,6 +1185,12 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 		c.errors = append(c.errors, errors.New("failed to refresh MRN for "+query.Uid))
 		return nil
 	}
+	for _, prop := range query.Props {
+		if err := prop.RefreshMRN(query.Mrn); err != nil {
+			c.errors = append(c.errors, errors.New("failed to refresh MRN for property in query "+query.Uid))
+			return nil
+		}
+	}
 	if uid != "" {
 		c.uid2mrn[uid] = query.Mrn
 	}
@@ -1110,7 +1209,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 
 	// ensure MRNs for properties
 	for i := range query.Props {
-		np, err := c.compileProp(query.Props[i])
+		np, err := c.compileProp(query.Mrn, query.Props[i])
 		if err != nil {
 			c.errors = append(c.errors, errors.New("failed to compile properties for "+query.Mrn))
 			return nil
@@ -1163,27 +1262,13 @@ func (c *bundleCache) compileQuery(query *explorer.Mquery) {
 	}
 }
 
-func (c *bundleCache) compileProp(prop *explorer.Property) (*explorer.Property, error) {
+func (c *bundleCache) compileProp(ownerMrn string, prop *explorer.Property) (*explorer.Property, error) {
 	var name string
 
 	if prop.Mrn == "" {
 		uid := prop.Uid
-		forUids := make([]string, len(prop.For))
-		for i := range prop.For {
-			forUids[i] = prop.For[i].Uid
-		}
-
-		if err := prop.RefreshMRN(c.ownerMrn); err != nil {
+		if err := prop.RefreshMRN(ownerMrn); err != nil {
 			return nil, err
-		}
-
-		if uid != "" {
-			c.uid2mrn[uid] = prop.Mrn
-		}
-		for i := range forUids {
-			if forUids[i] != "" {
-				c.uid2mrn[forUids[i]] = prop.For[i].Mrn
-			}
 		}
 
 		// TODO: uid's can be namespaced, extract the name
@@ -1203,8 +1288,10 @@ func (c *bundleCache) compileProp(prop *explorer.Property) (*explorer.Property, 
 		return existing.Property, nil
 	}
 
-	if _, err := prop.RefreshChecksumAndType(c.conf.CompilerConfig); err != nil {
-		return nil, err
+	if prop.Mql != "" {
+		if _, err := prop.RefreshChecksumAndType(c.conf.CompilerConfig); err != nil {
+			return nil, err
+		}
 	}
 
 	c.lookupProp[prop.Mrn] = explorer.PropertyRef{

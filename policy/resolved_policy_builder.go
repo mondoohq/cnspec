@@ -15,7 +15,6 @@ import (
 	"go.mondoo.com/cnquery/v11/explorer"
 	"go.mondoo.com/cnquery/v11/llx"
 	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/mrn"
 )
 
 // buildResolvedPolicy builds a resolved policy from a bundle
@@ -1137,11 +1136,10 @@ func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderDat
 				prop = override
 			}
 			if name == "" {
-				var err error
-				name, err = mrn.GetResource(prop.Mrn, MRN_RESOURCE_QUERY)
-				if err != nil {
-					return nil, nil, errors.New("failed to get property name")
-				}
+				return nil, nil, errors.New("resolver> property mrn is empty for prop " + prop.Mrn + ", cannot compile query: " + prop.Mql)
+			}
+			if prop.CodeId == "" {
+				return nil, nil, errors.New("resolver> property code id is empty for prop " + prop.Mrn + ", cannot compile query: " + prop.Mql)
 			}
 
 			executionQuery, dataChecksum, err := mquery2executionQuery(prop, nil, map[string]string{}, rp.CollectorJob, false, data.compilerConf)
