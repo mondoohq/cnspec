@@ -279,7 +279,6 @@ func (m *HclModule) ToBlock() (*hclwrite.Block, error) {
 	}
 	if m.source != "" {
 		m.attributes["source"] = m.source
-
 	}
 	if m.version != "" {
 		m.attributes["version"] = m.version
@@ -375,7 +374,7 @@ type HclResource struct {
 
 type HclResourceModifier func(p *HclResource)
 
-// NewResource Create a provider statement in the HCL output.
+// NewDataSource Create a provider statement in the HCL output.
 func NewDataSource(rType string, name string, mods ...HclResourceModifier) *HclResource {
 	resource := &HclResource{rType: rType, name: name, object: DataSource}
 	for _, m := range mods {
@@ -409,7 +408,8 @@ func (m *HclResource) TraverseRefString(input ...string) string {
 
 // HclResourceWithAttributesAndProviderDetails Used to set parameters within the resource usage.
 func HclResourceWithAttributesAndProviderDetails(attrs map[string]interface{},
-	providerDetails []string) HclResourceModifier {
+	providerDetails []string,
+) HclResourceModifier {
 	return func(p *HclResource) {
 		p.attributes = attrs
 		p.providerDetails = providerDetails
@@ -510,6 +510,26 @@ func convertValueToTokens(value interface{}) (hclwrite.Tokens, error) {
 		return elem, nil
 	case hcl.Traversal:
 		return hclwrite.TokensForTraversal(elem), nil
+	case map[string]interface{}:
+		// Handle maps that might contain hcl.Traversal values
+		var keys []string
+		for k := range elem {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		objects := []hclwrite.ObjectAttrTokens{}
+		for _, attrKey := range keys {
+			attrVal := elem[attrKey]
+			tokens, err := convertValueToTokens(attrVal)
+			if err != nil {
+				return nil, err
+			}
+			objects = append(objects, hclwrite.ObjectAttrTokens{
+				Name:  hclwrite.TokensForIdentifier(attrKey),
+				Value: tokens,
+			})
+		}
+		return hclwrite.TokensForObject(objects), nil
 	default:
 		value, err := convertTypeToCty(elem)
 		if err != nil {
@@ -536,25 +556,28 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 		}
 		block.Body().SetAttributeValue(key, value)
 	case []map[string]interface{}:
-		values := []cty.Value{}
+		elems := []hclwrite.Tokens{}
 		for _, item := range v {
-			valueMap := map[string]cty.Value{}
-			for key, val := range item {
-				convertedValue, err := convertTypeToCty(val)
+			var keys []string
+			for k := range item {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			objects := []hclwrite.ObjectAttrTokens{}
+			for _, attrKey := range keys {
+				attrVal := item[attrKey]
+				tokens, err := convertValueToTokens(attrVal)
 				if err != nil {
 					return err
 				}
-				valueMap[key] = convertedValue
+				objects = append(objects, hclwrite.ObjectAttrTokens{
+					Name:  hclwrite.TokensForIdentifier(attrKey),
+					Value: tokens,
+				})
 			}
-			values = append(values, cty.ObjectVal(valueMap))
+			elems = append(elems, hclwrite.TokensForObject(objects))
 		}
-
-		if !cty.CanListVal(values) {
-			return errors.New(
-				"setBlockAttributeValue: Values can not be coalesced into a single List due to inconsistent element types",
-			)
-		}
-		block.Body().SetAttributeValue(key, cty.ListVal(values))
+		block.Body().SetAttributeRaw(key, hclwrite.TokensForTuple(elems))
 	case []interface{}:
 		elems := []hclwrite.Tokens{}
 		for _, e := range v {
@@ -838,4 +861,104 @@ func TraversalToString(traversal hcl.Traversal) string {
 		sb.Write(token.Bytes)
 	}
 	return sb.String()
+}
+
+type HclVariable struct {
+	// Required. Name of the variable.
+	name string
+
+	// Optional. Variable type - string, number, bool, etc.
+	varType string
+
+	// Optional. Description of the variable.
+	description string
+
+	// Optional. Default value for the variable.
+	defaultValue interface{}
+
+	// Optional. Whether the variable is sensitive.
+	sensitive bool
+}
+
+func (v *HclVariable) ToBlock() (*hclwrite.Block, error) {
+	block := hclwrite.NewBlock("variable", []string{v.name})
+
+	if v.varType != "" {
+		// Create type tokens that don't include quotes for type
+		typeTokens := hclwrite.Tokens{
+			{Type: hclsyntax.TokenIdent, Bytes: []byte(v.varType)},
+		}
+		block.Body().SetAttributeRaw("type", typeTokens)
+	}
+
+	if v.description != "" {
+		value, err := convertTypeToCty(v.description)
+		if err != nil {
+			return nil, err
+		}
+		block.Body().SetAttributeValue("description", value)
+	}
+
+	if v.defaultValue != nil {
+		value, err := convertTypeToCty(v.defaultValue)
+		if err != nil {
+			return nil, err
+		}
+		block.Body().SetAttributeValue("default", value)
+	}
+
+	if v.sensitive {
+		value, err := convertTypeToCty(v.sensitive)
+		if err != nil {
+			return nil, err
+		}
+		block.Body().SetAttributeValue("sensitive", value)
+	}
+
+	return block, nil
+}
+
+type HclVariableModifier func(v *HclVariable)
+
+// NewVariable creates a new Terraform variable declaration.
+func NewVariable(name string, mods ...HclVariableModifier) *HclVariable {
+	variable := &HclVariable{name: name}
+	for _, m := range mods {
+		m(variable)
+	}
+	return variable
+}
+
+// HclVariableWithType sets the type of the variable.
+func HclVariableWithType(varType string) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.varType = varType
+	}
+}
+
+// HclVariableWithDescription sets the description of the variable.
+func HclVariableWithDescription(description string) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.description = description
+	}
+}
+
+// HclVariableWithDefault sets the default value of the variable.
+func HclVariableWithDefault(defaultValue interface{}) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.defaultValue = defaultValue
+	}
+}
+
+// HclVariableWithSensitive marks the variable as sensitive.
+func HclVariableWithSensitive(sensitive bool) HclVariableModifier {
+	return func(v *HclVariable) {
+		v.sensitive = sensitive
+	}
+}
+
+// CreateVariableReference creates a reference to a Terraform variable.
+// e.g. var.name
+func CreateVariableReference(name string) hcl.Traversal {
+	return CreateSimpleTraversal("var", name)
 }
