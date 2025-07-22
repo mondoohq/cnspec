@@ -698,6 +698,55 @@ func (s *GroupType) UnmarshalYAML(node *yaml.Node) error {
 	return errors.New("failed to unmarshal GroupType")
 }
 
+type HumanTime struct {
+	Seconds     int64       `protobuf:"varint,1,opt,name=seconds,proto3" json:"seconds,omitempty" yaml:"seconds,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp HumanTime
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d HumanTime) MarshalYAML() (interface{}, error) {
+	type alias HumanTime
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
 type Impact struct {
 	Value       *ImpactValue           `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty" yaml:"value,omitempty"`
 	Scoring     explorer.ScoringSystem `protobuf:"varint,2,opt,name=scoring,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring,omitempty" yaml:"scoring,omitempty"`
@@ -1297,6 +1346,7 @@ type PolicyGroup struct {
 	StartDate    int64            `protobuf:"varint,21,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty" yaml:"start_date,omitempty"`
 	EndDate      int64            `protobuf:"varint,22,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty" yaml:"end_date,omitempty"`
 	ReminderDate int64            `protobuf:"varint,23,opt,name=reminder_date,json=reminderDate,proto3" json:"reminder_date,omitempty" yaml:"reminder_date,omitempty"`
+	Valid        *Validity        `protobuf:"bytes,41,opt,name=valid,proto3" json:"valid,omitempty" yaml:"valid,omitempty"`
 	Reviewers    []*Author        `protobuf:"bytes,27,rep,name=reviewers,proto3" json:"reviewers,omitempty" yaml:"reviewers,omitempty"`
 	ReviewStatus ReviewStatus     `protobuf:"varint,28,opt,name=review_status,json=reviewStatus,proto3,enum=cnspec.policy.v1.ReviewStatus" json:"review_status,omitempty" yaml:"review_status,omitempty"`
 	Created      int64            `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
@@ -2077,6 +2127,56 @@ func (x *TypedDoc) UnmarshalYAML(node *yaml.Node) error {
 
 func (d TypedDoc) MarshalYAML() (interface{}, error) {
 	type alias TypedDoc
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type Validity struct {
+	From        *HumanTime  `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty" yaml:"from,omitempty"`
+	Until       *HumanTime  `protobuf:"bytes,2,opt,name=until,proto3" json:"until,omitempty" yaml:"until,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *Validity) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Validity
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d Validity) MarshalYAML() (interface{}, error) {
+	type alias Validity
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
 	if err != nil {

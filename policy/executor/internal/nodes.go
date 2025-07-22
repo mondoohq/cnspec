@@ -13,6 +13,7 @@ import (
 	"go.mondoo.com/cnquery/v11/types"
 	"go.mondoo.com/cnquery/v11/utils/multierr"
 	"go.mondoo.com/cnspec/v11/policy"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -446,7 +447,7 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 			if score.Type != policy.ScoreType_Result {
 				// We map errors to failed results.
 				// Skip and unknown are mapped to passing results
-				score = score.CloneVT()
+				score = proto.Clone(score).(*policy.Score)
 				if score.Type == policy.ScoreType_Error {
 					score.Type = policy.ScoreType_Result
 					score.Value = 0
@@ -544,8 +545,9 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 					Type: policy.ScoreType_Result,
 				}
 			} else {
-				s = c.score.CloneVT()
+				s = proto.Clone(c.score).(*policy.Score)
 				s.QrId = nodeData.queryID
+
 				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
 					s.Type = policy.ScoreType_Disabled
 				} else if s.Type == policy.ScoreType_Result {
@@ -557,6 +559,12 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 							if floor > s.Value {
 								s.Value = floor
 							}
+						}
+
+						// since we clone it from the child, which is just the raw score,
+						// we have to set the type on this layer
+						if c.impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+							s.Type = policy.ScoreType_Skip
 						}
 					}
 				}

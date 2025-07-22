@@ -6,12 +6,15 @@ package reporter
 import (
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/mergestat/timediff"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v11/explorer"
@@ -207,9 +210,19 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 
 	var queries map[string]*explorer.Mquery
 	var controls map[string]*policy.Control
+	previewChecks := map[string]*policy.PolicyGroup{}
 	if r.bundle != nil {
 		queries = r.bundle.QueryMap()
 		controls = r.bundle.ControlsMap()
+		for _, p := range r.bundle.Policies {
+			for _, g := range p.Groups {
+				for _, c := range g.Checks {
+					if c.Action == explorer.Action_IGNORE || g.Type == policy.GroupType_IGNORED {
+						previewChecks[c.Mrn] = g
+					}
+				}
+			}
+		}
 	}
 
 	for _, assetMrnName := range orderedAssets {
@@ -250,7 +263,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		}
 
 		if r.Conf.printData || r.Conf.printChecks {
-			r.printAssetQueries(resolved, report, queries, assetMrn, asset)
+			r.printAssetQueries(resolved, report, queries, previewChecks, assetMrn, asset)
 		}
 
 		if r.Conf.printRisks {
@@ -361,7 +374,12 @@ type simpleScore struct {
 	Rating  policy.ScoreRating
 }
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, assetMrn string, asset *inventory.Asset) {
+type previewGroup struct {
+	until          int64
+	sortedFailures []string
+}
+
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, checkToPreview map[string]*policy.PolicyGroup, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
 	if r.Conf.printData {
@@ -385,54 +403,70 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		}
 	}
 
+	previewGroups := map[int]*previewGroup{
+		math.MaxInt64: {until: math.MaxInt64},
+	}
+	for _, pg := range checkToPreview {
+		until := math.MaxInt64
+		if pg.Valid != nil && pg.Valid.Until != nil {
+			until = int(pg.Valid.Until.Seconds)
+		}
+		previewGroups[until] = &previewGroup{}
+	}
+
 	if r.Conf.printChecks {
 		foundChecks := map[string]simpleScore{}
 		sortedPassed := []string{}
 		sortedWarnings := []string{}
 		sortedFailed := []string{}
 
-		for id, score := range report.Scores {
+		for id, query := range queries {
 			_, ok := resolved.CollectorJob.ReportingQueries[id]
 			if !ok {
 				continue
 			}
 
-			query, ok := queries[id]
+			pscore, ok := report.Scores[query.Mrn]
 			if !ok {
 				r.out("Couldn't find any queries for score of " + id)
 				continue
 			}
 
 			// FIXME v12: this is only a workaround for a deeper bug with the score value
+			isSuccess := pscore.Value == 100
 			if query.Impact != nil && query.Impact.Value != nil {
 				floor := 100 - uint32(query.Impact.Value.Value)
-				if floor > score.Value {
-					score.Value = floor
+				if floor > pscore.Value {
+					pscore.Value = floor
 				}
 			}
 
 			score := simpleScore{
-				Value:   score.Value,
-				Type:    score.Type,
-				Message: score.Message,
-				Rating:  score.Rating(),
+				Value:   pscore.Value,
+				Type:    pscore.Type,
+				Message: pscore.Message,
+				Rating:  pscore.Rating(),
 				// FIXME v12: this is incorrect because the score value is 100 for failing checks whose impact is 0
-				Success: score.Value == 100,
+				Success: isSuccess,
 			}
 			foundChecks[id] = score
 
 			if score.Success {
 				sortedPassed = append(sortedPassed, id)
-			} else if score.Value >= uint32(r.ScoreThreshold) {
+			} else if score.Value >= uint32(r.ScoreThreshold) && r.ScoreThreshold != 0 {
 				sortedWarnings = append(sortedWarnings, id)
+			} else if score.Type == policy.ScoreType_Skip {
+				g := checkToPreview[query.Mrn]
+				var pg *previewGroup
+				if g != nil && g.Valid != nil && g.Valid.Until != nil {
+					pg = previewGroups[int(g.Valid.Until.Seconds)]
+				} else {
+					pg = previewGroups[math.MaxInt64]
+				}
+				pg.sortedFailures = append(pg.sortedFailures, id)
 			} else {
 				sortedFailed = append(sortedFailed, id)
 			}
-		}
-
-		if r.ScoreThreshold == 0 {
-			sortedFailed = append(sortedFailed, sortedWarnings...)
-			sortedWarnings = []string{}
 		}
 
 		sort.Slice(sortedPassed, func(i, j int) bool {
@@ -479,6 +513,48 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			for _, id := range sortedWarnings {
 				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
 			}
+			prevPrinted = true
+		}
+
+		times := []int{}
+		for t, pg := range previewGroups {
+			if len(pg.sortedFailures) != 0 {
+				times = append(times, t)
+			}
+		}
+		sort.Ints(times)
+		for i := len(times) - 1; i >= 0; i-- {
+			if prevPrinted {
+				r.out(NewLineCharacter)
+			}
+
+			unixTime := times[i]
+			deadline := time.Unix(int64(unixTime), 0)
+			diff := timediff.TimeDiff(deadline)
+			r.out("Remediation deadline: " + deadline.Format("2006/01/02") + " (" + diff + ")\n")
+
+			group := previewGroups[unixTime]
+			sort.Slice(group.sortedFailures, func(i, j int) bool {
+				ida := group.sortedFailures[i]
+				idb := group.sortedFailures[j]
+				a := foundChecks[ida].Value
+				b := foundChecks[idb].Value
+				if a == b {
+					return queries[ida].Title < queries[idb].Title
+				}
+				return a > b
+			})
+
+			for _, id := range group.sortedFailures {
+				// we have to force the score type for the printer here,
+				// so we can see it as a failure and not as a skip
+				score := foundChecks[id]
+				score.Type = policy.ScoreType_Result
+				ps := policy.Score{Value: score.Value, Type: score.Type, ScoreCompletion: 100}
+				score.Rating = ps.Rating()
+				r.printCheck(score, queries[id], resolved, report, results)
+			}
+
 			prevPrinted = true
 		}
 

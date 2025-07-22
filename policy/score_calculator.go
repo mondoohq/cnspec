@@ -80,10 +80,10 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 			// calculation in most calculators despite its weight.
 			// 2. We don't want to set it to unscored, because technically we
 			// just ignore the score.
-			// Thus we set the score to unknown for the sake of the calculator,
+			// Thus we set the score to skip for the sake of the calculator,
 			// thus it knows it is handling a scored result, but also knows not
 			// to count it.
-			Type:            ScoreType_Unknown,
+			Type:            ScoreType_Skip,
 			Value:           score.Value,
 			Weight:          0,
 			ScoreCompletion: score.ScoreCompletion,
