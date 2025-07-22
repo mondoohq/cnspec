@@ -794,10 +794,11 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		}
 
 		for _, c := range g.Checks {
-			// Check the action. If its an override, we don't need to add the check
-			// because it will get included in a policy that wants it run.
-			// This will prevent the check from being connected to the policy that
-			// overrides its action
+			// Check the action. If its an override, we might have to add the check
+			// if it doesn't exist yet. Generally checks are connected to policies that include them.
+			// For example if a policy pulls a check and we override it later, we need to
+			// adjust it while remaining connected to the original policy.
+			// It may also be pulled into a policy and have an override in a later group.
 			if isOverride(c.Action, g.Type) {
 				b.propsCache.Add(c.Props...)
 				continue

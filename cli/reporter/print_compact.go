@@ -404,6 +404,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 
 			// FIXME v12: this is only a workaround for a deeper bug with the score value
+			isSuccess := score.Value == 100
 			if query.Impact != nil && query.Impact.Value != nil {
 				floor := 100 - uint32(query.Impact.Value.Value)
 				if floor > score.Value {
@@ -417,7 +418,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				Message: score.Message,
 				Rating:  score.Rating(),
 				// FIXME v12: this is incorrect because the score value is 100 for failing checks whose impact is 0
-				Success: score.Value == 100,
+				Success: isSuccess,
 			}
 			foundChecks[id] = score
 
