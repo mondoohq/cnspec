@@ -773,11 +773,18 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 	scoringSystem := b.policyScoringSystems[policy.Mrn]
 	b.addNode(&rpBuilderPolicyNode{policy: policy, scoringSystem: scoringSystem, isRoot: b.bundleMrn == policy.Mrn})
 	hasMatchingGroup := false
+
+	validGroups := []*PolicyGroup{}
 	for _, g := range policy.Groups {
 		if !b.isGroupMatching(g) {
 			continue
 		}
 		hasMatchingGroup = true
+		validGroups = append(validGroups, g)
+	}
+
+	addedChecks := map[string]*explorer.Mquery{}
+	for _, g := range validGroups {
 		for _, pRef := range g.Policies {
 			p := b.bundleMap.Policies[pRef.Mrn]
 			if b.addPolicy(p) {
@@ -794,33 +801,52 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		}
 
 		for _, c := range g.Checks {
-			// Check the action. If its an override, we don't need to add the check
-			// because it will get included in a policy that wants it run.
-			// This will prevent the check from being connected to the policy that
-			// overrides its action
-			if isOverride(c.Action, g.Type) {
+			if c.Action == explorer.Action_IGNORE {
+				if _, ok := b.actionOverrides[c.Mrn]; !ok {
+					b.actionOverrides[c.Mrn] = explorer.Action_IGNORE
+				}
 				b.propsCache.Add(c.Props...)
 				continue
 			}
-
-			c, ok := b.bundleMap.Queries[c.Mrn]
-			if !ok {
-				log.Warn().Str("mrn", c.Mrn).Msg("check not found in bundle")
+			if c.Action == explorer.Action_DEACTIVATE {
+				delete(addedChecks, c.Mrn)
 				continue
 			}
-
-			if _, ok := b.addQuery(c); ok {
-				action := b.actionOverrides[c.Mrn]
-				var impact *explorer.Impact
-				if action == explorer.Action_IGNORE {
-					impact = &explorer.Impact{
-						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-					}
+			if g.Type == GroupType_IGNORED {
+				if _, ok := b.actionOverrides[c.Mrn]; !ok {
+					b.actionOverrides[c.Mrn] = explorer.Action_IGNORE
 				}
-				b.addEdge(c.Mrn, policy.Mrn, impact)
+				b.propsCache.Add(c.Props...)
+				continue
 			}
+			if g.Type == GroupType_DISABLE || g.Type == GroupType_OUT_OF_SCOPE {
+				delete(addedChecks, c.Mrn)
+				continue
+			}
+			addedChecks[c.Mrn] = c
+		}
+	}
+
+	for _, c := range addedChecks {
+		c, ok := b.bundleMap.Queries[c.Mrn]
+		if !ok {
+			log.Warn().Str("mrn", c.Mrn).Msg("check not found in bundle")
+			continue
 		}
 
+		if _, ok := b.addQuery(c); ok {
+			action := b.actionOverrides[c.Mrn]
+			var impact *explorer.Impact
+			if action == explorer.Action_IGNORE {
+				impact = &explorer.Impact{
+					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+				}
+			}
+			b.addEdge(c.Mrn, policy.Mrn, impact)
+		}
+	}
+
+	for _, g := range validGroups {
 		for _, q := range g.Queries {
 			// Check the action. If its an override, we don't need to add the query
 			// because it will get included in a policy that wants it run.
