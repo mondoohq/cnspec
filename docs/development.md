@@ -72,9 +72,9 @@ When debugging `cnspec`, you can monitor and profile memory and CPU usage using 
 
 **How it works?**
 
-* Prometheus: Scrapes and stores time series metrics from your application.
-* Grafana: Visualizes the metrics and allows creating dashboards and alerts.
-* `cnspec` in `DEBUG` mode: Exposes basic metrics
+- Prometheus: Scrapes and stores time series metrics from your application.
+- Grafana: Visualizes the metrics and allows creating dashboards and alerts.
+- `cnspec` in `DEBUG` mode: Exposes basic metrics
 
 ### Setup
 
