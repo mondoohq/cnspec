@@ -2794,36 +2794,57 @@ queries:
           - The system's audit trail may be incomplete, undermining trust in audit data and complicating incident response or compliance reviews.
 
         Adding audit=1 to the GRUB configuration ensures that the Linux kernel begins generating audit records as soon as it starts, capturing all auditable activity regardless of when auditd is fully initialized. This enhances the completeness and integrity of audit logging across the system lifecycle.
-      remediation: |-
-        Edit `/etc/default/grub` and add `audit=1` to `GRUB_CMDLINE_LINUX`:
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
 
-        ```
-        GRUB_CMDLINE_LINUX="audit=1"
-        ```
+            1. Edit the GRUB configuration file to include the `audit=1`` parameter:
 
-        Run this command to update the `grub2` configuration:
+            **RHEL/Fedora/Amazon Linux and derivatives**
 
-        ### RHEL/Fedora/Amazon Linux and derivatives
+            For BIOS systems, edit `/etc/default/grub`:
 
-        For BIOS systems:
+            ```bash
+            GRUB_CMDLINE_LINUX="audit=1"
+            ```
 
-        ```bash
-        grub2-mkconfig -o /boot/grub2/grub.cfg
-        ```
+            For UEFI systems, edit `/etc/default/grub`:
 
-        For UEFI systems:
+            ```bash
+            GRUB_CMDLINE_LINUX="audit=1"
+            ```
 
-        ```bash
-        grub2-mkconfig -o /boot/efi/EFI/<distribution>/grub.cfg
-        ```
+            **Debian/Ubuntu and derivatives**
 
-        Replace `<distribution>` with your distribution's directory name (e.g., `centos`, `redhat`, `fedora`).
+            Edit `/etc/default/grub`:
 
-        ### Debian/Ubuntu and derivatives
+            ```bash
+            GRUB_CMDLINE_LINUX_DEFAULT="audit=1"
+            ```
 
-        ```bash
-        update-grub
-        ```
+            2. Update the GRUB configuration:
+
+            **RHEL/Fedora/Amazon Linux and derivatives**
+
+            For BIOS systems:
+
+            ```bash
+            grub2-mkconfig -o /boot/grub2/grub.cfg
+            ```
+            For UEFI systems:
+
+            ```bash
+            grub2-mkconfig -o /boot/efi/EFI/<distribution>/grub.cfg
+            ```
+
+            Replace `<distribution>` with your distribution's directory name (e.g., `centos`, `redhat`, `fedora`).
+
+            **Debian/Ubuntu and derivatives**
+
+            ```bash
+            update-grub
+            ```
   - uid: mondoo-linux-security-audit-log-storage-size-is-configured
     title: Ensure audit log storage size is configured
     impact: 40
@@ -3375,7 +3396,7 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that the audit system is configured to log all events that change the system’s date and time settings, including modifications to the system clock and timezone.
+        This check verifies that the audit system is configured to log all events that change the system's date and time settings, including modifications to the system clock and timezone.
 
         **Why this matters**
 
@@ -3387,47 +3408,81 @@ queries:
           •  Compliance with standards that require time synchronization and audit log integrity may be violated.
 
         By auditing all date and time modifications, administrators can detect tampering attempts, verify system integrity, and maintain a trustworthy timeline of system events. This ensures that audit logs remain a reliable source of truth during security reviews and investigations.
-      remediation: |-
-        For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`_
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-time_change.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-time_change.rules`
 
-        ```
-        -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
-        -a always,exit -F arch=b32 -S clock_settime -k time-change
-        -w /etc/localtime -p wa -k time-change
-        ```
+            2. Add the following lines:
 
-        For 64-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+            ```
+            -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+            -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+            -a always,exit -F arch=b32 -S clock_settime -k time-change
+            -a always,exit -F arch=b64 -S clock_settime -k time-change
+            -w /etc/localtime -p wa -k time-change
+            ```
 
-        Example: `vi /etc/audit/rules.d/50-time_change.rules`
+            3. To load the newly added rules into the running configuration:
 
-        Add the following lines:
+            ```bash
+            augenrules --load
+            ```
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        ```
-        -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
-        -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
-        -a always,exit -F arch=b64 -S clock_settime -k time-change
-        -a always,exit -F arch=b32 -S clock_settime -k time-change
-        -w /etc/localtime -p wa -k time-change
-        ```
+            4. Check if a reboot is required, in case the running configuration is set to be immutable:
 
-        To load the newly added rules into the running configuration:
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
 
-        ```bash
-        augenrules --load
-        ```
+            Use this Ansible playbook to set the audit rules for date and time changes:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```yaml
+            ---
+            - name: Configure audit rules for time change events
+              hosts: all
+              become: true
 
+              tasks:
+                - name: Ensure required time-change audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-time_change.rules
+                    block: |
+                      -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+                      -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+                      -a always,exit -F arch=b32 -S clock_settime -k time-change
+                      -a always,exit -F arch=b64 -S clock_settime -k time-change
+                      -w /etc/localtime -p wa -k time-change
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: audit_rules_updated
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: audit_rules_updated.changed
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
   - uid: mondoo-linux-security-events-that-modify-the-systems-mandatory-access-controls-are-collected
     title: Ensure events that modify the system's Mandatory Access Controls are collected
     impact: 50
@@ -3445,51 +3500,97 @@ queries:
       appArmorSys || seLinuxSys
     docs:
       desc: |
-        This check verifies that the audit system is configured to log changes to the system’s Mandatory Access Control (MAC) configurations, such as modifications to SELinux or AppArmor policies.
+        This check verifies that the audit system is configured to log changes to the system's Mandatory Access Control (MAC) configurations, such as modifications to SELinux or AppArmor policies.
 
         **Why this matters**
 
-        Mandatory Access Controls enforce strict rules about which subjects (users, processes) can access which objects (files, resources) beyond traditional discretionary permissions. Changes to MAC settings directly impact the system’s security posture and can either strengthen or weaken its defenses.
+        Mandatory Access Controls enforce strict rules about which subjects (users, processes) can access which objects (files, resources) beyond traditional discretionary permissions. Changes to MAC settings directly impact the system's security posture and can either strengthen or weaken its defenses.
 
         When modifications to MAC configurations are not audited:
           - Unauthorized or malicious changes may go undetected, potentially disabling key security mechanisms.
           - Administrators may be unaware of policy alterations that expose the system to privilege escalation or data leakage.
-          - The system’s compliance with security frameworks requiring MAC enforcement may be compromised.
+          - The system's compliance with security frameworks requiring MAC enforcement may be compromised.
 
-        Logging events that alter SELinux modes, AppArmor profiles, or related configuration files helps ensure that all security policy changes are tracked and attributable. This supports continuous monitoring, strengthens control over access enforcement, and enhances trust in the system’s security model.
-      remediation: |-
-        Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+        Logging events that alter SELinux modes, AppArmor profiles, or related configuration files helps ensure that all security policy changes are tracked and attributable. This supports continuous monitoring, strengthens control over access enforcement, and enhances trust in the system's security model.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-MAC_policy.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines, for SELinux:
+            Example: `vi /etc/audit/rules.d/50-MAC_policy.rules`
 
-        ```
-        -w /etc/selinux/ -p wa -k MAC-policy
-        -w /usr/share/selinux/ -p wa -k MAC-policy
-        ```
+            2. Add the following lines, for SELinux:
 
-        Add the following lines, for AppArmor:
+            ```
+            -w /etc/selinux/ -p wa -k MAC-policy
+            -w /usr/share/selinux/ -p wa -k MAC-policy
+            ```
 
-        ```
-        -w /etc/apparmor/ -p wa -k MAC-policy
-        -w /etc/apparmor.d/ -p wa -k MAC-policy
-        ```
+            3. Add the following lines, for AppArmor:
 
-        To load the newly added rules into the running configuration:
+            ```
+            -w /etc/apparmor/ -p wa -k MAC-policy
+            -w /etc/apparmor.d/ -p wa -k MAC-policy
+            ```
 
-        ```bash
-        augenrules --load
-        ```
+            4. To load the newly added rules into the running configuration:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```bash
+            augenrules --load
+            ```
 
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+            5. Check if a reboot is required, in case the running configuration is set to be immutable:
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for MAC policy changes:
+
+            ```yaml
+            ---
+            - name: Configure audit rules for SELinux and AppArmor MAC policy monitoring
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure MAC-policy audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-MAC_policy.rules
+                    block: |
+                      -w /etc/selinux/ -p wa -k MAC-policy
+                      -w /usr/share/selinux/ -p wa -k MAC-policy
+                      -w /etc/apparmor/ -p wa -k MAC-policy
+                      -w /etc/apparmor.d/ -p wa -k MAC-policy
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: mac_audit_rules_updated
+
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: mac_audit_rules_updated.changed
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
   - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected
     title: Ensure events that modify the system's network environment are collected
     impact: 50
@@ -3826,34 +3927,82 @@ queries:
           - The system may fall out of compliance with security standards requiring audit logging.
 
         By ensuring that changes to these critical files are monitored, organizations can maintain a secure environment and quickly respond to potential threats.
-      remediation: |-
-        Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-identity.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-identity.rules`
 
-        ```
-        -w /etc/group -p wa -k identity
-        -w /etc/passwd -p wa -k identity
-        -w /etc/gshadow -p wa -k identity
-        -w /etc/shadow -p wa -k identity
-        -w /etc/security/opasswd -p wa -k identity
-        ```
+            2. Add the following lines:
 
-        To load the newly added rules into the running configuration:
+            ```
+            -w /etc/group -p wa -k identity
+            -w /etc/passwd -p wa -k identity
+            -w /etc/gshadow -p wa -k identity
+            -w /etc/shadow -p wa -k identity
+            -w /etc/security/opasswd -p wa -k identity
+            ```
 
-        ```bash
-        augenrules --load
-        ```
+            3. To load the newly added rules into the running configuration:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```bash
+            augenrules --load
+            ```
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            4. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for user and group information changes:
+
+            ```yaml
+            ---
+            - name: Configure audit rules for identity file monitoring
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure identity audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-identity.rules
+                    block: |
+                      -w /etc/group -p wa -k identity
+                      -w /etc/passwd -p wa -k identity
+                      -w /etc/gshadow -p wa -k identity
+                      -w /etc/shadow -p wa -k identity
+                      -w /etc/security/opasswd -p wa -k identity
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: identity_audit_rules_updated
+
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: identity_audit_rules_updated.changed
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
   - uid: mondoo-linux-security-successful-file-system-mounts-are-collected
     title: Ensure successful file system mounts are collected
     impact: 50
@@ -4084,34 +4233,74 @@ queries:
           - Compliance with security policies requiring detailed logging of administrative actions may be compromised.
 
         By monitoring the `sudo` log file, organizations can ensure that all privileged commands are logged, supporting accountability, security, and compliance efforts.
-      remediation: |
-        Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules` and add the following line:
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        ```
-        -w <Path to sudo log file> -p wa -k actions
-        ```
+            Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Example: `vi /etc/audit/rules.d/actions.rules`
+            Example: `vi /etc/audit/rules.d/actions.rules`
 
-        and add the following line:
+            Add the following line:
 
-        ```
-        -w /var/log/sudo.log -p wa -k actions
-        ```
+            ```
+            -w /var/log/sudo.log -p wa -k actions
+            ```
 
-        To load the newly added rules into the running configuration:
+            To load the newly added rules into the running configuration:
 
-        ```bash
-        augenrules --load
-        ```
+            ```bash
+            augenrules --load
+            ```
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+            Check if a reboot is required, in case the running configuration is set to be immutable:
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for sudo log monitoring:
+
+            ```yaml
+            ---
+            - name: Configure audit rule for sudo actions
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure audit rule for /var/log/sudo.log is present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/actions.rules
+                    block: |
+                      -w /var/log/sudo.log -p wa -k actions
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: sudo_audit_rule_updated
+
+                - name: Reload audit rules if updated
+                  ansible.builtin.command: augenrules --load
+                  when: sudo_audit_rule_updated.changed
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
   - uid: mondoo-linux-security-the-audit-configuration-is-immutable
     title: Ensure the audit configuration is immutable
     impact: 50
@@ -4135,26 +4324,78 @@ queries:
           - It supports compliance with security standards that require robust and unalterable audit logging mechanisms.
 
         Once the audit system is set to immutable mode, changes to audit rules can only be made by rebooting the system, providing an additional layer of protection against unauthorized modifications.
-      remediation: |-
-        Edit or create the file `/etc/audit/audit.rules` and add the following line at the end of the file:
+      remediation:
+        - id: cli
+          desc: |
+              **Using the CLI**
 
-        ```
-        -e 2
-        ```
+              To ensure the audit configuration is immutable, follow these steps:
 
-        To load the newly added rules into the running configuration:
+              1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`.
 
-        ```bash
-        augenrules --load
-        ```
+                 Example:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+                 ```
+                 vi /etc/audit/rules.d/50-immutable.rules
+                 ```
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+              2. Add the following line to the file:
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+                 ```
+                 -e 2
+                 ```
+
+              3. Load the newly added rules into the running configuration:
+
+                 ```bash
+                 augenrules --load
+                 ```
+
+              4. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+                ```bash
+                if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+                ```
+        - id: ansible
+          desc: |
+              **Using Ansible**
+
+              Use this Ansible playbook to set the audit configuration to immutable mode:
+
+              ```yaml
+              ---
+              - name: Ensure audit configuration is set to immutable mode (-e 2)
+                hosts: all
+                become: true
+
+                tasks:
+                  - name: Ensure immutable audit rule is present
+                    ansible.builtin.blockinfile:
+                      path: /etc/audit/rules.d/50-immutable.rules
+                      block: |
+                        -e 2
+                      create: yes
+                      owner: root
+                      group: root
+                      mode: '0640'
+                    register: immutable_rule_updated
+
+                  - name: Reload audit rules if file was updated
+                    ansible.builtin.command: augenrules --load
+                    when: immutable_rule_updated.changed
+
+                  - name: Check if auditd is already in immutable mode
+                    ansible.builtin.shell: |
+                      auditctl -s | grep -q '^enabled.*2$'
+                    register: immutable_check
+                    changed_when: false
+                    failed_when: false
+
+                  - name: Notify if reboot is required due to immutable audit config
+                    ansible.builtin.debug:
+                      msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                    when: immutable_check.rc == 0
+              ```
   - uid: mondoo-linux-security-sudo-logging-is-enabled
     title: Ensure sudo logging is enabled
     impact: 80
@@ -5218,39 +5459,96 @@ queries:
         - Compliance with security standards requiring strong cryptographic practices may be violated.
 
         By ensuring that only strong key exchange algorithms are used, organizations can protect sensitive data, maintain secure communications, and comply with cryptographic best practices.
-      remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to add or modify the `KexAlgorithms` parameter so that it contains a comma-separated list of the site approved key exchange algorithms
+      remediation:
+        - id: cli
+          desc: |
+            ***Using the CLI***
 
-        openssh-server version 6.x
+            To configure SSH to use only approved key exchange algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `KexAlgorithms` parameter based on your `openssh-server` version.
 
-        ```
-        KexAlgorithms curve25519-sha256@libssh.org
-        ```
+            First, determine your SSH server version:
 
-        openssh-server version 7.x:
+            ```bash
+            cnquery run -c "package('openssh-server').version"
+            ```
 
-        ```
-        KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
-        ```
+            Then, based on the version, set the appropriate `KexAlgorithms` value:
 
-        openssh-server version 8.0 to 8.5:
+            - **OpenSSH 6.x**:
+              ```
+              KexAlgorithms curve25519-sha256@libssh.org
+              ```
 
-        ```
-        KexAlgorithms sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
-        ```
+            - **OpenSSH 7.x**:
+              ```
+              KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+              ```
 
-        openssh-server version 8.6 or later:
+            - **OpenSSH 8.0 to 8.5**:
+              ```
+              KexAlgorithms sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+              ```
 
-        ```
-        KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
-        ```
+            - **OpenSSH 8.6 or later**:
+              ```
+              KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+              ```
 
-        NOTE:
-        To quickly find out what openssh-server version you are using, run this command:
+            After editing the file, restart the SSH service:
 
-        ```bash
-        cnquery run -c "package('openssh-server').version"
-        ```
+            ```bash
+            sudo systemctl restart sshd
+            ```
+        - id: ansible
+          desc: |
+            ***Using Ansible***
+            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook:
+
+            ```yaml
+            ---
+            - name: Configure SSH with approved KexAlgorithms based on OpenSSH version
+              hosts: all
+              become: true
+              gather_facts: true
+
+              tasks:
+                - name: Get OpenSSH version from sshd binary
+                  ansible.builtin.shell: |
+                    /usr/sbin/sshd -v 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+'
+                  register: sshd_version
+                  changed_when: false
+                  failed_when: sshd_version.rc != 0 or sshd_version.stdout == ""
+
+                - name: Set parsed OpenSSH version
+                  ansible.builtin.set_fact:
+                    openssh_version_float: "{{ sshd_version.stdout | float }}"
+
+                - name: Determine appropriate KexAlgorithms value
+                  ansible.builtin.set_fact:
+                    kexalgos: >-
+                      {% if openssh_version_float < 7.0 %}
+                        curve25519-sha256@libssh.org
+                      {% elif openssh_version_float < 8.0 %}
+                        curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+                      {% elif openssh_version_float < 8.6 %}
+                        sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+                      {% else %}
+                        sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+                      {% endif %}
+
+                - name: Ensure KexAlgorithms is set in sshd_config
+                  ansible.builtin.lineinfile:
+                    path: /etc/ssh/sshd_config
+                    regexp: '^KexAlgorithms'
+                    line: "KexAlgorithms {{ kexalgos }}"
+                    create: yes
+                    state: present
+
+                - name: Restart SSHD to apply configuration
+                  ansible.builtin.systemd:
+                    name: sshd
+                    state: restarted
+            ```
   - uid: mondoo-linux-security-ssh-idle-timeout-interval-is-configured
     title: Ensure SSH Idle Timeout Interval is configured
     impact: 60
