@@ -256,6 +256,35 @@ queries:
                   ansible.builtin.package:
                     name: aide
                     state: present
+        - id: bash
+          desc: |
+            ***Using a Bash Script***
+
+            Use this Bash script to install AIDE on most Linux distributions. It will auto-detect the package manager and install AIDE if not already installed.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if command -v yum >/dev/null 2>&1; then
+              echo "Detected yum-based system. Installing aide..."
+              sudo yum install -y aide
+            elif command -v dnf >/dev/null 2>&1; then
+              echo "Detected dnf-based system. Installing aide..."
+              sudo dnf install -y aide
+            elif command -v apt-get >/dev/null 2>&1; then
+              echo "Detected apt-based system. Installing aide..."
+              sudo apt-get update
+              sudo apt-get install -y aide
+            elif command -v zypper >/dev/null 2>&1; then
+              echo "Detected zypper-based system. Installing aide..."
+              sudo zypper install -y aide
+            else
+              echo "No supported package manager found. Please install AIDE manually."
+              exit 1
+            fi
+
+            echo "AIDE installation complete."
             ```
   - uid: mondoo-linux-security-filesystem-integrity-is-regularly-checked
     title: Ensure filesystem integrity is regularly checked using AIDE
@@ -408,6 +437,51 @@ queries:
                     enabled: true
                     state: started
             ```
+        - id: bash
+          desc: |
+            ***Using a Bash Script***
+
+            Use this Bash script to configure a daily AIDE check on most Linux distributions. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            # Install AIDE if not present
+            if ! command -v aide >/dev/null 2>&1; then
+              if command -v yum >/dev/null 2>&1; then
+                echo "Detected yum-based system. Installing aide..."
+                sudo yum install -y aide
+              elif command -v dnf >/dev/null 2>&1; then
+                echo "Detected dnf-based system. Installing aide..."
+                sudo dnf install -y aide
+              elif command -v apt-get >/dev/null 2>&1; then
+                echo "Detected apt-based system. Installing aide..."
+                sudo apt-get update
+                sudo apt-get install -y aide
+              elif command -v zypper >/dev/null 2>&1; then
+                echo "Detected zypper-based system. Installing aide..."
+                sudo zypper install -y aide
+              else
+                echo "No supported package manager found. Please install AIDE manually."
+                exit 1
+              fi
+            fi
+
+            # Initialize AIDE database if not already initialized
+            if [ ! -f /var/lib/aide/aide.db.gz ] && [ ! -f /var/lib/aide/aide.db ]; then
+              echo "Initializing AIDE database..."
+              sudo aide --init
+              sudo cp /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz 2>/dev/null || true
+              sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db 2>/dev/null || true
+            fi
+
+            # Add cron job for daily check at 5AM if not already present
+            CRON_LINE="0 5 * * * /usr/sbin/aide --check"
+            (sudo crontab -l 2>/dev/null | grep -v -F "$CRON_LINE" ; echo "$CRON_LINE") | sudo crontab -
+
+            echo "AIDE daily check scheduled at 5AM via cron."
+            ```
   - uid: mondoo-linux-security-core-dumps-are-restricted
     title: Ensure core dumps are restricted
     impact: 75
@@ -500,6 +574,7 @@ queries:
                     value: '0'
                     sysctl_file: /etc/sysctl.d/99-disable-coredump.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
 
                 - name: Check if systemd-coredump config exists
@@ -522,6 +597,37 @@ queries:
                     - name: Reload systemd daemon after coredump config change
                       ansible.builtin.command: systemctl daemon-reexec
                   when: coredump_conf.stat.exists
+            ```
+        - id: bash
+          desc: |
+            ***Using a Bash Script***
+
+            Use this Bash script to restrict core dumps on most Linux distributions. It will set the appropriate limits, kernel parameters, and update systemd-coredump configuration if present.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            # Set hard core dump limit to 0
+            if ! grep -qE '^\*\s+hard\s+core\s+0' /etc/security/limits.conf; then
+              echo '* hard core 0' | sudo tee -a /etc/security/limits.conf
+            fi
+
+            # Set fs.suid_dumpable to 0 in sysctl
+            if ! grep -q '^fs.suid_dumpable' /etc/sysctl.conf 2>/dev/null && ! grep -q '^fs.suid_dumpable' /etc/sysctl.d/* 2>/dev/null; then
+              echo 'fs.suid_dumpable = 0' | sudo tee /etc/sysctl.d/99-disable-coredump.conf
+            fi
+            sudo sysctl -w fs.suid_dumpable=0
+
+            # Configure systemd-coredump if present
+            if [ -f /etc/systemd/coredump.conf ]; then
+              sudo sed -i '/^ProcessSizeMax/d' /etc/systemd/coredump.conf
+              sudo sed -i '/^Storage/d' /etc/systemd/coredump.conf
+              echo -e '[Coredump]\nProcessSizeMax=0\nStorage=none' | sudo tee -a /etc/systemd/coredump.conf
+              sudo systemctl daemon-reexec
+            fi
+
+            echo "Core dump restrictions applied."
             ```
   - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
     title: Ensure address space layout randomization (ASLR) is enabled
@@ -581,7 +687,27 @@ queries:
                     value: '2'
                     sysctl_file: /etc/sysctl.d/99-aslr.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
+            ```
+        - id: bash
+          desc: |
+            ***Using a Bash Script***
+
+            Use this Bash script to set ASLR:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            # Set ASLR to 2
+            if ! grep -q '^kernel.randomize_va_space' /etc/sysctl.conf 2>/dev/null && ! grep -q '^kernel.randomize_va_space' /etc/sysctl.d/* 2>/dev/null; then
+              echo 'kernel.randomize_va_space = 2' | sudo tee /etc/sysctl.d/99-aslr.conf
+            fi
+
+            sudo sysctl -w kernel.randomize_va_space=2
+
+            echo "ASLR set to 2."
             ```
   - uid: mondoo-linux-security-prelink-is-disabled
     title: Ensure prelink is disabled
@@ -1962,6 +2088,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-ip-forwarding.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.ip_forward', value: '0' }
@@ -2032,6 +2159,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-packet-redirect.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
@@ -2111,6 +2239,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-source-routing.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
@@ -2193,6 +2322,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-icmp-redirects.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
@@ -2265,6 +2395,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-secure-icmp-redirects.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
@@ -2332,6 +2463,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-log-suspicious-packets.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
@@ -2396,6 +2528,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-icmp-echo-broadcasts.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
@@ -2459,6 +2592,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-bogus-icmp-responses.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
@@ -2525,6 +2659,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-enable-reverse-path-filtering.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
@@ -2589,6 +2724,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-enable-tcp-syncookies.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.tcp_syncookies', value: '1' }
@@ -2657,6 +2793,7 @@ queries:
                     value: "{{ item.value }}"
                     sysctl_file: /etc/sysctl.d/99-disable-ipv6-router-advertisements.conf
                     state: present
+                    sysctl_set: true
                     reload: yes
                   loop:
                     - { name: 'net.ipv6.conf.all.accept_ra', value: '0' }
