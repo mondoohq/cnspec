@@ -19,7 +19,11 @@ func TestScanFlags(t *testing.T) {
 		r := test.NewCliTestRunner("./cnspec", "scan", "docker", "alpine:latest", "--json")
 		err := r.Run()
 		require.NoError(t, err)
-		assert.Equal(t, 0, r.ExitCode())
+		if !assert.Equal(t, 0, r.ExitCode()) {
+			// Print the output for debugging
+			t.Logf("Stdout: %s", r.Stdout())
+			t.Logf("Stderr: %s", r.Stderr())
+		}
 		assert.NotNil(t, r.Stdout())
 		assert.NotNil(t, r.Stderr())
 

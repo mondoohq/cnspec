@@ -2014,6 +2014,8 @@ policies:
   props:
   - uid: name
     mql: return "definitely not the asset name"
+    for:
+    - uid: name
   groups:
   - type: chapter
     filters: "true"
