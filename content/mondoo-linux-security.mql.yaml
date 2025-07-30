@@ -13,7 +13,7 @@ policies:
         email: hello@mondoo.com
     docs:
       desc: |-
-        The Mondoo Linux Security policy provides guidance for establishing a secure baseline configuration for Linux systems running on x86 and x64 platforms.
+        The Mondoo Linux Security policy provides guidance for establishing a secure baseline configuration for Linux systems running on x64 platforms.
 
         This policy includes queries to help harden Linux systems by:
           - Identifying problematic services that may be running
@@ -23,7 +23,7 @@ policies:
           - Ensure users and groups are securely configured
           - Identifying misconfigured Kernel networking configurations
 
-        This policy has been developed for Red Hat (RHEL), Debian, Ubuntu, and SUSE (SLES) derivative distributions running on x86 and x64 architectures.
+        This policy has been developed for Red Hat (RHEL), Debian, Ubuntu, and SUSE (SLES) derivative distributions running on x64 architectures.
         Some queries may be skipped depending on your particular distribution, installation type, or underlying infrastructure.
         The overall guidance within this policy broadly assumes that operations are being performed as the root user.
         Operations performed using sudo instead of the root user may produce unexpected results or fail to make the intended changes to the system.
@@ -4789,41 +4789,94 @@ queries:
         ```
 
         If your system's UID_MIN is not `1000`, replace `auid>=1000` with `auid>=<UID_MIN for your system>` in the audit and remediation procedures.
-      remediation: |-
-        For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-deletion.rules`
+            Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-deletion.rules`
 
-        ```
-        -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
-        ```
+            Add the following lines:
 
-        For 64-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+            ```
+            -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+            -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+            ```
 
-        Example: `vi /etc/audit/rules.d/50-deletion.rules`
+            To load the newly added rules into the running configuration:
 
-        Add the following lines:
+            ```bash
+            augenrules --load
+            ```
 
-        ```
-        -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
-        -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
-        ```
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        To load the newly added rules into the running configuration:
+            Check if a reboot is required, in case the running configuration is set to be immutable:
 
-        ```bash
-        augenrules --load
-        ```
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+        - id: ansible
+          desc: |
+            **Using Ansible**
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            Use this Ansible playbook to set the audit rules for file deletion and renaming:
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+            ```yaml
+            ---
+            - name: Configure audit rules for file deletion and renaming
+              hosts: all
+              become: true
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+              tasks:
+                - name: Ensure file deletion and renaming audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-deletion.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                      -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: deletion_audit_rules_updated
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: deletion_audit_rules_updated.changed
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash script**
+
+            To set the audit rules for file deletion and renaming, you can use the following Bash script:
+
+            #!/bin/bash
+            set -e
+
+            # Create or overwrite the audit rules file for file deletion events
+            cat <<EOF > /etc/audit/rules.d/50-deletion.rules
+            -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+            -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+            EOF
+
+            # Load the new rules into the running configuration
+            augenrules --load
+
+            # Notify if a reboot is required due to immutable audit configuration
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules"
+            fi
   - uid: mondoo-linux-security-kernel-module-loading-and-unloading-is-collected
     title: Ensure kernel module loading and unloading is collected
     impact: 50
@@ -4837,7 +4890,7 @@ queries:
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/insmod\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/rmmod\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
       props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/sbin\/modprobe\s+\-p\s+x\s+\-k\s+modules(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/)) || props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b32\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/))
+      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-a\s+always,exit\s+\-F\s+arch\=b64\s+\-S\s+init\_module\s+\-S\s+delete\_module\s+\-k\s+modules(\s+)?$/))
     docs:
       desc: |
         This check verifies that the loading and unloading of kernel modules is monitored by auditing the execution of related programs and system calls, such as `insmod`, `rmmod`, `modprobe`, `init_module`, and `delete_module`.
@@ -4850,46 +4903,98 @@ queries:
           - System administrators may lack visibility into critical changes to the kernel's behavior.
 
         By auditing the execution of module-related programs and system calls, organizations can detect and respond to unauthorized changes, ensuring the integrity and security of the kernel.
-      remediation: |-
-        For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-modules.rules`
+            Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-modules.rules`
 
-        ```
-        -w /sbin/insmod -p x -k modules
-        -w /sbin/rmmod -p x -k modules
-        -w /sbin/modprobe -p x -k modules
-        -a always,exit -F arch=b32 -S init_module -S delete_module -k modules
-        ```
+            Add the following lines:
 
-        For 64-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+            ```
+            -w /sbin/insmod -p x -k modules
+            -w /sbin/rmmod -p x -k modules
+            -w /sbin/modprobe -p x -k modules
+            -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
+            ```
 
-        Example: `vi /etc/audit/rules.d/50-modules.rules`
+            To load the newly added rules into the running configuration:
 
-        Add the following lines:
+            ```bash
+            augenrules --load
+            ```
 
-        ```
-        -w /sbin/insmod -p x -k modules
-        -w /sbin/rmmod -p x -k modules
-        -w /sbin/modprobe -p x -k modules
-        -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
-        ```
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        To load the newly added rules into the running configuration:
+            Check if a reboot is required, in case the running configuration is set to be immutable:
 
-        ```bash
-        augenrules --load
-        ```
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            Use this Ansible playbook to set the audit rules for kernel module loading and unloading:
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+            ```yaml
+            ---
+            - name: Configure audit rules for kernel modules
+              hosts: all
+              become: true
+              tasks:
+                - name: Ensure audit rules for kernel modules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-modules.rules
+                    block: |
+                      -w /sbin/insmod -p x -k modules
+                      -w /sbin/rmmod -p x -k modules
+                      -w /sbin/modprobe -p x -k modules
+                      -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                    register: modules_audit_rules_updated
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: modules_audit_rules_updated.changed
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using Bash**
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            To set the audit rules for kernel module loading and unloading, you can run the following bash script:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            echo "Setting audit rules for kernel modules..."
+            echo "-w /sbin/insmod -p x -k modules" > /etc/audit/rules.d/50-modules.rules
+            echo "-w /sbin/rmmod -p x -k modules" >> /etc/audit/rules.d/50-modules.rules
+            echo "-w /sbin/modprobe -p x -k modules" >> /etc/audit/rules.d/50-modules.rules
+            echo "-a always,exit -F arch=b64 -S init_module -S delete_module -k modules" >> /etc/audit/rules.d/50-modules.rules
+
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules"
+            fi
+            ```
   - uid: mondoo-linux-security-system-administrator-actions-sudolog-are-collected
     title: Ensure system administrator actions (sudolog) are collected
     impact: 50
