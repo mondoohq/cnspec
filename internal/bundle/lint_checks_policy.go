@@ -11,7 +11,7 @@ import (
 )
 
 // reResourceID: lowercase letters, digits, dots or hyphens, fewer than 200 chars, more than 5 chars
-var reResourceID = regexp.MustCompile(`^([\d-_\.]|[a-zA-Z]){5,200}$`)
+var reResourceID = regexp.MustCompile(`^([\d-_\.]|[a-z]){5,200}$`)
 
 // LintContext provides shared information and state to lint check functions.
 type LintContext struct {
@@ -73,37 +73,43 @@ func GetPolicyLintChecks() []LintCheck {
 			Description: "Ensures every policy has a `name` field.",
 			Severity:    LevelError,
 			Run:         runCheckPolicyName,
-		}, {
+		},
+		{
 			ID:          PolicyRequiredTagsMissingRuleID,
 			Name:        "Policy Required Tags",
 			Description: "Ensures policies have required tags like 'mondoo.com/category' and 'mondoo.com/platform'.",
 			Severity:    LevelWarning,
 			Run:         runCheckPolicyRequiredTags,
-		}, {
+		},
+		{
 			ID:          PolicyMissingVersionRuleID,
 			Name:        "Policy Version Presence",
 			Description: "Ensures every policy has a `version` field.",
 			Severity:    LevelError,
 			Run:         runCheckPolicyMissingVersion,
-		}, {
+		},
+		{
 			ID:          PolicyWrongVersionRuleID,
 			Name:        "Policy Version Format",
 			Description: "Ensures policy versions follow semantic versioning (semver).",
 			Severity:    LevelError,
 			Run:         runCheckPolicyWrongVersion,
-		}, {
+		},
+		{
 			ID:          PolicyMissingChecksRuleID, // Covers empty groups and empty checks/queries in groups
 			Name:        "Policy Missing Checks or Groups",
 			Description: "Ensures policies have defined groups, and groups have checks or queries.",
 			Severity:    LevelError,
 			Run:         runCheckPolicyGroupsAndChecks,
-		}, {
+		},
+		{
 			ID:          PolicyMissingAssetFilterRuleID,
 			Name:        "Policy Group Missing Asset Filter",
 			Description: "Warns if a policy group or its checks lack asset filters or variants.",
 			Severity:    LevelWarning, // Original was warning
 			Run:         runCheckPolicyGroupAssetFilter,
-		}, {
+		},
+		{
 			ID:          PolicyMissingAssignedQueryRuleID,
 			Name:        "Policy Assigned Query Existence",
 			Description: "Ensures that queries assigned in policy groups exist globally or are valid embedded queries.",
