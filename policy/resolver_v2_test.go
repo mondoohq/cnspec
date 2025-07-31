@@ -632,7 +632,7 @@ policies:
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(policyMrn("policy-active")).Notifies("root")
-		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -698,7 +698,7 @@ policies:
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(policyMrn("policy-active")).WithScoringSystem(explorer.ScoringSystem_BANDED).Notifies("root")
-		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -744,7 +744,7 @@ policies:
 	rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 	rpTester.ExecutesQuery(queryMrn("check1"))
 	rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
-	rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies("policy-1").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+	rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies("policy-1").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 	rpTester.ReportingJobByMrn(policyMrn("policy-1")).Notifies("root")
 }
 
@@ -899,11 +899,11 @@ framework_maps:
 		rpTester.ReportingJobByMrn(queryMrn("check-pass-2")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(queryMrn("active-query"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 		rpTester.ReportingJobByMrn(queryMrn("active-query")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(queryMrn("active-query-2"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 		rpTester.ReportingJobByMrn(queryMrn("active-query-2")).Notifies(policyMrn("policy1"))
 
 		rpTester.ReportingJobByMrn(queryMrn("check-overlap")).Notifies(policyMrn("policy1"))
@@ -1664,7 +1664,7 @@ policies:
 	rpTester.CodeIdReportingJobForMrn(queryMrn("query-2")).Notifies(queryMrn("query-2"))
 
 	// rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(queryMrn("sshd-service-running"))
-	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 	rpTester.ReportingJobByMrn(riskFactorMrn("sshd-service")).WithType(policy.ReportingJob_RISK_FACTOR).Notifies(policyMrn("risk-factors-security"))
 
 	rpTester.ReportingJobByMrn(queryMrn("query-1")).Notifies(policyMrn("testpolicy1"))
@@ -1760,7 +1760,7 @@ framework_maps:
 
 		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 
-		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -1786,7 +1786,7 @@ framework_maps:
 
 		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 
-		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -1943,7 +1943,7 @@ policies:
 			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
-		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
 		rpTester.ReportingJobByMrn(policyMrn("policy1")).Notifies("root")
 
@@ -2052,6 +2052,80 @@ policies:
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies("root")
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies("root")
 
+		rpTester.doTest(t, rp)
+	})
+}
+
+func TestResolveV2_ValidUntil(t *testing.T) {
+	ctx := context.Background()
+	bYaml := `
+owner_mrn: //test.sth
+policies:
+  - uid: example1
+    name: Example policy 1
+    groups:
+      - filters:
+          - mql: "true"
+        checks:
+          - uid: check-01
+            mql: |
+              1 == 2
+            impact: 95
+
+      - type: override
+        title: Exception 1
+        valid:
+          until: 2025-09-01
+        checks:
+          - uid: check-01
+            action: preview
+`
+
+	t.Run("now is before validUntil", func(t *testing.T) {
+		b := parseBundle(t, bYaml)
+		srv := initResolver(t, []*testAsset{
+			{asset: "asset1", policies: []string{policyMrn("example1")}},
+		}, []*policy.Bundle{b})
+		srv.NowProvider = func() time.Time {
+			return time.Date(2024, 9, 1, 0, 0, 0, 0, time.UTC)
+		}
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    policyMrn("example1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("check-01"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check-01")).
+			Notifies(queryMrn("check-01")).
+			WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE, Value: &explorer.ImpactValue{Value: 95}})
+		rpTester.ReportingJobByMrn(queryMrn("check-01")).Notifies("root")
+		rpTester.doTest(t, rp)
+	})
+
+	t.Run("now is after validUntil", func(t *testing.T) {
+		b := parseBundle(t, bYaml)
+		srv := initResolver(t, []*testAsset{
+			{asset: "asset1", policies: []string{policyMrn("example1")}},
+		}, []*policy.Bundle{b})
+		srv.NowProvider = func() time.Time {
+			return time.Date(2025, 9, 2, 0, 0, 0, 0, time.UTC)
+		}
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    policyMrn("example1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("check-01"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check-01")).
+			Notifies(queryMrn("check-01")).
+			WithImpact(&explorer.Impact{Value: &explorer.ImpactValue{Value: 95}})
+		rpTester.ReportingJobByMrn(queryMrn("check-01")).Notifies("root")
 		rpTester.doTest(t, rp)
 	})
 }
