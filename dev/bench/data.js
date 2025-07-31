@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753984115226,
+  "lastUpdate": 1753985298941,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -3244,6 +3244,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "62354 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jay@mondoo.com",
+            "name": "Jay Mundrawala",
+            "username": "jaym"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "72359ac844a854ca0e263e42886f498c28ba4da7",
+          "message": "Make properties work properly (#1734)\n\n* Make properties work properly\n\n- Props are now namespaced to either a policy or query\n- Props on policies need to reference props through `for`\n- We will automatically make the `for` references if a pack does\n  not define any props but includes queries with props\n\nExamples:\n```yaml\npolicies:\n  - uid: example1\n    name: Example policy 1\n    version: \"1.0.0\"\n    authors:\n      - name: Mondoo\n        email: hello@mondoo.com\n    groups:\n      - title: group1\n        filters: return true\n        queries:\n          - uid: variant-1\n          - uid: variant-2\n          - uid: variant-3\n          - uid: variant-4\n    props:\n      - uid: userHome\n        for:\n          - uid: home\n          - uid: homeDir\n        mql: return \"ex\"\n\nqueries:\n  - uid: variant-1\n    mql: props.home + \" on 1\"\n    props:\n      - uid: home\n        mql: return \"p1\"\n\n  - uid: variant-2\n    mql: props.home + \" on 2\"\n    props:\n      - uid: home\n        mql: return \"p2\"\n\n  - uid: variant-3\n    mql: props.homeDir + \" on 3\"\n    props:\n      - uid: homeDir\n        mql: return \"p3\"\n\n  - uid: variant-4\n    mql: props.user + \" is the user\"\n    props:\n      - uid: user\n        mql: return \"ada\"\n```\n\n```\ngo run ./apps/cnspec scan -f props.mql.yaml\n```\n\n```\nhome.+: \"ex on 1\"\nhome.+: \"ex on 2\"\nhomeDir.+: \"ex on 3\"\nuser.+: \"ada is the user\"\n```\n\n```\ngo run ./apps/cnspec scan -f props.mql.yaml --props userHome=\"return 'foo'\"\n```\n\n```\nhomeDir.+: \"foo on 3\"\nuser.+: \"ada is the user\"\nhome.+: \"foo on 1\"\nhome.+: \"foo on 2\"\n```\n\n```yaml\npolicies:\n  - uid: example1\n    name: Example policy 1\n    version: \"1.0.0\"\n    authors:\n      - name: Mondoo\n        email: hello@mondoo.com\n    groups:\n      - title: group1\n        filters: return true\n        queries:\n          - uid: variant-1\n          - uid: variant-2\n          - uid: variant-3\n          - uid: variant-4\nqueries:\n  - uid: variant-1\n    mql: props.home + \" on 1\"\n    props:\n      - uid: home\n        mql: return \"p1\"\n\n  - uid: variant-2\n    mql: props.home + \" on 2\"\n    props:\n      - uid: home\n        mql: return \"p2\"\n\n  - uid: variant-3\n    mql: props.homeDir + \" on 3\"\n    props:\n      - uid: homeDir\n        mql: return \"p3\"\n\n  - uid: variant-4\n    mql: props.user + \" is the user\"\n    props:\n      - uid: user\n        mql: return \"ada\"\n```\n\n```\ngo run ./apps/cnspec scan -f props.mql.yaml\n```\n\n```\nhome.+: \"p2 on 2\"\nhome.+: \"p1 on 1\"\nhomeDir.+: \"p3 on 3\"\nuser.+: \"ada is the user\"\n```\n\n```\ngo run ./apps/cnspec scan -f props.mql.yaml --props home=\"return 'foo'\"\n```\n\n```\nhome.+: \"foo on 2\"\nhomeDir.+: \"p3 on 3\"\nuser.+: \"ada is the user\"\nhome.+: \"foo on 1\"\n```\n\n* try to lift properties early",
+          "timestamp": "2025-07-31T13:05:26-05:00",
+          "tree_id": "766c7d974d010eb074cef1259ca45c76e55bf1ef",
+          "url": "https://github.com/mondoohq/cnspec/commit/72359ac844a854ca0e263e42886f498c28ba4da7"
+        },
+        "date": 1753985298441,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19769,
+            "unit": "ns/op\t    4891 B/op\t      71 allocs/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19769,
+            "unit": "ns/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4891,
+            "unit": "B/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "55077 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 20489,
+            "unit": "ns/op\t    4897 B/op\t      71 allocs/op",
+            "extra": "65078 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 20489,
+            "unit": "ns/op",
+            "extra": "65078 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4897,
+            "unit": "B/op",
+            "extra": "65078 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "65078 times\n4 procs"
           }
         ]
       }
