@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.mondoo.com/cnquery/v11"
+	"go.mondoo.com/cnquery/v11/mqlc"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
 	"go.mondoo.com/cnspec/v11/policy"
 	k8sYaml "sigs.k8s.io/yaml"
@@ -91,7 +93,13 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 	// check if the file is compilable
 	policyBundleForCompilation, err := policy.BundleFromYAML(data)
 	if err == nil {
-		_, compileErr := policyBundleForCompilation.Compile(context.Background(), schema, nil)
+		ctx := context.Background()
+		features := cnquery.DefaultFeatures
+		features = append(features, byte(cnquery.FailIfNoEntryPoints))
+		cfg := policy.BundleCompileConf{
+			CompilerConfig: mqlc.NewConfig(schema, features),
+		}
+		_, compileErr := policyBundleForCompilation.CompileExt(ctx, cfg)
 		if compileErr != nil {
 			var locs []Location
 			locs = append(locs, Location{
