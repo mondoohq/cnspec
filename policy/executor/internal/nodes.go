@@ -13,7 +13,6 @@ import (
 	"go.mondoo.com/cnquery/v11/types"
 	"go.mondoo.com/cnquery/v11/utils/multierr"
 	"go.mondoo.com/cnspec/v11/policy"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -447,7 +446,7 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 			if score.Type != policy.ScoreType_Result {
 				// We map errors to failed results.
 				// Skip and unknown are mapped to passing results
-				score = proto.Clone(score).(*policy.Score)
+				score = score.CloneVT()
 				if score.Type == policy.ScoreType_Error {
 					score.Type = policy.ScoreType_Result
 					score.Value = 0
@@ -545,7 +544,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 					Type: policy.ScoreType_Result,
 				}
 			} else {
-				s = proto.Clone(c.score).(*policy.Score)
+				s = c.score.CloneVT()
 				s.QrId = nodeData.queryID
 
 				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
