@@ -94,7 +94,7 @@ func runCheckQueryUid(ctx *LintContext, item interface{}) []*Entry {
 				}},
 			})
 		} else {
-			if !reResourceID.MatchString(q.Uid) {
+			if !queryUid.MatchString(q.Uid) {
 				entries = append(entries, &Entry{
 					RuleID:  BundleInvalidUidRuleID, // Shared Rule ID
 					Message: fmt.Sprintf("%s UID does not meet the requirements", queryIdentifier(q, isGlobal)),

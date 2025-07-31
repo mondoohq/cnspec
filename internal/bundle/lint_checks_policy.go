@@ -11,7 +11,10 @@ import (
 )
 
 // reResourceID: lowercase letters, digits, dots or hyphens, fewer than 200 chars, more than 5 chars
-var reResourceID = regexp.MustCompile(`^([\d-_\.]|[a-z]){5,200}$`)
+var (
+	policyUid = regexp.MustCompile(`^([\d-_]|[a-z]){4,100}$`)
+	queryUid  = regexp.MustCompile(`^([\d-_\.]|[a-zA-Z]){5,200}$`)
+)
 
 // LintContext provides shared information and state to lint check functions.
 type LintContext struct {
@@ -148,7 +151,7 @@ func runCheckPolicyUid(ctx *LintContext, item interface{}) []*Entry {
 			}},
 		})
 	} else {
-		if !reResourceID.MatchString(p.Uid) {
+		if !policyUid.MatchString(p.Uid) {
 			entries = append(entries, &Entry{
 				RuleID:  BundleInvalidUidRuleID,
 				Message: fmt.Sprintf("%s UID does not meet the requirements", policyIdentifier(p)),
