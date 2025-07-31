@@ -63,7 +63,7 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "error", result.Level)
 
 		result = findEntry(results.Entries, "bundle-compile-error")
-		assert.Equal(t, "Could not compile policy bundle: failed to refresh policy : failed to refresh mrn for policy Ubuntu Benchmark 1 : cannot refresh MRN with an empty UID", result.Message)
+		assert.Contains(t, result.Message, "cannot refresh MRN with an empty UID")
 		assert.Equal(t, "bundle-compile-error", result.RuleID)
 	})
 
