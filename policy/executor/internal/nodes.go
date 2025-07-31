@@ -447,10 +447,11 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 				// We map errors to failed results.
 				// Skip and unknown are mapped to passing results
 				score = score.CloneVT()
-				if score.Type == policy.ScoreType_Error {
+				switch score.Type {
+				case policy.ScoreType_Error:
 					score.Type = policy.ScoreType_Result
 					score.Value = 0
-				} else if score.Type == policy.ScoreType_Skip || score.Type == policy.ScoreType_Unscored {
+				case policy.ScoreType_Skip, policy.ScoreType_Unscored:
 					score.Type = policy.ScoreType_Result
 					score.Value = 100
 				}
