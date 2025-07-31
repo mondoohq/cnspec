@@ -4,7 +4,7 @@ go 1.24.0
 
 toolchain go1.24.1
 
-// replace go.mondoo.com/cnquery/v11 => ../cnquery
+replace go.mondoo.com/cnquery/v11 => ../cnquery
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1
@@ -28,6 +28,7 @@ require (
 	github.com/hashicorp/terraform-json v0.25.0
 	github.com/jstemmer/go-junit-report/v2 v2.1.0
 	github.com/mattn/go-isatty v0.0.20
+	github.com/mergestat/timediff v0.0.4
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.16.0
 	github.com/olekukonko/tablewriter v0.0.5

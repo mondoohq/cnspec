@@ -447,10 +447,11 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 				// We map errors to failed results.
 				// Skip and unknown are mapped to passing results
 				score = score.CloneVT()
-				if score.Type == policy.ScoreType_Error {
+				switch score.Type {
+				case policy.ScoreType_Error:
 					score.Type = policy.ScoreType_Result
 					score.Value = 0
-				} else if score.Type == policy.ScoreType_Skip || score.Type == policy.ScoreType_Unscored {
+				case policy.ScoreType_Skip, policy.ScoreType_Unscored:
 					score.Type = policy.ScoreType_Result
 					score.Value = 100
 				}
@@ -546,6 +547,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 			} else {
 				s = c.score.CloneVT()
 				s.QrId = nodeData.queryID
+
 				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
 					s.Type = policy.ScoreType_Disabled
 				} else if s.Type == policy.ScoreType_Result {
@@ -557,6 +559,12 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 							if floor > s.Value {
 								s.Value = floor
 							}
+						}
+
+						// since we clone it from the child, which is just the raw score,
+						// we have to set the type on this layer
+						if c.impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+							s.Type = policy.ScoreType_Skip
 						}
 					}
 				}
