@@ -3579,10 +3579,16 @@ queries:
             max_log_file = <MB>
             ```
 
-            2. Restart the service to load the new configuration values:
+            2. Reload the auditd service to apply the new configuration:
 
             ```bash
-            service auditd reload
+            systemctl reload auditd
+            ```
+
+            3. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
             ```
         - id: ansible
           desc: |
@@ -3597,6 +3603,13 @@ queries:
               become: true
 
               tasks:
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
                 - name: Ensure audit log storage size is configured in auditd.conf
                   ansible.builtin.lineinfile:
                     path: /etc/audit/auditd.conf
@@ -3604,10 +3617,40 @@ queries:
                     line: 'max_log_file = <MB>'
                     create: yes
                     state: present
-                - name: Reload auditd service to apply changes
+                  register: auditd_logsize_changed
+
+                - name: Restart auditd service to apply changes if not immutable
                   ansible.builtin.systemd:
                     name: auditd
-                    state: reloaded
+                    state: restarted
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_logsize_changed.changed
+
+                - name: Warn if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to configure the maximum log file size for audit logs.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            MB_SIZE="<MB>"  # Replace <MB> with the desired size in megabytes
+
+            echo "Configuring audit log storage size..."
+            echo "max_log_file = $MB_SIZE" >> /etc/audit/auditd.conf
+            systemctl reload auditd
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
             ```
   - uid: mondoo-linux-security-audit-logs-are-not-automatically-deleted
     title: Ensure audit logs are not automatically deleted
@@ -3640,10 +3683,16 @@ queries:
             max_log_file_action = keep_logs
             ```
 
-            2. Restart the service to load the new configuration values:
+            2. Reload the service to load the new configuration values:
 
             ```bash
             service auditd reload
+            ```
+
+            3. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
             ```
         - id: ansible
           desc: |
@@ -3658,6 +3707,13 @@ queries:
               become: true
 
               tasks:
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                  auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
                 - name: Ensure audit log file action is configured in auditd.conf
                   ansible.builtin.lineinfile:
                     path: /etc/audit/auditd.conf
@@ -3665,10 +3721,20 @@ queries:
                     line: 'max_log_file_action = keep_logs'
                     create: yes
                     state: present
-                - name: Reload auditd service to apply changes
+                    register: auditd_logfile_action_changed
+
+                - name: Reload auditd service to apply changes if not immutable
                   ansible.builtin.systemd:
                     name: auditd
                     state: reloaded
+                    when:
+                    - immutable_check.rc != 0
+                    - auditd_logfile_action_changed.changed
+
+                - name: Warn if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                    when: immutable_check.rc == 0
             ```
   - uid: mondoo-linux-security-system-is-disabled-when-audit-logs-are-full
     title: Ensure system is disabled when audit logs are full
@@ -3707,10 +3773,16 @@ queries:
             admin_space_left_action = halt
             ```
 
-            2. Restart the service to load the new configuration values:
+            2. Reload the service to load the new configuration values:
 
             ```bash
             service auditd reload
+            ```
+
+            3. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
             ```
         - id: ansible
           desc: |
@@ -3726,19 +3798,35 @@ queries:
 
               tasks:
                 - name: Ensure auditd parameters are configured in auditd.conf
-                  ansible.builtin.lineinfile:
+                  ansible.builtin.blockinfile:
                     path: /etc/audit/auditd.conf
-                    regexp: '^space_left_action =|^action_mail_acct =|^admin_space_left_action ='
-                    line: |
+                    block: |
                       space_left_action = email
                       action_mail_acct = root
                       admin_space_left_action = halt
                     create: yes
                     state: present
-                - name: Reload auditd service to apply changes
+                  register: auditd_params_changed
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Reload auditd service to apply changes if not immutable and config changed
                   ansible.builtin.systemd:
                     name: auditd
                     state: reloaded
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_params_changed.changed
+
+                - name: Warn if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
             ```
   - uid: mondoo-linux-security-changes-to-system-administration-scope-sudoers-is-collected
     title: Ensure changes to system administration scope (sudoers) is collected
@@ -6599,8 +6687,10 @@ queries:
             set -e
 
             if grep -q '^PermitRootLogin' /etc/ssh/sshd_config; then
+              echo "Updating PermitRootLogin in sshd_config..."
               sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
             else
+              echo "Adding PermitRootLogin to sshd_config..."
               echo "PermitRootLogin no" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6676,8 +6766,10 @@ queries:
             set -e
 
             if grep -q '^PermitEmptyPasswords' /etc/ssh/sshd_config; then
+              echo "Updating PermitEmptyPasswords in sshd_config..."
               sed -i 's/^PermitEmptyPasswords.*/PermitEmptyPasswords no/' /etc/ssh/sshd_config
             else
+              echo "Adding PermitEmptyPasswords to sshd_config..."
               echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6753,8 +6845,10 @@ queries:
             set -e
 
             if grep -q '^PermitUserEnvironment' /etc/ssh/sshd_config; then
+              echo "Updating PermitUserEnvironment in sshd_config..."
               sed -i 's/^PermitUserEnvironment.*/PermitUserEnvironment no/' /etc/ssh/sshd_config
             else
+              echo "Adding PermitUserEnvironment to sshd_config..."
               echo "PermitUserEnvironment no" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6837,9 +6931,12 @@ queries:
             set -e
 
             CIPHER_LINE="Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+
             if grep -q '^Ciphers' /etc/ssh/sshd_config; then
+              echo "Updating Ciphers in sshd_config..."
               sed -i "s/^Ciphers.*/$CIPHER_LINE/" /etc/ssh/sshd_config
             else
+              echo "Adding Ciphers to sshd_config..."
               echo "$CIPHER_LINE" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6921,8 +7018,10 @@ queries:
             MAC_LINE="MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
 
             if grep -q '^MACs' /etc/ssh/sshd_config; then
+              echo "Updating MACs in sshd_config..."
               sed -i "s/^MACs.*/$MAC_LINE/" /etc/ssh/sshd_config
             else
+              echo "Adding MACs to sshd_config..."
               echo "$MAC_LINE" >> /etc/ssh/sshd_config
             fi
 
@@ -7076,7 +7175,13 @@ queries:
               kex_algos="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             fi
 
-            echo "KexAlgorithms $kex_algos" >> /etc/ssh/sshd_config
+            if grep -q '^KexAlgorithms' /etc/ssh/sshd_config; then
+              echo "Updating existing KexAlgorithms configuration value"
+              sed -i "s/^KexAlgorithms.*/KexAlgorithms $kex_algos/" /etc/ssh/sshd_config
+            else
+              echo "Adding KexAlgorithms configuration value to SSH config"
+              echo "KexAlgorithms $kex_algos" >> /etc/ssh/sshd_config
+            fi
             systemctl restart sshd
             ```
   - uid: mondoo-linux-security-ssh-idle-timeout-interval-is-configured
