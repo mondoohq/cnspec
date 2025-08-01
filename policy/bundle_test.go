@@ -687,6 +687,74 @@ queries:
 	require.Equal(t, b.Queries[4].Props[0].Mrn, b.Policies[0].Props[2].For[0].Mrn)
 }
 
+func TestProps_QueryPropsLifted_DeprecatedQueryField(t *testing.T) {
+	// In this test, we expect that 3 properties are lifted to the policies:
+	// home, homeDir, and user.
+	// These must reference the queries prop through the for field
+	bundleYaml := `
+policies:
+  - uid: example1
+    name: Example policy 1
+    groups:
+      - title: group1
+        filters: return true
+        queries:
+          - uid: variant-1
+          - uid: variant-2
+          - uid: variant-3
+          - uid: variant-4
+queries:
+  - uid: variant-check
+    title: Variant check
+    variants:
+      - uid: variant-1
+      - uid: variant-2
+      - uid: variant-3
+
+  - uid: variant-1
+    mql: props.home + " on 1"
+    props:
+      - uid: home
+        mql: return "p1"
+
+  - uid: variant-2
+    query: props.home + " on 2"
+    props:
+      - uid: home
+        mql: return "p2"
+
+  - uid: variant-3
+    query: props.homeDir + " on 3"
+    props:
+      - uid: homeDir
+        mql: return "p3"
+  
+  - uid: variant-4
+    query: props.user + " is the user"
+    props:
+      - uid: user
+        mql: return "ada"`
+
+	b, err := policy.BundleFromYAML([]byte(bundleYaml))
+	require.NoError(t, err)
+	_, err = b.CompileExt(context.Background(), policy.BundleCompileConf{
+		CompilerConfig: conf,
+		RemoveFailing:  true,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, b.Policies[0].Props, 3)
+	require.Len(t, b.Policies[0].Props[0].For, 2)
+	require.NotEmpty(t, b.Policies[0].Props[0].For[0].Mrn)
+	require.NotEmpty(t, b.Policies[0].Props[0].For[1].Mrn)
+	require.Equal(t, b.Queries[1].Props[0].Mrn, b.Policies[0].Props[0].For[0].Mrn)
+	require.Equal(t, b.Queries[2].Props[0].Mrn, b.Policies[0].Props[0].For[1].Mrn)
+	require.Len(t, b.Policies[0].Props[1].For, 1)
+	require.Equal(t, b.Queries[3].Props[0].Mrn, b.Policies[0].Props[1].For[0].Mrn)
+	require.Len(t, b.Policies[0].Props[2].For, 1)
+	require.Equal(t, b.Queries[4].Props[0].Mrn, b.Policies[0].Props[2].For[0].Mrn)
+}
+
 func TestProps_QueryPropMrnsResolved(t *testing.T) {
 	// In this test, we expect that the property mrns are resolved correctly
 	// and that the for field is set to the correct query mrn.
