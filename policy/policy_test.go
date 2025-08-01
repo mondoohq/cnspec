@@ -482,6 +482,93 @@ queries:
 
 	pUpdated := bundle.Policies[0]
 
+	pUpdated.Groups[0].Valid = &policy.Validity{
+		From:  &explorer.HumanTime{Seconds: now.Unix()},
+		Until: &explorer.HumanTime{Seconds: now.Add(1 * time.Hour).Unix()},
+	}
+	pUpdated.Groups[1].Valid = &policy.Validity{
+		From:  &explorer.HumanTime{Seconds: now.Add(4 * time.Hour).Unix()},
+		Until: &explorer.HumanTime{Seconds: now.Add(5 * time.Hour).Unix()},
+	}
+	pUpdated.Groups[2].Valid = &policy.Validity{
+		From:  &explorer.HumanTime{Seconds: now.Add(2 * time.Hour).Unix()},
+		Until: &explorer.HumanTime{Seconds: now.Add(3 * time.Hour).Unix()},
+	}
+	pUpdated.Groups[3].Valid = &policy.Validity{
+		From: &explorer.HumanTime{Seconds: now.Add(6 * time.Hour).Unix()},
+	}
+
+	pUpdated.InvalidateLocalChecksums()
+	updatedBundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
+	require.NoError(t, err)
+
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(1*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(1*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(2*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(2*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(3*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(3*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Equal(t, now.Add(4*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
+	}
+	{
+		pUpdated.InvalidateLocalChecksums()
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(6*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		require.NoError(t, err, "computing checksums")
+		require.Nil(t, recalculateAt, "recalculateAt should be nil")
+	}
+}
+
+func TestPolicyRecalculateAt_Deprecated(t *testing.T) {
+	bundle, err := policy.BundleFromYAML([]byte(`
+policies:
+  - uid: test-policy
+    name: Another policy
+    version: "1.0.0"
+    groups:
+      - queries:
+          - uid: query1
+      - queries:
+          - uid: query2
+      - queries:
+          - uid: query3
+      - queries:
+          - uid: query4
+queries:
+  - uid: query1
+    mql: 1 == 1
+    filters: asset.family.contains("unix")
+  - uid: query2
+    mql: 2 == 2
+    filters: asset.family.contains("unix")
+  - uid: query3
+    mql: 3 == 3
+    filters: asset.family.contains("unix")
+  - uid: query4
+    mql: 4 == 4
+    filters: asset.family.contains("unix")
+`))
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+
+	pUpdated := bundle.Policies[0]
+
 	pUpdated.Groups[0].StartDate = now.Unix()
 	pUpdated.Groups[0].EndDate = now.Add(1 * time.Hour).Unix()
 	pUpdated.Groups[2].StartDate = now.Add(2 * time.Hour).Unix()

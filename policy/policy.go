@@ -351,6 +351,14 @@ func (p *Policy) recalculateAt(now time.Time) *time.Time {
 	}
 
 	for _, g := range p.Groups {
+		if g.Valid != nil {
+			if g.Valid.From != nil {
+				updateTimeToRecalculate(g.Valid.From.Seconds)
+			}
+			if g.Valid.Until != nil {
+				updateTimeToRecalculate(g.Valid.Until.Seconds)
+			}
+		}
 		updateTimeToRecalculate(g.StartDate)
 		updateTimeToRecalculate(g.EndDate)
 	}
