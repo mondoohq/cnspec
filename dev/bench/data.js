@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754062770737,
+  "lastUpdate": 1754063460497,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -3384,6 +3384,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "63889 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jay@mondoo.com",
+            "name": "Jay Mundrawala",
+            "username": "jaym"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "efa48552706eb229e20ca73ef2df591a8c0bbcee",
+          "message": "🧹 Migrate deprecated Query field on Mquery (#1757)\n\nThe order in which the bundle is compiled has changed, which meant the\nold field was not properly being migrated",
+          "timestamp": "2025-08-01T10:50:26-05:00",
+          "tree_id": "dd01e1f78fd6415a573e0b311980d638c0eb6a05",
+          "url": "https://github.com/mondoohq/cnspec/commit/efa48552706eb229e20ca73ef2df591a8c0bbcee"
+        },
+        "date": 1754063459904,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 20175,
+            "unit": "ns/op\t    4894 B/op\t      71 allocs/op",
+            "extra": "57087 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 20175,
+            "unit": "ns/op",
+            "extra": "57087 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4894,
+            "unit": "B/op",
+            "extra": "57087 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "57087 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 21072,
+            "unit": "ns/op\t    4895 B/op\t      71 allocs/op",
+            "extra": "52915 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 21072,
+            "unit": "ns/op",
+            "extra": "52915 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4895,
+            "unit": "B/op",
+            "extra": "52915 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "52915 times\n4 procs"
           }
         ]
       }
