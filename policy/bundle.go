@@ -1165,6 +1165,12 @@ func (cache *bundleCache) prepareMRNs() error {
 
 	fillOutLookupQuery := func(queries []*explorer.Mquery, policy *Policy) {
 		for _, query := range queries {
+			if query.Mql == "" {
+				// Query is deprecated. Calling compile does this migration, but we're
+				// potentially cloning and merging queries here, and no compilation
+				// has been done yet.
+				query.Mql = query.Query
+			}
 			// the policy is only nil if we are dealing with shared queries
 			if policy == nil {
 				cache.lookupQuery[query.Mrn] = query
