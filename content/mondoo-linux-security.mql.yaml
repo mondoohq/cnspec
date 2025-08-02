@@ -4041,6 +4041,47 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to configure the auditd parameters for handling full audit logs.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if grep -q '^space_left_action' /etc/audit/auditd.conf; then
+              echo "Updating space_left_action to email in /etc/audit/auditd.conf"
+              sed -i 's/^space_left_action.*/space_left_action = email/' /etc/audit/auditd.conf
+            else
+              echo "Adding space_left_action = email to /etc/audit/auditd.conf"
+              echo "space_left_action = email" >> /etc/audit/auditd.conf
+            fi
+
+            if grep -q '^action_mail_acct' /etc/audit/auditd.conf; then
+              echo "Updating action_mail_acct to root in /etc/audit/auditd.conf"
+              sed -i 's/^action_mail_acct.*/action_mail_acct = root/' /etc/audit/auditd.conf
+            else
+              echo "Adding action_mail_acct = root to /etc/audit/auditd.conf"
+              echo "action_mail_acct = root" >> /etc/audit/auditd.conf
+            fi
+
+            if grep -q '^admin_space_left_action' /etc/audit/auditd.conf; then
+              echo "Updating admin_space_left_action to halt in /etc/audit/auditd.conf"
+              sed -i 's/^admin_space_left_action.*/admin_space_left_action = halt/' /etc/audit/auditd.conf
+            else
+              echo "Adding admin_space_left_action = halt to /etc/audit/auditd.conf"
+              echo "admin_space_left_action = halt" >> /etc/audit/auditd.conf
+            fi
+
+            echo "Restarting auditd service to apply changes"
+            systemctl restart auditd
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-changes-to-system-administration-scope-sudoers-is-collected
     title: Ensure changes to system administration scope (sudoers) is collected
     impact: 50
@@ -4124,6 +4165,38 @@ queries:
                   ansible.builtin.systemd:
                     name: auditd
                     state: reloaded
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure changes to the sudoers file and directory are collected.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-scope.rules"
+
+            if [ ! -f "$RULES_FILE" ]; then
+              echo "Creating audit rules file: $RULES_FILE"
+              touch "$RULES_FILE"
+            fi
+
+            echo "Ensuring audit rules for sudoers are configured"
+            if ! grep -q '^-w /etc/sudoers -p wa -k scope' "$RULES_FILE"; then
+              echo "-w /etc/sudoers -p wa -k scope" >> "$RULES_FILE"
+            fi
+            if ! grep -q '^-w /etc/sudoers.d -p wa -k scope' "$RULES_FILE"; then
+              echo "-w /etc/sudoers.d -p wa -k scope" >> "$RULES_FILE"
+            fi
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
             ```
   - uid: mondoo-linux-security-login-and-logout-events-are-collected
     title: Ensure login and logout events are collected
@@ -4246,6 +4319,42 @@ queries:
                 - name: Load audit rules
                   command: augenrules --load
               ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure login and logout events are collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-logins.rules"
+
+            echo "Ensuring audit rules for lastlog and tallylog are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -w /var/log/lastlog -p wa -k logins
+            -w /var/log/tallylog -p wa -k logins
+            EOF
+
+            if [[ -d /var/log/faillog ]]; then
+              echo "Adding auditing for faillog in $RULES_FILE"
+              echo "-w /var/log/faillog -p wa -k logins" >> "$RULES_FILE"
+            fi
+
+            if [[ -d /var/run/faillock ]]; then
+              echo "Adding auditing for faillock in $RULES_FILE"
+              echo "-w /var/run/faillock -p wa -k logins" >> "$RULES_FILE"
+            fi
+
+            echo "Audit rules for login and logout events have been set in $RULES_FILE"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
+
   - uid: mondoo-linux-security-login-and-logout-events-are-collected-debian
     filters: asset.family.contains("debian")
     mql: |
@@ -4370,6 +4479,32 @@ queries:
               handlers:
                 - name: Load audit rules
                   command: augenrules --load
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure session initiation information is collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-session.rules"
+
+            echo "Ensuring audit rules for session initiation are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -w /var/run/utmp -p wa -k session
+            -w /var/log/wtmp -p wa -k logins
+            -w /var/log/btmp -p wa -k logins
+            EOF
+
+            echo "Reloading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
             ```
   - uid: mondoo-linux-security-events-that-modify-date-and-time-information-are-collected
     title: Ensure events that modify date and time information are collected
