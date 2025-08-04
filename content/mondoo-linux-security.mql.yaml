@@ -1928,6 +1928,25 @@ queries:
                     name: exim4
                     state: restarted
             ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to configure the MTA for local-only mode.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            echo "Configuring Postfix for local-only mode..."
+            sed -i 's/^inet_interfaces = .*/inet_interfaces = loopback-only/' /etc/postfix/main.cf
+            systemctl restart postfix
+
+            echo "Configuring Exim4 for local-only mode..."
+            sed -i "s/^dc_local_interfaces = .*/dc_local_interfaces='127.0.0.1 ; ::1'/" /etc/exim4/update-exim4.conf.conf
+            update-exim4.conf
+            systemctl restart exim4
+            ```
   - uid: mondoo-linux-security-nis-server-is-not-enabled
     title: Ensure NIS server is stopped and not enabled
     impact: 75
@@ -4624,6 +4643,34 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to configure the auditd rules for date and time changes.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-time_change.rules"
+
+            echo "Ensuring audit rules for time changes are configured"
+            cat > "$RULES_FILE" <<EOF
+            -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+            -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+            -a always,  exit -F arch=b32 -S clock_settime -k time-change
+            -a always,  exit -F arch=b64 -S clock_settime -k time-change
+            -w /etc/localtime -p wa -k time-change
+            EOF
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-events-that-modify-the-systems-mandatory-access-controls-are-collected
     title: Ensure events that modify the system's Mandatory Access Controls are collected
     impact: 50
@@ -4732,6 +4779,33 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure events that modify the system's Mandatory Access Controls are collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-MAC_policy.rules"
+
+            echo "Ensuring audit rules for MAC policy changes are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -w /etc/selinux/ -p wa -k MAC-policy
+            -w /usr/share/selinux/ -p wa -k MAC-policy
+            -w /etc/apparmor/ -p wa -k MAC-policy
+            -w /etc/apparmor.d/ -p wa -k MAC-policy
+            EOF
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected
     title: Ensure events that modify the system's network environment are collected
     impact: 50
@@ -4801,32 +4875,7 @@ queries:
 
         By auditing the sethostname and setdomainname system calls and monitoring changes to `/etc/issue`, `/etc/issue.net`, `/etc/hosts`, and `/etc/sysconfig/network`, administrators can detect critical network and identity changes. This supports system integrity, operational consistency, and incident investigation efforts.
       remediation: |-
-        For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
-
-        Example: `vi /etc/audit/rules.d/50-system_local.rules`
-
-        Add the following lines:
-
-        ```
-        -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
-        -w /etc/issue -p wa -k system-locale
-        -w /etc/issue.net -p wa -k system-locale
-        -w /etc/hosts -p wa -k system-locale
-        ```
-
-        Add the following line on Red Hat based systems:
-
-        ```
-        -w /etc/sysconfig/network -p wa -k system-locale
-        ```
-
-        Add the following line for Debian/Ubuntu based systems:
-
-        ```
-        -w /etc/network -p wa -k system-locale
-        ```
-
-        For 64-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+        1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
         Example: `vi /etc/audit/rules.d/50-system_local.rules`
 
@@ -4853,7 +4902,7 @@ queries:
         -w /etc/network -p wa -k system-locale
         ```
 
-        To load the newly added rules into the running configuration:
+        2. Load the newly added rules into the running configuration:
 
         ```bash
         augenrules --load
@@ -4861,7 +4910,7 @@ queries:
 
         This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+        3. Check if a reboot is required, in case the running configuration is set to be immutable:
 
         ```bash
         if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
