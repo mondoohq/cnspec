@@ -4874,47 +4874,163 @@ queries:
           •  Attackers may exploit these files to mask their activity or persist on the system.
 
         By auditing the sethostname and setdomainname system calls and monitoring changes to `/etc/issue`, `/etc/issue.net`, `/etc/hosts`, and `/etc/sysconfig/network`, administrators can detect critical network and identity changes. This supports system integrity, operational consistency, and incident investigation efforts.
-      remediation: |-
-        1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-system_local.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-network.rules`
 
-        ```
-        -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
-        -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+            2. Add the following lines, for SELinux:
 
-        -w /etc/issue -p wa -k system-locale
-        -w /etc/issue.net -p wa -k system-locale
-        -w /etc/hosts -p wa -k system-locale
-        ```
+            ```
+            -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+            -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
 
-        Add the following line for Red Hat based systems:
+            -w /etc/issue -p wa -k system-locale
+            -w /etc/issue.net -p wa -k system-locale
+            -w /etc/hosts -p wa -k system-locale
+            ```
 
-        ```
-        -w /etc/sysconfig/network -p wa -k system-locale
-        ```
+            3. Add the following line for Red Hat based systems:
 
-        Add the following line for Debian/Ubuntu based systems:
+            ```
+            -w /etc/sysconfig/network -p wa -k system-locale
+            ```
 
-        ```
-        -w /etc/network -p wa -k system-locale
-        ```
+            4. Add the following line for Debian/Ubuntu based systems:
 
-        2. Load the newly added rules into the running configuration:
+            ```
+            -w /etc/network -p wa -k system-locale
+            ```
 
-        ```bash
-        augenrules --load
-        ```
+            5. To load the newly added rules into the running configuration:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```bash
+            augenrules --load
+            ```
 
-        3. Check if a reboot is required, in case the running configuration is set to be immutable:
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            6. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for network environment changes:
+
+            ```yaml
+            ---
+            - name: Configure audit rules for network environment changes
+              hosts: all
+              become: true
+              tasks:
+                - name: Ensure network environment audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+                      -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+
+                      -w /etc/issue -p wa -k system-locale
+                      -w /etc/issue.net -p wa -k system-locale
+                      -w /etc/hosts -p wa -k system-locale
+                    state: present
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: network_audit_rules
+
+                - name: Ensure /etc/sysconfig/network is monitored when appropriate
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    block: |
+                      -w /etc/sysconfig/network -p wa -k system-locale
+                    state: present
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  when: netconfigfile.stat.exists | default(false)
+                  vars:
+                    netconfigfile: "{{ lookup('ansible.builtin.stat', '/etc/sysconfig/network') }}"
+                  register: sysconfig_network_audit
+
+                - name: Ensure /etc/network is monitored when appropriate
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    block: |
+                      -w /etc/network -p wa -k system-locale
+                    state: present
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  when: networkfile.stat.exists | default(false)
+                  vars:
+                    networkfile: "{{ lookup('ansible.builtin.stat', '/etc/network') }}"
+                  register: etc_network_audit
+
+                - name: Reload audit rules if any config was updated
+                  ansible.builtin.command: augenrules --load
+                  when:
+                    - network_audit_rules.changed
+                      or (sysconfig_network_audit is defined and sysconfig_network_audit.changed)
+                      or (etc_network_audit is defined and etc_network_audit.changed)
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure events that modify the system's network environment are collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-network.rules"
+
+            echo "Ensuring audit rules for network environment changes are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+            -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+            -w /etc/issue -p wa -k system-locale
+            -w /etc/issue.net -p wa -k system-locale
+            -w /etc/hosts -p wa -k system-locale
+            EOF
+
+            if [[ -f /etc/sysconfig/network ]]; then
+              echo "-w /etc/sysconfig/network -p wa -k system-locale" >> "$RULES_FILE"
+            elif [[ -d /etc/network ]]; then
+              echo "-w /etc/network -p wa -k system-locale" >> "$RULES_FILE"
+            fi
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-discretionary-access-control-permission-modification-events-are-collected
     title: Ensure discretionary access control permission modification events are collected
     impact: 50
@@ -4963,36 +5079,108 @@ queries:
           - Compliance with security standards requiring audit logging may be compromised.
 
         By auditing these system calls, administrators can detect and respond to unauthorized changes, ensuring the integrity of file permissions and attributes.
-      remediation: |-
-        1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-perm_mod.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-perm_mod.rules`
 
-        ```
-        -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-        -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-        -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
-        -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
-        -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
-        -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
-        ```
+            2. Add the following lines:
 
-        2. Reload the running configuration to load the newly added rules:
+            ```
+            -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            ```
 
-        ```bash
-        augenrules --load
-        ```
+            3. To load the newly added rules into the running configuration:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```bash
+            augenrules --load
+            ```
 
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        3. Check if a reboot is required, in case the running configuration is set to be immutable:
+            4. Check if a reboot is required, in case the running configuration is set to be immutable:
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for permission modification events:
+
+            ```yaml
+            ---
+            - name: Configure audit rules for permission modification events
+              hosts: all
+              become: true
+              tasks:
+                - name: Ensure permission modification audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-perm_mod.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: perm_mod_audit_rules_updated
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: perm_mod_audit_rules_updated.changed
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure discretionary access control permission modification events are collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-perm_mod.rules"
+            echo "Ensuring audit rules for permission modification events are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            EOF
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-unsuccessful-unauthorized-file-access-attempts-are-collected
     title: Ensure unsuccessful unauthorized file access attempts are collected
     impact: 50
@@ -5037,33 +5225,102 @@ queries:
           - The system may fall out of compliance with security standards requiring audit logging.
 
         By auditing these system calls, administrators can identify and respond to unauthorized access attempts, ensuring the integrity and security of the system.
-      remediation: |-
-        1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-access.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-access.rules`
 
-        ```
-        -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
-        -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
-        -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
-        -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
-        ```
+            2. Add the following lines:
 
-        2. Load the newly added rules into the running configuration:
+            ```
+            -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            ```
 
-        ```bash
-        augenrules --load
-        ```
+            3. To load the newly added rules into the running configuration:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```bash
+            augenrules --load
+            ```
 
-        3. Check if a reboot is required, in case the running configuration is set to be immutable:
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            4. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for unsuccessful unauthorized file access attempts:
+
+            ```yaml
+            ---
+            - name: Configure audit rules for unsuccessful unauthorized file access attempts
+              hosts: all
+              become: true
+              tasks:
+                - name: Ensure access audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-access.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: access_audit_rules_updated
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: access_audit_rules_updated.changed
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure unsuccessful unauthorized file access attempts are collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-access.rules"
+            echo "Ensuring audit rules for unsuccessful unauthorized file access attempts are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            EOF
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-events-that-modify-usergroup-information-are-collected
     title: Ensure events that modify user/group information are collected
     impact: 50
@@ -5169,6 +5426,34 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure events that modify user/group information are collected, overwriting any existing content in the rules file.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            RULES_FILE="/etc/audit/rules.d/50-identity.rules"
+
+            echo "Ensuring audit rules for user/group information changes are configured in $RULES_FILE"
+            cat > "$RULES_FILE" <<EOF
+            -w /etc/group -p wa -k identity
+            -w /etc/passwd -p wa -k identity
+            -w /etc/gshadow -p wa -k identity
+            -w /etc/shadow -p wa -k identity
+            -w /etc/security/opasswd -p wa -k identity
+            EOF
+
+            echo "Loading audit rules"
+            augenrules --load
+
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            fi
+            ```
   - uid: mondoo-linux-security-successful-file-system-mounts-are-collected
     title: Ensure successful file system mounts are collected
     impact: 50
@@ -5195,17 +5480,7 @@ queries:
 
         By ensuring that successful file system mount events are monitored, organizations can maintain a secure environment and quickly respond to potential threats.
       remediation: |-
-        For 32-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
-
-        Example: `vi /etc/audit/rules.d/50-mounts.rules`
-
-        Add the following lines:
-
-        ```
-        -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
-        ```
-
-        For 64-bit systems edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+        1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
         Example: `vi /etc/audit/rules.d/50-mounts.rules`
 
@@ -5216,7 +5491,7 @@ queries:
         -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
         ```
 
-        To load the newly added rules into the running configuration:
+        2. Load the newly added rules into the running configuration:
 
         ```bash
         augenrules --load
@@ -5224,7 +5499,7 @@ queries:
 
         This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        Check if a reboot is required, in case the running configuration is set to be immutable:
+        3. Check if a reboot is required, in case the running configuration is set to be immutable:
 
         ```bash
         if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
@@ -6593,8 +6868,10 @@ queries:
             set -e
 
             if grep -q '^Protocol' /etc/ssh/sshd_config; then
+              echo "Updating Protocol to 2 in /etc/ssh/sshd_config..."
               sed -i 's/^Protocol.*/Protocol 2/' /etc/ssh/sshd_config
             else
+              echo "Adding Protocol 2 to /etc/ssh/sshd_config..."
               echo "Protocol 2" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6673,8 +6950,10 @@ queries:
             set -e
 
             if grep -q '^LogLevel' /etc/ssh/sshd_config; then
+              echo "Updating LogLevel to VERBOSE in /etc/ssh/sshd_config..."
               sed -i 's/^LogLevel.*/LogLevel VERBOSE/' /etc/ssh/sshd_config
             else
+              echo "Adding LogLevel VERBOSE to /etc/ssh/sshd_config..."
               echo "LogLevel VERBOSE" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6749,8 +7028,10 @@ queries:
             set -e
 
             if grep -q '^X11Forwarding' /etc/ssh/sshd_config; then
+              echo "Updating X11Forwarding to no in /etc/ssh/sshd_config..."
               sed -i 's/^X11Forwarding.*/X11Forwarding no/' /etc/ssh/sshd_config
             else
+              echo "Adding X11Forwarding no to /etc/ssh/sshd_config..."
               echo "X11Forwarding no" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6826,8 +7107,10 @@ queries:
             set -e
 
             if grep -q '^MaxAuthTries' /etc/ssh/sshd_config; then
+              echo "Updating MaxAuthTries to 4 in /etc/ssh/sshd_config..."
               sed -i 's/^MaxAuthTries.*/MaxAuthTries 4/' /etc/ssh/sshd_config
             else
+              echo "Adding MaxAuthTries 4 to /etc/ssh/sshd_config..."
               echo "MaxAuthTries 4" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6903,8 +7186,10 @@ queries:
             set -e
 
             if grep -q '^IgnoreRhosts' /etc/ssh/sshd_config; then
+              echo "Updating IgnoreRhosts to yes in /etc/ssh/sshd_config..."
               sed -i 's/^IgnoreRhosts.*/IgnoreRhosts yes/' /etc/ssh/sshd_config
             else
+              echo "Adding IgnoreRhosts yes to /etc/ssh/sshd_config..."
               echo "IgnoreRhosts yes" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -6980,8 +7265,10 @@ queries:
             set -e
 
             if grep -q '^HostbasedAuthentication' /etc/ssh/sshd_config; then
+              echo "Updating HostbasedAuthentication to no in /etc/ssh/sshd_config..."
               sed -i 's/^HostbasedAuthentication.*/HostbasedAuthentication no/' /etc/ssh/sshd_config
             else
+              echo "Adding HostbasedAuthentication no to /etc/ssh/sshd_config..."
               echo "HostbasedAuthentication no" >> /etc/ssh/sshd_config
             fi
             systemctl restart sshd
@@ -7840,6 +8127,59 @@ queries:
                     deny_users_changed.changed or
                     deny_groups_changed.changed
             ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            To ensure that SSH access is limited, you can run the following bash script:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            # Define variables for users and groups
+            ALLOW_USERS="user1 user2"
+            ALLOW_GROUPS="sshusers"
+            DENY_USERS="user3"
+            DENY_GROUPS="nogroup"
+
+            if grep -q '^AllowUsers' /etc/ssh/sshd_config; then
+              echo "Updating existing AllowUsers configuration value"
+              sed -i "s/^AllowUsers.*/AllowUsers $ALLOW_USERS/" /etc/ssh/sshd_config
+            else
+              echo "Adding AllowUsers configuration value to SSH config"
+              echo "AllowUsers $ALLOW_USERS" >> /etc/ssh/sshd_config
+            fi
+
+            # Set or update AllowGroups
+            if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
+              echo "Updating existing AllowGroups configuration value"
+              sed -i "s/^AllowGroups.*/AllowGroups $ALLOW_GROUPS/" /etc/ssh/sshd_config
+            else
+              echo "Adding AllowGroups configuration value to SSH config"
+              echo "AllowGroups $ALLOW_GROUPS" >> /etc/ssh/sshd_config
+            fi
+
+            # Set or update DenyUsers
+            if grep -q '^DenyUsers' /etc/ssh/sshd_config; then
+              echo "Updating existing DenyUsers configuration value"
+              sed -i "s/^DenyUsers.*/DenyUsers $DENY_USERS/" /etc/ssh/sshd_config
+            else
+              echo "Adding DenyUsers configuration value to SSH config"
+              echo "DenyUsers $DENY_USERS" >> /etc/ssh/sshd_config
+            fi
+
+            # Set or update DenyGroups
+            if grep -q '^DenyGroups' /etc/ssh/sshd_config; then
+              echo "Updating existing DenyGroups configuration value"
+              sed -i "s/^DenyGroups.*/DenyGroups $DENY_GROUPS/" /etc/ssh/sshd_config
+            else
+              echo "Adding DenyGroups configuration value to SSH config"
+              echo "DenyGroups $DENY_GROUPS" >> /etc/ssh/sshd_config
+            fi
+
+            systemctl restart sshd
+            ```
   - uid: mondoo-linux-security-ssh-warning-banner-is-configured
     title: Ensure SSH warning banner is configured
     impact: 30
@@ -7906,7 +8246,13 @@ queries:
             set -e
 
             echo "Setting SSH warning banner"
-            echo "Banner /etc/issue.net" >> /etc/ssh/sshd_config
+            if grep -q '^Banner' /etc/ssh/sshd_config; then
+              echo "Updating existing Banner configuration value"
+              sed -i 's|^Banner.*|Banner /etc/issue.net|' /etc/ssh/sshd_config
+            else
+              echo "Adding Banner configuration value to SSH config"
+              echo "Banner /etc/issue.net" >> /etc/ssh/sshd_config
+            fi
             systemctl restart sshd
             ```
   - uid: mondoo-linux-security-permissions-on-etcpasswd-are-configured
