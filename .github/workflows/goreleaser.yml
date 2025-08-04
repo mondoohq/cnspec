@@ -11,6 +11,21 @@ on:
         type: boolean
         required: false
         default: false
+      use-test-cert:
+        description: "Use test certificate profile (not publicly trusted)"
+        required: false
+        default: false
+        type: boolean
+      goreleaser-snapshot:
+        description: "Run goreleaser in snapshot mode, which will not publish and bypass tag checks."
+        required: false
+        default: false
+        type: boolean
+      upload-artifacts:
+        description: "Uploading artifacts to workflow"
+        required: false
+        default: false
+        type: boolean
 
 env:
   REGISTRY: docker.io
@@ -24,6 +39,7 @@ jobs:
       id-token: "write"
 
     runs-on: self-hosted
+    environment: prod
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -31,12 +47,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Dump all inputs
+        run: echo "${{ toJSON(inputs) }}"
+
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
 
       - name: Skip Publish for Alpha and Beta Tags
         id: skip-publish
-        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') || inputs.skip-publish == 'true'
+        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') || inputs.skip-publish == true
         run: |
           echo "Skipping publish for alpha and beta tags"
           echo "skip-publish=true" >> $GITHUB_OUTPUT
@@ -54,13 +73,6 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WIP }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - id: "gcp_secrets"
-        uses: "google-github-actions/get-secretmanager-secrets@v2"
-        with:
-          secrets: |-
-            code_sign_cert_b64:mondoo-base-infra/mondoo_code_sign_certificate_pfx_b64
-            code_sign_cert_challenge:mondoo-base-infra/mondoo_code_sign_challenge
-
       - name: "Write RPM Signing Cert"
         run: |
           gpgkey="$(mktemp -t gpgkey.XXX)"
@@ -69,20 +81,29 @@ jobs:
         env:
           GPG_KEY: "${{ secrets.GPG_KEY}}"
 
-      - name: Configure DigiCert Signing Variables
-        shell: bash
+# jsign and azure-cli are both requirements for Azure Trusted Signing and these actions to authenticate
+# These packages have been installed on the self-hosted runner using ansible from the private repo
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.TSIGN_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.TSIGN_AZURE_TENANT_ID}}
+          subscription-id: ${{ vars.TSIGN_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Azure AD Access Token to trusted signing
+        id: get_token
         run: |
-          # CertLocker Authentication Certifiate
-          CERT_PATH="$(mktemp -t cert.XXX)"
-          echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > ${CERT_PATH}
-          echo "SM_CLIENT_CERT_FILE=${CERT_PATH}" >> "$GITHUB_ENV"
-          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV"
-          # CertLocker API Key & Host
-          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV"
-          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV"
-          # DigiCert CertLocker Code Signing Certificate
-          echo "SM_CODE_SIGNING_CERT_SHA1_HASH=${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" >> "$GITHUB_ENV"
-          echo "SM_CERT_ALIAS=${{ secrets.SM_CERT_ALIAS }}" >> "$GITHUB_ENV"
+          set -e  # Stop on first error
+          TSIGN_ACCESS_TOKEN=$(az account get-access-token --resource https://codesigning.azure.net --query accessToken -o tsv)
+
+          if [ -z "$TSIGN_ACCESS_TOKEN" ]; then
+            echo "Error: Access token is empty"
+            exit 1
+          fi
+          PREFIX="${TSIGN_ACCESS_TOKEN:0:8}"
+          echo "Access token prefix: ${PREFIX}..."
+          echo "TSIGN_ACCESS_TOKEN=$TSIGN_ACCESS_TOKEN" >> $GITHUB_OUTPUT
 
       - name: Install Quill for Mac Signing and Notarization
         run: |
@@ -97,12 +118,16 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Run GoReleaser
-        if: ${{ ! steps.skip-publish.outputs.skip-publish }}
+        if: ${{ inputs.skip-publish != true }}
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: v2.5.1
-          args: release --clean --timeout 120m
+          args: >
+            release
+            --config .goreleaser.yml
+            --clean
+            --timeout 120m
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -112,14 +137,23 @@ jobs:
           QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
           QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          TSIGN_AZURE_ENDPOINT: ${{ vars.TSIGN_AZURE_ENDPOINT }}
+          TSIGN_ACCOUNT_NAME: ${{ vars.TSIGN_ACCOUNT_NAME }}
+          TSIGN_CERT_PROFILE_NAME: ${{ github.event.inputs.use-test-cert == 'true' && vars.TSIGN_TEST_CERT_PROFILE_NAME || vars.TSIGN_CERT_PROFILE_NAME }}
+          TSIGN_ACCESS_TOKEN: ${{ steps.get_token.outputs.TSIGN_ACCESS_TOKEN }}
 
       - name: Run GoReleaser unstable
-        if: ${{ steps.skip-publish.outputs.skip-publish == 'true' }}
+        if: ${{ inputs.skip-publish == true }}
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
-          args: release -f .github/.goreleaser-unstable.yml --clean --timeout 120m
+          args: >
+            release
+            ${{ inputs.goreleaser-snapshot == true && '--snapshot' || '' }}
+            --config .github/.goreleaser-unstable.yml
+            --clean
+            --timeout 120m
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -129,17 +163,18 @@ jobs:
           QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
           QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          TSIGN_AZURE_ENDPOINT: ${{ vars.TSIGN_AZURE_ENDPOINT }}
+          TSIGN_ACCOUNT_NAME: ${{ vars.TSIGN_ACCOUNT_NAME }}
+          TSIGN_CERT_PROFILE_NAME: ${{ github.event.inputs.use-test-cert == 'true' && vars.TSIGN_TEST_CERT_PROFILE_NAME || vars.TSIGN_CERT_PROFILE_NAME }}
+          TSIGN_ACCESS_TOKEN: ${{ steps.get_token.outputs.TSIGN_ACCESS_TOKEN }}
 
       - name: Check RPMs
         run: |
           rpm -qpi dist/*.rpm
 
-      - name: Cleanup Signing Cert
-        if: always()
-        run: rm -f ${CERT_PATH}
-
   trigger-installer-release:
     name: Trigger Installer Release
+    if: ${{ inputs.skip-publish != true }}
     runs-on: ubuntu-latest
     needs: goreleaser
     steps:
@@ -176,7 +211,7 @@ jobs:
           repository: "mondoohq/installer"
           event-type: trigger-release
           client-payload: '{
-              "version": "${{ github.ref_name }}"
+            "version": "${{ github.ref_name }}"
             }'
 
   mondoo-operator-cnspec:
@@ -191,4 +226,3 @@ jobs:
           repository: mondoohq/mondoo-operator
           event-type: update
           client-payload: '{"version": "${{ github.ref_name }}"}'
-
