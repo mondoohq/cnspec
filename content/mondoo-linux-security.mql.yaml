@@ -4927,75 +4927,54 @@ queries:
 
             ```yaml
             ---
-            - name: Configure audit rules for network environment changes
-              hosts: all
-              become: true
-              tasks:
-                - name: Ensure network environment audit rules are present
-                  ansible.builtin.blockinfile:
-                    path: /etc/audit/rules.d/50-system_local.rules
-                    block: |
-                      -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
-                      -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+            - name: Gather network file facts
+              ansible.builtin.stat:
+                path: "{{ item }}"
+              register: network_files
+              loop:
+                - /etc/sysconfig/network
+                - /etc/network
 
-                      -w /etc/issue -p wa -k system-locale
-                      -w /etc/issue.net -p wa -k system-locale
-                      -w /etc/hosts -p wa -k system-locale
-                    state: present
-                    create: yes
-                    owner: root
-                    group: root
-                    mode: '0640'
-                  register: network_audit_rules
+            - name: Configure base audit rules
+              ansible.builtin.blockinfile:
+                path: /etc/audit/rules.d/50-system_local.rules
+                block: |
+                  -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+                  -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+                  -w /etc/issue -p wa -k system-locale
+                  -w /etc/issue.net -p wa -k system-locale
+                  -w /etc/hosts -p wa -k system-locale
+                marker: "# {mark} ANSIBLE MANAGED - base network rules"
+                state: present
+                create: true
+              register: base_audit_rules
 
-                - name: Ensure /etc/sysconfig/network is monitored when appropriate
-                  ansible.builtin.blockinfile:
-                    path: /etc/audit/rules.d/50-system_local.rules
-                    block: |
-                      -w /etc/sysconfig/network -p wa -k system-locale
-                    state: present
-                    create: yes
-                    owner: root
-                    group: root
-                    mode: '0640'
-                  when: netconfigfile.stat.exists | default(false)
-                  vars:
-                    netconfigfile: "{{ lookup('ansible.builtin.stat', '/etc/sysconfig/network') }}"
-                  register: sysconfig_network_audit
+            - name: Configure conditional network file monitoring
+              ansible.builtin.blockinfile:
+                path: /etc/audit/rules.d/50-system_local.rules
+                block: "-w {{ item.item }} -p wa -k system-locale"
+                marker: "# {mark} ANSIBLE MANAGED - {{ item.item | basename }}"
+                state: present
+              loop: "{{ network_files.results }}"
+              when: item.stat.exists
+              register: conditional_audit_rules
 
-                - name: Ensure /etc/network is monitored when appropriate
-                  ansible.builtin.blockinfile:
-                    path: /etc/audit/rules.d/50-system_local.rules
-                    block: |
-                      -w /etc/network -p wa -k system-locale
-                    state: present
-                    create: yes
-                    owner: root
-                    group: root
-                    mode: '0640'
-                  when: networkfile.stat.exists | default(false)
-                  vars:
-                    networkfile: "{{ lookup('ansible.builtin.stat', '/etc/network') }}"
-                  register: etc_network_audit
+            - name: Set secure file permissions
+              ansible.builtin.file:
+                path: /etc/audit/rules.d/50-system_local.rules
+                owner: root
+                group: root
+                mode: '0600'
 
-                - name: Reload audit rules if any config was updated
-                  ansible.builtin.command: augenrules --load
-                  when:
-                    - network_audit_rules.changed
-                      or (sysconfig_network_audit is defined and sysconfig_network_audit.changed)
-                      or (etc_network_audit is defined and etc_network_audit.changed)
-
-                - name: Check if auditd is in immutable mode
-                  ansible.builtin.shell: |
-                    auditctl -s | grep -q '^enabled.*2$'
-                  register: immutable_check
-                  failed_when: false
-                  changed_when: false
-
-                - name: Notify if reboot is required due to immutable audit config
-                  ansible.builtin.debug:
-                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
-                  when: immutable_check.rc == 0
+            - name: Reload audit rules with proper error handling
+              ansible.builtin.command: augenrules --load
+              register: augenrules_result
+              failed_when:
+                - augenrules_result.rc != 0
+                - not audit_immutable
+              when: >
+                base_audit_rules.changed or
+                conditional_audit_rules.changed
             ```
         - id: bash
           desc: |
