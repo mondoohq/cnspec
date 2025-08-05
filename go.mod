@@ -42,7 +42,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/zclconf/go-cty v1.16.3
-	go.mondoo.com/cnquery/v11 v11.65.1-0.20250730103739-7566f91e320e
+	go.mondoo.com/cnquery/v11 v11.66.0
 	go.mondoo.com/mondoo-go v0.0.0-20250702005123-23558fe8001c
 	go.mondoo.com/ranger-rpc v0.7.0
 	go.opentelemetry.io/otel v1.37.0
