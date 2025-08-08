@@ -3711,25 +3711,7 @@ queries:
           desc: |
             **Using CLI**
 
-            1. Edit the GRUB configuration file to include the `audit=1`` parameter:
-
-            **RHEL/Fedora/Amazon Linux and derivatives**
-
-            For BIOS systems, edit `/etc/default/grub`:
-
-            ```bash
-            GRUB_CMDLINE_LINUX="audit=1"
-            ```
-
-            For UEFI systems, edit `/etc/default/grub`:
-
-            ```bash
-            GRUB_CMDLINE_LINUX="audit=1"
-            ```
-
-            **Debian/Ubuntu and derivatives**
-
-            Edit `/etc/default/grub`:
+            1. Edit the GRUB configuration file at `/etc/default/grub` to include the `audit=1` parameter in addition to any previous values it may have:
 
             ```bash
             GRUB_CMDLINE_LINUX_DEFAULT="audit=1"
@@ -3744,6 +3726,7 @@ queries:
             ```bash
             grub2-mkconfig -o /boot/grub2/grub.cfg
             ```
+
             For UEFI systems:
 
             ```bash
@@ -3756,6 +3739,39 @@ queries:
 
             ```bash
             update-grub
+            ```
+        - id: bash
+          desc: |
+            **Using Bash**
+
+            Use this Bash script to ensure the audit=1 parameter is set in the GRUB configuration.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            EFI_DIR="/boot/efi/EFI"
+
+            # Check if GRUB configuration file exists
+            if [ -f /etc/default/grub ]; then
+              if grep -q "audit=1" /etc/default/grub; then
+                echo "audit=1 is already set in GRUB configuration."
+              else
+                echo "Setting audit=1 in GRUB configuration."
+                sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="audit=1 /' /etc/default/grub
+              fi
+            fi
+
+            if command -v update-grub >/dev/null 2>&1; then
+              echo "Running update-grub"
+              update-grub
+            elif [ -d "$EFI_DIR" ]; then
+              echo "EFI directory found at $EFI_DIR. Updating any grub.cfg files under it."
+              find "$EFI_DIR" -type f -name "grub.cfg" -exec grub2-mkconfig -o {} \;
+            else
+              echo "Running grub2-mkconfig for BIOS install"
+              grub2-mkconfig -o /boot/grub2/grub.cfg
+            fi
             ```
   - uid: mondoo-linux-security-audit-log-storage-size-is-configured
     title: Ensure audit log storage size is configured
@@ -5464,31 +5480,93 @@ queries:
           - The system may fall out of compliance with security standards requiring audit logging.
 
         By ensuring that successful file system mount events are monitored, organizations can maintain a secure environment and quickly respond to potential threats.
-      remediation: |-
-        1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
 
-        Example: `vi /etc/audit/rules.d/50-mounts.rules`
+            1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
-        Add the following lines:
+            Example: `vi /etc/audit/rules.d/50-mounts.rules`
 
-        ```
-        -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
-        -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
-        ```
+            2. Add the following lines:
 
-        2. Load the newly added rules into the running configuration:
+            ```
+            -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+            -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+            ```
 
-        ```bash
-        augenrules --load
-        ```
+            3. Load the newly added rules into the running configuration:
 
-        This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
+            ```bash
+            augenrules --load
+            ```
 
-        3. Check if a reboot is required, in case the running configuration is set to be immutable:
+            This command will generate a new `/etc/audit/audit.rules` file containing the newly added rules.
 
-        ```bash
-        if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
-        ```
+            4. Check if a reboot is required, in case the running configuration is set to be immutable:
+
+            ```bash
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then printf "Reboot required to load rules\n"; fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the audit rules for successful file system mounts:
+
+            ```yaml
+            ---
+            - name: Configure audit rules for successful file system mounts
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure mount audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-mounts.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+                      -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+                    state: present
+                    insertafter: EOF
+                    create: yes
+                    mode: '0600'
+                  register: mount_audit_rules_updated
+                - name: Reload audit rules if file was updated
+                  ansible.builtin.command: augenrules --load
+                  when: mount_audit_rules_updated.changed
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+                - name: Notify if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
+            ```
+        - id: bash
+          desc: |
+            **Using Bash**
+
+            Use the following commands to set the audit rules for successful file system mounts:
+
+            ```bash
+            cat <<EOF > /etc/audit/rules.d/50-mounts.rules
+            -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+            -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+            EOF
+
+            echo "Loading audit rules..."
+            augenrules --load
+
+            # Notify if a reboot is required due to immutable audit configuration
+            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+              echo "Reboot required to load rules"
+            fi
+            ```
   - uid: mondoo-linux-security-file-deletion-events-by-users-are-collected
     title: Ensure file deletion events by users are collected
     impact: 50
@@ -5996,11 +6074,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            To enable sudo logging to a dedicated file:
+            To enable sudo logging to a dedicated file using a sudoers.d file:
 
-            1. Edit the `/etc/sudoers` file using the `visudo` command to prevent syntax errors.
+            1. Create a new file in `/etc/sudoers.d/` (for example, `/etc/sudoers.d/sudo-logging`) using the `visudo` command to prevent syntax errors:
 
-            2. Add the following line:
+            ```bash
+            visudo -f /etc/sudoers.d/sudo-logging
+            ```
+
+            2. Add the following line to the file:
 
             ```
             Defaults logfile="/var/log/sudo.log"
@@ -6009,6 +6091,37 @@ queries:
             3. Ensure that the log file exists and has appropriate permissions:
 
             ```bash
+            touch /var/log/sudo.log
+            chmod 600 /var/log/sudo.log
+            chown root:root /var/log/sudo.log
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            To enable sudo logging to a dedicated file using a bash script:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            echo "Creating a temporary file with the sudo logging configuration..."
+            tmpfile=$(mktemp /tmp/sudo-logging.XXXXXX)
+            echo 'Defaults logfile="/var/log/sudo.log"' > "$tmpfile"
+
+            echo "Validating sudo logging configuration and installing..."
+            if visudo -cf "$tmpfile"; then
+              # Set correct permissions before moving
+              chmod 440 "$tmpfile"
+              install -o root -g root -m 440 "$tmpfile" /etc/sudoers.d/sudo-logging
+              rm -f "$tmpfile"
+            else
+              echo "visudo config file validation failed"
+              rm -f "$tmpfile"
+              exit 1
+            fi
+
+            echo "Creating the sudo log file..."
             touch /var/log/sudo.log
             chmod 600 /var/log/sudo.log
             chown root:root /var/log/sudo.log
