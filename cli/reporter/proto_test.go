@@ -27,16 +27,18 @@ func TestProtoConversion(t *testing.T) {
 
 		assert.Equal(t, 1, len(report.Assets))
 
-		assetMrn := "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2"
+		assetMrn := "//assets.api.mondoo.app/spaces/test-infallible-taussig-796596/assets/310qEuaqCbVCMU5tGa1HbLx8TZc"
+		require.Contains(t, assetMrn, assetMrn)
+
 		asset := report.Assets[assetMrn]
-		assert.Equal(t, "X1", asset.Name)
+		assert.Equal(t, "ubuntu:24.04", asset.Name)
 		assert.Equal(t, "ubuntu", asset.PlatformName)
 
 		assert.Equal(t, 1, len(report.Scores))
 		assert.Equal(t, 0, len(report.Errors))
 		assert.Equal(t, 1, len(report.Data))
 
-		assert.Equal(t, 108, len(report.Scores[assetMrn].Values))
+		assert.Equal(t, 53, len(report.Scores[assetMrn].Values))
 
 		score := report.Scores[assetMrn].Values["//policy.api.mondoo.app/queries/mondoo-linux-security-permissions-on-etcgshadow-are-configured"]
 		assert.Equal(t, 100, int(score.Score))

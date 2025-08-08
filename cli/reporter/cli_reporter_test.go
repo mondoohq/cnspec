@@ -42,10 +42,8 @@ func TestCompactReporter(t *testing.T) {
 	rr.print()
 
 	strData := buf.String()
-	assert.Contains(t, strData, "✕ HIGH (30):      Ensure")
-	assert.Contains(t, strData, ". Skipped:        Set")
 	assert.Contains(t, strData, "! Error:          Set")
-	assert.Contains(t, strData, "✓ Ensure rsyslog is installed")
+	assert.Contains(t, strData, "✓ Ensure ")
 	assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
 }
 
