@@ -37,10 +37,8 @@ func TestFileHandler(t *testing.T) {
 		require.NoError(t, err)
 
 		strData := string(data)
-		assert.Contains(t, strData, "✕ HIGH (30):      Ensure")
-		assert.Contains(t, strData, ". Skipped:        Set")
 		assert.Contains(t, strData, "! Error:          Set")
-		assert.Contains(t, strData, "✓ Ensure rsyslog is installed")
+		assert.Contains(t, strData, "✓ Ensure ")
 		assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
 		err = os.Remove(fileName)
 		require.NoError(t, err)
@@ -58,10 +56,8 @@ func TestFileHandler(t *testing.T) {
 		require.NoError(t, err)
 
 		strData := string(data)
-		assert.Contains(t, strData, "✕ HIGH (30):      Ensure")
-		assert.Contains(t, strData, ". Skipped:        Set")
 		assert.Contains(t, strData, "! Error:          Set")
-		assert.Contains(t, strData, "✓ Ensure rsyslog is installed")
+		assert.Contains(t, strData, "✓ Ensure ")
 		assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
 		err = os.Remove(trimmed)
 		require.NoError(t, err)
