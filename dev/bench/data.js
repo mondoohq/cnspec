@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754922029444,
+  "lastUpdate": 1754922134093,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -3876,6 +3876,74 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "60628 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "mondoohq",
+            "username": "mondoohq"
+          },
+          "committer": {
+            "name": "mondoohq",
+            "username": "mondoohq"
+          },
+          "id": "d4b3c2900636e21f9e0df8db95734dda3545a325",
+          "message": "Bump github.com/olekukonko/tablewriter from 0.0.5 to 1.0.9",
+          "timestamp": "2025-08-11T14:17:39Z",
+          "url": "https://github.com/mondoohq/cnspec/pull/1747/commits/d4b3c2900636e21f9e0df8db95734dda3545a325"
+        },
+        "date": 1754922133518,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19968,
+            "unit": "ns/op\t    4894 B/op\t      71 allocs/op",
+            "extra": "53259 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19968,
+            "unit": "ns/op",
+            "extra": "53259 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4894,
+            "unit": "B/op",
+            "extra": "53259 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "53259 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 20827,
+            "unit": "ns/op\t    4890 B/op\t      71 allocs/op",
+            "extra": "59666 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 20827,
+            "unit": "ns/op",
+            "extra": "59666 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4890,
+            "unit": "B/op",
+            "extra": "59666 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "59666 times\n4 procs"
           }
         ]
       }
