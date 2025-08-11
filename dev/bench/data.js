@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754934539648,
+  "lastUpdate": 1754936560994,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -4012,6 +4012,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "60811 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jay@mondoo.com",
+            "name": "Jay Mundrawala",
+            "username": "jaym"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88b2c82b7ec6da4996d1b3c350270ab5757ed159",
+          "message": "🐛 Don't change score type (#1776)\n\nThis turns out to be a breaking change. There's also no need to really\ndo this. Its not going to be counted against any policy and it looked\nlike this was only done for printing reasons\n\nBroke in #1754",
+          "timestamp": "2025-08-11T13:22:05-05:00",
+          "tree_id": "c17ab3b46410068315b1c96f099322c1d84cf7b0",
+          "url": "https://github.com/mondoohq/cnspec/commit/88b2c82b7ec6da4996d1b3c350270ab5757ed159"
+        },
+        "date": 1754936560569,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19446,
+            "unit": "ns/op\t    4893 B/op\t      71 allocs/op",
+            "extra": "58149 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19446,
+            "unit": "ns/op",
+            "extra": "58149 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4893,
+            "unit": "B/op",
+            "extra": "58149 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "58149 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 20134,
+            "unit": "ns/op\t    4895 B/op\t      71 allocs/op",
+            "extra": "67304 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 20134,
+            "unit": "ns/op",
+            "extra": "67304 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4895,
+            "unit": "B/op",
+            "extra": "67304 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "67304 times\n4 procs"
           }
         ]
       }
