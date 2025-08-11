@@ -351,6 +351,14 @@ func (p *Policy) recalculateAt(now time.Time) *time.Time {
 	}
 
 	for _, g := range p.Groups {
+		if g.Valid != nil {
+			if g.Valid.From != nil {
+				updateTimeToRecalculate(g.Valid.From.Seconds)
+			}
+			if g.Valid.Until != nil {
+				updateTimeToRecalculate(g.Valid.Until.Seconds)
+			}
+		}
 		updateTimeToRecalculate(g.StartDate)
 		updateTimeToRecalculate(g.EndDate)
 	}
@@ -604,7 +612,9 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 		// REMAINING FIELDS
 		executionChecksum = executionChecksum.
 			AddUint(uint64(group.StartDate)).
-			AddUint(uint64(group.EndDate))
+			AddUint(uint64(group.EndDate)).
+			AddUint(uint64(group.Valid.GetFrom().GetSeconds())).
+			AddUint(uint64(group.Valid.GetUntil().GetSeconds()))
 
 		// other content fields
 		contentChecksum = contentChecksum.
@@ -617,6 +627,9 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				Add(group.Docs.Desc)
 			contentChecksum = contentChecksum.Add(group.Docs.Justification)
 		}
+		contentChecksum = contentChecksum.
+			AddUint(uint64(group.Valid.GetFrom().GetSeconds())).
+			AddUint(uint64(group.Valid.GetUntil().GetSeconds()))
 	}
 
 	// RISKS

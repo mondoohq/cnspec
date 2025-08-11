@@ -722,11 +722,26 @@ type groupWithFilters interface {
 	GetFilters() *explorer.Filters
 }
 
+type groupWithValidity interface {
+	group
+	GetValid() *Validity
+}
+
 // isGroupMatching checks if the policy group is matching. A policy group is matching if it is not rejected,
 // and it is not expired. If it has filters, it must have at least one filter that matches the asset filters
 func (b *resolvedPolicyBuilder) isGroupMatching(group group) bool {
 	if group.GetReviewStatus() == ReviewStatus_REJECTED {
 		return false
+	}
+
+	if groupWithValidity, ok := group.(groupWithValidity); ok && groupWithValidity.GetValid() != nil {
+		valid := groupWithValidity.GetValid()
+		if valid.Until != nil {
+			validTime := time.Unix(valid.Until.GetSeconds(), 0)
+			if validTime.Before(b.now) {
+				return false
+			}
+		}
 	}
 
 	if group.GetEndDate() != 0 {
@@ -784,6 +799,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 				if pRefAction, ok := b.actionOverrides[pRef.Mrn]; ok && pRefAction == explorer.Action_IGNORE {
 					impact = &explorer.Impact{
 						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+						Action:  explorer.Action_IGNORE,
 					}
 				} else if i, ok := b.impactOverrides[pRef.Mrn]; ok {
 					impact = i
@@ -814,6 +830,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 				if action == explorer.Action_IGNORE {
 					impact = &explorer.Impact{
 						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+						Action:  explorer.Action_IGNORE,
 					}
 				}
 				b.addEdge(c.Mrn, policy.Mrn, impact)
@@ -839,6 +856,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			if _, ok := b.addQuery(q); ok {
 				b.addEdge(q.Mrn, policy.Mrn, &explorer.Impact{
 					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+					Action:  explorer.Action_IGNORE,
 				})
 			}
 		}
@@ -856,7 +874,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			continue
 		}
 		if added {
-			b.addEdge(r.Mrn, policy.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+			b.addEdge(r.Mrn, policy.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 			hasMatchingRiskFactor = true
 		}
 	}
@@ -961,7 +979,7 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 		// Add node for execution query
 		b.addNode(&rpBuilderExecutionQueryNode{query: c})
 		// TODO: we should just score the risk factor normally, I don't know why we ignore the score
-		b.addEdge(c.CodeId, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		b.addEdge(c.CodeId, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 
 		selectedCodeIds = append(selectedCodeIds, c.CodeId)
 
@@ -1007,7 +1025,7 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	if _, ok := b.nodes[framework.Mrn]; !ok {
 		b.addNode(&rpBuilderFrameworkNode{frameworkMrn: framework.Mrn})
 	} else {
-		impact = &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE}
+		impact = &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE}
 	}
 
 	for _, fmap := range framework.FrameworkMaps {
@@ -1063,7 +1081,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				b.addEdge(qNode.selectedCodeId, control.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+				b.addEdge(qNode.selectedCodeId, control.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
 				hasChild = true
 			}
 		}
@@ -1100,6 +1118,7 @@ func (b *resolvedPolicyBuilder) actionToImpact(mrn string) *explorer.Impact {
 	if action == explorer.Action_IGNORE {
 		return &explorer.Impact{
 			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
+			Action:  explorer.Action_IGNORE,
 		}
 	}
 	return nil
