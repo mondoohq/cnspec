@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754921488465,
+  "lastUpdate": 1754922029444,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -3804,6 +3804,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "60420 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dominik.richter@gmail.com",
+            "name": "Dominik Richter",
+            "username": "arlimus"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cbbcdc0de62701a48f13f7571f847a552bbe749d",
+          "message": "⭐ valid until (#1754)\n\n* ⭐ valid until\n\nIntroduces the `valid` keyword in policies, which supports setting an\n`until` value. This allows us to create human-readable policy groups\nthat are configured for a limited time.\n\nThis is particularly useful when defining temporary exceptions:\n\n```\npolicies:\n  - uid: example1\n    name: Example policy 1\n    groups:\n      - filters:\n          - mql: asset.family.contains('unix')\n        checks:\n          - uid: check-05\n            title: SSHd should only use very secure ciphers\n            mql: |\n              sshd.config.ciphers.all( _ == /ctr/ )\n            impact: 95\n\n      - type: override\n        title: Exception for strong ciphers until September\n        valid:\n          until: 2025-09-01\n        checks:\n          - uid: check-05\n            action: preview\n```\n\nDepends on https://github.com/mondoohq/cnquery/pull/5817\n\n* 🧹 fix genai mistakes\n\nSigned-off-by: Dominik Richter <dominik.richter@gmail.com>\n\n* 🧹 linter suggestion\n\n* jays changes\n\n* update recalculateAt\n\n* update cnquery\n\n* update policy checksums\n\n* fix tests\n\n---------\n\nSigned-off-by: Dominik Richter <dominik.richter@gmail.com>\nCo-authored-by: Jay Mundrawala <jay@mondoo.com>",
+          "timestamp": "2025-08-11T09:17:35-05:00",
+          "tree_id": "4f7feca6f0033207428671fcdc8f9367ff471684",
+          "url": "https://github.com/mondoohq/cnspec/commit/cbbcdc0de62701a48f13f7571f847a552bbe749d"
+        },
+        "date": 1754922028417,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19760,
+            "unit": "ns/op\t    4892 B/op\t      71 allocs/op",
+            "extra": "61632 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19760,
+            "unit": "ns/op",
+            "extra": "61632 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4892,
+            "unit": "B/op",
+            "extra": "61632 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "61632 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 22297,
+            "unit": "ns/op\t    4891 B/op\t      71 allocs/op",
+            "extra": "60628 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 22297,
+            "unit": "ns/op",
+            "extra": "60628 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4891,
+            "unit": "B/op",
+            "extra": "60628 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "60628 times\n4 procs"
           }
         ]
       }
