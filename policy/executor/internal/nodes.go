@@ -560,12 +560,6 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 								s.Value = floor
 							}
 						}
-
-						// since we clone it from the child, which is just the raw score,
-						// we have to set the type on this layer
-						if c.impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
-							s.Type = policy.ScoreType_Skip
-						}
 					}
 				}
 			}

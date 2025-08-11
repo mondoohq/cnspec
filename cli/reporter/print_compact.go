@@ -455,17 +455,18 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				sortedPassed = append(sortedPassed, id)
 			} else if score.Value >= uint32(r.ScoreThreshold) && r.ScoreThreshold != 0 {
 				sortedWarnings = append(sortedWarnings, id)
-			} else if score.Type == policy.ScoreType_Skip {
-				g := checkToPreview[query.Mrn]
-				var pg *previewGroup
-				if g != nil && g.Valid != nil && g.Valid.Until != nil {
-					pg = previewGroups[int(g.Valid.Until.Seconds)]
-				} else {
-					pg = previewGroups[math.MaxInt64]
-				}
-				pg.sortedFailures = append(pg.sortedFailures, id)
 			} else {
-				sortedFailed = append(sortedFailed, id)
+				if g, ok := checkToPreview[query.Mrn]; ok {
+					var pg *previewGroup
+					if g != nil && g.Valid != nil && g.Valid.Until != nil {
+						pg = previewGroups[int(g.Valid.Until.Seconds)]
+					} else {
+						pg = previewGroups[math.MaxInt64]
+					}
+					pg.sortedFailures = append(pg.sortedFailures, id)
+				} else {
+					sortedFailed = append(sortedFailed, id)
+				}
 			}
 		}
 
