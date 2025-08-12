@@ -404,10 +404,10 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 	}
 
 	previewGroups := map[int]*previewGroup{
-		math.MaxInt64: {until: math.MaxInt64},
+		math.MaxInt: {until: math.MaxInt},
 	}
 	for _, pg := range checkToPreview {
-		until := math.MaxInt64
+		until := math.MaxInt
 		if pg.Valid != nil && pg.Valid.Until != nil {
 			until = int(pg.Valid.Until.Seconds)
 		}
@@ -461,7 +461,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 					if g != nil && g.Valid != nil && g.Valid.Until != nil {
 						pg = previewGroups[int(g.Valid.Until.Seconds)]
 					} else {
-						pg = previewGroups[math.MaxInt64]
+						pg = previewGroups[math.MaxInt]
 					}
 					pg.sortedFailures = append(pg.sortedFailures, id)
 				} else {
