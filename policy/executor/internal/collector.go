@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnquery/v11"
 	"go.mondoo.com/cnquery/v11/llx"
 	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/cnquery/v11/utils/iox"
@@ -306,30 +307,33 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 		return
 	}
 
+	onTooLargeFn := func(item *llx.Result, msgSize int) {
+		log.Warn().Msgf("Data %s %d exceeds maximum message size", item.CodeId, msgSize)
+	}
+	sendFn := func(chunk []*llx.Result) error {
+		log.Debug().Msg("Sending datapoints")
+		resultsToSend := make(map[string]*llx.Result, len(chunk))
+		for _, rr := range chunk {
+			resultsToSend[rr.CodeId] = rr
+		}
+		_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
+			AssetMrn:       c.assetMrn,
+			Data:           resultsToSend,
+			IsPreprocessed: true,
+			IsLastBatch:    isDone,
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("failed to send datapoints")
+		}
+		return nil
+	}
 	if len(results) > 0 {
 		llxResults := make([]*llx.Result, len(results))
 		for i, rr := range results {
 			llxResults[i] = c.toResult(rr)
 		}
-		err := iox.ChunkMessages(func(chunk []*llx.Result) error {
-			log.Debug().Msg("Sending datapoints")
-			resultsToSend := make(map[string]*llx.Result, len(chunk))
-			for _, rr := range chunk {
-				resultsToSend[rr.CodeId] = rr
-			}
-			_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
-				AssetMrn:       c.assetMrn,
-				Data:           resultsToSend,
-				IsPreprocessed: true,
-				IsLastBatch:    isDone,
-			})
-			if err != nil {
-				log.Error().Err(err).Msg("failed to send datapoints")
-			}
-			return nil
-		}, func(item *llx.Result, msgSize int) {
-			log.Warn().Msgf("Data %s %d exceeds maximum message size", item.CodeId, msgSize)
-		}, llxResults...)
+
+		err := iox.ChunkMessages(sendFn, cnquery.GetDisableMaxLimit(), onTooLargeFn, llxResults...)
 		if err != nil {
 			log.Error().Err(err).Msg("failed to send datapoints")
 		}
