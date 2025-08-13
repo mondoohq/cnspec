@@ -15,7 +15,7 @@ endif
 
 LDFLAGS=-ldflags "-s -w -X go.mondoo.com/cnspec/v11.Version=${VERSION}" # -linkmode external -extldflags=-static
 LDFLAGSDIST=-tags production -ldflags "-s -w -X go.mondoo.com/cnquery/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v11.Version=${LATEST_VERSION_TAG} -s -w"
-
+LDFLAGSDIST_EXTRA=-tags production -ldflags "-s -w -X go.mondoo.com/cnquery/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnquery/v11.DisableMaxLimit=true -s -w"
 .PHONY: info/ldflags
 info/ldflags:
 	$(info go run ${LDFLAGS} apps/cnspec/cnspec.go)
@@ -94,6 +94,18 @@ cnspec/build/linux/arm:
 .PHONY: cnspec/build/windows
 cnspec/build/windows:
 	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+
+.PHONY: cnspec/build/linux/extra
+cnspec/build/linux/extra:
+	GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST_EXTRA} apps/cnspec/cnspec.go
+
+.PHONY: cnspec/build/linux/arm/extra
+cnspec/build/linux/arm/extra:
+	GOOS=linux GOARCH=arm64 go build ${LDFLAGSDIST_EXTRA} apps/cnspec/cnspec.go
+
+.PHONY: cnspec/build/windows/extra
+cnspec/build/windows/extra:
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST_EXTRA} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/install
 cnspec/install:
