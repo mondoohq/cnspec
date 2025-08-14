@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 2.0.0
+    version: 3.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -23,6 +23,14 @@ policies:
         checks:
           - uid: mondoo-gcp-security-cloud-storage-bucket-not-anonymously-publicly-accessible
           - uid: mondoo-gcp-security-cloud-storage-buckets-have-uniform-bucket-level-access-enabled
+      - title: Cloud KMS
+        checks:
+          - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible
+          - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days
+      - title: Cloud DNS
+        checks:
+          - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled
+          - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used
       - title: Compute Engine Instances
         checks:
           - uid: mondoo-gcp-security-block-project-wide-ssh-keys-enabled-vm-instances
@@ -752,7 +760,7 @@ queries:
     title: Ensure Cloud SQL MySQL instances are not publicly exposed
     impact: 100
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-all
+      - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-single
       - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-terraform-state
@@ -831,15 +839,10 @@ queries:
                 gcloud sql instances describe INSTANCE_NAME
                 ```
                 Check the `ipAddresses` section in the output to confirm the absence of an entry with `type: PRIMARY`.
-  - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-all
-    filters: |
-      asset.platform == 'gcp-project'
+  - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-single
+    filters: asset.platform == "gcp-sql-mysql"
     mql: |
-      gcp.project.sql.instances.where(maintenanceVersion.contains('MYSQL')) {
-        ipAddresses.all(
-          _.type != "PRIMARY"
-        )
-      }
+      gcp.sql.instance.ipAddresses.all(type != "PRIMARY")
   - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance')
@@ -871,7 +874,7 @@ queries:
     title: Ensure Cloud SQL MySQL connections require SSL/TLS
     impact: 100
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-all
+      - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-single
       - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-terraform-state
@@ -957,15 +960,10 @@ queries:
             **Prevention:**
 
             Always configure new Cloud SQL MySQL instances with `ssl_mode = "ENCRYPTED_ONLY"` during creation via Terraform. Regularly audit instances to ensure compliance.
-  - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-all
-    filters: |
-      asset.platform == 'gcp-project'
+  - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-single
+    filters: asset.platform == "gcp-sql-mysql"
     mql: |
-      gcp.project.sql.instances.where(maintenanceVersion.contains('MYSQL')) {
-        settings.ipConfiguration {
-          sslMode == 'ENCRYPTED_ONLY'
-        }
-      }
+      gcp.sql.instance.settings.ipConfiguration.sslMode == "ENCRYPTED_ONLY"
   - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance')
@@ -1003,7 +1001,7 @@ queries:
     title: Ensure 'skip_show_database' Database Flag for Cloud SQL MySQL Instances is enabled
     impact: 70
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-all
+      - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-single
       - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-state
@@ -1084,14 +1082,10 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-all
-    filters: |
-      asset.platform == 'gcp-project'
-      gcp.project.sql.instances.where(databaseInstalledVersion == /^MYSQL_/)
+  - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-single
+    filters: asset.platform == "gcp-sql-mysql"
     mql: |
-      gcp.project.sql.instances.where(databaseInstalledVersion == /^MYSQL_/).all(
-        settings.databaseFlags['skip_show_database'] == 'on'
-      )
+      gcp.sql.instance.settings.databaseFlags["skip_show_database"] == "on"
   - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('MYSQL'))
@@ -1129,7 +1123,7 @@ queries:
     title: Ensure the 'local_infile' Database Flag for Cloud SQL MySQL Instance is disabled
     impact: 70
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-all
+      - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-single
       - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-terraform-state
@@ -1210,13 +1204,10 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-all
-    filters: |
-      asset.platform == 'gcp-project'
+  - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-single
+    filters: asset.platform == "gcp-sql-mysql"
     mql: |
-      gcp.project.sql.instances.where(databaseInstalledVersion == /^MYSQL_/).all(
-        settings.databaseFlags['local_infile'] == 'off'
-      )
+      gcp.sql.instance.settings.databaseFlags["local_infile"] == "off"
   - uid: mondoo-gcp-security-cloud-sql-mysql-local-infile-disabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('MYSQL'))
@@ -1254,7 +1245,7 @@ queries:
     title: Ensure the 'log_error_verbosity' Database Flag for Cloud SQL PostgreSQL Instance Is Set to 'DEFAULT' or 'verbose'
     impact: 70
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-all
+      - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-single
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-state
@@ -1341,15 +1332,11 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-all
+  - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-postgresql'
     mql: |
-      gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(
-        settings {
-          databaseFlags['log_error_verbosity'] == 'verbose' || databaseFlags['log_error_verbosity'] == 'default'
-        }
-      )
+      gcp.project.sql.instance.settings.databaseFlags['log_error_verbosity'] == 'verbose' || gcp.project.sql.instance.settings.databaseFlags['log_error_verbosity'] == 'default'
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
@@ -1387,7 +1374,7 @@ queries:
     title: Ensure 'log_connections' Database Flag for Cloud SQL PostgreSQL Instances is enabled
     impact: 70
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-all
+      - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-single
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-terraform-state
@@ -1468,13 +1455,11 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-all
+  - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-postgresql'
     mql: |
-      gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(
-        settings.databaseFlags['log_connections'] == 'on'
-      )
+      gcp.project.sql.instance.settings.databaseFlags['log_connections'] == 'on'
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
@@ -1512,7 +1497,7 @@ queries:
     title: Ensure 'log_disconnections' Database Flag for Cloud SQL PostgreSQL Instances is enabled
     impact: 70
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-all
+      - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-single
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-terraform-state
@@ -1597,13 +1582,11 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-all
+  - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-postgresql'
     mql: |
-      gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(
-        settings.databaseFlags['log_disconnections'] == 'on'
-      )
+      gcp.project.sql.instance.settings.databaseFlags['log_disconnections'] == 'on'
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
@@ -2678,7 +2661,7 @@ queries:
     title: Ensure Cloud SQL PostgreSQL instances are not publicly exposed
     impact: 100
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-all
+      - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-single
       - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-terraform-state
@@ -2764,15 +2747,11 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-all
+  - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-postgresql'
     mql: |
-      gcp.project.sql.instances.where(maintenanceVersion.contains('POSTGRES')) {
-        ipAddresses.all(
-          _.type != "PRIMARY"
-        )
-      }
+      gcp.project.sql.instance.ipAddresses.all(type != "PRIMARY")
   - uid: mondoo-gcp-security-cloud-sql-postgres-instances-not-publicly-exposed-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
@@ -2810,7 +2789,7 @@ queries:
     title: Ensure Cloud SQL for SQL Server instances are not publicly exposed
     impact: 100
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed-all
+      - uid: mondoo-gcp-security-cloud-sql-sql-server-instance-not-publicly-exposed-single
       - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed-terraform-state
@@ -2891,15 +2870,11 @@ queries:
               }
             }
             ```
-  - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed-all
+  - uid: mondoo-gcp-security-cloud-sql-sql-server-instance-not-publicly-exposed-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-sqlserver'
     mql: |
-      gcp.project.sql.instances.where(maintenanceVersion.contains('SQLSERVER')) {
-        ipAddresses.all(
-          _.type != "PRIMARY"
-        )
-      }
+      gcp.project.sql.instance.ipAddresses.all(type != "PRIMARY")
   - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
@@ -2937,7 +2912,7 @@ queries:
     title: Ensure Cloud SQL PostgreSQL connections require SSL/TLS
     impact: 90
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-all
+      - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-single
       - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-terraform-state
@@ -3023,15 +2998,11 @@ queries:
             **Prevention:**
 
             Always configure new Cloud SQL MySQL instances with `ssl_mode = "ENCRYPTED_ONLY"` during creation via Terraform. Regularly audit instances to ensure compliance.
-  - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-all
+  - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-postgresql'
     mql: |
-      gcp.project.sql.instances.where(maintenanceVersion.contains('POSTGRES')) {
-        settings.ipConfiguration {
-          sslMode == 'ENCRYPTED_ONLY'
-        }
-      }
+      gcp.project.sql.instance.settings.ipConfiguration.sslMode == "ENCRYPTED_ONLY"
   - uid: mondoo-gcp-security-cloud-sql-postgres-connections-require-ssl-tls-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
@@ -3069,7 +3040,7 @@ queries:
     title: Ensure Cloud SQL for SQL Server connections require SSL/TLS
     impact: 90
     variants:
-      - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-all
+      - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-single
       - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-terraform-hcl
       - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-terraform-plan
       - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-terraform-state
@@ -3155,15 +3126,11 @@ queries:
             **Prevention:**
 
             Always configure new Cloud SQL for SQL Server instances with `ssl_mode = "ENCRYPTED_ONLY"` during creation via Terraform. Regularly audit instances to ensure compliance.
-  - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-all
+  - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-single
     filters: |
-      asset.platform == 'gcp-project'
+      asset.platform == 'gcp-sql-sqlserver'
     mql: |
-      gcp.project.sql.instances.where(maintenanceVersion.contains('SQLSERVER')) {
-        settings.ipConfiguration {
-           sslMode == 'ENCRYPTED_ONLY'
-        }
-      }
+      gcp.project.sql.instance.settings.ipConfiguration.sslMode == "ENCRYPTED_ONLY"
   - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
@@ -3197,3 +3164,478 @@ queries:
           }
         }
       }
+  - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible
+    title: Ensure That Cloud KMS Cryptokeys Are Not Anonymously or Publicly Accessible
+    impact: 100
+    variants:
+      - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-single
+      - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-plan
+      - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-state
+    docs:
+      desc: |
+        It is recommended to restrict anonymous and/or public access in the Cloud Key Management Service (KMS) Cryptokeys Identity and Access Management (IAM) policy.
+
+        Granting permissions to `allUsers` or `allAuthenticatedUsers` allows broad access to your cryptokeys. Ensuring that anonymous and/or public access is not permitted helps maintain the confidentiality and integrity of your encrypted data.
+
+        Removing `allUsers` and `allAuthenticatedUsers` from the Cloud KMS Cryptokey IAM policy prevents unauthorized anonymous or public access to your cryptokeys, thereby enhancing the security posture of your encrypted data.
+
+      audit: |
+        **Using Google Cloud Console**
+
+        1.  Navigate to the Cloud KMS Keys page: https://console.cloud.google.com/security/kms/keys
+        2.  Select a key ring to view its cryptokeys.
+        3.  For each cryptokey, click the **Permissions** tab.
+        4.  Verify that neither `allUsers` nor `allAuthenticatedUsers` appears in the member list.
+
+        **Using Google Cloud CLI**
+
+        1. List all Cloud KMS `Cryptokeys`:
+        ```bash
+        gcloud kms keys list --keyring=[key_ring_name] --location=global --format=json | jq '.[].name'
+        ```
+        2. Ensure the below command's output does not contain `allUsers` or `allAuthenticatedUsers`:
+        ```bash
+        gcloud kms keys get-iam-policy [key_name] --keyring=[key_ring_name] --location=global --format=json | jq '.bindings[].members[]'
+        ```
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1.  Navigate to the Cloud KMS Keys page: https://console.cloud.google.com/security/kms/keys
+            2.  Select the key ring containing the target cryptokey.
+            3.  Click on the cryptokey name to view its details.
+            4.  Navigate to the **Permissions** tab.
+            5.  For any binding that includes `allUsers` or `allAuthenticatedUsers`:
+                - Click the **Edit** (pencil) icon for that binding.
+                - Remove `allUsers` and/or `allAuthenticatedUsers` from the members list.
+                - Click **Save** to apply the changes.
+
+            **Prevention:**
+
+            When creating new cryptokeys or modifying IAM policies, ensure that `allUsers` and `allAuthenticatedUsers` are never added as members. Regularly audit cryptokey permissions to ensure compliance.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. List all Cloud KMS `Cryptokeys`:
+            ```bash
+            gcloud kms keys list --keyring=[key_ring_name] --location=global --format=json | jq '.[].name'
+            ```
+            2. Remove IAM policy binding for a KMS key to remove access to `allUsers` and `allAuthenticatedUsers`:
+            ```bash
+            gcloud kms keys remove-iam-policy-binding [key_name] --keyring=[key_ring_name] --location=global --member='allAuthenticatedUsers' --role='[role]'
+
+            gcloud kms keys remove-iam-policy-binding [key_name] --keyring=[key_ring_name] --location=global --member='allUsers' --role='[role]'
+            ```
+
+            **Prevention:**
+
+            When creating new cryptokeys or modifying IAM policies via CLI, ensure that `allUsers` and `allAuthenticatedUsers` are never included in policy bindings. Regularly audit cryptokey permissions to ensure compliance.
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure that IAM policy resources for KMS crypto keys do not include `allUsers` or `allAuthenticatedUsers` as members:
+
+            ```hcl
+            # Good example - specific users/service accounts only
+            resource "google_kms_crypto_key_iam_binding" "crypto_key" {
+              crypto_key_id = google_kms_crypto_key.key.id
+              role          = "roles/cloudkms.cryptoKeyEncrypter"
+
+              members = [
+                "user:jane@example.com",
+                "serviceAccount:my-service@project.iam.gserviceaccount.com",
+              ]
+            }
+
+            # Avoid - public access
+            resource "google_kms_crypto_key_iam_binding" "crypto_key_bad" {
+              crypto_key_id = google_kms_crypto_key.key.id
+              role          = "roles/cloudkms.cryptoKeyEncrypter"
+
+              members = [
+                "allUsers",                    # Remove this
+                "allAuthenticatedUsers",       # Remove this
+                "user:jane@example.com",
+              ]
+            }
+            ```
+
+            **Prevention:**
+
+            Always review IAM policies for KMS crypto keys during code reviews. Use Terraform validation rules or policy-as-code tools to prevent public access grants. Regularly audit your Terraform configurations to ensure compliance.
+  - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-single
+    filters: asset.platform == "gcp-kms-keyring"
+    mql: |
+      gcp.project.kms.keyring.cryptokeys.all(
+        iamPolicy.all(
+          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl'
+      terraform.resources.contains(nameLabel == 'google_kms_crypto_key_iam_policy') ||
+      terraform.resources.contains(nameLabel == 'google_kms_crypto_key_iam_binding') ||
+      terraform.resources.contains(nameLabel == 'google_kms_crypto_key_iam_member')
+    mql: |
+      terraform.resources.where(nameLabel == 'google_kms_crypto_key_iam_policy' || nameLabel == 'google_kms_crypto_key_iam_binding' || nameLabel == 'google_kms_crypto_key_iam_member')
+        .all(arguments.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers'))
+  - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key_iam_policy') ||
+      terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key_iam_binding') ||
+      terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key_iam_member')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key_iam_policy' || type == 'google_kms_crypto_key_iam_binding' || type == 'google_kms_crypto_key_iam_member').all(
+        change.after.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+      )
+  - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_kms_crypto_key_iam_policy') ||
+      terraform.state.resources.contains(type == 'google_kms_crypto_key_iam_binding') ||
+      terraform.state.resources.contains(type == 'google_kms_crypto_key_iam_member')
+    mql: |
+      terraform.state.resources.where(type == 'google_kms_crypto_key_iam_policy' || type == 'google_kms_crypto_key_iam_binding' || type == 'google_kms_crypto_key_iam_member')
+        .all(values.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers'))
+  - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days
+    title: Ensure KMS Encryption Keys Are Rotated Within a Period of 90 Days
+    impact: 30
+    variants:
+      - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-single
+      - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-plan
+      - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-state
+    docs:
+      desc: |
+        Google Cloud Key Management Service (KMS) stores cryptographic keys hierarchically with robust access control. Configure a key rotation period and start time to ensure regular updates, enhancing security for data encrypted by these keys. The gcloud CLI requires the next rotation time in ISO or RFC3339 format, and the rotation period as INTEGER[UNIT] (s, m, h, or d). Note that after rotation, the older key version is still required to decrypt data encrypted with it.
+      audit: |
+        **Using Google Cloud Console**
+
+        1. - Navigate to the Cryptographic Keys section of the Google Cloud Console by visiting: [https://console.cloud.google.com/security/kms](https://console.cloud.google.com/security/kms).
+
+        2. Select each key ring sequentially. Within each key ring, verify that every key's "Next Rotation" is scheduled to occur within 90 days from the current date.
+
+        **Using Google Cloud CLI**
+
+        1. To confirm that a rotation schedule is configured for each key, including both the ROTATION_PERIOD and NEXT_ROTATION_TIME, use the following command:
+
+        ```bash
+        gcloud kms keys list --keyring=<KEY_RING> --location=<LOCATION> --format=json'(rotationPeriod)'
+        ```
+
+        Ensure the returned values for rotationPeriod and nextRotationTime adhere to the following criteria:
+
+        - `rotationPeriod` must not exceed 129600m (minutes).
+        - `rotationPeriod` must not exceed 7776000s (seconds).
+        - `rotationPeriod` must not exceed 2160h (hours).
+        - `rotationPeriod` must not exceed 90d (days).
+        - `nextRotationTime` must be scheduled within 90 days from the current date.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Access the `Cryptographic Keys` page: [https://console.cloud.google.com/security/kms](https://console.cloud.google.com/security/kms).
+            2. Select the desired key ring.
+            3. From the list of keys, locate and click the three-dot menu icon on the right side of the specific key.
+            4. Choose "Edit rotation period" from the options.
+            5. In the pop-up window, set a new rotation period (in days) to be less than 90 days, and specify a "Starting on" date for the rotation to begin.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Update and schedule rotation by `ROTATION_PERIOD` and `NEXT_ROTATION_TIME` for each key:
+
+            ```bash
+            gcloud kms keys update KEY_NAME --keyring=KEY_RING --location=LOCATION --next-rotation-time=NEXT_ROTATION_TIME --rotation-period=ROTATION_PERIOD
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure automatic key rotation for your KMS cryptokeys by setting a rotation period of 90 days or less:
+
+            ```hcl
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+
+              # Rotate every 90 days (maximum)
+              rotation_period = "7776000s"  # 90 days in seconds
+
+              lifecycle {
+                prevent_destroy = true
+              }
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "global"
+            }
+            ```
+
+            **Prevention:**
+
+            Always configure key rotation periods in your Terraform KMS configurations. Use Terraform validation rules or policy-as-code tools to ensure rotation periods are set to 90 days or less. Regularly audit your Terraform configurations to ensure compliance with key rotation requirements.
+  - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled
+    title: Ensure That DNSSEC Is Enabled for Cloud DNS
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-single
+      - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-plan
+      - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-state
+    docs:
+      desc: |
+        Cloud DNS with DNSSEC provides a secure, reliable, and cost-effective domain name system. DNSSEC protects domains from hijacking and man-in-the-middle attacks by cryptographically signing DNS records, ensuring the authenticity of DNS responses. This prevents attackers from redirecting users to malicious sites through fake DNS lookups.
+      audit: |
+        **Using Google Cloud Console**
+
+        1. Go to `Cloud DNS` by navigating to [https://console.cloud.google.com/net-services/dns/zones](https://console.cloud.google.com/net-services/dns/zones).
+        2. For each zone of `Type` `Public`, make sure that `DNSSEC` is set to `On`.
+
+        **Using Google Cloud CLI**
+
+        1. List all Managed Zones in a project:
+
+        ```bash
+        gcloud dns managed-zones list
+        ```
+
+        2. For each zone of `VISIBILITY` `public`, describe its metadata:
+
+        ```bash
+        gcloud dns managed-zones describe ZONE_NAME
+        ```
+
+        3. Make sure that `dnssecConfig.state` property is `on`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to `Cloud DNS` by navigating to [https://console.cloud.google.com/net-services/dns/zones](https://console.cloud.google.com/net-services/dns/zones).
+            2. For each zone of `Type` `Public`, switch `DNSSEC` to `On`.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Use the below command to enable `DNSSEC` for Cloud DNS Zone Name:
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state on
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable DNSSEC for managed DNS zones by setting the `dnssec_config` block with `state = "on"`:
+
+            ```hcl
+            resource "google_dns_managed_zone" "example" {
+              name         = "example-zone"
+              dns_name     = "example.com."
+              description  = "Example managed zone"
+              visibility   = "public"
+
+              dnssec_config {
+                state = "on"
+                default_key_specs {
+                  algorithm  = "rsasha256"
+                  key_length = 2048
+                  key_type   = "keySigning"
+                }
+                default_key_specs {
+                  algorithm  = "rsasha256"
+                  key_length = 2048
+                  key_type   = "zoneSigning"
+                }
+              }
+            }
+            ```
+
+            **Prevention:**
+
+            Always configure DNSSEC for public DNS zones in your Terraform configurations. Use Terraform validation rules or policy-as-code tools to ensure DNSSEC is enabled for all public zones. Regularly audit your Terraform configurations to ensure compliance.
+  - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-single
+    filters: |
+      asset.platform == "gcp-dns-managedzone"
+      gcp.project.dnsService.managedzone.visibility == "public"
+    mql: |
+      gcp.dns.managedzone.dnssecConfig['state'] == 'on'
+  - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl'
+      terraform.resources.contains(nameLabel == 'google_dns_managed_zone')
+    mql: |
+      terraform.resources.where(nameLabel == 'google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == null).all(
+        blocks.where(type == 'dnssec_config').any(attributes['state'] == 'on')
+      )
+  - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == null).all(
+        change.after['dnssec_config'] != empty && change.after['dnssec_config'].any(_['state'] == "on")
+      )
+  - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
+        values['dnssec_config'] != empty && values['dnssec_config'].any(_['state'] == "on")
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used
+    title: Ensure That RSASHA1 Is Not Used for the Key-Signing Key in Cloud DNS DNSSEC
+    impact: 30
+    variants:
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-single
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-plan
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-state
+    docs:
+      desc: |
+        When configuring DNSSEC for a managed zone, choose strong, recommended algorithms for key signing and denial-of-existence. While various DNSSEC algorithms are available, some are better suited for zone signing or transaction security. Note that SHA1 is deprecated by Google and requires a Google Cloud support contract and allowlisting for use. To modify DNSSEC settings on an enabled zone, disable and then re-enable it with the new configuration.
+      audit: |
+        **Using Google Cloud CLI**
+
+        Ensure the property algorithm for keyType keySigning is not using `RSASHA1`:
+
+        ```bash
+        gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"
+        ```
+      remediation:
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. To change DNSSEC settings on an already enabled managed zone, first disable it:
+
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state off
+            ```
+
+            2. Then, re-enable it with the desired key-signing and denial-of-existence settings:
+
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state on --ksk-algorithm KSK_ALGORITHM --ksk-key-length KSK_KEY_LENGTH --zsk-algorithm ZSK_ALGORITHM --zsk-key-length ZSK_KEY_LENGTH --denial-of-existence DENIAL_OF_EXISTENCE
+            ```
+
+            **Supported algorithm options and key lengths:**
+
+            | Algorithm | KSK Length | ZSK Length |
+            |-----------|------------|------------|
+            | RSASHA1 | 1024,2048 | 1024,2048 |
+            | RSASHA256 | 1024,2048 | 1024,2048 |
+            | RSASHA512 | 1024,2048 | 1024,2048 |
+            | ECDSAP256SHA256 | 256 | 256 |
+            | ECDSAP384SHA384 | 384 | 384 |
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Avoid using RSASHA1 for key-signing keys in your DNSSEC configuration. Use stronger algorithms like RSASHA256, RSASHA512, or ECDSA variants.:
+
+            ```hcl
+            resource "google_dns_managed_zone" "example" {
+              name         = "example-zone"
+              dns_name     = "example.com."
+              description  = "Example managed zone"
+              visibility   = "public"
+
+              dnssec_config {
+                state = "on"
+                # Use RSASHA256 instead of RSASHA1 for key-signing
+                default_key_specs {
+                  algorithm  = "rsasha256"  # Not rsasha1
+                  key_length = 2048
+                  key_type   = "keySigning"
+                }
+                default_key_specs {
+                  algorithm  = "rsasha256"
+                  key_length = 2048
+                  key_type   = "zoneSigning"
+                }
+              }
+            }
+            ```
+
+            **Prevention:**
+
+            Always use strong cryptographic algorithms in your Terraform DNSSEC configurations. Avoid RSASHA1 and prefer RSASHA256, RSASHA512, or ECDSA algorithms. Use Terraform validation rules to prevent weak algorithms from being deployed.
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-single
+    filters: |
+      asset.platform == "gcp-dns-managedzone"
+      gcp.project.dnsService.managedzone.visibility != "private"
+    mql: |
+      gcp.dns.managedzone.dnssecConfig['state'] == 'on'
+      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'keySigning').all(algorithm != 'RSASHA1')
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl'
+      terraform.resources.contains(nameLabel == 'google_dns_managed_zone')
+    mql: |
+      terraform.resources.where(nameLabel == 'google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == null).all(
+        blocks.where(type == 'dnssec_config').where(attributes['state'] == 'on').all(
+          blocks.where(type == 'default_key_specs').where(attributes['key_type'] == 'keySigning').all(
+            attributes['algorithm'] != 'rsasha1'
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == null).all(
+        change.after['dnssec_config'] != empty &&
+        change.after['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].where(_['key_type'] == "keySigning").all(_['algorithm'] != "rsasha1")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
+        values['dnssec_config'] != empty &&
+        values['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].where(_['key_type'] == "keySigning").all(_['algorithm'] != "rsasha1")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-single
+    filters: asset.platform == "gcp-kms-keyring"
+    mql: |
+      gcp.project.kms.keyring.cryptokeys.where(primary.state == "ENABLED").all(rotationPeriod.seconds <= 7776000)
+  - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl'
+      terraform.resources.contains(nameLabel == 'google_kms_crypto_key')
+    mql: |
+      terraform.resources.where(nameLabel == 'google_kms_crypto_key').all(
+        arguments['rotation_period'] != null && arguments['rotation_period'] != empty
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key').all(
+        change.after['rotation_period'] != null && change.after['rotation_period'] != empty
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.state.resources.where(type == 'google_kms_crypto_key').all(
+        values['rotation_period'] != null && values['rotation_period'] != empty
+      )
