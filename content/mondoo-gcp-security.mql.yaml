@@ -29,6 +29,7 @@ policies:
       - title: Cloud DNS
         checks:
           - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled
+          - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used
       - title: Compute Engine Instances
         checks:
           - uid: mondoo-gcp-security-block-project-wide-ssh-keys-enabled-vm-instances
@@ -3409,4 +3410,129 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
         values['dnssec_config'] != empty && values['dnssec_config'].any(_['state'] == "on")
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used
+    title: Ensure That RSASHA1 Is Not Used for the Key-Signing Key in Cloud DNS DNSSEC
+    impact: 30
+    variants:
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-single
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-plan
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-state
+    docs:
+      desc: |
+        DNSSEC algorithm numbers in this registry may be used in CERT RRs. Zone signing (DNSSEC) and transaction security mechanisms (SIG(0) and TSIG) make use of particular subsets of these algorithms. The algorithm used for key signing should be a recommended one and it should be strong.
+
+        Domain Name System Security Extensions (DNSSEC) algorithm numbers in this registry may be used in CERT RRs. Zone signing (DNSSEC) and transaction security mechanisms (SIG(0) and TSIG) make use of particular subsets of these algorithms.
+
+        The algorithm used for key signing should be a recommended one and it should be strong. When enabling DNSSEC for a managed zone, or creating a managed zone with DNSSEC, the user can select the DNSSEC signing algorithms and the denial-of-existence type. Changing the DNSSEC settings is only effective for a managed zone if DNSSEC is not already enabled. If there is a need to change the settings for a managed zone where it has been enabled, turn DNSSEC off and then re-enable it with different settings.
+
+        **Note:** Currently, the SHA1 algorithm has been removed from general use by Google, and, if being used, needs to be allowlisted on a project basis by Google and will also require a Google Cloud support contract.
+      audit: |
+        **Using Google Cloud CLI**
+
+        Ensure the property algorithm for keyType keySigning is not using `RSASHA1`:
+
+        ```bash
+        gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"
+        ```
+      remediation:
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. If it is necessary to change the settings for a managed zone where it has been enabled, DNSSEC must be turned off and re-enabled with different settings. To turn off DNSSEC:
+
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state off
+            ```
+
+            2. To update key-signing for a reported managed DNS Zone:
+
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state on --ksk-algorithm KSK_ALGORITHM --ksk-key-length KSK_KEY_LENGTH --zsk-algorithm ZSK_ALGORITHM --zsk-key-length ZSK_KEY_LENGTH --denial-of-existence DENIAL_OF_EXISTENCE
+            ```
+
+            **Supported algorithm options and key lengths:**
+
+            | Algorithm | KSK Length | ZSK Length |
+            |-----------|------------|------------|
+            | RSASHA1 | 1024,2048 | 1024,2048 |
+            | RSASHA256 | 1024,2048 | 1024,2048 |
+            | RSASHA512 | 1024,2048 | 1024,2048 |
+            | ECDSAP256SHA256 | 256 | 256 |
+            | ECDSAP384SHA384 | 384 | 384 |
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Avoid using RSASHA1 for key-signing keys in your DNSSEC configuration. Use stronger algorithms like RSASHA256, RSASHA512, or ECDSA variants:
+
+            ```hcl
+            resource "google_dns_managed_zone" "example" {
+              name         = "example-zone"
+              dns_name     = "example.com."
+              description  = "Example managed zone"
+              visibility   = "public"
+
+              dnssec_config {
+                state = "on"
+                # Use RSASHA256 instead of RSASHA1 for key-signing
+                default_key_specs {
+                  algorithm  = "rsasha256"  # Not rsasha1
+                  key_length = 2048
+                  key_type   = "keySigning"
+                }
+                default_key_specs {
+                  algorithm  = "rsasha256"
+                  key_length = 2048
+                  key_type   = "zoneSigning"
+                }
+              }
+            }
+            ```
+
+            **Prevention:**
+
+            Always use strong cryptographic algorithms in your Terraform DNSSEC configurations. Avoid RSASHA1 and prefer RSASHA256, RSASHA512, or ECDSA algorithms. Use Terraform validation rules to prevent weak algorithms from being deployed.
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-single
+    filters: |
+      asset.platform == "gcp-dns-managedzone"
+      gcp.project.dnsService.managedzone.visibility == "public"
+      gcp.dns.managedzone.dnssecConfig['state'] == 'on'
+    mql: |
+      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'keySigning').all(algorithm != 'RSASHA1')
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl'
+      terraform.resources.contains(nameLabel == 'google_dns_managed_zone')
+    mql: |
+      terraform.resources.where(nameLabel == 'google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == null).all(
+        blocks.where(type == 'dnssec_config').where(attributes['state'] == 'on').all(
+          blocks.where(type == 'default_key_specs').where(attributes['key_type'] == 'keySigning').all(
+            attributes['algorithm'] != 'rsasha1'
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == null).all(
+        change.after['dnssec_config'] != empty &&
+        change.after['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].where(_['key_type'] == "keySigning").all(_['algorithm'] != "rsasha1")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
+        values['dnssec_config'] != empty &&
+        values['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].where(_['key_type'] == "keySigning").all(_['algorithm'] != "rsasha1")
+        )
       )
