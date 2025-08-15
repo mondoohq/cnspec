@@ -13,12 +13,13 @@ ifndef VERSION
 VERSION=${LATEST_VERSION_TAG}+$(shell git rev-list --count HEAD)
 endif
 
-LDFLAGS=-ldflags "-s -w -X go.mondoo.com/cnspec/v11.Version=${VERSION}" # -linkmode external -extldflags=-static
-LDFLAGSDIST=-tags production -ldflags "-s -w -X go.mondoo.com/cnquery/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v11.Version=${LATEST_VERSION_TAG} -s -w"
+# use LDFLAGSEXTRA to pass additional ldflags to the build
+LDFLAGS="-s -w -X go.mondoo.com/cnquery/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v11.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
+LDFLAGSDIST=-tags production -ldflags ${LDFLAGS}
 
 .PHONY: info/ldflags
 info/ldflags:
-	$(info go run ${LDFLAGS} apps/cnspec/cnspec.go)
+	$(info go run -ldflags ${LDFLAGS} apps/cnspec/cnspec.go)
 	@:
 
 #   🧹 CLEAN   #
