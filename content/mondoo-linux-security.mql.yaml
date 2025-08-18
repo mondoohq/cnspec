@@ -4137,15 +4137,9 @@ queries:
   - uid: mondoo-linux-security-changes-to-system-administration-scope-sudoers-is-collected
     title: Ensure changes to system administration scope (sudoers) is audited
     impact: 50
-    props:
-      - uid: mondooLinuxSecurityAuditFiles
-        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
-        mql: |
-          mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
-          return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/sudoers\.d(\/?)\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/sudoers(\/?)\s+\-p\s+wa\s+\-k\s+scope(\s+)?$/))
+      auditd.rules.files.where(path == "/etc/sudoers").all(permissions == "wa" && keyname == "scope")
+      auditd.rules.files.where(path == "/etc/sudoers.d").all(permissions == "wa" && keyname == "scope")
     docs:
       desc: |
         This check verifies that auditd is configured to monitor changes to the system administration scope (sudoers). The parameters below track changes to files associated with sudoers.
@@ -4420,16 +4414,10 @@ queries:
   - uid: mondoo-linux-security-session-initiation-information-is-collected
     title: Ensure session initiation information is audited
     impact: 50
-    props:
-      - uid: mondooLinuxSecurityAuditFiles
-        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
-        mql: |
-          mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
-          return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/run\/utmp\s+\-p\s+wa\s+\-k\s+session(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
+      auditd.rules.files.where(path == "/var/run/utmp").all(permissions == "wa" && keyname == "session")
+      auditd.rules.files.where(path == "/var/log/wtmp").all(permissions == "wa" && keyname == "login")
+      auditd.rules.files.where(path == "/var/log/btmp").all(permissions == "wa" && keyname == "login")
     docs:
       desc: |
         This check verifies that the system is configured to record session start events in the audit logs, ensuring that audit rules are in place to track successful login sessions using the auditd subsystem.
@@ -4683,18 +4671,15 @@ queries:
   - uid: mondoo-linux-security-events-that-modify-the-systems-mandatory-access-controls-are-collected
     title: Ensure events that modify the system's Mandatory Access Controls are audited
     impact: 50
-    props:
-      - uid: mondooLinuxSecurityAuditFiles
-        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
-        mql: |
-          mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
-          return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
+    filters: file("/etc/apparmor").exists || file("/etc/apparmor").exists
     mql: |
-      appArmorSys = props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/apparmor(\/?)\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
-        && props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/apparmor.d(\/?)\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
-      seLinuxSys = props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/selinux(\/?)\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
-       && props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/usr\/share\/selinux(\/?)\s+\-p\s+wa\s+\-k\s+MAC-policy(\s+)?$/))
-      appArmorSys || seLinuxSys
+      if(file("/etc/selinux").exists) {
+        auditd.rules.files.where(path == "/etc/apparmor/").all(permissions == "wa" && keyname == "MAC-policy")
+        auditd.rules.files.where(path == "/etc/apparmor.d/").all(permissions == "wa" && keyname == "MAC-policy")
+      } else if(file("/etc/selinux/config").exists) {
+        auditd.rules.files.where(path == "/etc/selinux/").all(permissions == "wa" && keyname == "MAC-policy")
+        auditd.rules.files.where(path == "/usr/share/selinux/").all(permissions == "wa" && keyname == "MAC-policy")
+      }
     docs:
       desc: |
         This check verifies that the audit system is configured to log changes to the system's Mandatory Access Control (MAC) configurations, such as modifications to SELinux or AppArmor policies.
