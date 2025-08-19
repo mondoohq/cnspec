@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -850,9 +851,67 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
+	var scanDataStore policy.ScanDataStore
+	if cnquery.IsFeatureActive(s.job.Ctx, cnquery.UploadResultsV2) {
+		var err error
+
+		// create a temporary file for the scan data store
+		tmpFile, err := os.CreateTemp("", "cnspec-scan-*.db")
+		if err != nil {
+			log.Error().Err(err).Msg("failed to create temporary file for scan data store")
+			return nil, err
+		}
+		tmpFile.Close() // nolint: errcheck
+		defer func() {
+			if err := os.Remove(tmpFile.Name()); err != nil {
+				log.Warn().Err(err).Msg("failed to remove temporary scan data store file")
+			}
+		}()
+
+		scanDataStore, err = policy.NewSqliteScanDataStore(tmpFile.Name(), s.job.Asset.Mrn)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to create scan data store")
+			return nil, err
+		}
+		defer scanDataStore.Close()
+
+		s.db.SetDataWriter(policy.NewScanDataStoreWrapper(scanDataStore, s.job.Asset.Mrn))
+	}
+
 	resolvedPolicy, err := s.runPolicy()
 	if err != nil {
 		return nil, err
+	}
+
+	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
+		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
+		recording := s.Runtime.Recording()
+		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
+		if !ok {
+			log.Debug().Msg("not storing resource data for this asset, nothing available")
+		} else {
+			_, err = s.services.StoreResults(context.Background(), &policy.StoreResultsReq{
+				AssetMrn:  s.job.Asset.Mrn,
+				Resources: data,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if cnquery.IsFeatureActive(s.job.Ctx, cnquery.UploadResultsV2) {
+		scanDataPath, err := scanDataStore.Finalize()
+		if err != nil {
+			log.Error().Err(err).Msg("failed to finalize scan data store")
+			return nil, err
+		}
+		log.Debug().Str("scan-data-path", scanDataPath).Msg("scan data store finalized")
+
+		if err := s.uploadScanDataStore(scanDataPath); err != nil {
+			log.Error().Err(err).Msg("failed to upload scan data store")
+			return nil, err
+		}
 	}
 
 	ar := &AssetReport{
@@ -874,6 +933,74 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
 	return ar, nil
+}
+
+func (s *localAssetScanner) uploadScanDataStore(scanDataPath string) error {
+	urlResp, err := s.services.GetUploadURL(s.job.Ctx, &policy.GetUploadURLReq{
+		Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0,
+		ScopeMrn: s.job.Asset.Mrn,
+	})
+	if err != nil {
+		return err
+	}
+
+	uploadUrl := urlResp.UploadUrl
+	if uploadUrl == nil {
+		return errors.New("no upload URL for scan data store")
+	}
+
+	headers := uploadUrl.Headers
+	url := uploadUrl.Url
+
+	// Open the scan database file
+	file, err := os.Open(scanDataPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create HTTP request for upload
+	req, err := http.NewRequestWithContext(s.job.Ctx, "PUT", url, file)
+	if err != nil {
+		return err
+	}
+
+	// Set required headers from the signed URL
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	// Add file size header
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	req.ContentLength = fileInfo.Size()
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	// Perform the upload
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
+	}
+
+	// Confirm the upload
+	_, err = s.services.ReportUploadCompleted(s.job.Ctx, &policy.ReportUploadCompletedReq{
+		UploadSessionId: urlResp.UploadSessionId,
+		ScopeMrn:        s.job.Asset.Mrn,
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Info().Str("session", urlResp.UploadSessionId).Msg("successfully uploaded scan data store")
+	return nil
 }
 
 func filterPolicyMrns(b *policy.Bundle, filters []string) []string {
@@ -1103,23 +1230,6 @@ func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*p
 			EntityMrn:  s.job.Asset.Mrn,
 			ScoringMrn: s.job.Asset.Mrn,
 		}, err
-	}
-
-	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
-		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
-		recording := s.Runtime.Recording()
-		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
-		if !ok {
-			log.Debug().Msg("not storing resource data for this asset, nothing available")
-		} else {
-			_, err = resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
-				AssetMrn:  s.job.Asset.Mrn,
-				Resources: data,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")

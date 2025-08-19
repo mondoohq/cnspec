@@ -74,9 +74,16 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 		return nil, err
 	}
 
-	policyResolver, err := NewPolicyResolverClient(addr, httpClient, auth...)
+	var policyResolver PolicyResolver
+	policyResolver, err = NewPolicyResolverClient(addr, httpClient, auth...)
 	if err != nil {
 		return nil, err
+	}
+
+	if true {
+		policyResolver = &NoStoreResults{
+			PolicyResolver: policyResolver,
+		}
 	}
 
 	return &Services{
@@ -91,4 +98,12 @@ func (l *LocalServices) Schema() resources.ResourcesSchema {
 
 func (l *LocalServices) NewCompilerConfig() mqlc.CompilerConfig {
 	return mqlc.NewConfig(l.Schema(), cnquery.DefaultFeatures)
+}
+
+type NoStoreResults struct {
+	PolicyResolver
+}
+
+func (n *NoStoreResults) StoreResults(context.Context, *StoreResultsReq) (*Empty, error) {
+	return globalEmpty, nil
 }
