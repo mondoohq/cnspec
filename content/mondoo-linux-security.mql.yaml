@@ -4534,16 +4534,16 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /settimeofday/)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /clock_settime/)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /adjtimex/)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /settimeofday|clock_settime|adjtimex/).all(
-        split("-").containsAll(["a always,exit ",])
-          && split("-").containsAll(["F arch=b64 "])
-            || split("-").containsAll(["F arch=b32 "])
-          && split(" ").containsAll(["-F", "key=time-change"])
-            || split(" ").containsAll(["-k", "time-change"])
-      )
+      auditd.rules.syscalls.where(
+        syscalls.containsAll(["adjtimex", "settimeofday", "clock_settime", "stime"]) &&
+        keyname == "time-change" &&
+        fields.contains(key == "arch" && op == "=" && value == "b32")
+        )
+      auditd.rules.syscalls.where(
+        syscalls.containsAll(["adjtimex", "settimeofday", "clock_settime"]) &&
+        keyname == "time-change" &&
+        fields.contains(key == "arch" && op == "=" && value == "b64")
+        )
       auditd.rules.files.contains(path == "/etc/localtime" && permissions == "wa" && keyname == "time-change")
     docs:
       desc: |
@@ -4571,10 +4571,8 @@ queries:
             2. Add the following lines to the configuration file:
 
                 ```
-                -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
-                -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
-                -a always,exit -F arch=b32 -S clock_settime -k time-change
-                -a always,exit -F arch=b64 -S clock_settime -k time-change
+                -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S clock_settime -S stime -k time-change
+                -a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -k time-change
                 -w /etc/localtime -p wa -k time-change
                 ```
 
@@ -4608,10 +4606,8 @@ queries:
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-time_change.rules
                     block: |
-                      -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
-                      -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
-                      -a always,exit -F arch=b32 -S clock_settime -k time-change
-                      -a always,exit -F arch=b64 -S clock_settime -k time-change
+                      -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S clock_settime -S stime -k time-change
+                      -a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -k time-change
                       -w /etc/localtime -p wa -k time-change
                     create: yes
                     owner: root
@@ -4649,10 +4645,8 @@ queries:
 
             echo "Ensuring audit rules for time changes are configured"
             cat > "$RULES_FILE" <<EOF
-            -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
-            -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
-            -a always,exit -F arch=b32 -S clock_settime -k time-change
-            -a always,exit -F arch=b64 -S clock_settime -k time-change
+            -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S clock_settime -S stime -k time-change
+            -a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -k time-change
             -w /etc/localtime -p wa -k time-change
             EOF
 
