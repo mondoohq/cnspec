@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -851,8 +852,29 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
+	store, err := policy.NewSqliteScanDataStore("test.db", s.job.Asset.Mrn, "test-session-id")
+	if err != nil {
+		log.Error().Err(err).Msg("failed to create scan data store")
+		return nil, err
+	}
+	defer store.Close()
+
+	s.db.SetDataWriter(policy.NewScanDataStoreWrapper(store, s.job.Asset.Mrn))
+
 	resolvedPolicy, err := s.runPolicy()
 	if err != nil {
+		return nil, err
+	}
+
+	scanDataPath, err := store.Finalize()
+	if err != nil {
+		log.Error().Err(err).Msg("failed to finalize scan data store")
+		return nil, err
+	}
+	log.Debug().Str("scan-data-path", scanDataPath).Msg("scan data store finalized")
+
+	if err := s.uploadScanDataStore(scanDataPath); err != nil {
+		log.Error().Err(err).Msg("failed to upload scan data store")
 		return nil, err
 	}
 
@@ -875,6 +897,74 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
 	return ar, nil
+}
+
+func (s *localAssetScanner) uploadScanDataStore(scanDataPath string) error {
+	urlResp, err := s.services.GetUploadURLs(s.job.Ctx, &policy.GetUploadURLsReq{
+		Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0,
+		ScopeMrn: s.job.Asset.Mrn,
+	})
+	if err != nil {
+		return err
+	}
+
+	uploadUrl := urlResp.DatabaseV0.GetDatabase()
+	if uploadUrl == nil {
+		return errors.New("no upload URL for scan data store")
+	}
+
+	headers := uploadUrl.Headers
+	url := uploadUrl.Url
+
+	// Open the scan database file
+	file, err := os.Open(scanDataPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create HTTP request for upload
+	req, err := http.NewRequestWithContext(s.job.Ctx, "PUT", url, file)
+	if err != nil {
+		return err
+	}
+
+	// Set required headers from the signed URL
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	// Add file size header
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	req.ContentLength = fileInfo.Size()
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	// Perform the upload
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
+	}
+
+	// Confirm the upload
+	_, err = s.services.ConfirmUploads(s.job.Ctx, &policy.ConfirmUploadsReq{
+		UploadSessionId: urlResp.UploadSessionId,
+		ScopeMrn:        s.job.Asset.Mrn,
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Info().Str("session", urlResp.UploadSessionId).Msg("successfully uploaded scan data store")
+	return nil
 }
 
 func filterPolicyMrns(b *policy.Bundle, filters []string) []string {
