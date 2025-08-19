@@ -435,6 +435,8 @@ type PolicyResolver interface {
 	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
 	GetResolvedPolicy(context.Context, *Mrn) (*ResolvedPolicy, error)
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
+	GetUploadURLs(context.Context, *GetUploadURLsReq) (*GetUploadURLsResp, error)
+	ConfirmUploads(context.Context, *ConfirmUploadsReq) (*Empty, error)
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
@@ -509,6 +511,16 @@ func (c *PolicyResolverClient) StoreResults(ctx context.Context, in *StoreResult
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreResults"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) GetUploadURLs(ctx context.Context, in *GetUploadURLsReq) (*GetUploadURLsResp, error) {
+	out := new(GetUploadURLsResp)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetUploadURLs"}, ""), in, out)
+	return out, err
+}
+func (c *PolicyResolverClient) ConfirmUploads(ctx context.Context, in *ConfirmUploadsReq) (*Empty, error) {
+	out := new(Empty)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ConfirmUploads"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
@@ -570,6 +582,8 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"ResolveAndUpdateJobs": srv.ResolveAndUpdateJobs,
 			"GetResolvedPolicy":    srv.GetResolvedPolicy,
 			"StoreResults":         srv.StoreResults,
+			"GetUploadURLs":        srv.GetUploadURLs,
+			"ConfirmUploads":       srv.ConfirmUploads,
 			"GetReport":            srv.GetReport,
 			"GetFrameworkReport":   srv.GetFrameworkReport,
 			"GetScore":             srv.GetScore,
@@ -777,6 +791,54 @@ func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byt
 		return nil, err
 	}
 	return p.handler.StoreResults(ctx, &req)
+}
+func (p *PolicyResolverServer) GetUploadURLs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req GetUploadURLsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetUploadURLs(ctx, &req)
+}
+func (p *PolicyResolverServer) ConfirmUploads(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req ConfirmUploadsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.ConfirmUploads(ctx, &req)
 }
 func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq

@@ -232,6 +232,31 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 	return globalEmpty, nil
 }
 
+// GetUploadURLs provides signed URLs for uploading data to the server
+func (s *LocalServices) GetUploadURLs(ctx context.Context, req *GetUploadURLsReq) (*GetUploadURLsResp, error) {
+	// Only forward to upstream if we have one and are not in incognito mode
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.PolicyResolver.GetUploadURLs(ctx, req)
+	}
+
+	// Local services don't need signed URLs - return empty response
+	return &GetUploadURLsResp{
+		UploadSessionId: "",
+		UploadUrls:      []*UploadURL{},
+	}, nil
+}
+
+// ConfirmUploads confirms that the client has successfully uploaded data
+func (s *LocalServices) ConfirmUploads(ctx context.Context, req *ConfirmUploadsReq) (*Empty, error) {
+	// Only forward to upstream if we have one and are not in incognito mode
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.PolicyResolver.ConfirmUploads(ctx, req)
+	}
+
+	// Local services don't need upload confirmation - return success
+	return globalEmpty, nil
+}
+
 // GetReport retrieves a report for a given asset and policy
 func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Report, error) {
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
@@ -260,7 +285,7 @@ func (s *LocalServices) GetScore(ctx context.Context, req *EntityScoreReq) (*Rep
 	return &Report{
 		EntityMrn:  req.EntityMrn,
 		ScoringMrn: req.ScoreMrn,
-		Score:      &score,
+		Score:      score,
 	}, nil
 }
 

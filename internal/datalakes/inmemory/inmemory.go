@@ -4,6 +4,8 @@
 package inmemory
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +21,52 @@ type Db struct {
 	uuid                string                // used for all object identifiers to prevent clashes (eg in-memory pubsub)
 	nowProvider         func() time.Time
 	resolvedPolicyCache *ResolvedPolicyCache
+	writer              DataStore
+}
+
+type DataStore interface {
+	WriteScore(ctx context.Context, assetMrn string, scores *policy.Score) error
+	GetScore(ctx context.Context, assetMrn string, scoreID string) (*policy.Score, error)
+	WriteData(ctx context.Context, assetMrn string, data *llx.Result) error
+	GetData(ctx context.Context, assetMrn string, qrId string) (*llx.Result, error)
+}
+
+type cacheDataWriter struct {
+	cache kvStore
+}
+
+func (c *cacheDataWriter) WriteScore(ctx context.Context, assetMrn string, score *policy.Score) error {
+	ok := c.cache.Set(dbIDScore+assetMrn+"\x00"+score.QrId, *score, 1)
+	if !ok {
+		return errors.New("failed to set score for asset '" + assetMrn + "' with ID '" + score.QrId + "'")
+	}
+	return nil
+}
+
+func (c *cacheDataWriter) GetScore(ctx context.Context, assetMrn string, scoreID string) (*policy.Score, error) {
+	x, ok := c.cache.Get(dbIDScore + assetMrn + "\x00" + scoreID)
+	if !ok {
+		return &policy.Score{}, errors.New("cannot find score")
+	}
+	s := x.(policy.Score)
+	return s.CloneVT(), nil
+}
+
+func (n *cacheDataWriter) WriteData(ctx context.Context, assetMrn string, value *llx.Result) error {
+	id := dbIDData + assetMrn + "\x00" + value.CodeId
+	ok := n.cache.Set(id, value, 1)
+	if !ok {
+		return errors.New("failed to save asset data for asset '" + assetMrn + "' and checksum '" + value.CodeId + "'")
+	}
+	return nil
+}
+
+func (n *cacheDataWriter) GetData(ctx context.Context, assetMrn string, qrId string) (*llx.Result, error) {
+	x, ok := n.cache.Get(dbIDData + assetMrn + "\x00" + qrId)
+	if !ok {
+		return nil, errors.New("cannot find data")
+	}
+	return x.(*llx.Result), nil
 }
 
 // NewServices creates a new set of policy services
@@ -34,12 +82,17 @@ func NewServices(runtime llx.Runtime, resolvedPolicyCache *ResolvedPolicyCache) 
 		uuid:                uuid.New().String(),
 		nowProvider:         time.Now,
 		resolvedPolicyCache: resolvedPolicyCache,
+		writer:              &cacheDataWriter{cache: cache},
 	}
 
 	services := policy.NewLocalServices(db, db.uuid, runtime)
 	db.services = services // close the connection between db and services
 
 	return db, services, nil
+}
+
+func (db *Db) SetDataWriter(writer DataStore) {
+	db.writer = writer
 }
 
 // WithDb creates a new set of policy services and closes everything out once the function is done

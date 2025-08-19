@@ -233,11 +233,11 @@ func NewPolicyServiceCollector(assetMrn string, resolver policy.PolicyResolver) 
 	}
 }
 
-func (c *PolicyServiceCollector) toResult(rr *llx.RawResult) *llx.Result {
+func toResult(assetMrn string, rr *llx.RawResult) *llx.Result {
 	v := rr.Result()
 	if v.Data.Size() > MAX_DATAPOINT {
 		log.Warn().
-			Str("asset", c.assetMrn).
+			Str("asset", assetMrn).
 			Str("id", rr.CodeID).
 			Msg("executor.scoresheet> not storing datafield because it is too large")
 
@@ -330,7 +330,7 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 	if len(results) > 0 {
 		llxResults := make([]*llx.Result, len(results))
 		for i, rr := range results {
-			llxResults[i] = c.toResult(rr)
+			llxResults[i] = toResult(c.assetMrn, rr)
 		}
 
 		err := iox.ChunkMessages(sendFn, cnquery.GetDisableMaxLimit(), onTooLargeFn, llxResults...)
@@ -371,4 +371,35 @@ func (c *FuncCollector) SinkScore(scores []*policy.Score) {
 		return
 	}
 	c.SinkScoreFunc(scores)
+}
+
+type UploadFileCollector struct {
+	store policy.ScanDataStore
+}
+
+func NewUploadFileCollector(store policy.ScanDataStore) *UploadFileCollector {
+	return &UploadFileCollector{
+		store: store,
+	}
+}
+
+func (c *UploadFileCollector) SinkData(results []*llx.RawResult) {
+	if len(results) == 0 {
+		return
+	}
+	for _, rr := range results {
+		r := rr.Result()
+		if err := c.store.WriteData(context.Background(), []*llx.Result{r}); err != nil {
+			log.Error().Err(err).Msg("failed to write data to upload file")
+		}
+	}
+}
+
+func (c *UploadFileCollector) SinkScore(scores []*policy.Score) {
+	if len(scores) == 0 {
+		return
+	}
+	if err := c.store.WriteScores(context.Background(), scores); err != nil {
+		log.Error().Err(err).Msg("failed to write scores to upload file")
+	}
 }

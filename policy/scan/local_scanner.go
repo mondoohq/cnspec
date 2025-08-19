@@ -851,6 +851,15 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
+	store, err := policy.NewSqliteScanDataStore("test.db", s.job.Asset.Mrn, "test-session-id")
+	if err != nil {
+		log.Error().Err(err).Msg("failed to create scan data store")
+		return nil, err
+	}
+	defer store.Close()
+
+	s.db.SetDataWriter(policy.NewScanDataStoreWrapper(store, s.job.Asset.Mrn))
+
 	resolvedPolicy, err := s.runPolicy()
 	if err != nil {
 		return nil, err

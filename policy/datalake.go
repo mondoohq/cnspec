@@ -88,7 +88,7 @@ type DataLake interface {
 	SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy *ResolvedPolicy, version ResolvedPolicyVersion, cached bool) error
 
 	// GetScore retrieves one score for an asset
-	GetScore(ctx context.Context, assetMrn string, scoreID string) (Score, error)
+	GetScore(ctx context.Context, assetMrn string, scoreID string) (*Score, error)
 	// GetScoredRisks retrieves risk scores for an asset
 	GetScoredRisks(ctx context.Context, assetMrn string) (*ScoredRiskFactors, error)
 	// UpdateScores sets the given scores and returns a list of updated IDs

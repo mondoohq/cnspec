@@ -483,7 +483,7 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 	res := policy.Report{
 		EntityMrn:             assetMrn,
 		ScoringMrn:            qrID,
-		Score:                 &score,
+		Score:                 score,
 		Scores:                scores,
 		Data:                  data,
 		Risks:                 risks,
@@ -494,12 +494,8 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 }
 
 // GetScore retrieves one score for an asset
-func (db *Db) GetScore(ctx context.Context, assetMrn, scoreID string) (policy.Score, error) {
-	x, ok := db.cache.Get(dbIDScore + assetMrn + "\x00" + scoreID)
-	if !ok {
-		return policy.Score{}, errors.New("cannot find score")
-	}
-	return x.(policy.Score), nil
+func (db *Db) GetScore(ctx context.Context, assetMrn, scoreID string) (*policy.Score, error) {
+	return db.writer.GetScore(ctx, assetMrn, scoreID)
 }
 
 // GetScores retrieves a map of score for an asset
@@ -509,13 +505,12 @@ func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (m
 	for i := range qrIDs {
 		qrID := qrIDs[i]
 
-		x, ok := db.cache.Get(dbIDScore + assetMrn + "\x00" + qrID)
-		if !ok {
-			return nil, errors.New("score for asset '" + assetMrn + "' with ID '" + qrID + "' not found")
+		score, err := db.writer.GetScore(ctx, assetMrn, qrID)
+		if err != nil {
+			return nil, err
 		}
 
-		score := x.(policy.Score)
-		res[qrID] = &score
+		res[qrID] = score
 	}
 
 	return res, nil
@@ -817,12 +812,7 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 }
 
 func (db *Db) setDatum(ctx context.Context, assetMrn string, checksum string, value *llx.Result) error {
-	id := dbIDData + assetMrn + "\x00" + checksum
-	ok := db.cache.Set(id, value, 1)
-	if !ok {
-		return errors.New("failed to save asset data for asset '" + assetMrn + "' and checksum '" + checksum + "'")
-	}
-	return nil
+	return db.writer.WriteData(ctx, assetMrn, value)
 }
 
 // UpdateScores sets the given scores and returns true if any were updated
@@ -879,9 +869,13 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 		score.FailureTime = org.FailureTime
 	}
 
-	ok := db.cache.Set(dbIDScore+assetMrn+"\x00"+score.QrId, *score, 1)
-	if !ok {
-		return false, errors.New("failed to set score for asset '" + assetMrn + "' with ID '" + score.QrId + "'")
+	if err := db.writer.WriteScore(ctx, assetMrn, score); err != nil {
+		log.Error().
+			Err(err).
+			Str("asset", assetMrn).
+			Str("query", score.QrId).
+			Msg("resolver.db> failed to write score")
+		return false, err
 	}
 
 	log.Debug().
