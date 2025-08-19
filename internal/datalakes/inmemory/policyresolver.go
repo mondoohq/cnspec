@@ -483,7 +483,7 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 	res := policy.Report{
 		EntityMrn:             assetMrn,
 		ScoringMrn:            qrID,
-		Score:                 &score,
+		Score:                 score,
 		Scores:                scores,
 		Data:                  data,
 		Risks:                 risks,
@@ -494,12 +494,8 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 }
 
 // GetScore retrieves one score for an asset
-func (db *Db) GetScore(ctx context.Context, assetMrn, scoreID string) (policy.Score, error) {
-	x, ok := db.cache.Get(dbIDScore + assetMrn + "\x00" + scoreID)
-	if !ok {
-		return policy.Score{}, errors.New("cannot find score")
-	}
-	return x.(policy.Score), nil
+func (db *Db) GetScore(ctx context.Context, assetMrn, scoreID string) (*policy.Score, error) {
+	return db.writer.GetScore(ctx, assetMrn, scoreID)
 }
 
 // GetScores retrieves a map of score for an asset
@@ -509,13 +505,12 @@ func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (m
 	for i := range qrIDs {
 		qrID := qrIDs[i]
 
-		x, ok := db.cache.Get(dbIDScore + assetMrn + "\x00" + qrID)
-		if !ok {
-			return nil, errors.New("score for asset '" + assetMrn + "' with ID '" + qrID + "' not found")
+		score, err := db.writer.GetScore(ctx, assetMrn, qrID)
+		if err != nil {
+			return nil, err
 		}
 
-		score := x.(policy.Score)
-		res[qrID] = &score
+		res[qrID] = score
 	}
 
 	return res, nil
@@ -523,23 +518,16 @@ func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (m
 
 // GetScoredRisks retrieves risk scores for an asset
 func (db *Db) GetScoredRisks(ctx context.Context, assetMrn string) (*policy.ScoredRiskFactors, error) {
-	raw, ok := db.cache.Get(dbIDAssetRisk + assetMrn)
-	if !ok {
-		return nil, nil
-	}
+	res := make([]*policy.ScoredRiskFactor, 0, 8)
 
-	risks := raw.(map[string]*policy.ScoredRiskFactor)
-	res := make([]*policy.ScoredRiskFactor, len(risks))
-	idx := 0
-	for _, risk := range risks {
+	err := db.writer.StreamRisks(ctx, assetMrn, func(risk *policy.ScoredRiskFactor) error {
 		srisk := &policy.ScoredRiskFactor{
 			Mrn:        risk.Mrn,
 			IsDetected: risk.IsDetected,
 		}
-
 		raw, ok := db.cache.Get(dbIDRiskFactor + risk.Mrn)
 		if !ok {
-			return nil, errors.New("cannot find risk metadata for " + risk.Mrn)
+			return fmt.Errorf("cannot find risk metadata for %s", risk.Mrn)
 		}
 		riskInfo := raw.(*policy.RiskFactor)
 		srisk.IsToxic = riskInfo.GetMagnitude().GetIsToxic()
@@ -547,9 +535,11 @@ func (db *Db) GetScoredRisks(ctx context.Context, assetMrn string) (*policy.Scor
 		if !risk.IsDetected {
 			srisk.Risk *= -1
 		}
-
-		res[idx] = srisk
-		idx++
+		res = append(res, srisk)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &policy.ScoredRiskFactors{
@@ -562,15 +552,15 @@ func (db *Db) GetData(ctx context.Context, assetMrn string, fields map[string]ty
 	res := make(map[string]*llx.Result, len(fields))
 
 	for checksum := range fields {
-		x, ok := db.cache.Get(dbIDData + assetMrn + "\x00" + checksum)
-		if !ok {
-			return nil, errors.New("failed to get data for asset '" + assetMrn + "' and checksum '" + checksum + "'")
+		data, err := db.writer.GetData(ctx, assetMrn, checksum)
+		if err != nil {
+			return nil, err
 		}
 
-		if x == nil {
+		if data == nil {
 			res[checksum] = nil
 		} else {
-			res[checksum] = x.(*llx.Result)
+			res[checksum] = data
 		}
 	}
 
@@ -723,25 +713,21 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 }
 
 func (db *Db) initDataValue(ctx context.Context, assetMrn string, checksum string, typ types.Type) error {
-	id := dbIDData + assetMrn + "\x00" + checksum
-	_, ok := db.cache.Get(id)
-	if ok {
-		return nil
-	}
-
-	ok = db.cache.Set(id, nil, 1)
-	if !ok {
-		return errors.New("failed to initialize data value for asset '" + assetMrn + "' with checksum '" + checksum + "'")
-	}
-	return nil
+	err := db.writer.WriteData(ctx, assetMrn, &llx.Result{
+		CodeId: checksum,
+		Data:   llx.NilPrimitive,
+	})
+	return err
 }
 
 func (db *Db) initEmptyScore(ctx context.Context, assetMrn string, qrid string) error {
-	id := dbIDScore + assetMrn + "\x00" + qrid
+	now := db.nowProvider().Unix()
 
-	ok := db.cache.Set(id, policy.Score{}, 1)
-	if !ok {
-		return errors.New("failed to initialize score for asset '" + assetMrn + "' with qrID '" + qrid + "'")
+	_, err := db.updateScore(ctx, assetMrn, &policy.Score{
+		QrId: qrid,
+	}, now)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -817,10 +803,15 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 }
 
 func (db *Db) setDatum(ctx context.Context, assetMrn string, checksum string, value *llx.Result) error {
-	id := dbIDData + assetMrn + "\x00" + checksum
-	ok := db.cache.Set(id, value, 1)
-	if !ok {
-		return errors.New("failed to save asset data for asset '" + assetMrn + "' and checksum '" + checksum + "'")
+	return db.writer.WriteData(ctx, assetMrn, value)
+}
+
+func (db *Db) UpdateResources(ctx context.Context, assetMrn string, resources map[string]*llx.ResourceRecording) error {
+	for _, rr := range resources {
+		err := db.writer.WriteResource(ctx, assetMrn, rr)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -879,9 +870,13 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 		score.FailureTime = org.FailureTime
 	}
 
-	ok := db.cache.Set(dbIDScore+assetMrn+"\x00"+score.QrId, *score, 1)
-	if !ok {
-		return false, errors.New("failed to set score for asset '" + assetMrn + "' with ID '" + score.QrId + "'")
+	if err := db.writer.WriteScore(ctx, assetMrn, score); err != nil {
+		log.Error().
+			Err(err).
+			Str("asset", assetMrn).
+			Str("query", score.QrId).
+			Msg("resolver.db> failed to write score")
+		return false, err
 	}
 
 	log.Debug().
@@ -901,31 +896,19 @@ func (db *Db) updateScore(ctx context.Context, assetMrn string, score *policy.Sc
 func (db *Db) UpdateRisks(ctx context.Context, assetMrn string, data []*policy.ScoredRiskFactor) (map[string]struct{}, error) {
 	updates := map[string]struct{}{}
 
-	var existingRisks map[string]*policy.ScoredRiskFactor
-	dbID := dbIDAssetRisk + assetMrn
-	raw, ok := db.cache.Get(dbID)
-	if ok {
-		existingRisks = raw.(map[string]*policy.ScoredRiskFactor)
-	} else {
-		existingRisks = map[string]*policy.ScoredRiskFactor{}
-	}
-
-	nuRisks := map[string]*policy.ScoredRiskFactor{}
-	for i := range data {
-		scoredRisk := data[i]
-
-		existing, ok := existingRisks[scoredRisk.Mrn]
-		if !ok || existing.IsDetected != scoredRisk.IsDetected {
+	for _, scoredRisk := range data {
+		existingRisk, err := db.writer.GetRisk(ctx, assetMrn, scoredRisk.Mrn)
+		if err != nil && !errors.Is(err, policy.ErrRiskNotFound) {
+			return nil, err
+		}
+		if existingRisk == nil || existingRisk.IsDetected != scoredRisk.IsDetected {
 			updates[scoredRisk.Mrn] = struct{}{}
 		}
-		nuRisks[scoredRisk.Mrn] = &policy.ScoredRiskFactor{
-			Mrn:        scoredRisk.Mrn,
-			IsDetected: scoredRisk.IsDetected,
+		err = db.writer.WriteRisk(ctx, assetMrn, scoredRisk)
+		if err != nil {
+			return nil, err
 		}
 	}
-
-	db.cache.Set(dbID, nuRisks, 1)
-
 	return updates, nil
 }
 
@@ -941,14 +924,6 @@ func (db *Db) GetResources(ctx context.Context, assetMrn string, req []*resource
 		res[i] = raw.(*llx.ResourceRecording)
 	}
 	return res, nil
-}
-
-// UpdateResources stores resources recording data for a given asset
-func (db *Db) UpdateResources(ctx context.Context, assetMrn string, resourcesRecording map[string]*llx.ResourceRecording) error {
-	for _, rr := range resourcesRecording {
-		db.cache.Set(dbIDData+assetMrn+"\x00"+rr.Resource+"\x00"+rr.Id, rr.Fields, 1)
-	}
-	return nil
 }
 
 // SetProps will override properties for a given entity (asset, space, org)

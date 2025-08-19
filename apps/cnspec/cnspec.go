@@ -8,6 +8,8 @@ import (
 	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/cnspec/v12"
 	"go.mondoo.com/cnspec/v12/apps/cnspec/cmd"
+
+	_ "github.com/glebarez/go-sqlite"
 )
 
 func main() {
