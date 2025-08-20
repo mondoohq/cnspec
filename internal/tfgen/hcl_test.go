@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.mondoo.com/cnspec/v11/internal/tfgen"
+	"go.mondoo.com/cnspec/v12/internal/tfgen"
 )
 
 func TestRealGcpHCLGeneration(t *testing.T) {
@@ -42,13 +42,13 @@ resource "mondoo_integration_gcp" "production" {
 }
 `
 	mondooProvider, err := tfgen.NewProvider("mondoo", tfgen.HclProviderWithAttributes(
-		map[string]interface{}{
+		map[string]any{
 			"space": "hungry-poet-123456",
 		},
 	)).ToBlock()
 	assert.NoError(t, err)
 	googleProvider, err := tfgen.NewProvider("google", tfgen.HclProviderWithAttributes(
-		map[string]interface{}{
+		map[string]any{
 			"project": "prod-project-123",
 			"region":  "us-central1",
 		},
@@ -56,7 +56,7 @@ resource "mondoo_integration_gcp" "production" {
 	assert.NoError(t, err)
 	googleServiceAccountResource, err := tfgen.NewResource("google_service_account",
 		"mondoo", tfgen.HclResourceWithAttributesAndProviderDetails(
-			map[string]interface{}{
+			map[string]any{
 				"account_id":   "mondoo-integration",
 				"display_name": "Mondoo service account",
 			}, nil,
@@ -64,17 +64,17 @@ resource "mondoo_integration_gcp" "production" {
 	assert.NoError(t, err)
 	googleServiceAccountKey, err := tfgen.NewResource("google_service_account_key",
 		"mondoo", tfgen.HclResourceWithAttributesAndProviderDetails(
-			map[string]interface{}{
+			map[string]any{
 				"service_account_id": tfgen.CreateSimpleTraversal("google_service_account", "mondoo", "name"),
 			}, nil,
 		)).ToBlock()
 	assert.NoError(t, err)
 	mondooIntegrationGCP, err := tfgen.NewResource("mondoo_integration_gcp",
 		"production", tfgen.HclResourceWithAttributesAndProviderDetails(
-			map[string]interface{}{
+			map[string]any{
 				"name":       "Production account",
 				"project_id": "prod-project-123",
-				"credentials": map[string]interface{}{
+				"credentials": map[string]any{
 					"private_key": tfgen.NewFuncCall(
 						"base64decode", tfgen.CreateSimpleTraversal("google_service_account_key", "mondoo", "private_key")),
 				},
@@ -96,7 +96,7 @@ resource "mondoo_integration_gcp" "production" {
 }
 
 func TestProviderToBlock(t *testing.T) {
-	provider := tfgen.NewProvider("aws", tfgen.HclProviderWithAttributes(map[string]interface{}{
+	provider := tfgen.NewProvider("aws", tfgen.HclProviderWithAttributes(map[string]any{
 		"region": "us-west-2",
 	}))
 
@@ -177,7 +177,7 @@ func TestNewOutput(t *testing.T) {
 func TestHclResourceToBlock(t *testing.T) {
 	resource := tfgen.NewResource("aws_instance",
 		"example", tfgen.HclResourceWithAttributesAndProviderDetails(
-			map[string]interface{}{"ami": "ami-123456"},
+			map[string]any{"ami": "ami-123456"},
 			[]string{"aws.foo"},
 		))
 	expectedOutput := `resource "aws_instance" "example" {
@@ -217,11 +217,11 @@ func TestGenericBlockCreation(t *testing.T) {
 		data, err := tfgen.HclCreateGenericBlock(
 			"thing",
 			[]string{"a", "b"},
-			map[string]interface{}{
+			map[string]any{
 				"a": "foo",
 				"b": 1,
 				"c": false,
-				"d": map[string]interface{}{ // Order of map elements should be sorted when executed
+				"d": map[string]any{ // Order of map elements should be sorted when executed
 					"f": 1,
 					"g": "bar",
 					"e": true,
@@ -238,10 +238,10 @@ func TestGenericBlockCreation(t *testing.T) {
 					},
 				},
 				"i": []string{"one", "two", "three"},
-				"j": []interface{}{"one", 2, true},
-				"k": []interface{}{
-					map[string]interface{}{"test1": []string{"f", "o", "o"}},
-					map[string]interface{}{"test2": []string{"b", "a", "r"}},
+				"j": []any{"one", 2, true},
+				"k": []any{
+					map[string]any{"test1": []string{"f", "o", "o"}},
+					map[string]any{"test2": []string{"b", "a", "r"}},
 				},
 			},
 		)
@@ -276,8 +276,8 @@ func TestGenericBlockCreation(t *testing.T) {
 		_, err := tfgen.HclCreateGenericBlock(
 			"thing",
 			[]string{},
-			map[string]interface{}{
-				"k": []map[string]interface{}{ // can use []interface{} here to support this sort of structure, but as-is will fail
+			map[string]any{
+				"k": []map[string]any{ // can use []any here to support this sort of structure, but as-is will fail
 					{"test1": []string{"f", "o", "o"}},
 					{"test2": []string{"b", "a", "r"}},
 				},
@@ -303,7 +303,7 @@ func TestModuleBlock(t *testing.T) {
 	data, err := tfgen.NewModule("foo",
 		"mycorp/mycloud",
 		tfgen.HclModuleWithVersion("~> 0.1"),
-		tfgen.HclModuleWithAttributes(map[string]interface{}{"bar": "foo"})).ToBlock()
+		tfgen.HclModuleWithAttributes(map[string]any{"bar": "foo"})).ToBlock()
 
 	assert.Nil(t, err)
 	assert.Equal(t, "module", data.Type())
@@ -337,7 +337,7 @@ func TestModuleWithProviderBlock(t *testing.T) {
 }
 
 func TestProviderBlock(t *testing.T) {
-	attrs := map[string]interface{}{"key": "value"}
+	attrs := map[string]any{"key": "value"}
 	data, err := tfgen.NewProvider("foo", tfgen.HclProviderWithAttributes(attrs)).ToBlock()
 
 	assert.Nil(t, err)
@@ -347,7 +347,7 @@ func TestProviderBlock(t *testing.T) {
 }
 
 func TestProviderBlockWithTraversal(t *testing.T) {
-	attrs := map[string]interface{}{
+	attrs := map[string]any{
 		"test": hcl.Traversal{
 			hcl.TraverseRoot{Name: "key"},
 			hcl.TraverseAttr{Name: "value"},
@@ -443,7 +443,7 @@ func TestOutputBlockCreation(t *testing.T) {
 
 func TestModuleToBlock(t *testing.T) {
 	module := tfgen.NewModule("vpc", "terraform-aws-modules/vpc/aws",
-		tfgen.HclModuleWithAttributes(map[string]interface{}{
+		tfgen.HclModuleWithAttributes(map[string]any{
 			"version": "2.32.0",
 		}),
 	)

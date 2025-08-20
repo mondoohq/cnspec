@@ -1,10 +1,10 @@
-module go.mondoo.com/cnspec/v11
+module go.mondoo.com/cnspec/v12
 
 go 1.24.0
 
 toolchain go1.24.1
 
-// replace go.mondoo.com/cnquery/v11 => ../cnquery
+// replace go.mondoo.com/cnquery/v12 => ../cnquery
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.11.0
@@ -43,7 +43,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.0
 	github.com/zclconf/go-cty v1.16.4
-	go.mondoo.com/cnquery/v11 v11.69.1
+	go.mondoo.com/cnquery/v12 v12.0.0-pre1
 	go.mondoo.com/mondoo-go v0.0.0-20250702005123-23558fe8001c
 	go.mondoo.com/ranger-rpc v0.7.0
 	go.opentelemetry.io/otel v1.37.0
@@ -278,6 +278,7 @@ require (
 	github.com/shurcooL/graphql v0.0.0-20230722043721-ed46e5a46466 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
+	github.com/smarty/assertions v1.16.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spdx/tools-golang v0.5.5 // indirect
 	github.com/spf13/cast v1.9.2 // indirect

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	subject "go.mondoo.com/cnspec/v11/internal/onboarding"
+	subject "go.mondoo.com/cnspec/v12/internal/onboarding"
 )
 
 func TestWriteHCL(t *testing.T) {

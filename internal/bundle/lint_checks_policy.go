@@ -28,13 +28,13 @@ type LintContext struct {
 }
 
 // LintCheck defines the structure for a single linting rule.
-// The item interface{} will be cast to *Policy or QueryLintInput.
+// The item any will be cast to *Policy or QueryLintInput.
 type LintCheck struct {
 	ID          string
 	Name        string
 	Description string
 	Severity    string
-	Run         func(ctx *LintContext, item interface{}) []*Entry
+	Run         func(ctx *LintContext, item any) []*Entry
 }
 
 // QueryLintInput is used to pass a query and its context (global or embedded) to check functions.
@@ -123,7 +123,7 @@ func policyIdentifier(p *Policy) string {
 	return fmt.Sprintf("policy at line %d", p.FileContext.Line)
 }
 
-func runCheckPolicyUid(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyUid(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -172,7 +172,7 @@ func runCheckPolicyUid(ctx *LintContext, item interface{}) []*Entry {
 	return entries
 }
 
-func runCheckPolicyName(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyName(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -192,7 +192,7 @@ func runCheckPolicyName(ctx *LintContext, item interface{}) []*Entry {
 	return nil
 }
 
-func runCheckPolicyRequiredTags(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyRequiredTags(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -216,7 +216,7 @@ func runCheckPolicyRequiredTags(ctx *LintContext, item interface{}) []*Entry {
 	return entries
 }
 
-func runCheckPolicyMissingVersion(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyMissingVersion(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -236,7 +236,7 @@ func runCheckPolicyMissingVersion(ctx *LintContext, item interface{}) []*Entry {
 	return nil
 }
 
-func runCheckPolicyWrongVersion(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyWrongVersion(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -259,7 +259,7 @@ func runCheckPolicyWrongVersion(ctx *LintContext, item interface{}) []*Entry {
 	return nil
 }
 
-func runCheckPolicyGroupsAndChecks(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyGroupsAndChecks(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -297,7 +297,7 @@ func runCheckPolicyGroupsAndChecks(ctx *LintContext, item interface{}) []*Entry 
 	return entries
 }
 
-func runCheckPolicyGroupAssetFilter(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyGroupAssetFilter(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -345,7 +345,7 @@ func runCheckPolicyGroupAssetFilter(ctx *LintContext, item interface{}) []*Entry
 	return entries
 }
 
-func runCheckPolicyAssignedQueriesExist(ctx *LintContext, item interface{}) []*Entry {
+func runCheckPolicyAssignedQueriesExist(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil

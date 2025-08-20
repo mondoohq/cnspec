@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type localFileHandler struct {

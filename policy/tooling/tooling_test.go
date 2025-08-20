@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func TestBundleFormattedYaml(t *testing.T) {

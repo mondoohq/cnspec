@@ -14,7 +14,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnquery/v11/cli/config"
+	"go.mondoo.com/cnquery/v12/cli/config"
 )
 
 func init() {

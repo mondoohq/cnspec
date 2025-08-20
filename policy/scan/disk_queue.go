@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v11/policy/scan/pdque"
+	"go.mondoo.com/cnspec/v12/policy/scan/pdque"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,7 +47,7 @@ type diskQueueClient struct {
 	handler func(job *Job)
 }
 
-func diskQueueEntryBuilder() interface{} {
+func diskQueueEntryBuilder() any {
 	return &queueMsg{}
 }
 
