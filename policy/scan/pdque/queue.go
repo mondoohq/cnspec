@@ -45,11 +45,11 @@ type Queue struct {
 	mu      sync.Mutex
 	closed  bool
 	cond    *sync.Cond
-	builder func() interface{}
+	builder func() any
 	maxSize int
 }
 
-func New(name string, path string, maxSize int, builder func() interface{}) (*Queue, error) {
+func New(name string, path string, maxSize int, builder func() any) (*Queue, error) {
 	err := os.MkdirAll(path, 0o755)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func New(name string, path string, maxSize int, builder func() interface{}) (*Qu
 	return que, nil
 }
 
-func NewOrOpen(name string, path string, maxSize int, builder func() interface{}) (*Queue, error) {
+func NewOrOpen(name string, path string, maxSize int, builder func() any) (*Queue, error) {
 	var que *Queue
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
@@ -91,7 +91,7 @@ func NewOrOpen(name string, path string, maxSize int, builder func() interface{}
 	return que, nil
 }
 
-func Open(name string, path string, maxSize int, builder func() interface{}) (*Queue, error) {
+func Open(name string, path string, maxSize int, builder func() any) (*Queue, error) {
 	overlyPermissive, err := isOverlyPermissive(path)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (q *Queue) Close() error {
 	return nil
 }
 
-func (q *Queue) Enqueue(obj interface{}) error {
+func (q *Queue) Enqueue(obj any) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -197,7 +197,7 @@ func (q *Queue) Enqueue(obj interface{}) error {
 	return nil
 }
 
-func (q *Queue) Dequeue() (interface{}, error) {
+func (q *Queue) Dequeue() (any, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -245,7 +245,7 @@ func (q *Queue) Dequeue() (interface{}, error) {
 	return nil, errors.New("no jobs in queue")
 }
 
-func (q *Queue) DequeueBlock() (interface{}, error) {
+func (q *Queue) DequeueBlock() (any, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -270,7 +270,7 @@ func (q *Queue) DequeueBlock() (interface{}, error) {
 
 // dequeueJob tries to dequeue a job from the queue without waiting.
 // It returns an ErrNoJobs error if there are no jobs to dequeue.
-func (q *Queue) dequeueJob() (interface{}, error) {
+func (q *Queue) dequeueJob() (any, error) {
 	files, err := os.ReadDir(q.path)
 	if err != nil {
 		return nil, err

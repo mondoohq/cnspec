@@ -8,8 +8,8 @@ package bundle
 import (
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnspec/v12/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +28,7 @@ type Action explorer.Action
 
 func (s *Action) UnmarshalYAML(node *yaml.Node) error {
 
-	var decoded interface{}
+	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
 		return err
@@ -86,7 +86,7 @@ func (x *Author) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Author) MarshalYAML() (interface{}, error) {
+func (d Author) MarshalYAML() (any, error) {
 	type alias Author
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -143,7 +143,7 @@ func (x *Bundle) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Bundle) MarshalYAML() (interface{}, error) {
+func (d Bundle) MarshalYAML() (any, error) {
 	type alias Bundle
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -200,7 +200,7 @@ func (x *Control) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Control) MarshalYAML() (interface{}, error) {
+func (d Control) MarshalYAML() (any, error) {
 	type alias Control
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -250,7 +250,7 @@ func (x *ControlDocs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d ControlDocs) MarshalYAML() (interface{}, error) {
+func (d ControlDocs) MarshalYAML() (any, error) {
 	type alias ControlDocs
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -304,7 +304,7 @@ func (x *ControlMap) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d ControlMap) MarshalYAML() (interface{}, error) {
+func (d ControlMap) MarshalYAML() (any, error) {
 	type alias ControlMap
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -355,7 +355,7 @@ func (x *ControlRef) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d ControlRef) MarshalYAML() (interface{}, error) {
+func (d ControlRef) MarshalYAML() (any, error) {
 	type alias ControlRef
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -410,7 +410,7 @@ func (x *Evidence) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Evidence) MarshalYAML() (interface{}, error) {
+func (d Evidence) MarshalYAML() (any, error) {
 	type alias Evidence
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -491,7 +491,7 @@ func (x *Framework) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Framework) MarshalYAML() (interface{}, error) {
+func (d Framework) MarshalYAML() (any, error) {
 	type alias Framework
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -552,7 +552,7 @@ func (x *FrameworkGroup) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d FrameworkGroup) MarshalYAML() (interface{}, error) {
+func (d FrameworkGroup) MarshalYAML() (any, error) {
 	type alias FrameworkGroup
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -609,7 +609,7 @@ func (x *FrameworkMap) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d FrameworkMap) MarshalYAML() (interface{}, error) {
+func (d FrameworkMap) MarshalYAML() (any, error) {
 	type alias FrameworkMap
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -660,7 +660,7 @@ func (x *FrameworkRef) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d FrameworkRef) MarshalYAML() (interface{}, error) {
+func (d FrameworkRef) MarshalYAML() (any, error) {
 	type alias FrameworkRef
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -677,7 +677,7 @@ type GroupType policy.GroupType
 
 func (s *GroupType) UnmarshalYAML(node *yaml.Node) error {
 
-	var decoded interface{}
+	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
 		return err
@@ -734,7 +734,7 @@ func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d HumanTime) MarshalYAML() (interface{}, error) {
+func (d HumanTime) MarshalYAML() (any, error) {
 	type alias HumanTime
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -816,7 +816,7 @@ func (x *Migration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Migration) MarshalYAML() (interface{}, error) {
+func (d Migration) MarshalYAML() (any, error) {
 	type alias Migration
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -865,7 +865,7 @@ func (x *MigrationDelta) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MigrationDelta) MarshalYAML() (interface{}, error) {
+func (d MigrationDelta) MarshalYAML() (any, error) {
 	type alias MigrationDelta
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -915,7 +915,7 @@ func (x *MigrationGroup) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MigrationGroup) MarshalYAML() (interface{}, error) {
+func (d MigrationGroup) MarshalYAML() (any, error) {
 	type alias MigrationGroup
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -964,7 +964,7 @@ func (x *MigrationMatch) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MigrationMatch) MarshalYAML() (interface{}, error) {
+func (d MigrationMatch) MarshalYAML() (any, error) {
 	type alias MigrationMatch
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -981,7 +981,7 @@ type Migration_Action policy.Migration_Action
 
 func (s *Migration_Action) UnmarshalYAML(node *yaml.Node) error {
 
-	var decoded interface{}
+	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
 		return err
@@ -1055,7 +1055,7 @@ func (x *Mquery) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Mquery) MarshalYAML() (interface{}, error) {
+func (d Mquery) MarshalYAML() (any, error) {
 	type alias Mquery
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1107,7 +1107,7 @@ func (x *MqueryDocs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MqueryDocs) MarshalYAML() (interface{}, error) {
+func (d MqueryDocs) MarshalYAML() (any, error) {
 	type alias MqueryDocs
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1157,7 +1157,7 @@ func (x *MqueryRef) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MqueryRef) MarshalYAML() (interface{}, error) {
+func (d MqueryRef) MarshalYAML() (any, error) {
 	type alias MqueryRef
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1208,7 +1208,7 @@ func (x *ObjectRef) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d ObjectRef) MarshalYAML() (interface{}, error) {
+func (d ObjectRef) MarshalYAML() (any, error) {
 	type alias ObjectRef
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1278,7 +1278,7 @@ func (x *Policy) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Policy) MarshalYAML() (interface{}, error) {
+func (d Policy) MarshalYAML() (any, error) {
 	type alias Policy
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1327,7 +1327,7 @@ func (x *PolicyDocs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d PolicyDocs) MarshalYAML() (interface{}, error) {
+func (d PolicyDocs) MarshalYAML() (any, error) {
 	type alias PolicyDocs
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1392,7 +1392,7 @@ func (x *PolicyGroup) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d PolicyGroup) MarshalYAML() (interface{}, error) {
+func (d PolicyGroup) MarshalYAML() (any, error) {
 	type alias PolicyGroup
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1442,7 +1442,7 @@ func (x *PolicyGroupDocs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d PolicyGroupDocs) MarshalYAML() (interface{}, error) {
+func (d PolicyGroupDocs) MarshalYAML() (any, error) {
 	type alias PolicyGroupDocs
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1497,7 +1497,7 @@ func (x *PolicyRef) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d PolicyRef) MarshalYAML() (interface{}, error) {
+func (d PolicyRef) MarshalYAML() (any, error) {
 	type alias PolicyRef
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1555,7 +1555,7 @@ func (x *Property) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Property) MarshalYAML() (interface{}, error) {
+func (d Property) MarshalYAML() (any, error) {
 	type alias Property
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1606,7 +1606,7 @@ func (x *QueryCounts) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d QueryCounts) MarshalYAML() (interface{}, error) {
+func (d QueryCounts) MarshalYAML() (any, error) {
 	type alias QueryCounts
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1659,7 +1659,7 @@ func (x *QueryGroup) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d QueryGroup) MarshalYAML() (interface{}, error) {
+func (d QueryGroup) MarshalYAML() (any, error) {
 	type alias QueryGroup
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1727,7 +1727,7 @@ func (x *QueryPack) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d QueryPack) MarshalYAML() (interface{}, error) {
+func (d QueryPack) MarshalYAML() (any, error) {
 	type alias QueryPack
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1776,7 +1776,7 @@ func (x *QueryPackDocs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d QueryPackDocs) MarshalYAML() (interface{}, error) {
+func (d QueryPackDocs) MarshalYAML() (any, error) {
 	type alias QueryPackDocs
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1839,7 +1839,7 @@ func (x *ResourceSelector) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d ResourceSelector) MarshalYAML() (interface{}, error) {
+func (d ResourceSelector) MarshalYAML() (any, error) {
 	type alias ResourceSelector
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1856,7 +1856,7 @@ type ReviewStatus policy.ReviewStatus
 
 func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
 
-	var decoded interface{}
+	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
 		return err
@@ -1928,7 +1928,7 @@ func (x *RiskFactor) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d RiskFactor) MarshalYAML() (interface{}, error) {
+func (d RiskFactor) MarshalYAML() (any, error) {
 	type alias RiskFactor
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -1978,7 +1978,7 @@ func (x *RiskFactorDocs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d RiskFactorDocs) MarshalYAML() (interface{}, error) {
+func (d RiskFactorDocs) MarshalYAML() (any, error) {
 	type alias RiskFactorDocs
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -2010,7 +2010,7 @@ type ScopeType policy.ScopeType
 
 func (s *ScopeType) UnmarshalYAML(node *yaml.Node) error {
 
-	var decoded interface{}
+	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
 		return err
@@ -2071,7 +2071,7 @@ func (x *SoftwareSelector) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d SoftwareSelector) MarshalYAML() (interface{}, error) {
+func (d SoftwareSelector) MarshalYAML() (any, error) {
 	type alias SoftwareSelector
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -2125,7 +2125,7 @@ func (x *TypedDoc) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d TypedDoc) MarshalYAML() (interface{}, error) {
+func (d TypedDoc) MarshalYAML() (any, error) {
 	type alias TypedDoc
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -2175,7 +2175,7 @@ func (x *Validity) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Validity) MarshalYAML() (interface{}, error) {
+func (d Validity) MarshalYAML() (any, error) {
 	type alias Validity
 	node := yaml.Node{}
 	err := node.Encode(alias(d))

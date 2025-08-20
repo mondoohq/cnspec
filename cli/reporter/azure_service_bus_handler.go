@@ -13,8 +13,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/util/azauth"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/util/azauth"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 var sbusRegex = regexp.MustCompile(`(https:\/\/|http:\/\/)?[a-zA-Z0-9-_]*[.](servicebus.windows.net)[\/][a-zA-Z0-9-_]*`)

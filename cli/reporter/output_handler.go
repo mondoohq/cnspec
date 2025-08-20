@@ -7,8 +7,8 @@ import (
 	"bytes"
 	"context"
 
-	"go.mondoo.com/cnquery/v11/utils/iox"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/utils/iox"
+	"go.mondoo.com/cnspec/v12/policy"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	_ "gocloud.dev/pubsub/azuresb"
 	"sigs.k8s.io/yaml"

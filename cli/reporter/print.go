@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type Format byte
@@ -29,9 +29,9 @@ func defaultPrintConfig() *PrintConfig {
 	return &PrintConfig{
 		format:               FormatCompact,
 		isCompact:            true,
-		printControls:        true,
+		printControls:        false,
 		printChecks:          true,
-		printData:            true,
+		printData:            false,
 		printRisks:           true,
 		printVulnerabilities: true,
 	}

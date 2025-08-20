@@ -9,9 +9,9 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnspec/v11"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type fetcher struct {

@@ -9,13 +9,13 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v11/cli/printer"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/utils/stringx"
-	"go.mondoo.com/cnspec/v11/cli/components"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/cli/printer"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/utils/stringx"
+	"go.mondoo.com/cnspec/v12/cli/components"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, scoringData []reportRow) string {

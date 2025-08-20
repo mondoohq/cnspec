@@ -6,7 +6,7 @@ package policy
 import (
 	"fmt"
 
-	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v12/explorer"
 )
 
 func (e *Evidence) fillUidIfEmpty(frameworkUid string, controlUid string, suffix string) {

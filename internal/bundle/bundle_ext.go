@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v12/explorer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +29,7 @@ func (x *Impact) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (v *Impact) MarshalYAML() (interface{}, error) {
+func (v *Impact) MarshalYAML() (any, error) {
 	if explorer.Action(v.Action) == explorer.Action_UNSPECIFIED && v.Scoring == explorer.ScoringSystem_SCORING_UNSPECIFIED && v.Weight < 1 {
 		if v.Value == nil {
 			return nil, nil
@@ -98,7 +98,7 @@ func (x *Filters) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (v *Filters) MarshalYAML() (interface{}, error) {
+func (v *Filters) MarshalYAML() (any, error) {
 	if v.Items == nil {
 		return nil, nil
 	}
@@ -139,7 +139,7 @@ func (x *Remediation) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (x *Remediation) MarshalYAML() (interface{}, error) {
+func (x *Remediation) MarshalYAML() (any, error) {
 	if len(x.Items) == 0 {
 		return nil, nil
 	}

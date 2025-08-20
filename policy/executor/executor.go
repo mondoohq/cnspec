@@ -11,14 +11,14 @@ import (
 
 	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/logger"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v11/types"
-	"go.mondoo.com/cnspec/v11"
-	"go.mondoo.com/cnspec/v11/policy/executor/internal"
+	"go.mondoo.com/cnquery/v12"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
+	"go.mondoo.com/cnquery/v12/types"
+	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/cnspec/v12/policy/executor/internal"
 )
 
 // Executor helps you run multiple pieces of mondoo code and process results
@@ -53,7 +53,7 @@ func (c *RawResults) Load(k string) (*llx.RawResult, bool) {
 
 // Range calls f sequentially for each key and value present in the map. If f returns false, range stops the iteration.
 func (c *RawResults) Range(f func(k string, v *llx.RawResult) bool) {
-	c.Map.Range(func(k, v interface{}) bool {
+	c.Map.Range(func(k, v any) bool {
 		return f(k.(string), v.(*llx.RawResult))
 	})
 }
@@ -119,7 +119,7 @@ func (c *RunningCode) Load(k string) (*llx.CodeBundle, bool) {
 
 // Range calls f sequentially for each key and value present in the map. If f returns false, range stops the iteration.
 func (c *RunningCode) Range(f func(k string, v *llx.CodeBundle) bool) {
-	c.Map.Range(func(k, v interface{}) bool {
+	c.Map.Range(func(k, v any) bool {
 		return f(k.(string), v.(*llx.CodeBundle))
 	})
 }
@@ -147,7 +147,7 @@ func (w *watcherMap) Delete(k string) {
 }
 
 func (w *watcherMap) Range(f func(k string, v watcherFunc) bool) {
-	w.Map.Range(func(k, v interface{}) bool {
+	w.Map.Range(func(k, v any) bool {
 		return f(k.(string), v.(watcherFunc))
 	})
 }
@@ -200,11 +200,11 @@ func (e *Executor) AreAllResultsCollected() bool {
 }
 
 // Compile a given code with the default schema
-func (e *Executor) Compile(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+func (e *Executor) Compile(code string, props mqlc.PropsHandler) (*llx.CodeBundle, error) {
 	return mqlc.Compile(code, props, mqlc.NewConfig(e.runtime.Schema(), cnquery.DefaultFeatures))
 }
 
-func (e *Executor) AddCode(code string, props map[string]*llx.Primitive) (*llx.CodeBundle, error) {
+func (e *Executor) AddCode(code string, props mqlc.PropsHandler) (*llx.CodeBundle, error) {
 	codeBundle, err := e.Compile(code, props)
 	if err != nil {
 		return nil, err
@@ -216,7 +216,7 @@ func (e *Executor) AddCode(code string, props map[string]*llx.Primitive) (*llx.C
 }
 
 // AddCode to the executor
-func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props map[string]*llx.Primitive) error {
+func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props mqlc.PropsHandler) error {
 	codeID := codeBundle.CodeV2.Id
 
 	org, ok := e.RunningCode.Load(codeID)
@@ -244,7 +244,7 @@ func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props map[string]*l
 		results := e.Results
 		scoreResults := e.ScoreResults
 
-		executor, err := llx.NewExecutorV2(codeBundle.CodeV2, e.runtime, props, func(res *llx.RawResult) {
+		executor, err := llx.NewExecutorV2(codeBundle.CodeV2, e.runtime, props.All(), func(res *llx.RawResult) {
 			e.onResult(res, waitGroup, results, scoreResults)
 		})
 		if err != nil {

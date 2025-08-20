@@ -72,7 +72,7 @@ func TestConvertTypeToCty(t *testing.T) {
 	})
 
 	t.Run("success_nil_value", func(t *testing.T) {
-		var val interface{}
+		var val any
 		result, err := convertTypeToCty(val)
 		assert.Error(t, err)
 		assert.Equal(t, cty.NilVal, result)
