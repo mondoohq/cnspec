@@ -8,11 +8,11 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
 	"k8s.io/utils/ptr"
 
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/gql"
 )
 
 type UpstreamFramework struct {

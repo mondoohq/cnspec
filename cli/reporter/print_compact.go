@@ -17,13 +17,13 @@ import (
 	"github.com/mergestat/timediff"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/utils/stringx"
-	cnspecComponents "go.mondoo.com/cnspec/v11/cli/components"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v12/utils/stringx"
+	cnspecComponents "go.mondoo.com/cnspec/v12/cli/components"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type assetMrnName struct {

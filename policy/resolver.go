@@ -14,14 +14,14 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/fasthash/fnv1a"
-	"go.mondoo.com/cnquery/v11/checksums"
-	"go.mondoo.com/cnquery/v11/explorer"
-	resources "go.mondoo.com/cnquery/v11/explorer/resources"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/logger"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/mrn"
-	"go.mondoo.com/cnquery/v11/utils/sortx"
+	"go.mondoo.com/cnquery/v12/checksums"
+	"go.mondoo.com/cnquery/v12/explorer"
+	resources "go.mondoo.com/cnquery/v12/explorer/resources"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/mrn"
+	"go.mondoo.com/cnquery/v12/utils/sortx"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -499,7 +499,6 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	}
 
 	return resolvedPolicy, nil
-
 }
 
 func refreshChecksums(executionJob *ExecutionJob, collectorJob *CollectorJob) {
@@ -564,12 +563,12 @@ func connectDatapointsToReportingJob(query *ExecutionQuery, job *ReportingJob, d
 }
 
 type queryLike interface {
-	Compile(props map[string]*llx.Primitive, conf mqlc.CompilerConfig) (*llx.CodeBundle, error)
+	Compile(props mqlc.PropsHandler, conf mqlc.CompilerConfig) (*llx.CodeBundle, error)
 	GetChecksum() string
 	GetMql() string
 }
 
-func mquery2executionQuery(query queryLike, props map[string]*llx.Primitive, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool, conf mqlc.CompilerConfig) (*ExecutionQuery, string, error) {
+func mquery2executionQuery(query queryLike, props mqlc.PropsHandler, propsToChecksums map[string]string, collectorJob *CollectorJob, isScoring bool, conf mqlc.CompilerConfig) (*ExecutionQuery, string, error) {
 	bundle, err := query.Compile(props, conf)
 	if err != nil {
 		return nil, "", err

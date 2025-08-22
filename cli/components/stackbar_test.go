@@ -9,7 +9,7 @@ import (
 
 	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
 )
 
 func TestStackBarGeneration(t *testing.T) {

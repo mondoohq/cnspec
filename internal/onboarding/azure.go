@@ -12,8 +12,8 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/cnquery/v11/cli/theme"
-	"go.mondoo.com/cnspec/v11/internal/tfgen"
+	"go.mondoo.com/cnquery/v12/cli/theme"
+	"go.mondoo.com/cnspec/v12/internal/tfgen"
 )
 
 // AzureIntegration represents the configuration of an Azure integration to be created.
@@ -82,7 +82,7 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"display_name":  "mondoo_security", // @afiune should we customize this?
-				"owners":        []interface{}{dataADClientConfig.TraverseRef("object_id")},
+				"owners":        []any{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),
 		)
@@ -114,7 +114,7 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		resourceADServicePrincipal = tfgen.NewResource("azuread_service_principal", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"client_id": resourceAdApplication.TraverseRef("client_id"),
-				"owners":    []interface{}{dataADClientConfig.TraverseRef("object_id")},
+				"owners":    []any{dataADClientConfig.TraverseRef("object_id")},
 			}),
 		)
 		// This is the way we avoid Grant Admin Consent issue.
@@ -131,7 +131,7 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_id":             resourceADReadersDirectoryRole.TraverseRef("template_id"),
 				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
-				"depends_on":          []interface{}{resourceTimeSleep.TraverseRef()},
+				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
 			}),
 		)
 		integrationAttributes = tfgen.Attributes{

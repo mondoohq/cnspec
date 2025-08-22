@@ -10,11 +10,11 @@
 package policy
 
 import (
-	explorer "go.mondoo.com/cnquery/v11/explorer"
-	resources "go.mondoo.com/cnquery/v11/explorer/resources"
-	llx "go.mondoo.com/cnquery/v11/llx"
-	inventory "go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	mvd "go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
+	explorer "go.mondoo.com/cnquery/v12/explorer"
+	resources "go.mondoo.com/cnquery/v12/explorer/resources"
+	llx "go.mondoo.com/cnquery/v12/llx"
+	inventory "go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	mvd "go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -7361,7 +7361,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\bGetScore\x12 .cnspec.policy.v1.EntityScoreReq\x1a\x18.cnspec.policy.v1.Report\"\x00\x12t\n" +
 	"\x10GetResourcesData\x12..cnquery.explorer.resources.EntityResourcesReq\x1a..cnquery.explorer.resources.EntityResourcesRes\"\x00\x12f\n" +
 	"\x11SynchronizeAssets\x12&.cnspec.policy.v1.SynchronizeAssetsReq\x1a'.cnspec.policy.v1.SynchronizeAssetsResp\"\x00\x12`\n" +
-	"\vPurgeAssets\x12$.cnspec.policy.v1.PurgeAssetsRequest\x1a).cnspec.policy.v1.PurgeAssetsConfirmation\"\x00B!Z\x1fgo.mondoo.com/cnspec/v11/policyb\x06proto3"
+	"\vPurgeAssets\x12$.cnspec.policy.v1.PurgeAssetsRequest\x1a).cnspec.policy.v1.PurgeAssetsConfirmation\"\x00B!Z\x1fgo.mondoo.com/cnspec/v12/policyb\x06proto3"
 
 var (
 	file_cnspec_policy_proto_rawDescOnce sync.Once

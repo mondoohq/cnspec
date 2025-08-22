@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
-	"go.mondoo.com/cnspec/v11"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnspec/v12"
 )
 
 const MEM_DEBUG_ENV = "MEM_DEBUG"

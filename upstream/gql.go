@@ -6,8 +6,8 @@ package upstream
 import (
 	"context"
 
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
-	policy "go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/gql"
+	policy "go.mondoo.com/cnspec/v12/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
 )
 
@@ -118,7 +118,7 @@ func GetSpace(ctx context.Context, c *gql.MondooClient, mrn string) (*Space, err
 	var q struct {
 		Space Space `graphql:"space(mrn: $mrn)"`
 	}
-	err := c.Query(ctx, &q, map[string]interface{}{"mrn": mondoogql.String(mrn)})
+	err := c.Query(ctx, &q, map[string]any{"mrn": mondoogql.String(mrn)})
 	if err != nil {
 		return nil, err
 	}

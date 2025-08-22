@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"time"
 
-	"go.mondoo.com/cnquery/v11"
-	"go.mondoo.com/cnquery/v11/explorer/transport"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
+	"go.mondoo.com/cnquery/v12"
+	"go.mondoo.com/cnquery/v12/explorer/transport"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
 	"go.mondoo.com/ranger-rpc"
 )
 

@@ -72,7 +72,7 @@ func queryIdentifier(q *Mquery, isGlobal bool) string {
 	return fmt.Sprintf("%s at line %d", prefix, q.FileContext.Line)
 }
 
-func runCheckQueryUid(ctx *LintContext, item interface{}) []*Entry {
+func runCheckQueryUid(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -133,7 +133,7 @@ func runCheckQueryUid(ctx *LintContext, item interface{}) []*Entry {
 	return entries
 }
 
-func runCheckQueryTitle(ctx *LintContext, item interface{}) []*Entry {
+func runCheckQueryTitle(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -160,7 +160,7 @@ func runCheckQueryTitle(ctx *LintContext, item interface{}) []*Entry {
 	return nil
 }
 
-func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []*Entry {
+func runCheckQueryVariantFields(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -209,7 +209,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item interface{}) []*Entry {
 	return entries
 }
 
-func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []*Entry {
+func runCheckQueryMQLPresence(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -243,7 +243,7 @@ func runCheckQueryMQLPresence(ctx *LintContext, item interface{}) []*Entry {
 	return nil
 }
 
-func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []*Entry {
+func runCheckQueryUnassigned(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -271,7 +271,7 @@ func runCheckQueryUnassigned(ctx *LintContext, item interface{}) []*Entry {
 	return nil
 }
 
-func runCheckQueryUsageConsistency(ctx *LintContext, item interface{}) []*Entry {
+func runCheckQueryUsageConsistency(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil

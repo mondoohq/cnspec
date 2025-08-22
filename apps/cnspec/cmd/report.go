@@ -8,7 +8,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnspec/v11/cli/reporter"
+	"go.mondoo.com/cnspec/v12/cli/reporter"
 )
 
 func init() {

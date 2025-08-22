@@ -12,9 +12,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/mqlc"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/mqlc"
 )
 
 // buildResolvedPolicy builds a resolved policy from a bundle
@@ -1140,11 +1140,11 @@ func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_
 	return rp.CollectorJob.ReportingJobs[uuid]
 }
 
-func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderData) (map[string]*llx.Primitive, map[string]string, error) {
-	var propTypes map[string]*llx.Primitive
+func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderData) (mqlc.PropsHandler, map[string]string, error) {
+	var propTypes mqlc.SimpleProps
 	var propToChecksums map[string]string
 	if len(query.Props) != 0 {
-		propTypes = make(map[string]*llx.Primitive, len(query.Props))
+		propTypes = make(mqlc.SimpleProps, len(query.Props))
 		propToChecksums = make(map[string]string, len(query.Props))
 		for j := range query.Props {
 			prop := query.Props[j]
