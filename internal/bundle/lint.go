@@ -75,6 +75,35 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 		return aggregatedEntries
 	}
 
+	policyBundleForCompilation, err := policy.BundleFromYAML(data)
+	if err != nil {
+		var locs []Location
+		locs = append(locs, Location{File: filename, Line: 1, Column: 1})
+		aggregatedEntries = append(aggregatedEntries, &Entry{
+			RuleID:   BundleInvalidRuleID,
+			Message:  "Could not load policy bundle for compilation: " + err.Error(),
+			Level:    LevelError,
+			Location: locs,
+		})
+	}
+
+	// We have to check for required dependencies before we do anything else
+	if policyBundleForCompilation != nil {
+		err := policyBundleForCompilation.EnsureRequirements(true)
+		if err != nil {
+			aggregatedEntries = append(aggregatedEntries, &Entry{
+				RuleID:  BundleUnknownFieldRuleID,
+				Message: fmt.Sprintf("Bundle file %s requirements not met: %s", filepath.Base(filename), err.Error()),
+				Level:   LevelError,
+				Location: []Location{{
+					File:   filename,
+					Line:   1,
+					Column: 1,
+				}},
+			})
+		}
+	}
+
 	// Check for unknown fields (UnmarshalStrict)
 	strictCheckBundle := &policy.Bundle{}
 	if err := k8sYaml.UnmarshalStrict(data, strictCheckBundle); err != nil {
@@ -91,8 +120,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 	}
 
 	// check if the file is compilable
-	policyBundleForCompilation, err := policy.BundleFromYAML(data)
-	if err == nil {
+	if policyBundleForCompilation != nil {
 		ctx := context.Background()
 		features := cnquery.DefaultFeatures
 		features = append(features, byte(cnquery.FailIfNoEntryPoints))
@@ -114,15 +142,6 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 				Location: locs,
 			})
 		}
-	} else {
-		var locs []Location
-		locs = append(locs, Location{File: filename, Line: 1, Column: 1})
-		aggregatedEntries = append(aggregatedEntries, &Entry{
-			RuleID:   BundleInvalidRuleID,
-			Message:  "Could not load policy bundle for compilation: " + err.Error(),
-			Level:    LevelError,
-			Location: locs,
-		})
 	}
 
 	aggregatedEntries = append(aggregatedEntries, lintParsedBundle(schema, filename, policyBundle)...)
