@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756127451114,
+  "lastUpdate": 1756192563996,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -4852,6 +4852,74 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "49280 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "mondoohq",
+            "username": "mondoohq"
+          },
+          "committer": {
+            "name": "mondoohq",
+            "username": "mondoohq"
+          },
+          "id": "fe330e75cbabed51cee6b6a1d2cc817673287aac",
+          "message": "⭐ policy require providers",
+          "timestamp": "2025-08-25T13:13:19Z",
+          "url": "https://github.com/mondoohq/cnspec/pull/1803/commits/fe330e75cbabed51cee6b6a1d2cc817673287aac"
+        },
+        "date": 1756192562562,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 18796,
+            "unit": "ns/op\t    4893 B/op\t      71 allocs/op",
+            "extra": "65905 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 18796,
+            "unit": "ns/op",
+            "extra": "65905 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4893,
+            "unit": "B/op",
+            "extra": "65905 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "65905 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 20012,
+            "unit": "ns/op\t    4894 B/op\t      71 allocs/op",
+            "extra": "59194 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 20012,
+            "unit": "ns/op",
+            "extra": "59194 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4894,
+            "unit": "B/op",
+            "extra": "59194 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "59194 times\n4 procs"
           }
         ]
       }
