@@ -8,6 +8,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/utils/timex"
 	"gopkg.in/yaml.v3"
 )
 
@@ -164,5 +165,28 @@ func (x *RiskMagnitude) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode((*tmp)(x)); err != nil {
 		return errors.Wrap(err, "can't unmarshal risk magnitude")
 	}
+	return nil
+}
+
+func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
+	x.addFileContext(node)
+
+	var i int64
+	if err := node.Decode(&i); err == nil {
+		x.Seconds = i
+		return nil
+	}
+
+	var s string
+	if err := node.Decode(&s); err != nil {
+		return errors.New("failed to parse " + string(node.Value) + " as a time string: " + err.Error())
+	}
+
+	v, err := timex.Parse(s, "")
+	if err != nil {
+		return errors.New("failed to parse " + s + " as time: " + err.Error())
+	}
+
+	x.Seconds = v.Unix()
 	return nil
 }
