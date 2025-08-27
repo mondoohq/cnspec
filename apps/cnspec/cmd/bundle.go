@@ -64,16 +64,6 @@ var policyFmtDeprecatedCmd = &cobra.Command{
 	Run:        runPolicyFmt,
 }
 
-// ensureProviders ensures that all providers are locally installed
-func ensureProviders() error {
-	for _, v := range providers.DefaultProviders {
-		if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: v.ID}, true, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 var policyBundlesCmd = &cobra.Command{
 	Use:        "bundle",
 	Hidden:     true,
@@ -113,8 +103,6 @@ var policyPublishCmd = &cobra.Command{
 		}
 		config.DisplayUsedConfig()
 
-		ensureProviders()
-
 		filename := args[0]
 		log.Info().Str("file", filename).Msg("load policy bundle")
 		files, err := policy.WalkPolicyBundleFiles(args[0])
@@ -145,6 +133,10 @@ var policyPublishCmd = &cobra.Command{
 		policyBundle, err := bundleLoader.BundleFromPaths(filename)
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not load policy bundle")
+		}
+
+		if err = policyBundle.EnsureRequirements(true); err != nil {
+			log.Fatal().Err(err).Msg("could not install requirements")
 		}
 
 		log.Info().Str("space", opts.SpaceMrn).Msg("add policy bundle to space")
