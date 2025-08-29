@@ -23,8 +23,8 @@ import (
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/cli/components"
-	"go.mondoo.com/cnquery/v11/cli/theme"
+	"go.mondoo.com/cnquery/v12/cli/components"
+	"go.mondoo.com/cnquery/v12/cli/theme"
 )
 
 // WriteHCL Writes the generated HCL code

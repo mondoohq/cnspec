@@ -8,7 +8,7 @@ import (
 	"reflect"
 
 	"github.com/rs/zerolog/log"
-	cnquery_reporter "go.mondoo.com/cnquery/v11/cli/reporter"
+	cnquery_reporter "go.mondoo.com/cnquery/v12/cli/reporter"
 )
 
 func FindSameAsset(name string, assets map[string]*cnquery_reporter.Asset) string {

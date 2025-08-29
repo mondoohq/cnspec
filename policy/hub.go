@@ -11,13 +11,12 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/logger"
-	"go.mondoo.com/cnquery/v11/mrn"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/mrn"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
-	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -26,8 +25,6 @@ const (
 	CollectionIDNamespace = "namespace"
 	CollectionIDPolicies  = "policies"
 )
-
-var tracer = otel.Tracer("go.mondoo.com/cnspec/v11/policy")
 
 func NewPolicyMrn(namespace string, uid string) string {
 	m := &mrn.MRN{

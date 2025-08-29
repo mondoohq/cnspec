@@ -16,7 +16,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-type Attributes map[string]interface{}
+type Attributes map[string]any
 
 type Object interface {
 	ToBlock() (*hclwrite.Block, error)
@@ -27,8 +27,8 @@ type HclProvider struct {
 	name string
 
 	// Optional. Extra properties for this module.
-	// Can supply string, bool, int, or map[string]interface{} as values
-	attributes map[string]interface{}
+	// Can supply string, bool, int, or map[string]any as values
+	attributes map[string]any
 
 	// Optional. Generic blocks
 	blocks []*hclwrite.Block
@@ -61,7 +61,7 @@ func NewProvider(name string, mods ...HclProviderModifier) *HclProvider {
 	return provider
 }
 
-func HclProviderWithAttributes(attrs map[string]interface{}) HclProviderModifier {
+func HclProviderWithAttributes(attrs map[string]any) HclProviderModifier {
 	return func(p *HclProvider) {
 		p.attributes = attrs
 	}
@@ -186,7 +186,7 @@ func (m *HclOutput) ToBlock() (*hclwrite.Block, error) {
 		return nil, errors.New("value must be supplied")
 	}
 
-	attributes := map[string]interface{}{
+	attributes := map[string]any{
 		"value": CreateSimpleTraversal(m.value...),
 	}
 
@@ -217,8 +217,8 @@ type HclModule struct {
 	version string
 
 	// Optional. Extra properties for this module.
-	// Can supply string, bool, int, or map[string]interface{} as values
-	attributes map[string]interface{}
+	// Can supply string, bool, int, or map[string]any as values
+	attributes map[string]any
 
 	// Optional. Provide a map of strings. Creates an instance of the module block for each item in the map, with the
 	// map keys assigned to the key field.
@@ -242,7 +242,7 @@ func NewModule(name string, source string, mods ...HclModuleModifier) *HclModule
 }
 
 // HclModuleWithAttributes Used to set parameters within the module usage.
-func HclModuleWithAttributes(attrs map[string]interface{}) HclModuleModifier {
+func HclModuleWithAttributes(attrs map[string]any) HclModuleModifier {
 	return func(p *HclModule) {
 		p.attributes = attrs
 	}
@@ -275,7 +275,7 @@ func HclModuleWithForEach(key string, value map[string]string) HclModuleModifier
 // ToBlock Create hclwrite.Block for module.
 func (m *HclModule) ToBlock() (*hclwrite.Block, error) {
 	if m.attributes == nil {
-		m.attributes = make(map[string]interface{})
+		m.attributes = make(map[string]any)
 	}
 	if m.source != "" {
 		m.attributes["source"] = m.source
@@ -316,7 +316,7 @@ func (m *HclModule) ToBlock() (*hclwrite.Block, error) {
 // ToBlock Create hclwrite.Block for resource or data-source.
 func (m *HclResource) ToBlock() (*hclwrite.Block, error) {
 	if m.attributes == nil {
-		m.attributes = make(map[string]interface{})
+		m.attributes = make(map[string]any)
 	}
 
 	block, err := HclCreateGenericBlock(string(m.object),
@@ -357,8 +357,8 @@ type HclResource struct {
 	name string
 
 	// Optional. Extra properties for this resource.
-	// Can supply string, bool, int, or map[string]interface{} as values
-	attributes map[string]interface{}
+	// Can supply string, bool, int, or map[string]any as values
+	attributes map[string]any
 
 	// Optional. Provider details to override defaults.
 	// These values must be supplied as strings, and raw values will be accepted.Unfortunately
@@ -408,7 +408,7 @@ func (m *HclResource) TraverseRefString(input ...string) string {
 }
 
 // HclResourceWithAttributesAndProviderDetails Used to set parameters within the resource usage.
-func HclResourceWithAttributesAndProviderDetails(attrs map[string]interface{},
+func HclResourceWithAttributesAndProviderDetails(attrs map[string]any,
 	providerDetails []string) HclResourceModifier {
 	return func(p *HclResource) {
 		p.attributes = attrs
@@ -434,7 +434,7 @@ func HclResourceWithGenericBlocks(blocks ...*hclwrite.Block) HclResourceModifier
 //
 // All values used in hclwrite.Block(s) must be cty.Value or a cty.Traversal.
 // This function performs that conversion for standard types (non-traversal).
-func convertTypeToCty(value interface{}) (cty.Value, error) {
+func convertTypeToCty(value any) (cty.Value, error) {
 	switch v := value.(type) {
 	case string:
 		return cty.StringVal(v), nil
@@ -453,7 +453,7 @@ func convertTypeToCty(value interface{}) (cty.Value, error) {
 			valueMap[key] = cty.StringVal(val)
 		}
 		return cty.MapVal(valueMap), nil
-	case map[string]interface{}:
+	case map[string]any:
 		if len(v) == 0 {
 			return cty.NilVal, nil
 		}
@@ -466,7 +466,7 @@ func convertTypeToCty(value interface{}) (cty.Value, error) {
 			valueMap[key] = convertedValue
 		}
 		return cty.MapVal(valueMap), nil
-	case []map[string]interface{}:
+	case []map[string]any:
 		values := []cty.Value{}
 		for _, item := range v {
 			valueMap := map[string]cty.Value{}
@@ -489,7 +489,7 @@ func convertTypeToCty(value interface{}) (cty.Value, error) {
 			valueSlice = append(valueSlice, cty.StringVal(s))
 		}
 		return cty.ListVal(valueSlice), nil
-	case []interface{}:
+	case []any:
 		valueSlice := []cty.Value{}
 		for _, i := range v {
 			newVal, err := convertTypeToCty(i)
@@ -504,7 +504,7 @@ func convertTypeToCty(value interface{}) (cty.Value, error) {
 	}
 }
 
-func convertValueToTokens(value interface{}) (hclwrite.Tokens, error) {
+func convertValueToTokens(value any) (hclwrite.Tokens, error) {
 	switch elem := value.(type) {
 	case hclwrite.Tokens:
 		return elem, nil
@@ -523,7 +523,7 @@ func convertValueToTokens(value interface{}) (hclwrite.Tokens, error) {
 //
 // hclwrite.Block attributes use cty.Value, hclwrite.Tokens or can be traversals, this function
 // determines what type of value is being used and builds the block accordingly.
-func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) error {
+func setBlockAttributeValue(block *hclwrite.Block, key string, val any) error {
 	switch v := val.(type) {
 	case hcl.Traversal:
 		block.Body().SetAttributeTraversal(key, v)
@@ -535,7 +535,7 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 			return err
 		}
 		block.Body().SetAttributeValue(key, value)
-	case []map[string]interface{}:
+	case []map[string]any:
 		values := []cty.Value{}
 		for _, item := range v {
 			valueMap := map[string]cty.Value{}
@@ -555,7 +555,7 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 			)
 		}
 		block.Body().SetAttributeValue(key, cty.ListVal(values))
-	case []interface{}:
+	case []any:
 		elems := []hclwrite.Tokens{}
 		for _, e := range v {
 			elem, err := convertValueToTokens(e)
@@ -568,10 +568,10 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val interface{}) 
 	case Attributes:
 		// cast the custom type and run set block attribute again, the compiler doesn't
 		// allow the same case statement to treat both types
-		if err := setBlockAttributeValue(block, key, map[string]interface{}(v)); err != nil {
+		if err := setBlockAttributeValue(block, key, map[string]any(v)); err != nil {
 			return err
 		}
-	case map[string]interface{}:
+	case map[string]any:
 		var keys []string
 		for k := range v {
 			keys = append(keys, k)
@@ -728,9 +728,9 @@ func rootTerraformBlock() (*hclwrite.Block, error) {
 
 // createRequiredProviders is a helper that creates the `required_providers` hcl block.
 func createRequiredProviders(providers ...*HclRequiredProvider) (*hclwrite.Block, error) {
-	providerDetails := map[string]interface{}{}
+	providerDetails := map[string]any{}
 	for _, provider := range providers {
-		details := map[string]interface{}{}
+		details := map[string]any{}
 		if provider.Source() != "" {
 			details["source"] = provider.Source()
 		}
@@ -789,7 +789,7 @@ func CreateRequiredProvidersWithCustomBlocks(
 
 // CombineHclBlocks Simple helper to combine multiple blocks (or slices of blocks) into a
 // single slice to be rendered to string.
-func CombineHclBlocks(results ...interface{}) []*hclwrite.Block {
+func CombineHclBlocks(results ...any) []*hclwrite.Block {
 	blocks := []*hclwrite.Block{}
 	// Combine all blocks into single flat slice
 	for _, result := range results {

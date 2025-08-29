@@ -4,8 +4,8 @@
 package tooling
 
 import (
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
-	bundlefmt "go.mondoo.com/cnspec/v11/internal/bundle"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
+	bundlefmt "go.mondoo.com/cnspec/v12/internal/bundle"
 )
 
 func Format(data []byte) ([]byte, error) {

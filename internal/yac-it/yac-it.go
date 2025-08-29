@@ -29,8 +29,8 @@ import (
 	"gopkg.in/yaml.v3"
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type FileContext struct {
@@ -76,7 +76,7 @@ type YacIt struct {
 	fieldOrder      map[string]int
 }
 
-func (t *YacIt) Add(typ interface{}) {
+func (t *YacIt) Add(typ any) {
 	t.createStruct(reflect.TypeOf(typ).Elem())
 }
 
@@ -200,7 +200,7 @@ func (x *%s) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d %s) MarshalYAML() (interface{}, error) {
+func (d %s) MarshalYAML() (any, error) {
 	type alias %s
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
@@ -249,7 +249,7 @@ func isProtoEnum(typ reflect.Type) bool {
 var protoEnumTemplate = template.Must(template.New("protoEnum").Parse(`
 func (s *{{.Name}}) UnmarshalYAML(node *yaml.Node) error {
 
-	var decoded interface{}
+	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
 		return err

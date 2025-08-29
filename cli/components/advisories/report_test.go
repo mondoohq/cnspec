@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
 )
 
 func TestFindVulnerablePackageWithoutNamespace(t *testing.T) {

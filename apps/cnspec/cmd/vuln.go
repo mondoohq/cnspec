@@ -7,14 +7,14 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v11/logger"
-	"go.mondoo.com/cnquery/v11/providers"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/sbom/generator"
-	"go.mondoo.com/cnquery/v11/sbom/pack"
-	"go.mondoo.com/cnspec/v11/cli/reporter"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/providers"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/plugin"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v12/sbom/generator"
+	"go.mondoo.com/cnquery/v12/sbom/pack"
+	"go.mondoo.com/cnspec/v12/cli/reporter"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func init() {

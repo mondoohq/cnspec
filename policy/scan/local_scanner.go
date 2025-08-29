@@ -16,29 +16,29 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
-	"go.mondoo.com/cnquery/v11"
-	"go.mondoo.com/cnquery/v11/cli/config"
-	"go.mondoo.com/cnquery/v11/cli/execruntime"
-	"go.mondoo.com/cnquery/v11/cli/progress"
-	"go.mondoo.com/cnquery/v11/explorer"
-	ee "go.mondoo.com/cnquery/v11/explorer/executor"
-	"go.mondoo.com/cnquery/v11/explorer/scan"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/logger"
-	"go.mondoo.com/cnquery/v11/mrn"
-	"go.mondoo.com/cnquery/v11/providers"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/recording"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/gql"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/health"
-	"go.mondoo.com/cnquery/v11/utils/multierr"
-	"go.mondoo.com/cnquery/v11/utils/slicesx"
-	"go.mondoo.com/cnspec/v11"
-	"go.mondoo.com/cnspec/v11/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v11/policy"
-	"go.mondoo.com/cnspec/v11/policy/executor"
+	"go.mondoo.com/cnquery/v12"
+	"go.mondoo.com/cnquery/v12/cli/config"
+	"go.mondoo.com/cnquery/v12/cli/execruntime"
+	"go.mondoo.com/cnquery/v12/cli/progress"
+	"go.mondoo.com/cnquery/v12/explorer"
+	ee "go.mondoo.com/cnquery/v12/explorer/executor"
+	"go.mondoo.com/cnquery/v12/explorer/scan"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/mrn"
+	"go.mondoo.com/cnquery/v12/providers"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/plugin"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/recording"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnquery/v12/utils/multierr"
+	"go.mondoo.com/cnquery/v12/utils/slicesx"
+	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/cnspec/v12/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v12/policy/executor"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
@@ -1009,12 +1009,12 @@ func (s *localAssetScanner) fetchPublicRegistryBundle() error {
 	}
 
 	// FIXME: remove hardcoded lookup and use embedded datastructures instead
-	data := res["IA0bVPKFxIh8Z735sqDh7bo/FNIYUQ/B4wLijN+YhiBZePu1x2sZCMcHoETmWM9jocdWbwGykKvNom/7QSm8ew=="].Data.Value.(map[string]interface{})
+	data := res["IA0bVPKFxIh8Z735sqDh7bo/FNIYUQ/B4wLijN+YhiBZePu1x2sZCMcHoETmWM9jocdWbwGykKvNom/7QSm8ew=="].Data.Value.(map[string]any)
 	kind := data["1oxYPIhW1eZ+14s234VsQ0Q7p9JSmUaT/RTWBtDRG1ZwKr8YjMcXz76x10J9iu13AcMmGZd43M1NNqPXZtTuKQ=="].(*llx.RawData).Value.(string)
 	platform := data["W+8HW/v60Fx0nqrVz+yTIQjImy4ki4AiqxcedooTPP3jkbCESy77ptEhq9PlrKjgLafHFn8w4vrimU4bwCi6aQ=="].(*llx.RawData).Value.(string)
 	runtime := data["a3RMPjrhk+jqkeXIISqDSi7EEP8QybcXCeefqNJYVUNcaDGcVDdONFvcTM2Wts8qTRXL3akVxpskitXWuI/gdA=="].(*llx.RawData).Value.(string)
 	version := data["5d4FZxbPkZu02MQaHp3C356NJ9TeVsJBw8Enu+TDyBGdWlZM/AE+J5UT/TQ72AmDViKZe97Hxz1Jt3MjcEH/9Q=="].(*llx.RawData).Value.(string)
-	fraw := data["l/aGjrixdNHvCxu5ib4NwkYb0Qrh3sKzcrGTkm7VxNWfWaaVbOxOEoGEMnjGJTo31jhYNeRm39/zpepZaSbUIw=="].(*llx.RawData).Value.([]interface{})
+	fraw := data["l/aGjrixdNHvCxu5ib4NwkYb0Qrh3sKzcrGTkm7VxNWfWaaVbOxOEoGEMnjGJTo31jhYNeRm39/zpepZaSbUIw=="].(*llx.RawData).Value.([]any)
 	family := make([]string, len(fraw))
 	for i := range fraw {
 		family[i] = fraw[i].(string)

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func TestProtoConversion(t *testing.T) {

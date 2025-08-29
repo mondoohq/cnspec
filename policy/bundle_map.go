@@ -9,11 +9,11 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/go-version"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/mrn"
-	"go.mondoo.com/cnquery/v11/utils/sortx"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/mrn"
+	"go.mondoo.com/cnquery/v12/utils/sortx"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries

@@ -11,8 +11,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/cnquery/v11/cli/theme"
-	"go.mondoo.com/cnspec/v11/internal/tfgen"
+	"go.mondoo.com/cnquery/v12/cli/theme"
+	"go.mondoo.com/cnspec/v12/internal/tfgen"
 )
 
 // Ms365Integration represents the configuration of a Microsoft 365 integration to be created.
@@ -142,7 +142,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"display_name":  "mondoo_ms365",
-				"owners":        []interface{}{dataADClientConfig.TraverseRef("object_id")},
+				"owners":        []any{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),
 			tfgen.HclResourceWithGenericBlocks(permissionsBlocks...),
@@ -178,7 +178,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"client_id":                    resourceAdApplication.TraverseRef("client_id"),
 				"app_role_assignment_required": false,
-				"owners":                       []interface{}{dataADClientConfig.TraverseRef("object_id")},
+				"owners":                       []any{dataADClientConfig.TraverseRef("object_id")},
 			}),
 		)
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "global_reader",
@@ -196,14 +196,14 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_id":             resourceADReadersDirectoryRole.TraverseRef("template_id"),
 				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
-				"depends_on":          []interface{}{resourceTimeSleep.TraverseRef()},
+				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
 			}),
 		)
 		resourceADExchangeAdminRoleAssignment = tfgen.NewResource("azuread_directory_role_assignment", "exchange_admin",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
 				"role_id":             resourceADExchangeAdminDirectoryRole.TraverseRef("object_id"),
-				"depends_on":          []interface{}{resourceTimeSleep.TraverseRef()},
+				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
 			}),
 		)
 		integrationAttributes = tfgen.Attributes{
@@ -215,7 +215,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 					tfgen.CreateSimpleTraversal(`"\n", [tls_self_signed_cert.credential.cert_pem, tls_private_key.credential.private_key_pem]`),
 				),
 			},
-			"depends_on": []interface{}{
+			"depends_on": []any{
 				resourceADServicePrincipal.TraverseRef(),
 				resourceADApplicationCertificate.TraverseRef(),
 				resourceADReadersRoleAssignment.TraverseRef(),

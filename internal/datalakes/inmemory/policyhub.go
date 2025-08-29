@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/checksums"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/checksums"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnspec/v12/policy"
 	"google.golang.org/protobuf/proto"
 )
 

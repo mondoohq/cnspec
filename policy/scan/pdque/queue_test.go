@@ -108,7 +108,7 @@ func TestEnqueue(t *testing.T) {
 	defer os.RemoveAll(testDir)
 
 	// Instantiate the Queue.
-	queue, err := New("testQueue", testDir, 1000, func() interface{} {
+	queue, err := New("testQueue", testDir, 1000, func() any {
 		return nil
 	})
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestClose(t *testing.T) {
 	}
 
 	// Instantiate the Queue.
-	queue, err := New("testQueue", testDir, 1000, func() interface{} {
+	queue, err := New("testQueue", testDir, 1000, func() any {
 		return nil
 	})
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestEnqueueDequeue(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 	// Setup: Initialize the queue
-	queue, err := NewOrOpen("testQueue", testDir, 10, func() interface{} {
+	queue, err := NewOrOpen("testQueue", testDir, 10, func() any {
 		return new(testObj)
 	})
 	require.NoError(t, err)
@@ -211,7 +211,7 @@ func TestQueueMaxSize(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 	maxSize := 5
-	queue, err := NewOrOpen("testQueue", testDir, maxSize, func() interface{} {
+	queue, err := NewOrOpen("testQueue", testDir, maxSize, func() any {
 		return new(testObj)
 	})
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestEnqueueDequeueMore(t *testing.T) {
 	defer os.RemoveAll(testDir)
 
 	// Create a new queue
-	q, err := NewOrOpen("testQueue", testDir, 1000, func() interface{} { return new(testObj) })
+	q, err := NewOrOpen("testQueue", testDir, 1000, func() any { return new(testObj) })
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -305,7 +305,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	const numJobs = 200
 
 	// Create a new queue
-	q, err := NewOrOpen("testConcurrentQueue", testDir, numJobs, func() interface{} { return &testObj{} })
+	q, err := NewOrOpen("testConcurrentQueue", testDir, numJobs, func() any { return &testObj{} })
 	require.NoError(t, err)
 	defer q.Close()
 
