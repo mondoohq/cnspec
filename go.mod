@@ -46,7 +46,6 @@ require (
 	go.mondoo.com/cnquery/v12 v12.0.0-pre1
 	go.mondoo.com/mondoo-go v0.0.0-20250702005123-23558fe8001c
 	go.mondoo.com/ranger-rpc v0.7.0
-	go.opentelemetry.io/otel v1.37.0
 	gocloud.dev v0.43.0
 	golang.org/x/sys v0.35.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250715232539-7130f93afb79
@@ -296,6 +295,7 @@ require (
 	go.opentelemetry.io/contrib/detectors/gcp v1.37.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.62.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.62.0 // indirect
+	go.opentelemetry.io/otel v1.37.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.37.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.37.0 // indirect

@@ -219,6 +219,10 @@ func (e *Executor) AddCode(code string, props mqlc.PropsHandler) (*llx.CodeBundl
 func (e *Executor) AddCodeBundle(codeBundle *llx.CodeBundle, props mqlc.PropsHandler) error {
 	codeID := codeBundle.CodeV2.Id
 
+	if props == nil {
+		props = mqlc.EmptyPropsHandler
+	}
+
 	org, ok := e.RunningCode.Load(codeID)
 	if ok && org.CodeV2.Id == codeBundle.CodeV2.Id {
 		return nil

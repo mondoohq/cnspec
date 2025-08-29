@@ -17,7 +17,6 @@ import (
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
-	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -26,8 +25,6 @@ const (
 	CollectionIDNamespace = "namespace"
 	CollectionIDPolicies  = "policies"
 )
-
-var tracer = otel.Tracer("go.mondoo.com/cnspec/v12/policy")
 
 func NewPolicyMrn(namespace string, uid string) string {
 	m := &mrn.MRN{
