@@ -61,7 +61,7 @@ func TestJsonOutput(t *testing.T) {
 	fmt.Println(buf.String())
 	require.True(t, valid)
 
-	assert.Contains(t, buf.String(), "//local.cnspec.io/run/local-execution/queries/custom-query-passing-1\":{\"score\":100,\"status\":\"pass\"}")
+	assert.Contains(t, buf.String(), "//local.cnspec.io/run/local-execution/queries/custom-query-passing-1\":{\"score\":100,\"riskScore\":0,\"status\":\"pass\"}")
 	assert.Contains(t, buf.String(), "\"errors\":{}")
 }
 

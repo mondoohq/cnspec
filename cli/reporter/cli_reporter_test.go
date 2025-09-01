@@ -44,7 +44,7 @@ func TestCompactReporter(t *testing.T) {
 	strData := buf.String()
 	assert.Contains(t, strData, "! Error:          Set")
 	assert.Contains(t, strData, "✓ Ensure ")
-	assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
+	assert.Contains(t, strData, "✕ CRITICAL (100): Ensure")
 }
 
 func TestVulnReporter(t *testing.T) {
