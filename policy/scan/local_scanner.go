@@ -861,7 +861,7 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		ResolvedPolicy: resolvedPolicy,
 	}
 
-	report, err := s.getReport()
+	report, err := s.getReport(resolvedPolicy)
 	if err != nil {
 		return ar, err
 	}
@@ -1091,7 +1091,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	return resolvedPolicy, nil
 }
 
-func (s *localAssetScanner) getReport() (*policy.Report, error) {
+func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*policy.Report, error) {
 	var resolver policy.PolicyResolver = s.services
 
 	// TODO: we do not needs this anymore since we receive updates already
@@ -1105,7 +1105,7 @@ func (s *localAssetScanner) getReport() (*policy.Report, error) {
 		}, err
 	}
 
-	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) {
+	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()
 		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
