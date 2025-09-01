@@ -775,7 +775,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		conf:          conf,
 		uid2mrn:       map[string]string{},
 		removeQueries: map[string]struct{}{},
-		lookupProp:    map[string]explorer.PropertyRef{},
+		lookupProps:   map[string]explorer.PropertyRef{},
 		lookupQuery:   map[string]*explorer.Mquery{},
 		codeBundles:   map[string]*llx.CodeBundle{},
 	}
@@ -810,12 +810,13 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	// Index policies + update MRNs and checksums, link properties via MRNs
 	for i := range p.Policies {
 		policy := p.Policies[i]
+		policyCache := cache.clone()
 
 		// !this is very important to prevent user overrides! vv
 		policy.InvalidateAllChecksums()
 
 		for i := range policy.Props {
-			np, ok := cache.lookupProp[policy.Props[i].Uid]
+			np, ok := policyCache.lookupProps[policy.Props[i].Uid]
 			if ok {
 				policy.Props[i] = np.Property
 			}
@@ -854,10 +855,10 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 				policyRef.RefreshChecksum()
 			}
 
-			if err := cache.compileQueries(group.Queries, policy); err != nil {
+			if err := policyCache.compileQueries(group.Queries, policy); err != nil {
 				return nil, err
 			}
-			if err := cache.compileQueries(group.Checks, policy); err != nil {
+			if err := policyCache.compileQueries(group.Checks, policy); err != nil {
 				return nil, err
 			}
 		}
@@ -871,10 +872,12 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 
 			risk.DetectScope()
 
-			if err := cache.compileRisk(risk, policy); err != nil {
+			if err := policyCache.compileRisk(risk, policy); err != nil {
 				return nil, errors.New("failed to compile risk: " + err.Error())
 			}
 		}
+
+		policyCache.finalize(cache)
 	}
 
 	// Removing any failing queries happens after everything is compiled.
@@ -1066,13 +1069,40 @@ func addBaseToVariant(base *explorer.Mquery, variant *explorer.Mquery) {
 type bundleCache struct {
 	ownerMrn      string
 	lookupQuery   map[string]*explorer.Mquery
-	lookupProp    map[string]explorer.PropertyRef
+	lookupProps   map[string]explorer.PropertyRef
 	uid2mrn       map[string]string
 	removeQueries map[string]struct{}
 	codeBundles   map[string]*llx.CodeBundle
 	bundle        *Bundle
 	conf          BundleCompileConf
 	errors        []error
+}
+
+func (c *bundleCache) clone() *bundleCache {
+	res := &bundleCache{
+		ownerMrn:      c.ownerMrn,
+		lookupQuery:   make(map[string]*explorer.Mquery, len(c.lookupQuery)),
+		lookupProps:   make(map[string]explorer.PropertyRef, len(c.lookupProps)),
+		uid2mrn:       make(map[string]string, len(c.uid2mrn)),
+		removeQueries: c.removeQueries,
+		bundle:        c.bundle,
+		errors:        c.errors,
+		conf:          c.conf,
+	}
+	for k, v := range c.lookupQuery {
+		res.lookupQuery[k] = v
+	}
+	for k, v := range c.lookupProps {
+		res.lookupProps[k] = v
+	}
+	for k, v := range c.uid2mrn {
+		res.uid2mrn[k] = v
+	}
+	return res
+}
+
+func (c *bundleCache) finalize(parent *bundleCache) {
+	parent.errors = append(parent.errors, c.errors...)
 }
 
 func (c *bundleCache) hasErrors() bool {
@@ -1116,7 +1146,7 @@ func (cache *bundleCache) prepareMRNs() error {
 				name = m.Basename()
 			}
 
-			_, ok := cache.lookupProp[prop.Mrn]
+			_, ok := cache.lookupProps[prop.Mrn]
 			if ok && prop.Mql == "" {
 				// this is a shared property, we can skip it
 				// TODO: this can go away. Props are now scoped and thus
@@ -1124,7 +1154,7 @@ func (cache *bundleCache) prepareMRNs() error {
 				continue
 			}
 
-			cache.lookupProp[prop.Mrn] = explorer.PropertyRef{
+			cache.lookupProps[prop.Mrn] = explorer.PropertyRef{
 				Property: prop,
 				Name:     name,
 			}
@@ -1234,8 +1264,8 @@ func (cache *bundleCache) prepareMRNs() error {
 	// We'll replace the properties that do not have an implementation
 	replacePropIfNecessary := func(prop *explorer.Property) {
 		for _, forProp := range prop.For {
-			if existing, ok := cache.lookupProp[forProp.Mrn]; ok && existing.Property.Mql == "" {
-				cache.lookupProp[forProp.Mrn] = explorer.PropertyRef{
+			if existing, ok := cache.lookupProps[forProp.Mrn]; ok && existing.Property.Mql == "" {
+				cache.lookupProps[forProp.Mrn] = explorer.PropertyRef{
 					Property: prop,
 					Name:     existing.Name,
 				}
@@ -1252,7 +1282,7 @@ func (cache *bundleCache) prepareMRNs() error {
 	}
 
 	// Compile the properties
-	for _, prop := range cache.lookupProp {
+	for _, prop := range cache.lookupProps {
 		if prop.Property.Mql == "" {
 			continue
 		}
@@ -1340,7 +1370,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 		if prop.Mql == "" {
 			// TODO(jaym): I think this is a bug in cnquery. It cannot handle the fact
 			// that the property doesn't have the code defined
-			lookup, ok := c.lookupProp[prop.Mrn]
+			lookup, ok := c.lookupProps[prop.Mrn]
 			if !ok {
 				c.errors = append(c.errors, fmt.Errorf("property %s not found in bundle for query %s", prop.Mrn, query.Mrn))
 				return nil
@@ -1373,9 +1403,32 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 // dependencies have been processed. Properties must be compiled. Connected
 // queries may not be ready yet, but we have to have precompiled them.
 func (c *bundleCache) compileQuery(query *explorer.Mquery) {
-	_, err := query.RefreshChecksumAndType(c.lookupQuery, c.lookupProp, c.conf.CompilerConfig)
+	props := &explorer.PropsResolver{
+		QueryCache:  map[string]explorer.PropertyRef{},
+		GlobalCache: c.lookupProps,
+		Query:       query,
+	}
+
+	for i := range query.Props {
+		prop := query.Props[i]
+		propMrn, err := mrn.NewMRN(prop.Mrn)
+		if err != nil {
+			c.errors = append(c.errors, errors.New("property doesn't have a valid MRN: "+prop.Mrn))
+			return
+		}
+		name := propMrn.Basename()
+
+		props.QueryCache[name] = explorer.PropertyRef{
+			Property: prop,
+			Name:     name,
+			Mrn:      prop.Mrn,
+		}
+	}
+
+	_, err := query.RefreshChecksumAndType(c.lookupQuery, props, c.conf.CompilerConfig)
 	if err != nil {
 		if c.conf.RemoveFailing {
+			log.Warn().Err(err).Str("uid", query.Uid).Msg("failed to compile")
 			c.removeQueries[query.Mrn] = struct{}{}
 		} else {
 			c.errors = append(c.errors, multierr.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
@@ -1411,7 +1464,7 @@ func (c *bundleCache) compileRisk(risk *RiskFactor, policy *Policy) error {
 			}
 		}
 
-		_, err := check.RefreshChecksumAndType(c.lookupQuery, c.lookupProp, c.conf.CompilerConfig)
+		_, err := check.RefreshChecksumAndType(c.lookupQuery, mqlc.EmptyPropsHandler, c.conf.CompilerConfig)
 		if err != nil {
 			if c.conf.RemoveFailing {
 				panic("REMOVE FAILING risk factors")

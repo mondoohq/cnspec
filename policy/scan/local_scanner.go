@@ -941,6 +941,7 @@ func (s *localAssetScanner) prepareAsset() error {
 		AssetMrn:      s.job.Asset.Mrn,
 		PolicyMrns:    policyMrns,
 		FrameworkMrns: frameworkMrns,
+		Action:        explorer.Action_ACTIVATE,
 	})
 	if err != nil {
 		return err
