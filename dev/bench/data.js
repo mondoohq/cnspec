@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756751731769,
+  "lastUpdate": 1756752278756,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -6504,6 +6504,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "54798 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dominik.richter@gmail.com",
+            "name": "Dominik Richter",
+            "username": "arlimus"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "999cf175454413d8f5e6645cc45d3c4c0ee1db3c",
+          "message": "⭐ add support for server-side features (#1814)\n\nThis allows the server to set or unset certain features that it supports. This means e.g. that if the server can store resources data in the new format, we can send it this way.\n\nSigned-off-by: Dominik Richter <dominik.richter@gmail.com>",
+          "timestamp": "2025-09-01T11:43:59-07:00",
+          "tree_id": "d0701d1f32b0a0e0dade843f0ea9f3ac81ea86fe",
+          "url": "https://github.com/mondoohq/cnspec/commit/999cf175454413d8f5e6645cc45d3c4c0ee1db3c"
+        },
+        "date": 1756752278067,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19818,
+            "unit": "ns/op\t    4896 B/op\t      71 allocs/op",
+            "extra": "63526 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19818,
+            "unit": "ns/op",
+            "extra": "63526 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4896,
+            "unit": "B/op",
+            "extra": "63526 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "63526 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 19866,
+            "unit": "ns/op\t    4895 B/op\t      71 allocs/op",
+            "extra": "63138 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 19866,
+            "unit": "ns/op",
+            "extra": "63138 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4895,
+            "unit": "B/op",
+            "extra": "63138 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "63138 times\n4 procs"
           }
         ]
       }
