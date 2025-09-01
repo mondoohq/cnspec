@@ -31,6 +31,7 @@ func printScore(score *policy.Score, mrn string, out iox.OutputHelper, prefix st
 
 	out.WriteString(prefix + llx.PrettyPrintString(mrn) +
 		":{\"score\":" + strconv.FormatUint(uint64(score.Value), 10) + "," +
+		"\"riskScore\":" + strconv.FormatUint(uint64(100-score.Value), 10) + "," +
 		"\"status\":\"" + status + "\"}")
 	return true
 }

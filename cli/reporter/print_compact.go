@@ -189,15 +189,15 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 			if r.data.Reports[assetsByPlatform[platform][i].Mrn] != nil {
 				score := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score
 				assetScoreRating = score.Rating()
-				assetScore = "[" + strconv.Itoa(int(score.Value)) + "/100]"
+				assetScore = assetScoreRating.Text() + " (" + strconv.Itoa(100-int(score.Value)) + "):"
 			} else {
 				assetScoreRating = policy.ScoreRating_error
 				assetScore = string(policy.ScoreRatingTextError)
 			}
 
-			paddedAssetScore := fmt.Sprintf("%-9s", assetScore)
+			paddedAssetScore := fmt.Sprintf("%-12s", assetScore)
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
-			output := fmt.Sprintf("    %s   %s", termenv.String(paddedAssetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
+			output := fmt.Sprintf("  %s  %s", termenv.String(paddedAssetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
 			r.out(output + NewLineCharacter)
 		}
 	}
@@ -647,7 +647,7 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *exp
 	} else {
 		scoreIndicator := ""
 		if query.Impact != nil {
-			scoreIndicator = " (" + strconv.Itoa(int(score.Value)) + ")"
+			scoreIndicator = " (" + strconv.Itoa(100-int(score.Value)) + ")"
 		}
 		scoreSymbol := "✕"
 		if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
