@@ -453,7 +453,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 
 			if score.Success {
 				sortedPassed = append(sortedPassed, id)
-			} else if score.Value >= uint32(r.ScoreThreshold) && r.ScoreThreshold != 0 {
+			} else if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 				sortedWarnings = append(sortedWarnings, id)
 			} else {
 				if g, ok := checkToPreview[query.Mrn]; ok {
@@ -510,7 +510,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				r.out(NewLineCharacter)
 			}
 			// FIXME v12: rename to risk threshold
-			r.out("Warning - above score threshold:" + NewLineCharacter)
+			r.out("Warnings (below risk threshold):" + NewLineCharacter)
 			for _, id := range sortedWarnings {
 				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
 			}
@@ -563,9 +563,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			if prevPrinted {
 				r.out(NewLineCharacter)
 			}
-			if r.ScoreThreshold > 0 {
-				// FIXME v12: rename to risk threshold
-				r.out("Failing - below score threshold:" + NewLineCharacter)
+			if r.RiskThreshold != DEFAULT_RISK_THRESHOLD {
+				r.out("Failures (above risk threshold):" + NewLineCharacter)
 			} else {
 				r.out("Failing:" + NewLineCharacter)
 			}
@@ -651,7 +650,7 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *exp
 			scoreIndicator = " (" + strconv.Itoa(int(score.Value)) + ")"
 		}
 		scoreSymbol := "✕"
-		if r.ScoreThreshold > 0 && score.Value > uint32(r.ScoreThreshold) {
+		if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 			scoreSymbol = "!"
 		}
 		passfail = termenv.String(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()
