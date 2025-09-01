@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756749558767,
+  "lastUpdate": 1756750889634,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -6364,6 +6364,78 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "59156 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dominik.richter@gmail.com",
+            "name": "Dominik Richter",
+            "username": "arlimus"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "46a459335da5a1a8dc98138a601d8300c5f42c7f",
+          "message": "🌈 streamline CLI output on risk score (#1809)\n\n* 🌈 streamline CLI output on risk score\n\nSigned-off-by: Dominik Richter <dominik.richter@gmail.com>",
+          "timestamp": "2025-09-01T11:20:53-07:00",
+          "tree_id": "1817c4dff95c2394198e19d1bf644863827cb460",
+          "url": "https://github.com/mondoohq/cnspec/commit/46a459335da5a1a8dc98138a601d8300c5f42c7f"
+        },
+        "date": 1756750889256,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 22575,
+            "unit": "ns/op\t    4894 B/op\t      71 allocs/op",
+            "extra": "55897 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 22575,
+            "unit": "ns/op",
+            "extra": "55897 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4894,
+            "unit": "B/op",
+            "extra": "55897 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "55897 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 22622,
+            "unit": "ns/op\t    4891 B/op\t      71 allocs/op",
+            "extra": "59146 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 22622,
+            "unit": "ns/op",
+            "extra": "59146 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4891,
+            "unit": "B/op",
+            "extra": "59146 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "59146 times\n4 procs"
           }
         ]
       }
