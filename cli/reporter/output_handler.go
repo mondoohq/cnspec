@@ -15,10 +15,10 @@ import (
 )
 
 type HandlerConfig struct {
-	Format         string
-	OutputTarget   string
-	Incognito      bool
-	ScoreThreshold int
+	Format        string
+	OutputTarget  string
+	Incognito     bool
+	RiskThreshold int
 }
 
 type OutputTarget byte
@@ -51,7 +51,9 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 	case CLI:
 		fallthrough
 	default:
-		return NewReporter(conf, config.Incognito, config.ScoreThreshold), nil
+		res := NewReporter(conf, config.Incognito)
+		res.RiskThreshold = config.RiskThreshold
+		return res, nil
 	}
 }
 

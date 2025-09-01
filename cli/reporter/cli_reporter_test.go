@@ -61,7 +61,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=summary", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatSummary)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)
@@ -70,7 +70,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=compact", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatCompact)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		err = r.PrintVulns(report, target)
 		require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=full", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatFull)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)
@@ -91,7 +91,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=yaml", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatYAMLv1)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)

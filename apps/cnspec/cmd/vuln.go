@@ -134,7 +134,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	// print the output using the specified output format
-	r := reporter.NewReporter(printConf, false, 0)
+	r := reporter.NewReporter(printConf, false)
 	logger.DebugDumpJSON("vulnReport", report)
 	if err := r.PrintVulns(vulnReport, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")

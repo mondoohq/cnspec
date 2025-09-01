@@ -75,6 +75,8 @@ func init() {
 	_ = scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 	_ = scanCmd.Flags().MarkHidden("category")
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
+	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
+	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "If any risk is greater or equal to this, exitstatus is 1.")
 	_ = scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
 }
 
@@ -119,6 +121,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("trace-id", cmd.Flags().Lookup("trace-id"))
 		_ = viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
+		_ = viper.BindPFlag("risk-threshold", cmd.Flags().Lookup("risk-threshold"))
 
 		// for all assets
 		_ = viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
@@ -163,10 +166,10 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	logger.DebugDumpJSON("report", report)
 
 	handlerConf := reporter.HandlerConfig{
-		Format:         conf.OutputFormat,
-		OutputTarget:   conf.OutputTarget,
-		Incognito:      conf.IsIncognito,
-		ScoreThreshold: conf.ScoreThreshold,
+		Format:        conf.OutputFormat,
+		OutputTarget:  conf.OutputTarget,
+		Incognito:     conf.IsIncognito,
+		RiskThreshold: conf.RiskThreshold,
 	}
 	outputHandler, err := reporter.NewOutputHandler(handlerConf)
 	if err != nil {
@@ -185,7 +188,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 			os.Exit(1)
 		}
 
-		if report.GetWorstScore() < uint32(conf.ScoreThreshold) {
+		if (100 - report.GetWorstScore()) >= uint32(conf.RiskThreshold) {
 			os.Exit(1)
 		}
 	}
@@ -213,8 +216,8 @@ type scanConfig struct {
 	Bundle       *policy.Bundle
 	runtime      *providers.Runtime
 
-	IsIncognito    bool
-	ScoreThreshold int
+	IsIncognito   bool
+	RiskThreshold int
 
 	DoRecord bool
 	AgentMrn string
@@ -260,17 +263,29 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		log.Fatal().Err(err).Msg("failed to parse inventory")
 	}
 
+	riskThreshold := viper.GetInt("risk-threshold")
+
+	// FIXME: DEPRECATED, just remove this section in v13, it is no longer necessary
+	deprecatedThreshold := 100 - viper.GetInt("score-threshold")
+	// note: the score threshold is off by one compared to the risk threshold;
+	// ie: risk threshold 90 => risk of 90 - 100 get exit 1
+	// vs: score threshold 11 => 100-11 = risk > 89 gets exit 1
+	if deprecatedThreshold+1 < riskThreshold {
+		riskThreshold = deprecatedThreshold + 1
+	}
+	// ^^
+
 	conf := scanConfig{
-		Features:       opts.GetFeatures(),
-		IsIncognito:    viper.GetBool("incognito"),
-		Inventory:      inv,
-		PolicyPaths:    dedupe(viper.GetStringSlice("policy-bundle")),
-		PolicyNames:    viper.GetStringSlice("policies"),
-		ScoreThreshold: viper.GetInt("score-threshold"),
-		Props:          props,
-		runtime:        runtime,
-		AgentMrn:       opts.AgentMrn,
-		OutputTarget:   viper.GetString("output-target"),
+		Features:      opts.GetFeatures(),
+		IsIncognito:   viper.GetBool("incognito"),
+		Inventory:     inv,
+		PolicyPaths:   dedupe(viper.GetStringSlice("policy-bundle")),
+		PolicyNames:   viper.GetStringSlice("policies"),
+		RiskThreshold: riskThreshold,
+		Props:         props,
+		runtime:       runtime,
+		AgentMrn:      opts.AgentMrn,
+		OutputTarget:  viper.GetString("output-target"),
 	}
 
 	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
