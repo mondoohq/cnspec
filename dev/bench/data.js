@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756750889634,
+  "lastUpdate": 1756751731769,
   "repoUrl": "https://github.com/mondoohq/cnspec",
   "entries": {
     "Benchmark": [
@@ -6436,6 +6436,74 @@ window.BENCHMARK_DATA = {
             "value": 71,
             "unit": "allocs/op",
             "extra": "59146 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "mondoohq",
+            "username": "mondoohq"
+          },
+          "committer": {
+            "name": "mondoohq",
+            "username": "mondoohq"
+          },
+          "id": "4af7c06f3ceefa987dabe393db2aa7a4aa9ac131",
+          "message": "⭐ add support for server-side features",
+          "timestamp": "2025-09-01T18:20:57Z",
+          "url": "https://github.com/mondoohq/cnspec/pull/1814/commits/4af7c06f3ceefa987dabe393db2aa7a4aa9ac131"
+        },
+        "date": 1756751731279,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkScan_SingleAsset",
+            "value": 19938,
+            "unit": "ns/op\t    4900 B/op\t      71 allocs/op",
+            "extra": "68136 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - ns/op",
+            "value": 19938,
+            "unit": "ns/op",
+            "extra": "68136 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - B/op",
+            "value": 4900,
+            "unit": "B/op",
+            "extra": "68136 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_SingleAsset - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "68136 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets",
+            "value": 19248,
+            "unit": "ns/op\t    4896 B/op\t      71 allocs/op",
+            "extra": "54798 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - ns/op",
+            "value": 19248,
+            "unit": "ns/op",
+            "extra": "54798 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - B/op",
+            "value": 4896,
+            "unit": "B/op",
+            "extra": "54798 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkScan_MultipleAssets - allocs/op",
+            "value": 71,
+            "unit": "allocs/op",
+            "extra": "54798 times\n4 procs"
           }
         ]
       }
