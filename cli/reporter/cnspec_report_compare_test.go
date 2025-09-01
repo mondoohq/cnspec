@@ -20,7 +20,6 @@ func TestReportComparison(t *testing.T) {
 	t.Run("pass vs pass", func(t *testing.T) {
 		equal := CompareReports(passReport, passReport)
 		assert.True(t, equal)
-
 	})
 
 	t.Run("pass vs fail", func(t *testing.T) {
