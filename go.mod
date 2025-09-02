@@ -43,7 +43,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.0
 	github.com/zclconf/go-cty v1.16.4
-	go.mondoo.com/cnquery/v12 v12.0.0-pre3
+	go.mondoo.com/cnquery/v12 v12.0.0-rc1
 	go.mondoo.com/mondoo-go v0.0.0-20250702005123-23558fe8001c
 	go.mondoo.com/ranger-rpc v0.7.0
 	gocloud.dev v0.43.0
