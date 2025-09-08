@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.31.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.3
 	github.com/charmbracelet/bubbles v0.21.0
-	github.com/charmbracelet/bubbletea v1.3.6
+	github.com/charmbracelet/bubbletea v1.3.7
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cockroachdb/errors v1.12.0
 	github.com/go-viper/mapstructure/v2 v2.4.0
@@ -42,12 +42,12 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
-	github.com/zclconf/go-cty v1.16.4
+	github.com/zclconf/go-cty v1.17.0
 	go.mondoo.com/cnquery/v12 v12.0.0
 	go.mondoo.com/mondoo-go v0.0.0-20250903000415-5d2e0cc74372
 	go.mondoo.com/ranger-rpc v0.7.0
 	gocloud.dev v0.43.0
-	golang.org/x/sys v0.35.0
+	golang.org/x/sys v0.36.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250826171959-ef028d996bc1
 	google.golang.org/protobuf v1.36.8
 	gopkg.in/yaml.v3 v3.0.1
