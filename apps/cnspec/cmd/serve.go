@@ -268,7 +268,7 @@ func updateProviders() error {
 		if provider.Name == "mock" || provider.Name == "core" || provider.Name == "sbom" {
 			continue
 		}
-		latestVersion, err := providers.LatestVersion(provider.Name)
+		latestVersion, err := providers.LatestVersion(context.Background(), provider.Name)
 		if err != nil {
 			return err
 		}
