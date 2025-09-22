@@ -25,7 +25,7 @@ require (
 	github.com/hashicorp/hc-install v0.9.2
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/hashicorp/terraform-exec v0.24.0
-	github.com/hashicorp/terraform-json v0.27.1
+	github.com/hashicorp/terraform-json v0.27.2
 	github.com/jstemmer/go-junit-report/v2 v2.1.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mergestat/timediff v0.0.4
