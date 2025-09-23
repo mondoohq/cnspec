@@ -145,7 +145,7 @@ test/lint/golangci-lint/run: prep/tools
 .PHONY: test/lint/golangci-lint/run/new
 test/lint/golangci-lint/run/new: prep/tools
 	golangci-lint --version
-	golangci-lint run --timeout 10m --config .github/.golangci.yml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
+	golangci-lint run --timeout 10m --config .github/.golangci.yaml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
 
 license: license/headers/check
 
