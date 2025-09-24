@@ -11,11 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v11/cli/printer"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/utils/iox"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/cli/printer"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v12/utils/iox"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func TestCompactReporter(t *testing.T) {
@@ -44,7 +44,7 @@ func TestCompactReporter(t *testing.T) {
 	strData := buf.String()
 	assert.Contains(t, strData, "! Error:          Set")
 	assert.Contains(t, strData, "✓ Ensure ")
-	assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
+	assert.Contains(t, strData, "✕ CRITICAL (100): Ensure")
 }
 
 func TestVulnReporter(t *testing.T) {
@@ -61,7 +61,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=summary", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatSummary)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)
@@ -70,7 +70,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=compact", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatCompact)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		err = r.PrintVulns(report, target)
 		require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=full", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatFull)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)
@@ -91,7 +91,7 @@ func TestVulnReporter(t *testing.T) {
 
 	t.Run("format=yaml", func(t *testing.T) {
 		conf := defaultPrintConfig().setFormat(FormatYAMLv1)
-		r := NewReporter(conf, false, 0)
+		r := NewReporter(conf, false)
 		r.out = &writer
 		require.NoError(t, err)
 		err = r.PrintVulns(report, target)

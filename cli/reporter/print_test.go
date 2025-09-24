@@ -36,12 +36,15 @@ func TestParseConfig(t *testing.T) {
 			expect.format = FormatSummary
 			expect.printControls = false
 			expect.printRisks = false
+			expect.printData = true
 			assert.Equal(t, expect, conf)
 		}},
 		{"full", func(t *testing.T, conf *PrintConfig) {
 			expect := defaultPrintConfig()
 			expect.format = FormatFull
 			expect.isCompact = false
+			expect.printControls = true
+			expect.printData = true
 			assert.Equal(t, expect, conf)
 		}},
 		{"nodata,noVuln,noRiSks", func(t *testing.T, conf *PrintConfig) {

@@ -16,16 +16,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v11"
-	cnquery_app "go.mondoo.com/cnquery/v11/apps/cnquery/cmd"
-	"go.mondoo.com/cnquery/v11/cli/config"
-	cli_errors "go.mondoo.com/cnquery/v11/cli/errors"
-	"go.mondoo.com/cnquery/v11/cli/providers"
-	"go.mondoo.com/cnquery/v11/cli/theme"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/logger"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/cnspec/v11"
+	"go.mondoo.com/cnquery/v12"
+	cnquery_app "go.mondoo.com/cnquery/v12/apps/cnquery/cmd"
+	"go.mondoo.com/cnquery/v12/cli/config"
+	cli_errors "go.mondoo.com/cnquery/v12/cli/errors"
+	"go.mondoo.com/cnquery/v12/cli/providers"
+	"go.mondoo.com/cnquery/v12/cli/theme"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/cnspec/v12"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
@@ -147,7 +147,8 @@ func init() {
 	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 	viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
 	viper.BindPFlag("auto_update", rootCmd.PersistentFlags().Lookup("auto-update"))
-	viper.BindEnv("features")
+	_ = viper.BindEnv("features")
+	_ = viper.BindEnv("providers_url")
 
 	config.Init(rootCmd)
 }

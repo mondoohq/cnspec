@@ -12,9 +12,10 @@ ifndef VERSION
 # echo "read VERSION from git"
 VERSION=${LATEST_VERSION_TAG}+$(shell git rev-list --count HEAD)
 endif
+MAJOR_VERSION=v12
 
 # use LDFLAGSEXTRA to pass additional ldflags to the build
-LDFLAGS="-s -w -X go.mondoo.com/cnquery/v11.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/v11.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
+LDFLAGS="-s -w -X go.mondoo.com/cnquery/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
 LDFLAGSDIST=-tags production -ldflags ${LDFLAGS}
 
 .PHONY: info/ldflags
@@ -117,7 +118,7 @@ test/lint/policies:
 test: test/go test/lint
 
 benchmark/go:
-	go test -bench=. -benchmem go.mondoo.com/cnspec/v11/policy/scan/benchmark
+	go test -bench=. -benchmem go.mondoo.com/cnspec/${MAJOR_VERSION}/policy/scan/benchmark
 
 test/go: cnspec/generate test/go/plain
 
@@ -144,7 +145,7 @@ test/lint/golangci-lint/run: prep/tools
 .PHONY: test/lint/golangci-lint/run/new
 test/lint/golangci-lint/run/new: prep/tools
 	golangci-lint --version
-	golangci-lint run --timeout 10m --config .github/.golangci.yml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
+	golangci-lint run --timeout 10m --config .github/.golangci.yaml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
 
 license: license/headers/check
 

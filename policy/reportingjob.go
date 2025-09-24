@@ -6,8 +6,8 @@ package policy
 import (
 	"sort"
 
-	"go.mondoo.com/cnquery/v11/checksums"
-	"go.mondoo.com/cnquery/v11/utils/sortx"
+	"go.mondoo.com/cnquery/v12/checksums"
+	"go.mondoo.com/cnquery/v12/utils/sortx"
 )
 
 // RefreshChecksum recalculates the reporting job checksum

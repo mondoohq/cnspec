@@ -11,15 +11,15 @@ import (
 	"os"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11"
-	"go.mondoo.com/cnquery/v11/cli/printer"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/providers"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/utils/iox"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12"
+	"go.mondoo.com/cnquery/v12/cli/printer"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/providers"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v12/utils/iox"
+	"go.mondoo.com/cnspec/v12/policy"
 	"sigs.k8s.io/yaml"
 )
 
@@ -84,22 +84,24 @@ func defaultChecksum(code mqlCode, schema resources.ResourcesSchema) (string, er
 
 // note: implements the OutputHandler interface
 type Reporter struct {
-	Conf           *PrintConfig
-	Printer        *printer.Printer
-	Colors         *colors.Theme
-	IsIncognito    bool
-	ScoreThreshold int
-	out            io.Writer
+	Conf          *PrintConfig
+	Printer       *printer.Printer
+	Colors        *colors.Theme
+	IsIncognito   bool
+	RiskThreshold int
+	out           io.Writer
 }
 
-func NewReporter(conf *PrintConfig, incognito bool, scoreThreshold int) *Reporter {
+const DEFAULT_RISK_THRESHOLD = 101
+
+func NewReporter(conf *PrintConfig, incognito bool) *Reporter {
 	return &Reporter{
-		Conf:           conf,
-		Printer:        &printer.DefaultPrinter,
-		Colors:         &colors.DefaultColorTheme,
-		IsIncognito:    incognito,
-		ScoreThreshold: scoreThreshold,
-		out:            os.Stdout,
+		Conf:          conf,
+		Printer:       &printer.DefaultPrinter,
+		Colors:        &colors.DefaultColorTheme,
+		IsIncognito:   incognito,
+		RiskThreshold: DEFAULT_RISK_THRESHOLD,
+		out:           os.Stdout,
 	}
 }
 

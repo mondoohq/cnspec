@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func TestFileHandler(t *testing.T) {
@@ -39,7 +39,7 @@ func TestFileHandler(t *testing.T) {
 		strData := string(data)
 		assert.Contains(t, strData, "! Error:          Set")
 		assert.Contains(t, strData, "✓ Ensure ")
-		assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
+		assert.Contains(t, strData, "✕ CRITICAL (100): Ensure")
 		err = os.Remove(fileName)
 		require.NoError(t, err)
 	})
@@ -58,7 +58,7 @@ func TestFileHandler(t *testing.T) {
 		strData := string(data)
 		assert.Contains(t, strData, "! Error:          Set")
 		assert.Contains(t, strData, "✓ Ensure ")
-		assert.Contains(t, strData, "✕ CRITICAL (0):   Ensure")
+		assert.Contains(t, strData, "✕ CRITICAL (100): Ensure")
 		err = os.Remove(trimmed)
 		require.NoError(t, err)
 	})

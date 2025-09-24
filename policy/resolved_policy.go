@@ -5,9 +5,9 @@ package policy
 
 import (
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/types"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/types"
 )
 
 // WithDataQueries cycles through all data queries of the resolved policy and calls the given function
@@ -118,4 +118,15 @@ func (x *ResolvedPolicy) EnumerateQueryResources() map[string][]string {
 	}
 
 	return res
+}
+
+// HasFeature checks if the resolved policy indicates if certain features
+// should be supported on the execution and collection of it
+func (r *ResolvedPolicy) HasFeature(feature ServerFeature) bool {
+	for _, f := range r.Features {
+		if f == feature {
+			return true
+		}
+	}
+	return false
 }

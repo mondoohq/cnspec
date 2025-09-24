@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v11/explorer"
+	"go.mondoo.com/cnquery/v12/explorer"
 )
 
 func TestEvidenceFillUidIfEmpty(t *testing.T) {

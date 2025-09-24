@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnquery/v11/utils/stringx"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/cnquery/v12/utils/stringx"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 const (
@@ -174,7 +174,7 @@ func (m ScoreCard) Render(score *policy.Score) string {
 			// determine indicator headerline
 			stringx.Indent(1, strings.Repeat(scoreCardTitleBarChar, m.width-2)),
 			// label for rating + score
-			"\n\n" + strings.Repeat(" ", 11) + rating.CategoryLabel() + " " + strconv.Itoa(int(score.Value)) + "/100",
+			"\n\n" + strings.Repeat(" ", 11) + rating.CategoryLabel() + " " + strconv.Itoa(100-int(score.Value)) + "/100",
 			// completion
 			"\n\n\n" + strings.Repeat(" ", 11) + strconv.Itoa(int(score.Completion())) + "% complete",
 			// achievement indicator

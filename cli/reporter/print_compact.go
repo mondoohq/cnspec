@@ -17,13 +17,13 @@ import (
 	"github.com/mergestat/timediff"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v11/utils/stringx"
-	cnspecComponents "go.mondoo.com/cnspec/v11/cli/components"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/cnquery/v12/utils/stringx"
+	cnspecComponents "go.mondoo.com/cnspec/v12/cli/components"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type assetMrnName struct {
@@ -189,15 +189,15 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 			if r.data.Reports[assetsByPlatform[platform][i].Mrn] != nil {
 				score := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score
 				assetScoreRating = score.Rating()
-				assetScore = "[" + strconv.Itoa(int(score.Value)) + "/100]"
+				assetScore = assetScoreRating.Text() + " (" + strconv.Itoa(100-int(score.Value)) + "):"
 			} else {
 				assetScoreRating = policy.ScoreRating_error
 				assetScore = string(policy.ScoreRatingTextError)
 			}
 
-			paddedAssetScore := fmt.Sprintf("%-9s", assetScore)
+			paddedAssetScore := fmt.Sprintf("%-12s", assetScore)
 			scoreColor := cnspecComponents.DefaultRatingColors.Color(assetScoreRating)
-			output := fmt.Sprintf("    %s   %s", termenv.String(paddedAssetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
+			output := fmt.Sprintf("  %s  %s", termenv.String(paddedAssetScore).Foreground(scoreColor), assetsByPlatform[platform][i].Name)
 			r.out(output + NewLineCharacter)
 		}
 	}
@@ -453,7 +453,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 
 			if score.Success {
 				sortedPassed = append(sortedPassed, id)
-			} else if score.Value >= uint32(r.ScoreThreshold) && r.ScoreThreshold != 0 {
+			} else if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 				sortedWarnings = append(sortedWarnings, id)
 			} else {
 				if g, ok := checkToPreview[query.Mrn]; ok {
@@ -510,7 +510,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				r.out(NewLineCharacter)
 			}
 			// FIXME v12: rename to risk threshold
-			r.out("Warning - above score threshold:" + NewLineCharacter)
+			r.out("Warnings (below risk threshold):" + NewLineCharacter)
 			for _, id := range sortedWarnings {
 				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
 			}
@@ -563,9 +563,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			if prevPrinted {
 				r.out(NewLineCharacter)
 			}
-			if r.ScoreThreshold > 0 {
-				// FIXME v12: rename to risk threshold
-				r.out("Failing - below score threshold:" + NewLineCharacter)
+			if r.RiskThreshold != DEFAULT_RISK_THRESHOLD {
+				r.out("Failures (above risk threshold):" + NewLineCharacter)
 			} else {
 				r.out("Failing:" + NewLineCharacter)
 			}
@@ -648,10 +647,10 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *exp
 	} else {
 		scoreIndicator := ""
 		if query.Impact != nil {
-			scoreIndicator = " (" + strconv.Itoa(int(score.Value)) + ")"
+			scoreIndicator = " (" + strconv.Itoa(100-int(score.Value)) + ")"
 		}
 		scoreSymbol := "✕"
-		if r.ScoreThreshold > 0 && score.Value > uint32(r.ScoreThreshold) {
+		if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 			scoreSymbol = "!"
 		}
 		passfail = termenv.String(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()

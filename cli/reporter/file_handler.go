@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 type localFileHandler struct {
@@ -26,7 +26,7 @@ func (h *localFileHandler) WriteReport(ctx context.Context, report *policy.Repor
 		return err
 	}
 	defer f.Close() //nolint: errcheck
-	reporter := NewReporter(h.conf, false, 0)
+	reporter := NewReporter(h.conf, false)
 	reporter.out = f
 	err = reporter.WriteReport(ctx, report)
 	if err != nil {

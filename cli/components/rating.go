@@ -6,8 +6,8 @@ package components
 import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v11/cli/theme/colors"
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 var DefaultRatingColors = NewRating(colors.DefaultColorTheme)
@@ -67,7 +67,7 @@ func NewScoreRating(theme colors.Theme) ScoreRating {
 			policy.ScoreRatingTextCritical: theme.Critical,
 			policy.ScoreRatingTextError:    theme.Error,
 		},
-		// TODO @afiune this should live in "go.mondoo.com/cnquery/v11/cli/theme/colors"
+		// TODO @afiune this should live in "go.mondoo.com/cnquery/v12/cli/theme/colors"
 		ScoreRatingLipglossColorMapping: map[string]lipgloss.Color{
 			policy.ScoreRatingTextUnrated:  lipgloss.Color("231"),
 			policy.ScoreRatingTextNone:     lipgloss.Color("78"),

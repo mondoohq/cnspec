@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	subject "go.mondoo.com/cnspec/v11/internal/onboarding"
+	subject "go.mondoo.com/cnspec/v12/internal/onboarding"
 )
 
 func TestGenerateMs365HCL_Basic(t *testing.T) {

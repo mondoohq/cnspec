@@ -9,9 +9,9 @@ import (
 	"errors"
 	"strings"
 
-	cr "go.mondoo.com/cnquery/v11/cli/reporter"
-	"go.mondoo.com/cnquery/v11/utils/iox"
-	"go.mondoo.com/cnspec/v11/policy"
+	cr "go.mondoo.com/cnquery/v12/cli/reporter"
+	"go.mondoo.com/cnquery/v12/utils/iox"
+	"go.mondoo.com/cnspec/v12/policy"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -100,7 +100,7 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			}
 
 			var v *structpb.Value
-			var jsonStruct map[string]interface{}
+			var jsonStruct map[string]any
 			err = json.Unmarshal([]byte(buf.Bytes()), &jsonStruct)
 			if err == nil {
 				v, err = structpb.NewValue(jsonStruct)
@@ -239,7 +239,8 @@ func gatherScoreValue(score *policy.Score) *ScoreValue {
 	}
 
 	return &ScoreValue{
-		Score:  score.Value,
-		Status: status,
+		Score:     score.Value,
+		Status:    status,
+		RiskScore: 100 - score.Value,
 	}
 }

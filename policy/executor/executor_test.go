@@ -10,12 +10,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v11"
-	"go.mondoo.com/cnquery/v11/llx"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnquery/v11/types"
-	"go.mondoo.com/cnspec/v11"
+	"go.mondoo.com/cnquery/v12"
+	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnquery/v12/types"
+	"go.mondoo.com/cnspec/v12"
 )
 
 func initExecutor() *Executor {
@@ -28,7 +28,7 @@ func initExecutor() *Executor {
 type value struct {
 	max   int
 	err   error
-	value interface{}
+	value any
 }
 
 func runTest(t *testing.T, code string, expected map[string]value, callers ...func(*testing.T, *Executor)) {

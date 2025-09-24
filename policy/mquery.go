@@ -7,10 +7,10 @@ import (
 	"sort"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v11/checksums"
-	"go.mondoo.com/cnquery/v11/explorer"
-	"go.mondoo.com/cnquery/v11/mqlc"
-	"go.mondoo.com/cnquery/v11/mrn"
+	"go.mondoo.com/cnquery/v12/checksums"
+	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/cnquery/v12/mrn"
 )
 
 func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string) (string, error) {
@@ -60,7 +60,7 @@ func ChecksumAssetFilters(queries []*explorer.Mquery, conf mqlc.CompilerConfig) 
 // RefreshChecksums of all queries
 // Note: This method is used for testing purposes only. If you need it in other
 // places please make sure to implement the query lookup.
-func (m *Mqueries) RefreshChecksums(conf mqlc.CompilerConfig, props map[string]explorer.PropertyRef) error {
+func (m *Mqueries) RefreshChecksums(conf mqlc.CompilerConfig, props mqlc.PropsHandler) error {
 	queries := map[string]*explorer.Mquery{}
 	for i := range m.Items {
 		if _, err := m.Items[i].RefreshChecksumAndType(queries, props, conf); err != nil {

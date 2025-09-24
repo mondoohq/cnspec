@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"go.mondoo.com/cnspec/v11/policy"
+	"go.mondoo.com/cnspec/v12/policy"
 	"google.golang.org/protobuf/proto"
 )
 

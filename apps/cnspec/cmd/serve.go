@@ -11,21 +11,21 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v11"
-	"go.mondoo.com/cnquery/v11/cli/config"
-	"go.mondoo.com/cnquery/v11/logger"
+	"go.mondoo.com/cnquery/v12"
+	"go.mondoo.com/cnquery/v12/cli/config"
+	"go.mondoo.com/cnquery/v12/logger"
 
-	cli_errors "go.mondoo.com/cnquery/v11/cli/errors"
-	"go.mondoo.com/cnquery/v11/cli/execruntime"
-	"go.mondoo.com/cnquery/v11/cli/inventoryloader"
-	"go.mondoo.com/cnquery/v11/cli/prof"
-	"go.mondoo.com/cnquery/v11/providers"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v11/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v11"
-	"go.mondoo.com/cnspec/v11/apps/cnspec/cmd/backgroundjob"
-	cnspec_config "go.mondoo.com/cnspec/v11/apps/cnspec/cmd/config"
-	"go.mondoo.com/cnspec/v11/policy/scan"
+	cli_errors "go.mondoo.com/cnquery/v12/cli/errors"
+	"go.mondoo.com/cnquery/v12/cli/execruntime"
+	"go.mondoo.com/cnquery/v12/cli/inventoryloader"
+	"go.mondoo.com/cnquery/v12/cli/prof"
+	"go.mondoo.com/cnquery/v12/providers"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/cnspec/v12/apps/cnspec/cmd/backgroundjob"
+	cnspec_config "go.mondoo.com/cnspec/v12/apps/cnspec/cmd/config"
+	"go.mondoo.com/cnspec/v12/policy/scan"
 )
 
 // we send a 78 exit code to prevent systemd from restart
@@ -268,7 +268,7 @@ func updateProviders() error {
 		if provider.Name == "mock" || provider.Name == "core" || provider.Name == "sbom" {
 			continue
 		}
-		latestVersion, err := providers.LatestVersion(provider.Name)
+		latestVersion, err := providers.LatestVersion(context.Background(), provider.Name)
 		if err != nil {
 			return err
 		}
