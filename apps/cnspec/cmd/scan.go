@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -74,6 +75,8 @@ func init() {
 	_ = scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
 	_ = scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 	_ = scanCmd.Flags().MarkHidden("category")
+	_ = scanCmd.Flags().String("report-type", "full", "Set the report type for the output. Valid options are 'full', 'error', 'none'.")
+	_ = scanCmd.Flags().MarkHidden("report-type")
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "If any risk is greater or equal to this, exitstatus is 1.")
@@ -120,6 +123,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("asset-name", cmd.Flags().Lookup("asset-name"))
 		_ = viper.BindPFlag("trace-id", cmd.Flags().Lookup("trace-id"))
 		_ = viper.BindPFlag("category", cmd.Flags().Lookup("category"))
+		_ = viper.BindPFlag("report-type", cmd.Flags().Lookup("report-type"))
 		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 		_ = viper.BindPFlag("risk-threshold", cmd.Flags().Lookup("risk-threshold"))
 
@@ -158,7 +162,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to resolve policies")
 	}
 
-	report, err := RunScan(conf)
+	report, err := RunScan(conf, scan.WithReportType(conf.ReportType))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
@@ -275,10 +279,22 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	}
 	// ^^
 
+	reportType := scan.ReportType_FULL
+	rtString := strings.ToUpper(viper.GetString("report-type"))
+	switch rtString {
+	case scan.ReportType_FULL.String():
+		reportType = scan.ReportType_FULL
+	case scan.ReportType_ERROR.String():
+		reportType = scan.ReportType_ERROR
+	case scan.ReportType_NONE.String():
+		reportType = scan.ReportType_NONE
+	}
+
 	conf := scanConfig{
 		Features:      opts.GetFeatures(),
 		IsIncognito:   viper.GetBool("incognito"),
 		Inventory:     inv,
+		ReportType:    reportType,
 		PolicyPaths:   dedupe(viper.GetStringSlice("policy-bundle")),
 		PolicyNames:   viper.GetStringSlice("policies"),
 		RiskThreshold: riskThreshold,
