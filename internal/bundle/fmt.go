@@ -90,11 +90,20 @@ func FormatFile(filename string, sort bool) error {
 	if err != nil {
 		return err
 	}
-	b, err := ParseYaml(data)
+
+	b, err := policy.BundleFromYAML(data)
 	if err != nil {
 		return err
 	}
-	fmtData, err := FormatBundle(b, sort)
+	if err := b.EnsureRequirements(true); err != nil {
+		return err
+	}
+
+	raw, err := ParseYaml(data)
+	if err != nil {
+		return err
+	}
+	fmtData, err := FormatBundle(raw, sort)
 	if err != nil {
 		return err
 	}
