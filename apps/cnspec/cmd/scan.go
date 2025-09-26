@@ -75,7 +75,8 @@ func init() {
 	_ = scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
 	_ = scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
 	_ = scanCmd.Flags().MarkHidden("category")
-	_ = scanCmd.Flags().String("report-type", "full", "Set the report type for the output. Valid options are 'full', 'error', 'none'.")
+	// Experimental: This is not intended to be used by users. It is internal use only.
+	_ = scanCmd.Flags().String("report-type", "full", "Experimental: Set the report type for the output. Valid options are 'full', 'error'. Default is 'full'.")
 	_ = scanCmd.Flags().MarkHidden("report-type")
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
