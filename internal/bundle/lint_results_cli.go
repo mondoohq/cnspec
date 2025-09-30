@@ -10,6 +10,8 @@ import (
 	"strconv"
 
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/renderer"
+	"github.com/olekukonko/tablewriter/tw"
 )
 
 // Entry represents a single linting issue found.
@@ -80,18 +82,40 @@ func (r *Results) ToCli() []byte {
 
 	// render platform advisories
 	var buf bytes.Buffer
-	table := tablewriter.NewWriter(&buf)
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetBorder(false)
-	table.SetHeaderLine(false)
-	table.SetRowLine(false)
-	table.SetColumnSeparator("") // Keep this for no vertical lines
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-
-	table.SetAutoWrapText(false) // Disable automatic text wrapping
+	table := tablewriter.NewTable(&buf,
+		tablewriter.WithRenderer(renderer.NewBlueprint(tw.Rendition{
+			Borders: tw.Border{Left: tw.Off, Top: tw.Off, Right: tw.Off, Bottom: tw.Off},
+			// Symbols: tw.NewSymbolCustom("cnspec").WithColumn(""),
+			Settings: tw.Settings{
+				Separators: tw.Separators{
+					ShowHeader:     tw.Off,
+					BetweenRows:    tw.Off,
+					BetweenColumns: tw.Off,
+				},
+				Lines: tw.Lines{
+					ShowHeaderLine: tw.Off,
+					ShowFooterLine: tw.Off,
+				},
+			},
+		})),
+		tablewriter.WithConfig(tablewriter.Config{
+			Header: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignLeft}, // Left-align rows
+			},
+			Row: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignLeft}, // Left-align rows
+				Formatting: tw.CellFormatting{
+					AutoWrap: tw.WrapNone,
+				},
+			},
+			Footer: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignRight},
+			},
+		}),
+	)
 
 	header := []string{"Rule ID", "Level", "File", "Line", "Message"}
-	table.SetHeader(header)
+	table.Header(header)
 
 	for i := range r.Entries {
 		entry := r.Entries[i]

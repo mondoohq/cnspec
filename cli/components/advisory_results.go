@@ -11,6 +11,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/renderer"
+	"github.com/olekukonko/tablewriter/tw"
 	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd/cvss"
 	"go.mondoo.com/cnspec/v12/cli/components/advisories"
@@ -57,16 +59,40 @@ func (a AdvisoryResultTable) Render(r *mvd.VulnReport) (string, error) {
 		}
 
 		// render platform advisories
-		table := tablewriter.NewWriter(b)
-		table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-		table.SetBorder(false)
-		table.SetHeaderLine(false)
-		table.SetRowLine(false)
-		table.SetColumnSeparator("")
-		table.SetAlignment(tablewriter.ALIGN_LEFT)
+		table := tablewriter.NewTable(b,
+			tablewriter.WithRenderer(renderer.NewBlueprint(tw.Rendition{
+				Borders: tw.Border{Left: tw.Off, Top: tw.Off, Right: tw.Off, Bottom: tw.Off},
+				// Symbols: tw.NewSymbolCustom("cnspec").WithColumn(""),
+				Settings: tw.Settings{
+					Separators: tw.Separators{
+						ShowHeader:     tw.Off,
+						BetweenRows:    tw.Off,
+						BetweenColumns: tw.Off,
+					},
+					Lines: tw.Lines{
+						ShowHeaderLine: tw.Off,
+						ShowFooterLine: tw.Off,
+					},
+				},
+			})),
+			tablewriter.WithConfig(tablewriter.Config{
+				Header: tw.CellConfig{
+					Alignment: tw.CellAlignment{Global: tw.AlignLeft}, // Left-align rows
+				},
+				Row: tw.CellConfig{
+					Alignment: tw.CellAlignment{Global: tw.AlignLeft}, // Left-align rows
+					Formatting: tw.CellFormatting{
+						AutoWrap: tw.WrapNone,
+					},
+				},
+				Footer: tw.CellConfig{
+					Alignment: tw.CellAlignment{Global: tw.AlignRight},
+				},
+			}),
+		)
 
 		header := []string{"■", "score", "advisory", "current", "fixed", "patch"}
-		table.SetHeader(header)
+		table.Header(header)
 
 		for i := range platformAdvisory {
 			advisory := platformAdvisory[i]
@@ -112,14 +138,37 @@ func (a AdvisoryResultTable) Render(r *mvd.VulnReport) (string, error) {
 }
 
 func NewCliTableWriter(writer io.Writer, detailedPackageRisks bool) *CliTableWriter {
-	table := tablewriter.NewWriter(writer)
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetBorder(false)
-	table.SetHeaderLine(false)
-	table.SetRowLine(false)
-	table.SetColumnSeparator("")
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	// table.SetAutoMergeCells(true)
+	table := tablewriter.NewTable(writer,
+		tablewriter.WithRenderer(renderer.NewBlueprint(tw.Rendition{
+			Borders: tw.Border{Left: tw.Off, Top: tw.Off, Right: tw.Off, Bottom: tw.Off},
+			// Symbols: tw.NewSymbolCustom("cnspec").WithColumn(""),
+			Settings: tw.Settings{
+				Separators: tw.Separators{
+					ShowHeader:     tw.Off,
+					BetweenRows:    tw.Off,
+					BetweenColumns: tw.Off,
+				},
+				Lines: tw.Lines{
+					ShowHeaderLine: tw.Off,
+					ShowFooterLine: tw.Off,
+				},
+			},
+		})),
+		tablewriter.WithConfig(tablewriter.Config{
+			Header: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignLeft}, // Left-align rows
+			},
+			Row: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignLeft}, // Left-align rows
+				Formatting: tw.CellFormatting{
+					AutoWrap: tw.WrapNone,
+				},
+			},
+			Footer: tw.CellConfig{
+				Alignment: tw.CellAlignment{Global: tw.AlignRight},
+			},
+		}),
+	)
 
 	return &CliTableWriter{
 		table:                table,
@@ -143,7 +192,7 @@ func (c *CliTableWriter) WriteHeader() error {
 		header = append(header, "advisory")
 	}
 
-	c.table.SetHeader(header)
+	c.table.Header(header)
 	return nil
 }
 
