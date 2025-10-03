@@ -778,6 +778,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		lookupProps:   map[string]explorer.PropertyRef{},
 		lookupQuery:   map[string]*explorer.Mquery{},
 		codeBundles:   map[string]*llx.CodeBundle{},
+		parents:       map[string][]parent{},
 	}
 
 	// Process variants and inherit attributes filled from their parents
@@ -800,6 +801,10 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	}
 
 	if err := cache.prepareMRNs(); err != nil {
+		return nil, err
+	}
+
+	if err := cache.buildParents(); err != nil {
 		return nil, err
 	}
 
@@ -1066,6 +1071,11 @@ func addBaseToVariant(base *explorer.Mquery, variant *explorer.Mquery) {
 	// than are applicable to the variant.
 }
 
+type parent struct {
+	policy *Policy
+	query  *explorer.Mquery
+}
+
 type bundleCache struct {
 	ownerMrn      string
 	lookupQuery   map[string]*explorer.Mquery
@@ -1076,6 +1086,7 @@ type bundleCache struct {
 	bundle        *Bundle
 	conf          BundleCompileConf
 	errors        []error
+	parents       map[string][]parent
 }
 
 func (c *bundleCache) clone() *bundleCache {
@@ -1294,6 +1305,32 @@ func (cache *bundleCache) prepareMRNs() error {
 	return nil
 }
 
+func (c *bundleCache) buildParents() error {
+	for _, p := range c.bundle.Policies {
+		for _, g := range p.Groups {
+			for _, arr := range [][]*explorer.Mquery{g.Queries, g.Checks} {
+				for _, q := range arr {
+					if q == nil {
+						continue
+					}
+					c.parents[q.Mrn] = append(c.parents[q.Mrn], parent{policy: p})
+				}
+			}
+		}
+	}
+
+	for _, q := range c.bundle.Queries {
+		for _, v := range q.Variants {
+			if v == nil {
+				continue
+			}
+			c.parents[v.Mrn] = append(c.parents[v.Mrn], parent{query: q})
+		}
+	}
+
+	return nil
+}
+
 func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy) error {
 	mergedQueries := make([]*explorer.Mquery, len(queries))
 	for i := range queries {
@@ -1365,19 +1402,19 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 		return nil
 	}
 
-	for i := range query.Props {
-		prop := query.Props[i]
-		if prop.Mql == "" {
-			// TODO(jaym): I think this is a bug in cnquery. It cannot handle the fact
-			// that the property doesn't have the code defined
-			lookup, ok := c.lookupProps[prop.Mrn]
-			if !ok {
-				c.errors = append(c.errors, fmt.Errorf("property %s not found in bundle for query %s", prop.Mrn, query.Mrn))
-				return nil
-			}
-			query.Props[i] = lookup.Property
-		}
-	}
+	// for i := range query.Props {
+	// 	prop := query.Props[i]
+	// 	if prop.Mql == "" {
+	// 		// TODO(jaym): I think this is a bug in cnquery. It cannot handle the fact
+	// 		// that the property doesn't have the code defined
+	// 		lookup, ok := c.lookupProps[prop.Mrn]
+	// 		if !ok {
+	// 			c.errors = append(c.errors, fmt.Errorf("property %s not found in bundle for query %s", prop.Mrn, query.Mrn))
+	// 			return nil
+	// 		}
+	// 		query.Props[i] = lookup.Property
+	// 	}
+	// }
 
 	// filters have no dependencies, so we can compile them early
 	if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
@@ -1399,33 +1436,147 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 	return query
 }
 
+type QueryPropsResolver struct {
+	query          *explorer.Mquery
+	parents        map[string][]parent
+	nameToPropType map[string]string
+
+	errors []error
+}
+
+func newQueryPropsResolver(query *explorer.Mquery, parents map[string][]parent) (*QueryPropsResolver, error) {
+	propTypes := map[string]string{}
+	for _, p := range query.Props {
+		name, err := explorer.GetPropName(p.Mrn)
+		if err != nil {
+			return nil, err
+		}
+		propTypes[name] = p.Type
+	}
+	return &QueryPropsResolver{
+		query:          query,
+		parents:        parents,
+		nameToPropType: propTypes,
+		errors:         []error{},
+	}, nil
+}
+
+func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
+	// Check explicitlyl defined properties
+	for propName, propType := range r.nameToPropType {
+		if propName == name {
+			return &llx.Primitive{Type: propType}
+		}
+	}
+
+	found := struct {
+		mrn  string
+		prop *explorer.Property
+	}{}
+	r.walkParents(func(p hasProps) bool {
+		for _, prop := range p.GetProps() {
+			propName, err := explorer.GetPropName(prop.Mrn)
+			if err != nil {
+				continue
+			}
+			if propName == name {
+				found.mrn = prop.Mrn
+				found.prop = prop
+				return true
+			}
+		}
+		return false
+	})
+
+	if found.prop != nil {
+		// Create an explicit property in the query for this implicit property.
+		newProp := &explorer.Property{
+			Uid:  name,
+			Type: found.prop.Type,
+		}
+		if err := newProp.RefreshMRN(r.query.Mrn); err != nil {
+			r.errors = append(r.errors, errors.New("failed to create MRN for implicit property "+name+" in query "+r.query.Mrn))
+			return nil
+		}
+		r.query.Props = append(r.query.Props, newProp)
+		// Reference the new property from the used property
+		found.prop.For = append(found.prop.For, &explorer.ObjectRef{Mrn: newProp.Mrn})
+		return &llx.Primitive{Type: found.prop.Type}
+	}
+
+	return nil
+}
+
+func (r *QueryPropsResolver) Available() map[string]*llx.Primitive {
+	available := map[string]*llx.Primitive{}
+	for name, propType := range r.nameToPropType {
+		available[name] = &llx.Primitive{Type: propType}
+	}
+	return available
+}
+
+func (r *QueryPropsResolver) All() map[string]*llx.Primitive {
+	all := map[string]*llx.Primitive{}
+	for name, propType := range r.nameToPropType {
+		all[name] = &llx.Primitive{Type: propType}
+	}
+	r.walkParents(func(p hasProps) bool {
+		for _, prop := range p.GetProps() {
+			propName, err := explorer.GetPropName(prop.Mrn)
+			if err != nil {
+				continue
+			}
+			if _, ok := all[propName]; !ok {
+				all[propName] = &llx.Primitive{Type: prop.Type}
+			}
+		}
+		return false
+	})
+	return all
+}
+
+type hasProps interface {
+	GetMrn() string
+	GetProps() []*explorer.Property
+}
+
+func (r *QueryPropsResolver) walkParents(f func(p hasProps) bool) {
+	var walk func(parents []parent) bool
+	walk = func(parents []parent) bool {
+		for _, p := range parents {
+			var hp hasProps
+			if p.query != nil {
+				hp = p.query
+			} else if p.policy != nil {
+				hp = p.policy
+			}
+			if hp == nil {
+				continue
+			}
+			if f(hp) {
+				return true
+			}
+			if walk(r.parents[hp.GetMrn()]) {
+				return true
+			}
+
+		}
+		return false
+	}
+	walk(r.parents[r.query.Mrn])
+}
+
 // Note: you only want to run this, after you are sure that all connected
 // dependencies have been processed. Properties must be compiled. Connected
 // queries may not be ready yet, but we have to have precompiled them.
 func (c *bundleCache) compileQuery(query *explorer.Mquery) {
-	props := &explorer.PropsResolver{
-		QueryCache:  map[string]explorer.PropertyRef{},
-		GlobalCache: c.lookupProps,
-		Query:       query,
+	props, err := newQueryPropsResolver(query, c.parents)
+	if err != nil {
+		c.errors = append(c.errors, errors.New("failed to prepare property resolver for query "+query.Mrn))
+		return
 	}
 
-	for i := range query.Props {
-		prop := query.Props[i]
-		propMrn, err := mrn.NewMRN(prop.Mrn)
-		if err != nil {
-			c.errors = append(c.errors, errors.New("property doesn't have a valid MRN: "+prop.Mrn))
-			return
-		}
-		name := propMrn.Basename()
-
-		props.QueryCache[name] = explorer.PropertyRef{
-			Property: prop,
-			Name:     name,
-			Mrn:      prop.Mrn,
-		}
-	}
-
-	_, err := query.RefreshChecksumAndType(c.lookupQuery, props, c.conf.CompilerConfig)
+	_, err = query.RefreshChecksumAndType(c.lookupQuery, props, c.conf.CompilerConfig)
 	if err != nil {
 		if c.conf.RemoveFailing {
 			log.Warn().Err(err).Str("uid", query.Uid).Msg("failed to compile")
@@ -1433,6 +1584,9 @@ func (c *bundleCache) compileQuery(query *explorer.Mquery) {
 		} else {
 			c.errors = append(c.errors, multierr.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
 		}
+	}
+	if len(props.errors) != 0 {
+		c.errors = append(c.errors, props.errors...)
 	}
 }
 
