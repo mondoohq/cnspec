@@ -1437,35 +1437,55 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 }
 
 type QueryPropsResolver struct {
-	query          *explorer.Mquery
-	parents        map[string][]parent
-	nameToPropType map[string]string
+	query      *explorer.Mquery
+	parents    map[string][]parent
+	nameToProp map[string]*explorer.Property
 
 	errors []error
 }
 
 func newQueryPropsResolver(query *explorer.Mquery, parents map[string][]parent) (*QueryPropsResolver, error) {
-	propTypes := map[string]string{}
+	propsMap := map[string]*explorer.Property{}
 	for _, p := range query.Props {
 		name, err := explorer.GetPropName(p.Mrn)
 		if err != nil {
 			return nil, err
 		}
-		propTypes[name] = p.Type
+		propsMap[name] = p
 	}
 	return &QueryPropsResolver{
-		query:          query,
-		parents:        parents,
-		nameToPropType: propTypes,
-		errors:         []error{},
+		query:      query,
+		parents:    parents,
+		nameToProp: propsMap,
+		errors:     []error{},
 	}, nil
 }
 
 func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 	// Check explicitlyl defined properties
-	for propName, propType := range r.nameToPropType {
+	for propName, queryProp := range r.nameToProp {
 		if propName == name {
-			return &llx.Primitive{Type: propType}
+			if queryProp.Type == "" {
+				// Resolve a type if the prop was defined with just a name
+				r.walkParents(func(p hasProps) bool {
+					for _, parentProp := range p.GetProps() {
+						pn, err := explorer.GetPropName(parentProp.Mrn)
+						if err != nil {
+							continue
+						}
+						if pn == name && parentProp.Type != "" {
+							queryProp.Type = parentProp.Type
+							return true
+						}
+					}
+					return false
+				})
+				if queryProp.Type == "" {
+					r.errors = append(r.errors, errors.New("property "+name+" has no type in query "+r.query.Mrn))
+					return nil
+				}
+			}
+			return &llx.Primitive{Type: queryProp.Type}
 		}
 	}
 
@@ -1509,16 +1529,16 @@ func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 
 func (r *QueryPropsResolver) Available() map[string]*llx.Primitive {
 	available := map[string]*llx.Primitive{}
-	for name, propType := range r.nameToPropType {
-		available[name] = &llx.Primitive{Type: propType}
+	for name, prop := range r.nameToProp {
+		available[name] = &llx.Primitive{Type: prop.Type}
 	}
 	return available
 }
 
 func (r *QueryPropsResolver) All() map[string]*llx.Primitive {
 	all := map[string]*llx.Primitive{}
-	for name, propType := range r.nameToPropType {
-		all[name] = &llx.Primitive{Type: propType}
+	for name, prop := range r.nameToProp {
+		all[name] = &llx.Primitive{Type: prop.Type}
 	}
 	r.walkParents(func(p hasProps) bool {
 		for _, prop := range p.GetProps() {
