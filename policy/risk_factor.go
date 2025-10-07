@@ -318,6 +318,12 @@ func cmpScoredRiskFactors(ri, rj *ScoredRiskInfo) int {
 // It merges the risk factors from the sortedRisks and applies them to the score.
 // Each array of ScoredRiskInfo is expected to be sorted using SortScoredRiskInfo.
 func AdjustRiskScore(score *Score, sortedRisks ...[]*ScoredRiskInfo) {
+	if score == nil {
+		return
+	}
+	if len(sortedRisks) == 0 {
+		return
+	}
 	score.RiskScore = score.Value
 	// Adjust the score based on the risk factors
 	for risk := range mergeSorted(cmpScoredRiskFactors, sortedRisks...) {
