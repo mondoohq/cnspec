@@ -1402,20 +1402,6 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 		return nil
 	}
 
-	// for i := range query.Props {
-	// 	prop := query.Props[i]
-	// 	if prop.Mql == "" {
-	// 		// TODO(jaym): I think this is a bug in cnquery. It cannot handle the fact
-	// 		// that the property doesn't have the code defined
-	// 		lookup, ok := c.lookupProps[prop.Mrn]
-	// 		if !ok {
-	// 			c.errors = append(c.errors, fmt.Errorf("property %s not found in bundle for query %s", prop.Mrn, query.Mrn))
-	// 			return nil
-	// 		}
-	// 		query.Props[i] = lookup.Property
-	// 	}
-	// }
-
 	// filters have no dependencies, so we can compile them early
 	if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
 		c.errors = append(c.errors, errors.New("failed to compile filters for query "+query.Mrn))
