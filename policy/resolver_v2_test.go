@@ -2058,6 +2058,55 @@ policies:
 	})
 }
 
+func TestResolveV2_ImplicitProps(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  props:
+  - uid: name
+    mql: return "definitely not the asset name"
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+      mql: asset.name == props.name
+    queries:
+    - uid: query1
+      mql: asset{*}
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    policyMrn("policy1"),
+			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+		require.Len(t, rp.ExecutionJob.Queries, 3)
+		require.Len(t, rp.Filters, 1)
+		require.Len(t, rp.CollectorJob.ReportingJobs, 5)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.ExecutesQuery(queryMrn("query1"))
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies("root")
+		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies("root")
+
+		rpTester.doTest(t, rp)
+	})
+}
+
 func TestResolveV2_ValidUntil(t *testing.T) {
 	ctx := context.Background()
 	bYaml := `

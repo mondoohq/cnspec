@@ -41,7 +41,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zclconf/go-cty v1.17.0
-	go.mondoo.com/cnquery/v12 v12.4.0
+	go.mondoo.com/cnquery/v12 v12.4.1-0.20251008175811-9296198fc578
 	go.mondoo.com/mondoo-go v0.0.0-20250926171959-050a30773627
 	go.mondoo.com/ranger-rpc v0.7.0
 	gocloud.dev v0.43.0
@@ -307,7 +307,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621 // indirect
-	golang.org/x/mod v0.28.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/oauth2 v0.31.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
