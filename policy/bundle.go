@@ -1449,30 +1449,29 @@ func newQueryPropsResolver(query *explorer.Mquery, parents map[string][]parent) 
 
 func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 	// Check explicitlyl defined properties
-	for propName, queryProp := range r.nameToProp {
-		if propName == name {
-			if queryProp.Type == "" {
-				// Resolve a type if the prop was defined with just a name
-				r.walkParents(func(p hasProps) bool {
-					for _, parentProp := range p.GetProps() {
-						pn, err := explorer.GetPropName(parentProp.Mrn)
-						if err != nil {
-							continue
-						}
-						if pn == name && parentProp.Type != "" {
-							queryProp.Type = parentProp.Type
-							return true
-						}
+	queryProp, ok := r.nameToProp[name]
+	if ok {
+		if queryProp.Type == "" {
+			// Resolve a type if the prop was defined with just a name
+			r.walkParents(func(p hasProps) bool {
+				for _, parentProp := range p.GetProps() {
+					pn, err := explorer.GetPropName(parentProp.Mrn)
+					if err != nil {
+						continue
 					}
-					return false
-				})
-				if queryProp.Type == "" {
-					r.errors = append(r.errors, errors.New("property "+name+" has no type in query "+r.query.Mrn))
-					return nil
+					if pn == name && parentProp.Type != "" {
+						queryProp.Type = parentProp.Type
+						return true
+					}
 				}
+				return false
+			})
+			if queryProp.Type == "" {
+				r.errors = append(r.errors, errors.New("property "+name+" has no type in query "+r.query.Mrn))
+				return nil
 			}
-			return &llx.Primitive{Type: queryProp.Type}
 		}
+		return &llx.Primitive{Type: queryProp.Type}
 	}
 
 	found := struct {
