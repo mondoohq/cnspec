@@ -704,47 +704,12 @@ type HumanTime struct {
 	Comments    Comments    `json:"-" yaml:"-"`
 }
 
-func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
-	// prevent recursive calls into UnmarshalYAML with a placeholder type
-	type tmp HumanTime
-	err := node.Decode((*tmp)(x))
-	if err != nil {
-		return err
-	}
-
+func (x *HumanTime) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
-
-	headComment := node.HeadComment
-	if headComment == "" && len(node.Content) > 1 {
-		headComment = node.Content[0].HeadComment
-	}
-
-	lineComment := node.LineComment
-
-	footComment := node.FootComment
-	if footComment == "" && len(node.Content) > 1 {
-		last := len(node.Content) - 1
-		footComment = node.Content[last].FootComment
-	}
-
-	x.Comments.HeadComment = headComment
-	x.Comments.LineComment = lineComment
-	x.Comments.FootComment = footComment
-	return nil
-}
-
-func (d HumanTime) MarshalYAML() (any, error) {
-	type alias HumanTime
-	node := yaml.Node{}
-	err := node.Encode(alias(d))
-	if err != nil {
-		return nil, err
-	}
-	node.HeadComment = d.Comments.HeadComment
-	node.LineComment = d.Comments.LineComment
-	node.FootComment = d.Comments.FootComment
-	return node, nil
+	x.Comments.HeadComment = node.HeadComment
+	x.Comments.LineComment = node.LineComment
+	x.Comments.FootComment = node.FootComment
 }
 
 type Impact struct {
@@ -1226,6 +1191,7 @@ type Policy struct {
 	Created                int64                  `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64                  `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
 	RiskFactors            []*RiskFactor          `protobuf:"bytes,47,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
+	Require                []*Requirement         `protobuf:"bytes,48,rep,name=require,proto3" json:"require,omitempty" yaml:"require,omitempty"`
 	LocalContentChecksum   string                 `protobuf:"bytes,37,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
 	GraphContentChecksum   string                 `protobuf:"bytes,38,opt,name=graph_content_checksum,json=graphContentChecksum,proto3" json:"graph_content_checksum,omitempty" yaml:"graph_content_checksum,omitempty"`
 	LocalExecutionChecksum string                 `protobuf:"bytes,39,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
@@ -1801,6 +1767,57 @@ func (x *Remediation) addFileContext(node *yaml.Node) {
 	x.Comments.HeadComment = node.HeadComment
 	x.Comments.LineComment = node.LineComment
 	x.Comments.FootComment = node.FootComment
+}
+
+type Requirement struct {
+	Name        string      `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Version     string      `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
+	Id          string      `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *Requirement) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Requirement
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d Requirement) MarshalYAML() (any, error) {
+	type alias Requirement
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
 }
 
 type ResourceSelector struct {
