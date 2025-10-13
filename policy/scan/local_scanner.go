@@ -455,6 +455,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 						return nil, multierr.Wrap(err, "failed to generate a random asset MRN")
 					}
 					asset.Mrn = x.String()
+					batch[i].Runtime.AssetUpdated(asset)
 				}
 			}
 		}
