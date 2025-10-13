@@ -137,7 +137,7 @@ func (s *SqliteScanDataStore) initializeDatabase() error {
 	}
 
 	s.riskStmt, err = s.db.Prepare(`
-		INSERT OR REPLACE INTO score_risk_factors (mrn, risk, is_toxic, is_detected) VALUES (?, ?, ?, ?)
+		INSERT OR REPLACE INTO scored_risk_factors (mrn, risk, is_toxic, is_detected) VALUES (?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare risk statement: %w", err)
