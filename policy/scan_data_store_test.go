@@ -24,7 +24,6 @@ func TestSqliteScanDataStore(t *testing.T) {
 	}()
 
 	assetMrn := "//assets.api.mondoo.com/spaces/test-space/assets/test-asset"
-	uploadSessionId := "session-123"
 
 	// Test data
 	testScores := []*Score{
@@ -122,7 +121,6 @@ func TestSqliteScanDataStore(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, SchemaVersion, metadata.SchemaVersion)
 		assert.Equal(t, assetMrn, metadata.AssetMrn)
-		assert.Equal(t, uploadSessionId, metadata.UploadSessionId)
 
 		// Read scores
 		var scores []*Score

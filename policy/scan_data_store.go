@@ -501,10 +501,6 @@ func (s *SqliteScanDataStore) ValidateFile() error {
 		return fmt.Errorf("missing asset_mrn in metadata")
 	}
 
-	if metadata.UploadSessionId == "" {
-		return fmt.Errorf("missing upload_session_id in metadata")
-	}
-
 	// Validate table structure exists
 	tables := []string{"metadata", "scores", "data", "scored_risk_factors", "resources"}
 	for _, table := range tables {
