@@ -134,6 +134,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyBundle *Bundle) []*Entry {
 	aggregatedEntries := []*Entry{}
 
+	bundleChecks := GetBundleLintChecks()
 	policyChecks := GetPolicyLintChecks()
 	queryChecks := GetQueryLintChecks()
 
@@ -207,6 +208,12 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 				}
 			}
 		}
+	}
+
+	// Run Bundle checks
+	for _, check := range bundleChecks {
+		entries := check.Run(lintCtx, policyBundle)
+		aggregatedEntries = append(aggregatedEntries, entries...)
 	}
 
 	// Run Policy Checks
