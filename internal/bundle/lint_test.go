@@ -51,6 +51,16 @@ func TestLinter_Fail(t *testing.T) {
 		return nil
 	}
 
+	t.Run("fail-global-props", func(t *testing.T) {
+		file := "./testdata/fail-bundle-global-props.mql.yaml"
+		results, err := Lint(schema, file)
+		require.NoError(t, err)
+		assert.Equal(t, 1, len(results.Entries))
+		assert.Equal(t, "bundle-global-props-deprecated", results.Entries[0].RuleID)
+		assert.Equal(t, "error", results.Entries[0].Level)
+		assert.Equal(t, "Defining global properties in a policy bundle is deprecated. Define properties within individual policies and queries instead.", results.Entries[0].Message)
+	})
+
 	t.Run("fail-policy-uid", func(t *testing.T) {
 		file := "./testdata/fail-policy-uid.mql.yaml"
 		results, err := Lint(schema, file)
