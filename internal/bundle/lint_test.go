@@ -41,6 +41,7 @@ func TestLinter_Pass(t *testing.T) {
 }
 
 func TestLinter_Fail(t *testing.T) {
+
 	findEntry := func(entries []*Entry, id string) *Entry {
 		for _, entry := range entries {
 			if entry.RuleID == id {
