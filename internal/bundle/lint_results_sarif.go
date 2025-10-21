@@ -66,7 +66,27 @@ func sarifLinterRules() []Rule {
 		Name:        "Bundle unknown field",
 		Description: "The bundle YAML contains fields not defined in the schema",
 	})
-	// Note: bundleInvalidUidRuleID is covered by specific policy/query UID checks.
+	rules = append(rules, Rule{
+		ID:          BundleGlobalPropsDeprecatedRuleID,
+		Name:        "Bundle global props deprecated",
+		Description: "Global properties in policy bundles are deprecated",
+	})
+	// Add sub-rules that are used by policy/query checks but not registered as separate LintChecks
+	rules = append(rules, Rule{
+		ID:          BundleInvalidUidRuleID,
+		Name:        "Invalid UID format",
+		Description: "UID does not meet naming requirements",
+	})
+	rules = append(rules, Rule{
+		ID:          "policy-uid-unique",
+		Name:        "Policy UID uniqueness",
+		Description: "Policy UID must be unique within the file",
+	})
+	rules = append(rules, Rule{
+		ID:          "query-uid-unique",
+		Name:        "Query UID uniqueness",
+		Description: "Query UID must be unique within the file",
+	})
 
 	return rules
 }
@@ -166,46 +186,10 @@ func toSarifLocations(rootDir string, locations []Location) []*sarif.Location {
 
 	for i := range locations {
 		l := locations[i]
-		// Validate and sanitize line and column values to prevent integer overflow
-		// SARIF uses int values which must fit within a 32-bit signed integer range
-		// to ensure compatibility with various SARIF parsers
-		line := sanitizeLineColumn(l.Line)
-		column := sanitizeLineColumn(l.Column)
-
-		region := sarif.NewRegion().WithStartLine(line).WithStartColumn(column)
+		region := sarif.NewRegion().WithStartLine(l.Line).WithStartColumn(l.Column)
 		loc := sarif.NewPhysicalLocation().WithArtifactLocation(artifactLocation(rootDir, l.File)).WithRegion(region)
 		sarifLocs = append(sarifLocs, sarif.NewLocation().WithPhysicalLocation(loc))
 	}
 
 	return sarifLocs
-}
-
-// sanitizeLineColumn ensures that line/column values are valid for SARIF output.
-// Invalid values (<=0 or outside safe integer range) are replaced with 1.
-// This prevents integer overflow errors when the SARIF file is parsed.
-//
-// Background: The yaml.v3 parser can occasionally produce extremely large line/column
-// numbers (e.g., 18446744073709552000, which exceeds 2^64) when parsing certain
-// edge cases such as:
-// - Files with Unicode/encoding issues
-// - Extremely long lines or deeply nested structures
-// - Parser bugs triggered by specific YAML constructs
-//
-// These invalid values would cause GitHub's SARIF parser to fail with:
-// "strconv.ParseInt: parsing \"18446744073709552000\": value out of range"
-func sanitizeLineColumn(value int) int {
-	// Max safe value for SARIF integer fields
-	// Using 2^31-1 (max 32-bit signed integer) for maximum compatibility.
-	// This is a conservative choice because:
-	// 1. Many SARIF parsers use 32-bit integers for line/column numbers
-	// 2. JSON parsers in different languages have varying integer limits
-	// 3. JavaScript (often used for SARIF processing) is only safe up to 2^53-1
-	// 4. No real source file would ever have > 2 billion lines
-	// 5. GitHub's SARIF parser has been observed to fail with values near 2^64
-	const maxSafeValue = 2147483647 // 2^31 - 1 (2,147,483,647)
-
-	if value <= 0 || value > maxSafeValue {
-		return 1
-	}
-	return value
 }
