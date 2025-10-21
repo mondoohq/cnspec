@@ -31,6 +31,105 @@ func TestResults_SarifReport(t *testing.T) {
 	assert.Equal(t, 0, len(report.Runs[0].Results))
 }
 
+func TestSanitizeLineColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int
+		expected int
+	}{
+		{
+			name:     "valid line number",
+			input:    42,
+			expected: 42,
+		},
+		{
+			name:     "zero value",
+			input:    0,
+			expected: 1,
+		},
+		{
+			name:     "negative value",
+			input:    -1,
+			expected: 1,
+		},
+		{
+			name:     "max safe value",
+			input:    2147483647,
+			expected: 2147483647,
+		},
+		{
+			name:     "overflow value (simulated with max int)",
+			input:    2147483648,
+			expected: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeLineColumn(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestResults_SarifReportWithInvalidLocations(t *testing.T) {
+	// Create a Results object with invalid line/column values
+	results := &Results{
+		BundleLocations: []string{"test.yaml"},
+		Entries: []*Entry{
+			{
+				RuleID:  "test-rule",
+				Level:   LevelError,
+				Message: "Test error with invalid location",
+				Location: []Location{
+					{
+						File:   "test.yaml",
+						Line:   -1, // Invalid line
+						Column: 0,  // Invalid column
+					},
+				},
+			},
+			{
+				RuleID:  "test-rule-2",
+				Level:   LevelWarning,
+				Message: "Test warning with overflow location",
+				Location: []Location{
+					{
+						File:   "test.yaml",
+						Line:   2147483648, // Overflow value
+						Column: 2147483648, // Overflow value
+					},
+				},
+			},
+		},
+	}
+
+	report, err := results.SarifReport(".")
+	require.NoError(t, err)
+	require.NotNil(t, report)
+
+	// Verify that the report was generated successfully
+	assert.Equal(t, 1, len(report.Runs))
+	assert.Equal(t, 2, len(report.Runs[0].Results))
+
+	// Verify that locations were sanitized to valid values
+	for _, result := range report.Runs[0].Results {
+		for _, location := range result.Locations {
+			if location.PhysicalLocation != nil && location.PhysicalLocation.Region != nil {
+				// StartLine and StartColumn should be sanitized to 1
+				assert.NotNil(t, location.PhysicalLocation.Region.StartLine)
+				assert.Greater(t, *location.PhysicalLocation.Region.StartLine, 0)
+				assert.LessOrEqual(t, *location.PhysicalLocation.Region.StartLine, 2147483647)
+
+				if location.PhysicalLocation.Region.StartColumn != nil {
+					assert.Greater(t, *location.PhysicalLocation.Region.StartColumn, 0)
+					assert.LessOrEqual(t, *location.PhysicalLocation.Region.StartColumn, 2147483647)
+				}
+			}
+		}
+	}
+}
+
 func TestLinter_Pass(t *testing.T) {
 	file := "./testdata/pass-rules.mql.yaml"
 	results, err := Lint(schema, file)
@@ -41,7 +140,6 @@ func TestLinter_Pass(t *testing.T) {
 }
 
 func TestLinter_Fail(t *testing.T) {
-
 	findEntry := func(entries []*Entry, id string) *Entry {
 		for _, entry := range entries {
 			if entry.RuleID == id {
