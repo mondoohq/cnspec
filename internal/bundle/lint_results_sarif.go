@@ -66,7 +66,27 @@ func sarifLinterRules() []Rule {
 		Name:        "Bundle unknown field",
 		Description: "The bundle YAML contains fields not defined in the schema",
 	})
-	// Note: bundleInvalidUidRuleID is covered by specific policy/query UID checks.
+	rules = append(rules, Rule{
+		ID:          BundleGlobalPropsDeprecatedRuleID,
+		Name:        "Bundle global props deprecated",
+		Description: "Global properties in policy bundles are deprecated",
+	})
+	// Add sub-rules that are used by policy/query checks but not registered as separate LintChecks
+	rules = append(rules, Rule{
+		ID:          BundleInvalidUidRuleID,
+		Name:        "Invalid UID format",
+		Description: "UID does not meet naming requirements",
+	})
+	rules = append(rules, Rule{
+		ID:          "policy-uid-unique",
+		Name:        "Policy UID uniqueness",
+		Description: "Policy UID must be unique within the file",
+	})
+	rules = append(rules, Rule{
+		ID:          "query-uid-unique",
+		Name:        "Query UID uniqueness",
+		Description: "Query UID must be unique within the file",
+	})
 
 	return rules
 }
