@@ -645,8 +645,15 @@ var policyLintCmd = &cobra.Command{
 
 func runPolicyLint(cmd *cobra.Command, args []string) {
 	log.Info().Str("file", args[0]).Msg("lint policy bundle")
-	if err := ensureProviders(); err != nil {
-		log.Fatal().Err(err).Msg("could not initialize providers")
+	autoUpdate := true
+	if viper.IsSet("auto-update") {
+		autoUpdate = viper.GetBool("auto-update")
+	}
+	if autoUpdate {
+		log.Info().Msg("checking for provider updates...")
+		if err := ensureProviders(); err != nil {
+			log.Fatal().Err(err).Msg("could not initialize providers")
+		}
 	}
 
 	files, err := policy.WalkPolicyBundleFiles(args[0])
