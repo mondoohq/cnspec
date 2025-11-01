@@ -19,10 +19,12 @@ func init() {
 	schema = runtime.Schema()
 }
 
+var testLintOptions = LintOptions{AutoUpdateProviders: true}
+
 func TestResults_SarifReport(t *testing.T) {
 	file := "./testdata/pass-rules.mql.yaml"
 	rootDir := "./testdata"
-	results, err := Lint(schema, file)
+	results, err := Lint(schema, testLintOptions, file)
 	require.NoError(t, err)
 	report, err := results.SarifReport(rootDir)
 	require.NoError(t, err)
@@ -33,7 +35,7 @@ func TestResults_SarifReport(t *testing.T) {
 
 func TestLinter_Pass(t *testing.T) {
 	file := "./testdata/pass-rules.mql.yaml"
-	results, err := Lint(schema, file)
+	results, err := Lint(schema, testLintOptions, file)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(results.BundleLocations))
 	assert.Equal(t, 0, len(results.Entries))
@@ -53,7 +55,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-global-props", func(t *testing.T) {
 		file := "./testdata/fail-bundle-global-props.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "bundle-global-props-deprecated", results.Entries[0].RuleID)
@@ -63,7 +65,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-uid", func(t *testing.T) {
 		file := "./testdata/fail-policy-uid.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
 
@@ -79,7 +81,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-name", func(t *testing.T) {
 		file := "./testdata/fail-policy-name.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "policy 'ubuntu-bench-1' does not define a name", results.Entries[0].Message)
@@ -89,7 +91,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-missing-asset-filter-variants", func(t *testing.T) {
 		file := "./testdata/fail-policy-missing-asset-filter-variants.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "policy 'mondoo-aws-security', group 'AWS IAM' (line 16): Check 'mondoo-aws-security-access-keys-rotated' lacks an asset filter or variants, and the group also has no filter.", results.Entries[0].Message)
@@ -99,7 +101,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-missing-asset-filter-groups", func(t *testing.T) {
 		file := "./testdata/fail-policy-missing-asset-filter-groups.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "policy 'mondoo-aws-security', group 'AWS IAM' (line 16): Check 'mondoo-aws-security-access-keys-rotated' lacks an asset filter or variants, and the group also has no filter.", results.Entries[0].Message)
@@ -109,7 +111,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-missing-checks", func(t *testing.T) {
 		file := "./testdata/fail-policy-missing-checks.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
 		assert.Equal(t, "policy 'ubuntu-bench-1', group 'Configure Ubuntu 1' (line 14) has no checks, data queries, or sub-policies defined", results.Entries[0].Message)
@@ -122,7 +124,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-missing-version", func(t *testing.T) {
 		file := "./testdata/fail-policy-missing-version.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "policy 'ubuntu-bench-1' is missing version", results.Entries[0].Message)
@@ -132,7 +134,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-wrong-version", func(t *testing.T) {
 		file := "./testdata/fail-policy-wrong-version.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
 
@@ -149,7 +151,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-policy-required-tags-missing", func(t *testing.T) {
 		file := "./testdata/fail-policy-required-tags-missing.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
 		assert.Equal(t, "policy 'ubuntu-bench-1' does not contain the required tag `mondoo.com/category`", results.Entries[0].Message)
@@ -162,7 +164,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-query-uid-unique", func(t *testing.T) {
 		file := "./testdata/fail-query-uid-unique.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Global query UID 'ubuntu-1-1' is used multiple times in the same file", results.Entries[0].Message)
@@ -172,7 +174,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-query-name", func(t *testing.T) {
 		file := "./testdata/fail-query-name.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Global query 'ubuntu-hard-2-2' does not define a title", results.Entries[0].Message)
@@ -182,7 +184,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-query-variant-uses-non-default-fields", func(t *testing.T) {
 		file := "./testdata/fail-query-variant-uses-non-default-fields.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Query variant 'ubuntu-hard-2-1-var1' should not define 'impact'", results.Entries[0].Message)
@@ -192,7 +194,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-query-missing-mql", func(t *testing.T) {
 		file := "./testdata/fail-query-missing-mql.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(results.Entries))
 
@@ -209,7 +211,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-query-unassigned", func(t *testing.T) {
 		file := "./testdata/fail-query-unassigned.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Global query UID 'ubuntu-hard-1-1' is defined but not assigned to any policy", results.Entries[0].Message)
@@ -219,7 +221,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-query-used-as-different-types", func(t *testing.T) {
 		file := "./testdata/fail-query-used-as-different-types.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Query UID 'sshd-sshd-01' is used as both a check and a data query in policies", results.Entries[0].Message)
@@ -229,7 +231,7 @@ func TestLinter_Fail(t *testing.T) {
 
 	t.Run("fail-bundle-unknown-field", func(t *testing.T) {
 		file := "./testdata/fail-bundle-unknown-field.mql.yaml"
-		results, err := Lint(schema, file)
+		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Bundle file fail-bundle-unknown-field.mql.yaml contains unknown fields: error unmarshaling JSON: while decoding JSON: json: unknown field \"unknown_field\"", results.Entries[0].Message)

@@ -15,20 +15,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Formats the given bundle to a yaml string
-func Format(bundle *Bundle) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	err := enc.Encode(bundle)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+// ParseYaml loads a yaml file and parse it into the go struct
+func ParseYaml(data []byte) (*Bundle, error) {
+	baseline := Bundle{}
+
+	err := yaml.Unmarshal([]byte(data), &baseline)
+	return &baseline, err
+}
+
+type FormatOptions struct {
+	SortContents        bool
+	AutoUpdateProviders bool
 }
 
 // FormatRecursive iterates recursively through all .mql.yaml files and formats them
-func FormatRecursive(mqlBundlePath string, sort bool) error {
+func FormatRecursive(mqlBundlePath string, opts FormatOptions) error {
 	log.Info().Str("file", mqlBundlePath).Msg("format policy bundle(s)")
 	_, err := os.Stat(mqlBundlePath)
 	if err != nil {
@@ -42,20 +43,12 @@ func FormatRecursive(mqlBundlePath string, sort bool) error {
 
 	for i := range files {
 		f := files[i]
-		err := FormatFile(f, sort)
+		err := FormatFile(f, opts)
 		if err != nil {
 			return errors.Wrap(err, "could not format file: "+f)
 		}
 	}
 	return nil
-}
-
-// ParseYaml loads a yaml file and parse it into the go struct
-func ParseYaml(data []byte) (*Bundle, error) {
-	baseline := Bundle{}
-
-	err := yaml.Unmarshal([]byte(data), &baseline)
-	return &baseline, err
 }
 
 // sanitizeStringForYaml is here to help generating literal style yaml strings
@@ -84,7 +77,7 @@ func sanitizeStringForYaml(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-func FormatFile(filename string, sort bool) error {
+func FormatFile(filename string, opts FormatOptions) error {
 	log.Info().Str("file", filename).Msg("format file")
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -95,7 +88,7 @@ func FormatFile(filename string, sort bool) error {
 	if err != nil {
 		return err
 	}
-	if err := b.EnsureRequirements(true); err != nil {
+	if err := b.EnsureRequirements(true, opts.AutoUpdateProviders); err != nil {
 		return err
 	}
 
@@ -103,7 +96,7 @@ func FormatFile(filename string, sort bool) error {
 	if err != nil {
 		return err
 	}
-	fmtData, err := FormatBundle(raw, sort)
+	fmtData, err := FormatBundle(raw, opts.SortContents)
 	if err != nil {
 		return err
 	}
@@ -116,7 +109,7 @@ func FormatFile(filename string, sort bool) error {
 	return nil
 }
 
-// Format formats the Bundle
+// FormatBundle formats the policy bundle
 func FormatBundle(b *Bundle, sort bool) ([]byte, error) {
 	// to improve the formatting we need to remove the whitespace at the end of the lines
 
@@ -166,5 +159,17 @@ func FormatBundle(b *Bundle, sort bool) ([]byte, error) {
 		b.SortContents()
 	}
 
-	return Format(b)
+	return FormatYAML(b)
+}
+
+// FormatYAML indents and formats the bundle as human-readable yaml
+func FormatYAML(bundle *Bundle) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	err := enc.Encode(bundle)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
