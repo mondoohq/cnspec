@@ -29,8 +29,12 @@ const (
 	LevelWarning = "warning"
 )
 
+type LintOptions struct {
+	AutoUpdateProviders bool
+}
+
 // Lint loads a file and lints its content
-func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
+func Lint(schema resources.ResourcesSchema, opts LintOptions, files ...string) (*Results, error) {
 	aggregatedResults := &Results{
 		BundleLocations: []string{},
 		Entries:         []*Entry{},
@@ -49,14 +53,14 @@ func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
 			return nil, fmt.Errorf("failed to read file %s: %w", absPath, err)
 		}
 
-		aggregatedResults.Entries = append(aggregatedResults.Entries, LintPolicyBundle(schema, absPath, data)...)
+		aggregatedResults.Entries = append(aggregatedResults.Entries, LintPolicyBundle(schema, absPath, data, opts)...)
 	}
 
 	return aggregatedResults, nil
 }
 
 // LintPolicyBundle lints a yaml formatted bundle
-func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []byte) []*Entry {
+func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []byte, opts LintOptions) []*Entry {
 	aggregatedEntries := []*Entry{}
 
 	policyBundle, err := ParseYaml(data)
@@ -75,6 +79,35 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 		return aggregatedEntries
 	}
 
+	policyBundleForCompilation, err := policy.BundleFromYAML(data)
+	if err != nil {
+		var locs []Location
+		locs = append(locs, Location{File: filename, Line: 1, Column: 1})
+		aggregatedEntries = append(aggregatedEntries, &Entry{
+			RuleID:   BundleInvalidRuleID,
+			Message:  "Could not load policy bundle for compilation: " + err.Error(),
+			Level:    LevelError,
+			Location: locs,
+		})
+	}
+
+	// We have to check for required dependencies before we do anything else
+	if policyBundleForCompilation != nil {
+		err := policyBundleForCompilation.EnsureRequirements(true, opts.AutoUpdateProviders)
+		if err != nil {
+			aggregatedEntries = append(aggregatedEntries, &Entry{
+				RuleID:  BundleUnknownFieldRuleID,
+				Message: fmt.Sprintf("Bundle file %s requirements not met: %s", filepath.Base(filename), err.Error()),
+				Level:   LevelError,
+				Location: []Location{{
+					File:   filename,
+					Line:   1,
+					Column: 1,
+				}},
+			})
+		}
+	}
+
 	// Check for unknown fields (UnmarshalStrict)
 	strictCheckBundle := &policy.Bundle{}
 	if err := k8sYaml.UnmarshalStrict(data, strictCheckBundle); err != nil {
@@ -91,8 +124,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 	}
 
 	// check if the file is compilable
-	policyBundleForCompilation, err := policy.BundleFromYAML(data)
-	if err == nil {
+	if policyBundleForCompilation != nil {
 		ctx := context.Background()
 		features := cnquery.DefaultFeatures
 		features = append(features, byte(cnquery.FailIfNoEntryPoints))
@@ -114,15 +146,6 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 				Location: locs,
 			})
 		}
-	} else {
-		var locs []Location
-		locs = append(locs, Location{File: filename, Line: 1, Column: 1})
-		aggregatedEntries = append(aggregatedEntries, &Entry{
-			RuleID:   BundleInvalidRuleID,
-			Message:  "Could not load policy bundle for compilation: " + err.Error(),
-			Level:    LevelError,
-			Location: locs,
-		})
 	}
 
 	aggregatedEntries = append(aggregatedEntries, lintParsedBundle(schema, filename, policyBundle)...)
@@ -130,13 +153,13 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 	return aggregatedEntries
 }
 
-// lintBundle lints parsed bundle for issues
+// lintParsedBundle lints parsed bundle with the default set of rules
 func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyBundle *Bundle) []*Entry {
 	aggregatedEntries := []*Entry{}
 
-	bundleChecks := GetBundleLintChecks()
-	policyChecks := GetPolicyLintChecks()
-	queryChecks := GetQueryLintChecks()
+	bundleRules := GetBundleLintRules()
+	policyRules := GetPolicyLintRules()
+	queryRules := GetQueryLintRules()
 
 	// Initialize LintContext with data from ALL parsed bundles for cross-file context
 	// This context will be shared for checks that need to know about the whole bundle.
@@ -210,34 +233,34 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 		}
 	}
 
-	// Run Bundle checks
-	for _, check := range bundleChecks {
+	// Run bundle rules
+	for _, check := range bundleRules {
 		entries := check.Run(lintCtx, policyBundle)
 		aggregatedEntries = append(aggregatedEntries, entries...)
 	}
 
-	// Run Policy Checks
+	// Run policy rules
 	for _, p := range policyBundle.Policies {
-		for _, check := range policyChecks {
+		for _, check := range policyRules {
 			entries := check.Run(lintCtx, p)
 			aggregatedEntries = append(aggregatedEntries, entries...)
 		}
 	}
 
-	// Run Query Checks for Global Queries
+	// Run query rules for global queries
 	for _, q := range policyBundle.Queries {
-		for _, check := range queryChecks {
+		for _, check := range queryRules {
 			entries := check.Run(lintCtx, QueryLintInput{Query: q, IsGlobal: true})
 			aggregatedEntries = append(aggregatedEntries, entries...)
 		}
 	}
 
-	// Run Query Checks for Embedded Queries in Policies
+	// Run query rules for embedded queries in policies
 	for _, p := range policyBundle.Policies {
 		for _, group := range p.Groups {
 			for _, checkQuery := range group.Checks {
 				if isQueryDefinitionComplete(checkQuery) {
-					for _, check := range queryChecks {
+					for _, check := range queryRules {
 						entries := check.Run(lintCtx, QueryLintInput{Query: checkQuery, IsGlobal: false})
 						aggregatedEntries = append(aggregatedEntries, entries...)
 					}
@@ -245,7 +268,7 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 			}
 			for _, dataQuery := range group.Queries {
 				if isQueryDefinitionComplete(dataQuery) {
-					for _, check := range queryChecks {
+					for _, check := range queryRules {
 						entries := check.Run(lintCtx, QueryLintInput{Query: dataQuery, IsGlobal: false})
 						aggregatedEntries = append(aggregatedEntries, entries...)
 					}

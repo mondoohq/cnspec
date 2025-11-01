@@ -32,7 +32,7 @@ func sarifLinterRules() []Rule {
 	var rules []Rule
 
 	// Add rules from registered policy checks
-	for _, check := range GetPolicyLintChecks() {
+	for _, check := range GetPolicyLintRules() {
 		rules = append(rules, Rule{
 			ID:          check.ID,
 			Name:        check.Name,
@@ -41,7 +41,7 @@ func sarifLinterRules() []Rule {
 	}
 
 	// Add rules from registered query checks
-	for _, check := range GetQueryLintChecks() {
+	for _, check := range GetQueryLintRules() {
 		rules = append(rules, Rule{
 			ID:          check.ID,
 			Name:        check.Name,
