@@ -39,7 +39,7 @@ func (p *Bundle) EnsureRequirements(installIfNoRequire bool, autoUpdate bool) er
 
 	// install default providers for policies that do not specify any requirements
 	if len(missingRequires) != 0 {
-		log.Info().Strs("policies", missingRequires).Msg("policy doesn't specify required providers, defaulting to installing all default providers")
+		log.Debug().Strs("policies", missingRequires).Msg("policy doesn't specify required providers, defaulting to installing all default providers")
 		for _, v := range providers.DefaultProviders {
 			if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: v.ID}, autoUpdate, nil); err != nil {
 				return err
