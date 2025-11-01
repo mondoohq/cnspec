@@ -18,45 +18,45 @@ const (
 	QueryVariantUsesNonDefaultFieldsRuleID = "query-variant-uses-non-default-fields"
 )
 
-// GetQueryLintChecks is the input type for lint checks on queries.
-func GetQueryLintChecks() []LintCheck {
-	return []LintCheck{
+// GetQueryLintRules is the input type for lint checks on queries.
+func GetQueryLintRules() []LintRule {
+	return []LintRule{
 		{
 			ID:          QueryUidRuleID, // This check now covers UID presence, format, and uniqueness for global queries
 			Name:        "Query UID Validation",
 			Description: "Ensures global queries have a UID, it's correctly formatted, and unique within the file.",
 			Severity:    LevelError,
-			Run:         runCheckQueryUid,
+			Run:         runRuleQueryUid,
 		}, {
 			ID:          QueryTitleRuleID,
 			Name:        "Query Title Presence",
 			Description: "Ensures non-variant queries have a `title` field.",
 			Severity:    LevelError,
-			Run:         runCheckQueryTitle,
+			Run:         runRuleQueryTitle,
 		}, {
 			ID:          QueryVariantUsesNonDefaultFieldsRuleID,
 			Name:        "Query Variant Field Restrictions",
 			Description: "Ensures variant queries do not define fields like impact, title, tags, or nested variants.",
 			Severity:    LevelError,
-			Run:         runCheckQueryVariantFields,
+			Run:         runRuleQueryVariantFields,
 		}, {
 			ID:          QueryMissingMQLRuleID,
 			Name:        "Query MQL Presence (for Variants and Non-Variant Parents)",
 			Description: "Ensures variant queries have MQL. Ensures parent queries without variants have MQL.",
 			Severity:    LevelError,
-			Run:         runCheckQueryMQLPresence,
+			Run:         runRuleQueryMQLPresence,
 		}, {
 			ID:          QueryUnassignedRuleID,
 			Name:        "Unassigned Query",
 			Description: "Warns if a global query is defined but not assigned to any policy.",
 			Severity:    LevelWarning,
-			Run:         runCheckQueryUnassigned,
+			Run:         runRuleQueryUnassigned,
 		}, {
 			ID:          QueryUsedAsDifferentTypesRuleID,
 			Name:        "Query Usage Consistency",
 			Description: "Ensures a query is not used as both a check and a data query within policies.",
 			Severity:    LevelError,
-			Run:         runCheckQueryUsageConsistency,
+			Run:         runRuleQueryUsageConsistency,
 		},
 	}
 }
@@ -72,7 +72,7 @@ func queryIdentifier(q *Mquery, isGlobal bool) string {
 	return fmt.Sprintf("%s at line %d", prefix, q.FileContext.Line)
 }
 
-func runCheckQueryUid(ctx *LintContext, item any) []*Entry {
+func runRuleQueryUid(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -133,7 +133,7 @@ func runCheckQueryUid(ctx *LintContext, item any) []*Entry {
 	return entries
 }
 
-func runCheckQueryTitle(ctx *LintContext, item any) []*Entry {
+func runRuleQueryTitle(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -160,7 +160,7 @@ func runCheckQueryTitle(ctx *LintContext, item any) []*Entry {
 	return nil
 }
 
-func runCheckQueryVariantFields(ctx *LintContext, item any) []*Entry {
+func runRuleQueryVariantFields(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -209,7 +209,7 @@ func runCheckQueryVariantFields(ctx *LintContext, item any) []*Entry {
 	return entries
 }
 
-func runCheckQueryMQLPresence(ctx *LintContext, item any) []*Entry {
+func runRuleQueryMQLPresence(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -243,7 +243,7 @@ func runCheckQueryMQLPresence(ctx *LintContext, item any) []*Entry {
 	return nil
 }
 
-func runCheckQueryUnassigned(ctx *LintContext, item any) []*Entry {
+func runRuleQueryUnassigned(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
@@ -271,7 +271,7 @@ func runCheckQueryUnassigned(ctx *LintContext, item any) []*Entry {
 	return nil
 }
 
-func runCheckQueryUsageConsistency(ctx *LintContext, item any) []*Entry {
+func runRuleQueryUsageConsistency(ctx *LintContext, item any) []*Entry {
 	input, ok := item.(QueryLintInput)
 	if !ok {
 		return nil
