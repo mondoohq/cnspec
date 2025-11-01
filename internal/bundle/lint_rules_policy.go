@@ -30,9 +30,9 @@ type LintContext struct {
 	VariantMapping        map[string]string   // Maps variant child UID to parent query UID
 }
 
-// LintCheck defines the structure for a single linting rule.
+// LintRule defines the structure for a single linting rule.
 // The item any will be cast to *Policy or QueryLintInput.
-type LintCheck struct {
+type LintRule struct {
 	ID          string
 	Name        string
 	Description string
@@ -60,64 +60,64 @@ const (
 	PolicyRequiredTagsMissingRuleID  = "policy-required-tags-missing"
 )
 
-// GetPolicyLintChecks returns a list of lint checks for policies.
-func GetPolicyLintChecks() []LintCheck {
-	return []LintCheck{
+// GetPolicyLintRules returns a list of lint checks for policies.
+func GetPolicyLintRules() []LintRule {
+	return []LintRule{
 		{
 			ID:          PolicyUidRuleID,
 			Name:        "Policy UID Presence and Format",
 			Description: "Checks if a policy has a UID and if it conforms to naming standards. Also checks for uniqueness within the file.",
 			Severity:    LevelError,
-			Run:         runCheckPolicyUid,
+			Run:         runRulePolicyUid,
 		},
 		{
 			ID:          PolicyNameRuleID,
 			Name:        "Policy Name Presence",
 			Description: "Ensures every policy has a `name` field.",
 			Severity:    LevelError,
-			Run:         runCheckPolicyName,
+			Run:         runRulePolicyName,
 		},
 		{
 			ID:          PolicyRequiredTagsMissingRuleID,
 			Name:        "Policy Required Tags",
 			Description: "Ensures policies have required tags like 'mondoo.com/category' and 'mondoo.com/platform'.",
 			Severity:    LevelWarning,
-			Run:         runCheckPolicyRequiredTags,
+			Run:         runRulePolicyRequiredTags,
 		},
 		{
 			ID:          PolicyMissingVersionRuleID,
 			Name:        "Policy Version Presence",
 			Description: "Ensures every policy has a `version` field.",
 			Severity:    LevelError,
-			Run:         runCheckPolicyMissingVersion,
+			Run:         runRulePolicyMissingVersion,
 		},
 		{
 			ID:          PolicyWrongVersionRuleID,
 			Name:        "Policy Version Format",
 			Description: "Ensures policy versions follow semantic versioning (semver).",
 			Severity:    LevelError,
-			Run:         runCheckPolicyWrongVersion,
+			Run:         runRulePolicyWrongVersion,
 		},
 		{
 			ID:          PolicyMissingChecksRuleID, // Covers empty groups and empty checks/queries in groups
 			Name:        "Policy Missing Checks or Groups",
 			Description: "Ensures policies have defined groups, and groups have checks or queries.",
 			Severity:    LevelError,
-			Run:         runCheckPolicyGroupsAndChecks,
+			Run:         runRulePolicyGroupsAndChecks,
 		},
 		{
 			ID:          PolicyMissingAssetFilterRuleID,
 			Name:        "Policy Group Missing Asset Filter",
 			Description: "Warns if a policy group or its checks lack asset filters or variants.",
 			Severity:    LevelWarning, // Original was warning
-			Run:         runCheckPolicyGroupAssetFilter,
+			Run:         runRulePolicyGroupAssetFilter,
 		},
 		{
 			ID:          PolicyMissingAssignedQueryRuleID,
 			Name:        "Policy Assigned Query Existence",
 			Description: "Ensures that queries assigned in policy groups exist globally or are valid embedded queries.",
 			Severity:    LevelError,
-			Run:         runCheckPolicyAssignedQueriesExist,
+			Run:         runRulePolicyAssignedQueriesExist,
 		},
 	}
 }
@@ -132,7 +132,7 @@ func policyIdentifier(p *Policy) string {
 	return fmt.Sprintf("policy at line %d", p.FileContext.Line)
 }
 
-func runCheckPolicyUid(ctx *LintContext, item any) []*Entry {
+func runRulePolicyUid(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -181,7 +181,7 @@ func runCheckPolicyUid(ctx *LintContext, item any) []*Entry {
 	return entries
 }
 
-func runCheckPolicyName(ctx *LintContext, item any) []*Entry {
+func runRulePolicyName(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -201,7 +201,7 @@ func runCheckPolicyName(ctx *LintContext, item any) []*Entry {
 	return nil
 }
 
-func runCheckPolicyRequiredTags(ctx *LintContext, item any) []*Entry {
+func runRulePolicyRequiredTags(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -225,7 +225,7 @@ func runCheckPolicyRequiredTags(ctx *LintContext, item any) []*Entry {
 	return entries
 }
 
-func runCheckPolicyMissingVersion(ctx *LintContext, item any) []*Entry {
+func runRulePolicyMissingVersion(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -245,7 +245,7 @@ func runCheckPolicyMissingVersion(ctx *LintContext, item any) []*Entry {
 	return nil
 }
 
-func runCheckPolicyWrongVersion(ctx *LintContext, item any) []*Entry {
+func runRulePolicyWrongVersion(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -268,7 +268,7 @@ func runCheckPolicyWrongVersion(ctx *LintContext, item any) []*Entry {
 	return nil
 }
 
-func runCheckPolicyGroupsAndChecks(ctx *LintContext, item any) []*Entry {
+func runRulePolicyGroupsAndChecks(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -306,7 +306,7 @@ func runCheckPolicyGroupsAndChecks(ctx *LintContext, item any) []*Entry {
 	return entries
 }
 
-func runCheckPolicyGroupAssetFilter(ctx *LintContext, item any) []*Entry {
+func runRulePolicyGroupAssetFilter(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil
@@ -354,7 +354,7 @@ func runCheckPolicyGroupAssetFilter(ctx *LintContext, item any) []*Entry {
 	return entries
 }
 
-func runCheckPolicyAssignedQueriesExist(ctx *LintContext, item any) []*Entry {
+func runRulePolicyAssignedQueriesExist(ctx *LintContext, item any) []*Entry {
 	p, ok := item.(*Policy)
 	if !ok {
 		return nil

@@ -7,19 +7,19 @@ const (
 	BundleGlobalPropsDeprecatedRuleID = "bundle-global-props-deprecated"
 )
 
-func GetBundleLintChecks() []LintCheck {
-	return []LintCheck{
+func GetBundleLintRules() []LintRule {
+	return []LintRule{
 		{
 			ID:          BundleGlobalPropsDeprecatedRuleID,
 			Name:        "Policy Bundle Global Properties Deprecated",
 			Description: "Checks if the policy bundle defines global properties",
 			Severity:    LevelWarning,
-			Run:         runCheckBundleGlobalPropsDeprecated,
+			Run:         runRuleBundleGlobalPropsDeprecated,
 		},
 	}
 }
 
-func runCheckBundleGlobalPropsDeprecated(ctx *LintContext, item any) []*Entry {
+func runRuleBundleGlobalPropsDeprecated(ctx *LintContext, item any) []*Entry {
 	bundle, ok := item.(*Bundle)
 	if !ok {
 		return nil
