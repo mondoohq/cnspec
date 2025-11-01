@@ -29,8 +29,12 @@ const (
 	LevelWarning = "warning"
 )
 
+type LintOptions struct {
+	AutoUpdateProviders bool
+}
+
 // Lint loads a file and lints its content
-func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
+func Lint(schema resources.ResourcesSchema, opts LintOptions, files ...string) (*Results, error) {
 	aggregatedResults := &Results{
 		BundleLocations: []string{},
 		Entries:         []*Entry{},
@@ -49,14 +53,14 @@ func Lint(schema resources.ResourcesSchema, files ...string) (*Results, error) {
 			return nil, fmt.Errorf("failed to read file %s: %w", absPath, err)
 		}
 
-		aggregatedResults.Entries = append(aggregatedResults.Entries, LintPolicyBundle(schema, absPath, data)...)
+		aggregatedResults.Entries = append(aggregatedResults.Entries, LintPolicyBundle(schema, absPath, data, opts)...)
 	}
 
 	return aggregatedResults, nil
 }
 
 // LintPolicyBundle lints a yaml formatted bundle
-func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []byte) []*Entry {
+func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []byte, opts LintOptions) []*Entry {
 	aggregatedEntries := []*Entry{}
 
 	policyBundle, err := ParseYaml(data)
@@ -89,7 +93,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 
 	// We have to check for required dependencies before we do anything else
 	if policyBundleForCompilation != nil {
-		err := policyBundleForCompilation.EnsureRequirements(true)
+		err := policyBundleForCompilation.EnsureRequirements(true, opts.AutoUpdateProviders)
 		if err != nil {
 			aggregatedEntries = append(aggregatedEntries, &Entry{
 				RuleID:  BundleUnknownFieldRuleID,

@@ -21,6 +21,12 @@ func Format(data []byte) ([]byte, error) {
 	return fmtData, nil
 }
 
-func Lint(schema resources.ResourcesSchema, filename string, data []byte) []*bundlefmt.Entry {
-	return bundlefmt.LintPolicyBundle(schema, filename, data)
+type LintOptions struct {
+	AutoUpdateProviders bool
+}
+
+func Lint(schema resources.ResourcesSchema, filename string, data []byte, opts LintOptions) []*bundlefmt.Entry {
+	return bundlefmt.LintPolicyBundle(schema, filename, data, bundlefmt.LintOptions{
+		AutoUpdateProviders: opts.AutoUpdateProviders,
+	})
 }

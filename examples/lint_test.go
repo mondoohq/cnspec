@@ -55,7 +55,7 @@ func TestExampleLint(t *testing.T) {
 	}
 
 	mock := testutils.LinuxMock()
-	result, err := bundle.Lint(mock.Schema(), files...)
+	result, err := bundle.Lint(mock.Schema(), bundle.LintOptions{AutoUpdateProviders: true}, files...)
 	require.NoError(t, err)
 	assert.False(t, result.HasError())
 }

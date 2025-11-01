@@ -110,10 +110,17 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not find bundle files")
 		}
 
+		autoUpdate := true
+		if viper.IsSet("auto-update") {
+			autoUpdate = viper.GetBool("auto-update")
+		}
+
 		noLint := viper.GetBool("no-lint")
 		if !noLint {
 			runtime := providers.DefaultRuntime()
-			result, err := bundle.Lint(runtime.Schema(), files...)
+			result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
+				AutoUpdateProviders: autoUpdate,
+			}, files...)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not lint bundle files")
 			}
@@ -135,7 +142,8 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not load policy bundle")
 		}
 
-		if err = policyBundle.EnsureRequirements(true); err != nil {
+		// we only need to auto update providers when linting is disabled
+		if err = policyBundle.EnsureRequirements(true, autoUpdate && noLint); err != nil {
 			log.Fatal().Err(err).Msg("could not install requirements")
 		}
 
