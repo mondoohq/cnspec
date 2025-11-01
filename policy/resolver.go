@@ -241,7 +241,7 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 func (s *LocalServices) GetUploadURL(ctx context.Context, req *GetUploadURLReq) (*GetUploadURLResp, error) {
 	// Only forward to upstream if we have one and are not in incognito mode
 	if s.Upstream != nil && !s.Incognito {
-		return s.Upstream.PolicyResolver.GetUploadURL(ctx, req)
+		return s.Upstream.GetUploadURL(ctx, req)
 	}
 
 	// Local services don't need signed URLs - return empty response
@@ -252,7 +252,7 @@ func (s *LocalServices) GetUploadURL(ctx context.Context, req *GetUploadURLReq) 
 func (s *LocalServices) ReportUploadCompleted(ctx context.Context, req *ReportUploadCompletedReq) (*Empty, error) {
 	// Only forward to upstream if we have one and are not in incognito mode
 	if s.Upstream != nil && !s.Incognito {
-		return s.Upstream.PolicyResolver.ReportUploadCompleted(ctx, req)
+		return s.Upstream.ReportUploadCompleted(ctx, req)
 	}
 
 	// Local services don't need upload confirmation - return success

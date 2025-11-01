@@ -520,7 +520,7 @@ func (db *Db) GetScores(ctx context.Context, assetMrn string, qrIDs []string) (m
 func (db *Db) GetScoredRisks(ctx context.Context, assetMrn string) (*policy.ScoredRiskFactors, error) {
 	res := make([]*policy.ScoredRiskFactor, 0, 8)
 
-	db.writer.StreamRisks(ctx, assetMrn, func(risk *policy.ScoredRiskFactor) error {
+	err := db.writer.StreamRisks(ctx, assetMrn, func(risk *policy.ScoredRiskFactor) error {
 		srisk := &policy.ScoredRiskFactor{
 			Mrn:        risk.Mrn,
 			IsDetected: risk.IsDetected,
@@ -538,6 +538,9 @@ func (db *Db) GetScoredRisks(ctx context.Context, assetMrn string) (*policy.Scor
 		res = append(res, srisk)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &policy.ScoredRiskFactors{
 		Items: res,
@@ -710,11 +713,11 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 }
 
 func (db *Db) initDataValue(ctx context.Context, assetMrn string, checksum string, typ types.Type) error {
-	db.writer.WriteData(ctx, assetMrn, &llx.Result{
+	err := db.writer.WriteData(ctx, assetMrn, &llx.Result{
 		CodeId: checksum,
 		Data:   llx.NilPrimitive,
 	})
-	return nil
+	return err
 }
 
 func (db *Db) initEmptyScore(ctx context.Context, assetMrn string, qrid string) error {
