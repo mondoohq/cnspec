@@ -6,10 +6,13 @@ package bundle
 import (
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v12/explorer"
 	"go.mondoo.com/cnquery/v12/utils/timex"
+	"go.mondoo.com/cnspec/v12/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -215,6 +218,27 @@ func (x *RiskMagnitude) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+func (x *HumanTime) MarshalYAML() (any, error) {
+	ts := time.Unix(x.Seconds, 0)
+	utcTs := ts.UTC()
+	var alias string
+	if utcTs.Hour() == 0 && utcTs.Minute() == 0 && utcTs.Second() == 0 {
+		alias = ts.UTC().Format(time.DateOnly)
+	} else {
+		alias = ts.Format(time.RFC3339)
+	}
+
+	node := yaml.Node{}
+	err := node.Encode(alias)
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = x.Comments.HeadComment
+	node.LineComment = x.Comments.LineComment
+	node.FootComment = x.Comments.FootComment
+	return node, nil
+}
+
 func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
 	x.addFileContext(node)
 
@@ -236,4 +260,38 @@ func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
 
 	x.Seconds = v.Unix()
 	return nil
+}
+
+// MarshalYAML cannot be a pointer since group types are assigned as non-pointer to PolicyGroup
+func (x GroupType) MarshalYAML() (any, error) {
+	value := policy.GroupType_name[int32(x)]
+	value = strings.ToLower(value)
+
+	node := yaml.Node{}
+	err := node.Encode(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
+}
+
+// MarshalYAML cannot be a pointer since action are assigned as non-pointer to Mquery
+// see func (a *Action) UnmarshalJSON(data []byte) error in cnquery explorer package
+func (x Action) MarshalYAML() (any, error) {
+	value := explorer.Action_name[int32(x)]
+	value = strings.ToLower(value)
+
+	// preview into the default in v12 but proto still uses ignore internally
+	if value == "ignore" {
+		value = "preview"
+	}
+
+	node := yaml.Node{}
+	err := node.Encode(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
 }

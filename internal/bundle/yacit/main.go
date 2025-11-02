@@ -43,9 +43,10 @@ func main() {
 			"Version":  97,
 			"Impact":   97,
 			"License":  96,
+			"Valid":    96,
+			"Variants": 59,
 			"Tags":     70,
 			"Mql":      60,
-			"Variants": 59,
 
 			"Authors": 51,
 
