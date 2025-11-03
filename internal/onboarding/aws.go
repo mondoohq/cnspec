@@ -14,29 +14,32 @@ import (
 	"go.mondoo.com/cnspec/v12/internal/tfgen"
 )
 
-// AzureIntegration represents the configuration of an AWS integration to be created.
-type AwsIntegration struct {
+// AwsIntegration represents the configuration of an AWS integration to be created.
+type awsIntegration struct {
 	Name      string
 	Space     string
 	AccessKey string
 	SecretKey string
 }
 
-func NewAwsIntegration(name, space, accessKey, secretKey string) AwsIntegration {
+func integrationName(name string) string {
 	if name == "" {
-		name = fmt.Sprintf("AWS Integration (%s)", uuid.New().String()[:7])
 		log.Info().Msgf("integration name not provided, using %s", theme.DefaultTheme.Primary(name))
+		return fmt.Sprintf("AWS Integration (%s)", uuid.New().String()[:7])
 	}
+	return name
+}
 
-	return AwsIntegration{
-		Name:      name,
+func NewAwsIntegration(name, space, accessKey, secretKey string) awsIntegration {
+	return awsIntegration{
+		Name:      integrationName(name),
 		Space:     space,
 		AccessKey: accessKey,
 		SecretKey: secretKey,
 	}
 }
 
-func (a AwsIntegration) Validate() []error {
+func (a awsIntegration) Validate() []error {
 	var errs []error
 	if a.AccessKey == "" {
 		errs = append(errs, errors.New("missing AWS access key"))
@@ -47,8 +50,8 @@ func (a AwsIntegration) Validate() []error {
 	return errs
 }
 
-// GenerateAzureHCL generates automation code to create an AWS integration.
-func GenerateAwsHCL(integration AwsIntegration) (string, error) {
+// GenerateAwsHCL generates automation code to create an AWS integration.
+func GenerateAwsHCL(integration awsIntegration) (string, error) {
 	if validationErrs := integration.Validate(); len(validationErrs) > 0 {
 		return "", errors.Join(validationErrs...)
 	}

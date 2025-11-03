@@ -14,12 +14,7 @@ import (
 func TestNewAwsIntegration(t *testing.T) {
 	t.Run("all fields are set correctly", func(t *testing.T) {
 		actual := subject.NewAwsIntegration("custom-name", "space-123", "access-key", "secret-key")
-		expected := subject.AwsIntegration{
-			Name:      "custom-name",
-			Space:     "space-123",
-			AccessKey: "access-key",
-			SecretKey: "secret-key",
-		}
+		expected := subject.NewAwsIntegration("custom-name", "space-123", "access-key", "secret-key")
 		assert.Equal(t, expected, actual)
 	})
 
@@ -50,12 +45,12 @@ func TestAwsIntegration_Validate(t *testing.T) {
 }
 
 func TestGenerateAwsHCL_KeyBased(t *testing.T) {
-	code, err := subject.GenerateAwsHCL(subject.AwsIntegration{
-		Name:      "test-key-integration",
-		Space:     "space-123",
-		AccessKey: "AKIAIOSFODNN7EXAMPLE",
-		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-	})
+	code, err := subject.GenerateAwsHCL(subject.NewAwsIntegration(
+		"test-key-integration",
+		"space-123",
+		"AKIAIOSFODNN7EXAMPLE",
+		"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	))
 	assert.Nil(t, err)
 
 	expected := `terraform {
@@ -97,9 +92,12 @@ resource "mondoo_integration_aws" "this" {
 }
 
 func TestGenerateAwsHCL_ErrorsOnNoAuthMethod(t *testing.T) {
-	_, err := subject.GenerateAwsHCL(subject.AwsIntegration{
-		Name: "test-integration",
-	})
+	_, err := subject.GenerateAwsHCL(subject.NewAwsIntegration(
+		"test-integration",
+		"space-123",
+		"",
+		"",
+	))
 	assert.ErrorContains(t, err, "missing AWS access key")
 	assert.ErrorContains(t, err, "missing AWS secret key")
 }

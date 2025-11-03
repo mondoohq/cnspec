@@ -85,13 +85,11 @@ var (
 			return errors.Join(errs...)
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			var (
-				space           = viper.GetString("space")
-				output          = viper.GetString("output")
-				integrationName = viper.GetString("integration-name")
-				accessKey       = os.Getenv("TF_VAR_aws_access_key")
-				secretKey       = os.Getenv("TF_VAR_aws_secret_key")
-			)
+			space := viper.GetString("space")
+			output := viper.GetString("output")
+			integrationName := viper.GetString("integration-name")
+			accessKey := os.Getenv("TF_VAR_aws_access_key")
+			secretKey := os.Getenv("TF_VAR_aws_secret_key")
 
 			// Verify if space exists, which verifies we have access to the Mondoo platform
 			opts, err := config.Read()
