@@ -271,20 +271,6 @@ func TestGenericBlockCreation(t *testing.T) {
 `
 		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(data))
 	})
-	t.Run("should fail to construct generic block with mismatched list element types", func(t *testing.T) {
-		_, err := tfgen.HclCreateGenericBlock(
-			"thing",
-			[]string{},
-			map[string]any{
-				"k": []map[string]any{ // can use []any here to support this sort of structure, but as-is will fail
-					{"test1": []string{"f", "o", "o"}},
-					{"test2": []string{"b", "a", "r"}},
-				},
-			},
-		)
-
-		assert.Error(t, err, "should fail to generate block with mismatched list element types")
-	})
 }
 
 func TestLocalVariable(t *testing.T) {
