@@ -245,6 +245,4 @@ func (ge *GraphExecutor) Debug() {
 		log.Error().Err(err).Msg("failed to write debug graph")
 		return
 	}
-
-	return
 }
