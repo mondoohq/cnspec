@@ -97,25 +97,14 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 
 	blocks, err := tfgen.ObjectsToBlocks(
 		providerMondoo,
+		accessKeyVariable,
+		secretKeyVariable,
 		resourceMondooIntegration,
 	)
 	if err != nil {
 		return "", err
 	}
 
-	if integration.AccessKey != "" && integration.SecretKey != "" {
-		blocks, err = tfgen.ObjectsToBlocks(
-			providerMondoo,
-			accessKeyVariable,
-			secretKeyVariable,
-			resourceMondooIntegration,
-		)
-		if err != nil {
-			return "", err
-		}
-	}
-
 	hclBlocks := tfgen.CombineHclBlocks(requiredProvidersBlock, blocks)
-
 	return tfgen.CreateHclStringOutput(hclBlocks...), nil
 }
