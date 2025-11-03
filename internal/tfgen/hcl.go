@@ -617,22 +617,11 @@ func HclCreateGenericBlock(hcltype string, labels []string, attr map[string]any,
 	block := hclwrite.NewBlock(hcltype, labels)
 
 	// Source and version require some special handling, should go at the top of a block declaration
-	sourceFound := false
-	versionFound := false
+	_, sourceFound := attr["source"]
+	_, versionFound := attr["version"]
 
 	// We need/want to guarantee the ordering of the attributes, do that here
-	var keys []string
-	for k := range attr {
-		switch k {
-		case "source":
-			sourceFound = true
-		case "version":
-			versionFound = true
-		default:
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
+	keys := sortx.Keys(attr)
 
 	if sourceFound || versionFound {
 		var newKeys []string

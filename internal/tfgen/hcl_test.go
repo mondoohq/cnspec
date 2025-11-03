@@ -92,7 +92,6 @@ resource "mondoo_integration_gcp" "production" {
 		)...,
 	)
 	assert.Equal(t, expectedOutput, blocksOutput)
-
 }
 
 func TestProviderToBlock(t *testing.T) {
@@ -174,6 +173,7 @@ func TestNewOutput(t *testing.T) {
 	assert.Equal(t, "output", string(block.Type()))
 	assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
 }
+
 func TestHclResourceToBlock(t *testing.T) {
 	resource := tfgen.NewResource("aws_instance",
 		"example", tfgen.HclResourceWithAttributesAndProviderDetails(
@@ -270,7 +270,6 @@ func TestGenericBlockCreation(t *testing.T) {
 }
 `
 		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(data))
-
 	})
 	t.Run("should fail to construct generic block with mismatched list element types", func(t *testing.T) {
 		_, err := tfgen.HclCreateGenericBlock(
@@ -351,7 +350,8 @@ func TestProviderBlockWithTraversal(t *testing.T) {
 		"test": hcl.Traversal{
 			hcl.TraverseRoot{Name: "key"},
 			hcl.TraverseAttr{Name: "value"},
-		}}
+		},
+	}
 	data, err := tfgen.NewProvider("foo", tfgen.HclProviderWithAttributes(attrs)).ToBlock()
 
 	assert.Nil(t, err)
@@ -486,4 +486,44 @@ func TestModuleWithForEach(t *testing.T) {
 }
 `
 	assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
+}
+
+func TestHclVariable(t *testing.T) {
+	t.Run("empty hcl variable", func(t *testing.T) {
+		variable := tfgen.NewVariable("my_variable")
+		block, err := variable.ToBlock()
+		assert.NoError(t, err)
+		assert.NotNil(t, block)
+		assert.Equal(t, "variable", string(block.Type()))
+		expectedOutput := `variable "my_variable" {
+}
+`
+		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
+	})
+
+	t.Run("hcl variable with modifications", func(t *testing.T) {
+		variable := tfgen.NewVariable(
+			"my_variable",
+			tfgen.HclVariableWithDefault("defaultVal"),
+			tfgen.HclVariableWithDescription("A description for this variable"),
+			tfgen.HclVariableWithType("variableType"),
+			tfgen.HclVariableWithSensitive(true))
+		block, err := variable.ToBlock()
+		assert.NoError(t, err)
+		assert.NotNil(t, block)
+		assert.Equal(t, "variable", string(block.Type()))
+		expectedOutput := `variable "my_variable" {
+  type        = variableType
+  description = "A description for this variable"
+  default     = "defaultVal"
+  sensitive   = true
+}
+`
+		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
+	})
+}
+
+func TestCreateVariableReference(t *testing.T) {
+	ref := tfgen.CreateVariableReference("my_variable")
+	assert.Equal(t, "var.my_variable", tfgen.TraversalToString(ref))
 }
