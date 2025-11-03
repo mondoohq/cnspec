@@ -623,19 +623,22 @@ func HclCreateGenericBlock(hcltype string, labels []string, attr map[string]any,
 	// We need/want to guarantee the ordering of the attributes, do that here
 	keys := sortx.Keys(attr)
 
-	if sourceFound || versionFound {
-		var newKeys []string
-		if sourceFound {
-			newKeys = append(newKeys, "source")
+	var orderedKeys []string
+	if sourceFound {
+		orderedKeys = append(orderedKeys, "source")
+	}
+	if versionFound {
+		orderedKeys = append(orderedKeys, "version")
+	}
+
+	for _, key := range keys {
+		if key != "source" && key != "version" {
+			orderedKeys = append(orderedKeys, key)
 		}
-		if versionFound {
-			newKeys = append(newKeys, "version")
-		}
-		keys = append(newKeys, keys...)
 	}
 
 	// Write block data
-	for _, key := range keys {
+	for _, key := range orderedKeys {
 		val := attr[key]
 		if err := setBlockAttributeValue(block, key, val); err != nil {
 			return nil, err

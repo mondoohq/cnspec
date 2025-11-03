@@ -218,9 +218,11 @@ func TestGenericBlockCreation(t *testing.T) {
 			"thing",
 			[]string{"a", "b"},
 			map[string]any{
-				"a": "foo",
-				"b": 1,
-				"c": false,
+				"a":       "foo",
+				"b":       1,
+				"c":       false,
+				"source":  "should be first",
+				"version": "should be second",
 				"d": map[string]any{ // Order of map elements should be sorted when executed
 					"f": 1,
 					"g": "bar",
@@ -251,9 +253,11 @@ func TestGenericBlockCreation(t *testing.T) {
 		assert.Equal(t, "a", data.Labels()[0])
 		assert.Equal(t, "b", data.Labels()[1])
 		expectedOutput := `thing "a" "b" {
-  a = "foo"
-  b = 1
-  c = false
+  source  = "should be first"
+  version = "should be second"
+  a       = "foo"
+  b       = 1
+  c       = false
   d = {
     e = true
     f = 1
