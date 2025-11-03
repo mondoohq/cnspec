@@ -36,8 +36,6 @@ func init() {
 
 	// cnspec integrate aws
 	integrateCmd.AddCommand(integrateAwsCmd)
-	integrateAwsCmd.Flags().String("role-arn", "", "AWS role ARN")
-	integrateAwsCmd.Flags().String("external-id", "", "AWS external ID")
 
 	// cnspec integrate azure
 	integrateCmd.AddCommand(integrateAzureCmd)
