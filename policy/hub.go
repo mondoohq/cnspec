@@ -382,7 +382,6 @@ func (s *LocalServices) GetFramework(ctx context.Context, req *Mrn) (*Framework,
 
 func (s *LocalServices) DeleteFramework(ctx context.Context, req *Mrn) (*Empty, error) {
 	panic("NOT YET IMPLEMENTED")
-	return globalEmpty, nil
 }
 
 func (s *LocalServices) ListFrameworks(ctx context.Context, req *ListReq) (*Frameworks, error) {

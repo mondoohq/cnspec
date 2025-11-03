@@ -113,16 +113,16 @@ func runWindowsUpdate(hc *http.Client) error {
 }
 
 func runUpdate(hc *http.Client) error {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return runWindowsUpdate(hc)
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		return runUnixUpdate(hc)
-	} else if runtime.GOOS == "linux" {
+	case "linux":
 		return runUnixUpdate(hc)
-	} else {
+	default:
 		return fmt.Errorf("platform %s is not supported for automatic update", runtime.GOOS)
 	}
-	return nil
 }
 
 func runCmd(cmd *exec.Cmd) error {
