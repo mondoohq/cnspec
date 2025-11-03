@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
+	"go.mondoo.com/cnquery/v12/utils/sortx"
 )
 
 type Attributes map[string]any
@@ -512,11 +513,7 @@ func convertValueToTokens(value any) (hclwrite.Tokens, error) {
 		return hclwrite.TokensForTraversal(elem), nil
 	case map[string]interface{}:
 		// Handle maps that might contain hcl.Traversal values
-		var keys []string
-		for k := range elem {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := sortx.Keys(elem)
 		objects := []hclwrite.ObjectAttrTokens{}
 		for _, attrKey := range keys {
 			attrVal := elem[attrKey]
@@ -558,11 +555,7 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val any) error {
 	case []map[string]any:
 		elems := []hclwrite.Tokens{}
 		for _, item := range v {
-			var keys []string
-			for k := range item {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
+			keys := sortx.Keys(item)
 			objects := []hclwrite.ObjectAttrTokens{}
 			for _, attrKey := range keys {
 				attrVal := item[attrKey]
@@ -595,11 +588,7 @@ func setBlockAttributeValue(block *hclwrite.Block, key string, val any) error {
 			return err
 		}
 	case map[string]any:
-		var keys []string
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := sortx.Keys(v)
 		objects := []hclwrite.ObjectAttrTokens{}
 		for _, attrKey := range keys {
 			attrVal := v[attrKey]
@@ -866,16 +855,12 @@ func TraversalToString(traversal hcl.Traversal) string {
 type HclVariable struct {
 	// Required. Name of the variable.
 	name string
-
 	// Optional. Variable type - string, number, bool, etc.
 	varType string
-
 	// Optional. Description of the variable.
 	description string
-
 	// Optional. Default value for the variable.
 	defaultValue interface{}
-
 	// Optional. Whether the variable is sensitive.
 	sensitive bool
 }

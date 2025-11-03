@@ -4,37 +4,53 @@
 package onboarding
 
 import (
+	"fmt"
+
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/cnquery/v11/cli/theme"
-	"go.mondoo.com/cnspec/v11/internal/tfgen"
+	"go.mondoo.com/cnquery/v12/cli/theme"
+	"go.mondoo.com/cnspec/v12/internal/tfgen"
 )
 
 // AzureIntegration represents the configuration of an AWS integration to be created.
 type AwsIntegration struct {
-	Name       string
-	Space      string
-	AccessKey  string
-	SecretKey  string
-	RoleArn    string
-	ExternalID string
+	Name      string
+	Space     string
+	AccessKey string
+	SecretKey string
+}
+
+func NewAwsIntegration(name, space, accessKey, secretKey string) AwsIntegration {
+	if name == "" {
+		name = fmt.Sprintf("AWS Integration (%s)", uuid.New().String()[:7])
+		log.Info().Msgf("integration name not provided, using %s", theme.DefaultTheme.Primary(name))
+	}
+
+	return AwsIntegration{
+		Name:      name,
+		Space:     space,
+		AccessKey: accessKey,
+		SecretKey: secretKey,
+	}
+}
+
+func (a AwsIntegration) Validate() []error {
+	var errs []error
+	if a.AccessKey == "" {
+		errs = append(errs, errors.New("missing AWS access key"))
+	}
+	if a.SecretKey == "" {
+		errs = append(errs, errors.New("missing AWS secret key"))
+	}
+	return errs
 }
 
 // GenerateAzureHCL generates automation code to create an AWS integration.
 func GenerateAwsHCL(integration AwsIntegration) (string, error) {
-	if (integration.AccessKey == "" && integration.SecretKey == "") && (integration.RoleArn == "" && integration.ExternalID == "") {
-		return "", errors.New("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
-	} else if (integration.AccessKey == "" && integration.SecretKey != "") || (integration.RoleArn == "" && integration.ExternalID != "") || (integration.AccessKey != "" && integration.SecretKey == "") || (integration.RoleArn != "" && integration.ExternalID == "") {
-		return "", errors.New("missing credentials to authenticate to AWS, access key and secret key or role ARN and external ID are required")
-	}
-	// Validate integration name is not empty, if it is, generate a random one
-	if integration.Name == "" {
-		integration.Name = "AWS Integration"
-		log.Info().Msgf(
-			"integration name not provided, using %s",
-			theme.DefaultTheme.Primary(integration.Name),
-		)
+	if validationErrs := integration.Validate(); len(validationErrs) > 0 {
+		return "", errors.Join(validationErrs...)
 	}
 
 	requiredProvidersBlock, err := tfgen.CreateRequiredProviders(
@@ -54,21 +70,21 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 		))
 	}
 
-	var (
-		providerMondoo = tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
+	providerMondoo := tfgen.NewProvider("mondoo", mondooProviderHclModifier...)
 
-		accessKeyVariable = tfgen.NewVariable("aws_access_key",
-			tfgen.HclVariableWithType("string"),
-			tfgen.HclVariableWithDescription("AWS access key used for authentication"),
-			tfgen.HclVariableWithSensitive(true),
-		)
-		secretKeyVariable = tfgen.NewVariable("aws_secret_key",
-			tfgen.HclVariableWithType("string"),
-			tfgen.HclVariableWithDescription("AWS secret key used for authentication"),
-			tfgen.HclVariableWithSensitive(true),
-		)
+	accessKeyVariable := tfgen.NewVariable("aws_access_key",
+		tfgen.HclVariableWithType("string"),
+		tfgen.HclVariableWithDescription("AWS access key used for authentication"),
+		tfgen.HclVariableWithSensitive(true),
+	)
+	secretKeyVariable := tfgen.NewVariable("aws_secret_key",
+		tfgen.HclVariableWithType("string"),
+		tfgen.HclVariableWithDescription("AWS secret key used for authentication"),
+		tfgen.HclVariableWithSensitive(true),
+	)
 
-		integrationKeyAttributes = tfgen.Attributes{
+	resourceMondooIntegration := tfgen.NewResource("mondoo_integration_aws", "this",
+		tfgen.HclResourceWithAttributes(tfgen.Attributes{
 			"name": integration.Name,
 			"credentials": tfgen.Attributes{
 				"key": map[string]interface{}{
@@ -76,28 +92,8 @@ func GenerateAwsHCL(integration AwsIntegration) (string, error) {
 					"secret_key": tfgen.CreateVariableReference("aws_secret_key"),
 				},
 			},
-		}
-		integrationRoleAttributes = tfgen.Attributes{
-			"name": integration.Name,
-			"credentials": tfgen.Attributes{
-				"role": map[string]interface{}{
-					"role_arn":    integration.RoleArn,
-					"external_id": integration.ExternalID,
-				},
-			},
-		}
+		}),
 	)
-
-	var resourceMondooIntegration *tfgen.HclResource
-	if integration.ExternalID != "" && integration.RoleArn != "" {
-		resourceMondooIntegration = tfgen.NewResource("mondoo_integration_aws", "this",
-			tfgen.HclResourceWithAttributes(integrationRoleAttributes),
-		)
-	} else {
-		resourceMondooIntegration = tfgen.NewResource("mondoo_integration_aws", "this",
-			tfgen.HclResourceWithAttributes(integrationKeyAttributes),
-		)
-	}
 
 	blocks, err := tfgen.ObjectsToBlocks(
 		providerMondoo,

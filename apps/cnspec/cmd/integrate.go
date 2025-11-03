@@ -64,20 +64,17 @@ var (
 		Use:   "aws",
 		Short: "Onboard Amazon Web Services",
 		Long: `Use this command to connect your AWS environment into the Mondoo platform.
-		
-		To onboard your AWS account, you need to provide the AWS access key and secret key as environment variables:
 
+		To onboard your AWS account, you need to create an AWS user with read-only access. For more info, see: https://mondoo.com/docs/platform/infra/cloud/aws/hosted/integration-hosted/index.html#create-an-aws-user-and-access-key-for-mondoo.
+
+		Then provide the AWS access key and secret key as environment variables:
 			export TF_VAR_aws_access_key=<access_key>
-			export TF_VAR_aws_secret_key=<secret
-		
+			export TF_VAR_aws_secret_key=<secret_key>
+
 		Then run the command:
-		
+
 			cnspec integrate aws
 
-		Or you can provide the AWS role ARN and external ID to assume a role in another account (this has precedence over the access key and secret key):
-
-			cnspec integrate aws --role-arn <role_arn> --external-id <external_id>
-		
 		Other flags are optional:
 
 			cnspec integrate aws ... --space <space_id> --output <output_dir> --integration-name <name>`,
@@ -86,8 +83,6 @@ var (
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
-				viper.BindPFlag("role-arn", cmd.Flags().Lookup("role-arn")),
-				viper.BindPFlag("external-id", cmd.Flags().Lookup("external-id")),
 			}
 			return errors.Join(errs...)
 		},
@@ -98,8 +93,6 @@ var (
 				integrationName = viper.GetString("integration-name")
 				accessKey       = os.Getenv("TF_VAR_aws_access_key")
 				secretKey       = os.Getenv("TF_VAR_aws_secret_key")
-				roleArn         = viper.GetString("role-arn")
-				externalID      = viper.GetString("external-id")
 			)
 
 			// Verify if space exists, which verifies we have access to the Mondoo platform
@@ -113,15 +106,17 @@ var (
 			if err != nil {
 				return err
 			}
+
 			// by default, use the MRN from the config
 			spaceMrn := opts.GetParentMrn()
 			if space != "" {
 				// unless it was specified via flag
 				spaceMrn = spacePrefix + space
 			}
+
 			spaceInfo, err := cnspec_upstream.GetSpace(context.Background(), mondooClient, spaceMrn)
 			if err != nil {
-				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
+				log.Fatal().Msgf("unable to verify access to space '%s': %s", spaceMrn, err)
 			}
 			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
 
@@ -131,14 +126,8 @@ var (
 
 			// Generate HCL for aws deployment
 			log.Info().Msg("generating automation code")
-			hcl, err := onboarding.GenerateAwsHCL(onboarding.AwsIntegration{
-				Name:       integrationName,
-				Space:      space,
-				AccessKey:  accessKey,
-				SecretKey:  secretKey,
-				RoleArn:    roleArn,
-				ExternalID: externalID,
-			})
+			awsIntegration := onboarding.NewAwsIntegration(integrationName, space, accessKey, secretKey)
+			hcl, err := onboarding.GenerateAwsHCL(awsIntegration)
 			if err != nil {
 				return errors.Wrap(err, "unable to generate automation code")
 			}
@@ -156,13 +145,21 @@ var (
 				return err
 			}
 
-			if applied {
-				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
-				log.Info().Msgf(
-					"To view integration status, visit https://console.mondoo.com/space/integrations/aws?spaceId=%s",
-					space,
-				)
+			if !applied {
+				log.Info().Msg("Terraform plan was not applied")
+				return nil
 			}
+
+			edgePrefix := ""
+			if strings.Contains(opts.APIEndpoint, ".edge.") {
+				edgePrefix = "edge."
+			}
+
+			integrationUrl := fmt.Sprintf("https://%sconsole.mondoo.com/space/integrations/aws?spaceId=%s", edgePrefix, space)
+
+			log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
+			log.Info().Msgf("To view integration status, visit %s", integrationUrl)
+
 			return nil
 		},
 	}

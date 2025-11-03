@@ -8,8 +8,46 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	subject "go.mondoo.com/cnspec/v11/internal/onboarding"
+	subject "go.mondoo.com/cnspec/v12/internal/onboarding"
 )
+
+func TestNewAwsIntegration(t *testing.T) {
+	t.Run("all fields are set correctly", func(t *testing.T) {
+		actual := subject.NewAwsIntegration("custom-name", "space-123", "access-key", "secret-key")
+		expected := subject.AwsIntegration{
+			Name:      "custom-name",
+			Space:     "space-123",
+			AccessKey: "access-key",
+			SecretKey: "secret-key",
+		}
+		assert.Equal(t, expected, actual)
+	})
+
+	t.Run("random name is used when no name is provided", func(t *testing.T) {
+		awsIntegration := subject.NewAwsIntegration("", "space-123", "access-key", "secret-key")
+		assert.Contains(t, awsIntegration.Name, "AWS Integration")
+		assert.Len(t, awsIntegration.Name, 25) // "AWS Integration (" + 7 chars + ")"
+		assert.Equal(t, "space-123", awsIntegration.Space)
+		assert.Equal(t, "access-key", awsIntegration.AccessKey)
+		assert.Equal(t, "secret-key", awsIntegration.SecretKey)
+	})
+}
+
+func TestAwsIntegration_Validate(t *testing.T) {
+	t.Run("valid integration", func(t *testing.T) {
+		integration := subject.NewAwsIntegration("valid-integration", "space-123", "access-key", "secret-key")
+		errs := integration.Validate()
+		assert.Empty(t, errs)
+	})
+
+	t.Run("missing access key and secret key", func(t *testing.T) {
+		integration := subject.NewAwsIntegration("invalid-integration", "space-123", "", "")
+		errs := integration.Validate()
+		assert.Len(t, errs, 2)
+		assert.Equal(t, "missing AWS access key", errs[0].Error())
+		assert.Equal(t, "missing AWS secret key", errs[1].Error())
+	})
+}
 
 func TestGenerateAwsHCL_KeyBased(t *testing.T) {
 	code, err := subject.GenerateAwsHCL(subject.AwsIntegration{
@@ -58,44 +96,10 @@ resource "mondoo_integration_aws" "this" {
 	assert.Equal(t, expected, code)
 }
 
-func TestGenerateAwsHCL_RoleBased(t *testing.T) {
-	code, err := subject.GenerateAwsHCL(subject.AwsIntegration{
-		Name:       "test-role-integration",
-		RoleArn:    "arn:aws:iam::123456789012:role/MondooRole",
-		ExternalID: "external-123",
-	})
-	assert.Nil(t, err)
-
-	expected := `terraform {
-  required_providers {
-    mondoo = {
-      source  = "mondoohq/mondoo"
-      version = "~> 0.19"
-    }
-  }
-}
-
-provider "mondoo" {
-}
-
-resource "mondoo_integration_aws" "this" {
-  credentials = {
-    role = {
-      external_id = "external-123"
-      role_arn    = "arn:aws:iam::123456789012:role/MondooRole"
-    }
-  }
-  name = "test-role-integration"
-}
-`
-	assert.Equal(t, expected, code)
-}
-
 func TestGenerateAwsHCL_ErrorsOnNoAuthMethod(t *testing.T) {
 	_, err := subject.GenerateAwsHCL(subject.AwsIntegration{
 		Name: "test-integration",
 	})
-	if err == nil {
-		t.Fatal("expected error for no auth method selected, got nil")
-	}
+	assert.ErrorContains(t, err, "missing AWS access key")
+	assert.ErrorContains(t, err, "missing AWS secret key")
 }
