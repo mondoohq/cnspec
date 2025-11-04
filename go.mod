@@ -41,12 +41,12 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zclconf/go-cty v1.17.0
-	go.mondoo.com/cnquery/v12 v12.7.1
-	go.mondoo.com/mondoo-go v0.0.0-20251022000425-2aa884f9d36b
+	go.mondoo.com/cnquery/v12 v12.8.0
+	go.mondoo.com/mondoo-go v0.0.0-20251029000449-1687c2e9d120
 	go.mondoo.com/ranger-rpc v0.7.1
 	gocloud.dev v0.43.0
 	golang.org/x/sys v0.37.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251022142026-3a174f9686a8
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
@@ -99,18 +99,18 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.12 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.12 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.258.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.32.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.51.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.38.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.260.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.32.8 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.51.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.38.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.12 // indirect
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.39.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.39.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.34.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.8 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.66.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.66.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.39.0 // indirect
@@ -128,7 +128,7 @@ require (
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/charmbracelet/x/ansi v0.10.2 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
-	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
@@ -141,7 +141,7 @@ require (
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
-	github.com/cyphar/filepath-securejoin v0.5.0 // indirect
+	github.com/cyphar/filepath-securejoin v0.6.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
@@ -163,7 +163,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
-	github.com/getsentry/sentry-go v0.36.1 // indirect
+	github.com/getsentry/sentry-go v0.36.2 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.6.2 // indirect
