@@ -92,7 +92,6 @@ resource "mondoo_integration_gcp" "production" {
 		)...,
 	)
 	assert.Equal(t, expectedOutput, blocksOutput)
-
 }
 
 func TestProviderToBlock(t *testing.T) {
@@ -174,6 +173,7 @@ func TestNewOutput(t *testing.T) {
 	assert.Equal(t, "output", string(block.Type()))
 	assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
 }
+
 func TestHclResourceToBlock(t *testing.T) {
 	resource := tfgen.NewResource("aws_instance",
 		"example", tfgen.HclResourceWithAttributesAndProviderDetails(
@@ -218,9 +218,11 @@ func TestGenericBlockCreation(t *testing.T) {
 			"thing",
 			[]string{"a", "b"},
 			map[string]any{
-				"a": "foo",
-				"b": 1,
-				"c": false,
+				"a":       "foo",
+				"b":       1,
+				"c":       false,
+				"source":  "should be first",
+				"version": "should be second",
 				"d": map[string]any{ // Order of map elements should be sorted when executed
 					"f": 1,
 					"g": "bar",
@@ -251,9 +253,11 @@ func TestGenericBlockCreation(t *testing.T) {
 		assert.Equal(t, "a", data.Labels()[0])
 		assert.Equal(t, "b", data.Labels()[1])
 		expectedOutput := `thing "a" "b" {
-  a = "foo"
-  b = 1
-  c = false
+  source  = "should be first"
+  version = "should be second"
+  a       = "foo"
+  b       = 1
+  c       = false
   d = {
     e = true
     f = 1
@@ -270,21 +274,6 @@ func TestGenericBlockCreation(t *testing.T) {
 }
 `
 		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(data))
-
-	})
-	t.Run("should fail to construct generic block with mismatched list element types", func(t *testing.T) {
-		_, err := tfgen.HclCreateGenericBlock(
-			"thing",
-			[]string{},
-			map[string]any{
-				"k": []map[string]any{ // can use []any here to support this sort of structure, but as-is will fail
-					{"test1": []string{"f", "o", "o"}},
-					{"test2": []string{"b", "a", "r"}},
-				},
-			},
-		)
-
-		assert.Error(t, err, "should fail to generate block with mismatched list element types")
 	})
 }
 
@@ -351,7 +340,8 @@ func TestProviderBlockWithTraversal(t *testing.T) {
 		"test": hcl.Traversal{
 			hcl.TraverseRoot{Name: "key"},
 			hcl.TraverseAttr{Name: "value"},
-		}}
+		},
+	}
 	data, err := tfgen.NewProvider("foo", tfgen.HclProviderWithAttributes(attrs)).ToBlock()
 
 	assert.Nil(t, err)
@@ -486,4 +476,44 @@ func TestModuleWithForEach(t *testing.T) {
 }
 `
 	assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
+}
+
+func TestHclVariable(t *testing.T) {
+	t.Run("empty hcl variable", func(t *testing.T) {
+		variable := tfgen.NewVariable("my_variable")
+		block, err := variable.ToBlock()
+		assert.NoError(t, err)
+		assert.NotNil(t, block)
+		assert.Equal(t, "variable", string(block.Type()))
+		expectedOutput := `variable "my_variable" {
+}
+`
+		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
+	})
+
+	t.Run("hcl variable with modifications", func(t *testing.T) {
+		variable := tfgen.NewVariable(
+			"my_variable",
+			tfgen.HclVariableWithDefault("defaultVal"),
+			tfgen.HclVariableWithDescription("A description for this variable"),
+			tfgen.HclVariableWithType("variableType"),
+			tfgen.HclVariableWithSensitive(true))
+		block, err := variable.ToBlock()
+		assert.NoError(t, err)
+		assert.NotNil(t, block)
+		assert.Equal(t, "variable", string(block.Type()))
+		expectedOutput := `variable "my_variable" {
+  type        = variableType
+  description = "A description for this variable"
+  default     = "defaultVal"
+  sensitive   = true
+}
+`
+		assert.Equal(t, expectedOutput, tfgen.CreateHclStringOutput(block))
+	})
+}
+
+func TestCreateVariableReference(t *testing.T) {
+	ref := tfgen.CreateVariableReference("my_variable")
+	assert.Equal(t, "var.my_variable", tfgen.TraversalToString(ref))
 }
