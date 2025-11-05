@@ -22,12 +22,10 @@ type Db struct {
 }
 
 // NewServices creates a new set of policy services
-func NewServices(runtime llx.Runtime, resolvedPolicyCache *ResolvedPolicyCache) (*Db, *policy.LocalServices, error) {
+func NewServices(runtime llx.Runtime) (*Db, *policy.LocalServices, error) {
 	var cache kvStore = newKissDb()
 
-	if resolvedPolicyCache == nil {
-		resolvedPolicyCache = NewResolvedPolicyCache(0)
-	}
+	resolvedPolicyCache := NewResolvedPolicyCache(0)
 
 	db := &Db{
 		cache:               cache,
@@ -43,8 +41,8 @@ func NewServices(runtime llx.Runtime, resolvedPolicyCache *ResolvedPolicyCache) 
 }
 
 // WithDb creates a new set of policy services and closes everything out once the function is done
-func WithDb(runtime llx.Runtime, resolvedPolicyCache *ResolvedPolicyCache, f func(*Db, *policy.LocalServices) error) error {
-	db, ls, err := NewServices(runtime, resolvedPolicyCache)
+func WithDb(runtime llx.Runtime, f func(*Db, *policy.LocalServices) error) error {
+	db, ls, err := NewServices(runtime)
 	if err != nil {
 		return err
 	}
