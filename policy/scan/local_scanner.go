@@ -677,7 +677,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var res *AssetReport
 	var policyErr error
 
-	runtimeErr := inmemory.WithDb(s.runtime, func(db *inmemory.Db, services *policy.LocalServices) error {
+	runtimeErr := withDatalake(job.Ctx, s.runtime, func(db policy.DataLake, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
 			client, err := s.upstreamClient(job.Ctx, job.UpstreamConfig)
@@ -693,7 +693,6 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 
 		scanner := &localAssetScanner{
-			db:               db,
 			services:         services,
 			job:              job,
 			fetcher:          s.fetcher,
@@ -833,7 +832,6 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.Up
 }
 
 type localAssetScanner struct {
-	db       *inmemory.Db
 	services *policy.LocalServices
 	job      *AssetJob
 	fetcher  *fetcher
@@ -1187,4 +1185,12 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 		log.Error().Err(err).Msg("failed to send error to mondoo platform")
 		return
 	}
+}
+
+// withDatalake creates a new set of policy services and closes everything out once the function is done
+func withDatalake(ctx context.Context, runtime llx.Runtime, f func(policy.DataLake, *policy.LocalServices) error) error {
+	db := inmemory.NewDB(ctx)
+	ls := policy.NewLocalServices(db, runtime)
+
+	return f(db, ls)
 }

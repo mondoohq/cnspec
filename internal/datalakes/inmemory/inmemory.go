@@ -4,9 +4,9 @@
 package inmemory
 
 import (
+	"context"
 	"time"
 
-	"go.mondoo.com/cnquery/v12/llx"
 	"go.mondoo.com/cnspec/v12/policy"
 )
 
@@ -19,8 +19,7 @@ type Db struct {
 	resolvedPolicyCache *ResolvedPolicyCache
 }
 
-// NewServices creates a new set of policy services
-func NewServices(runtime llx.Runtime) (*Db, *policy.LocalServices, error) {
+func NewDB(ctx context.Context) *Db {
 	var cache kvStore = newKissDb()
 
 	resolvedPolicyCache := NewResolvedPolicyCache(0)
@@ -31,20 +30,7 @@ func NewServices(runtime llx.Runtime) (*Db, *policy.LocalServices, error) {
 		resolvedPolicyCache: resolvedPolicyCache,
 	}
 
-	services := policy.NewLocalServices(db, runtime)
-	db.services = services // close the connection between db and services
-
-	return db, services, nil
-}
-
-// WithDb creates a new set of policy services and closes everything out once the function is done
-func WithDb(runtime llx.Runtime, f func(*Db, *policy.LocalServices) error) error {
-	db, ls, err := NewServices(runtime)
-	if err != nil {
-		return err
-	}
-
-	return f(db, ls)
+	return db
 }
 
 // Prefixes for all keys that are stored in the cache.

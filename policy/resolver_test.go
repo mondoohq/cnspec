@@ -28,8 +28,7 @@ func parseBundle(t *testing.T, data string) *policy.Bundle {
 
 func initResolver(t *testing.T, assets []*testAsset, bundles []*policy.Bundle) *policy.LocalServices {
 	runtime := testutils.LinuxMock()
-	_, srv, err := inmemory.NewServices(runtime)
-	require.NoError(t, err)
+	srv := policy.NewLocalServices(inmemory.NewDB(context.Background()), runtime)
 
 	for i := range bundles {
 		bundle := bundles[i]
