@@ -1,7 +1,7 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package policy
+package scandb
 
 import (
 	"context"
@@ -9,9 +9,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	_ "github.com/glebarez/go-sqlite"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func TestSqliteScanDataStore(t *testing.T) {
@@ -26,7 +30,7 @@ func TestSqliteScanDataStore(t *testing.T) {
 	assetMrn := "//assets.api.mondoo.com/spaces/test-space/assets/test-asset"
 
 	// Test data
-	testScores := []*Score{
+	testScores := []*policy.Score{
 		{
 			QrId:      "score-1",
 			RiskScore: 85,
@@ -34,13 +38,13 @@ func TestSqliteScanDataStore(t *testing.T) {
 			Value:     100,
 			Weight:    50,
 			Message:   "Test score 1",
-			RiskFactors: &ScoredRiskFactors{
-				Items: []*ScoredRiskFactor{
+			RiskFactors: &policy.ScoredRiskFactors{
+				Items: []*policy.ScoredRiskFactor{
 					{Mrn: "risk1", Risk: 0.5, IsDetected: true},
 				},
 			},
-			Sources: &Sources{
-				Items: []*Source{
+			Sources: &policy.Sources{
+				Items: []*policy.Source{
 					{Name: "test-source", Version: "1.0"},
 				},
 			},
@@ -66,7 +70,7 @@ func TestSqliteScanDataStore(t *testing.T) {
 		},
 	}
 
-	testRisks := []*ScoredRiskFactor{
+	testRisks := []*policy.ScoredRiskFactor{
 		{
 			Mrn:        "risk-1",
 			Risk:       0.75,
@@ -123,8 +127,8 @@ func TestSqliteScanDataStore(t *testing.T) {
 		assert.Equal(t, assetMrn, metadata.AssetMrn)
 
 		// Read scores
-		var scores []*Score
-		err = store.StreamScores(context.Background(), func(score *Score) error {
+		var scores []*policy.Score
+		err = store.StreamScores(context.Background(), func(score *policy.Score) error {
 			scores = append(scores, score)
 			return nil
 		})
@@ -198,8 +202,8 @@ func TestSqliteScanDataStore(t *testing.T) {
 		assert.Contains(t, err.Error(), "data not found")
 
 		// Read risks
-		var risks []*ScoredRiskFactor
-		err = store.StreamRisks(context.Background(), func(risk *ScoredRiskFactor) error {
+		var risks []*policy.ScoredRiskFactor
+		err = store.StreamRisks(context.Background(), func(risk *policy.ScoredRiskFactor) error {
 			risks = append(risks, risk)
 			return nil
 		})
@@ -245,9 +249,9 @@ func TestStreamingReads(t *testing.T) {
 	assetMrn := "//assets.api.mondoo.com/spaces/test-space/assets/streaming-test"
 
 	// Create test data with more entries
-	testScores := make([]*Score, 10)
+	testScores := make([]*policy.Score, 10)
 	for i := 0; i < 10; i++ {
-		testScores[i] = &Score{
+		testScores[i] = &policy.Score{
 			QrId:      "score-" + string(rune('0'+i)),
 			RiskScore: uint32(50 + i*5),
 			Type:      uint32(i % 3),
@@ -286,9 +290,9 @@ func TestStreamingReads(t *testing.T) {
 
 	// Test streaming scores
 	t.Run("StreamScores", func(t *testing.T) {
-		var streamedScores []*Score
+		var streamedScores []*policy.Score
 
-		err := store.StreamScores(context.Background(), func(score *Score) error {
+		err := store.StreamScores(context.Background(), func(score *policy.Score) error {
 			streamedScores = append(streamedScores, score)
 			return nil
 		})
@@ -342,7 +346,7 @@ func TestSqliteScanDataStore_Finalize(t *testing.T) {
 	ctx := context.Background()
 
 	// Write some test data
-	testScore := &Score{
+	testScore := &policy.Score{
 		QrId:      "finalize-score-1",
 		RiskScore: 80,
 		Type:      1,
@@ -356,7 +360,7 @@ func TestSqliteScanDataStore_Finalize(t *testing.T) {
 		Data:   llx.StringPrimitive("finalize test data"),
 	}
 
-	err = store.WriteScores(ctx, []*Score{testScore})
+	err = store.WriteScores(ctx, []*policy.Score{testScore})
 	require.NoError(t, err)
 
 	err = store.WriteData(ctx, []*llx.Result{testData})
@@ -382,7 +386,7 @@ func TestSqliteScanDataStore_Finalize(t *testing.T) {
 	assert.Equal(t, llx.StringPrimitive("finalize test data"), result.Data)
 
 	// Writing should now fail
-	newScore := &Score{
+	newScore := &policy.Score{
 		QrId:      "finalize-score-2",
 		RiskScore: 85,
 		Type:      1,
@@ -391,12 +395,12 @@ func TestSqliteScanDataStore_Finalize(t *testing.T) {
 		Message:   "Post-finalize score",
 	}
 
-	err = store.WriteScores(ctx, []*Score{newScore})
+	err = store.WriteScores(ctx, []*policy.Score{newScore})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read-only mode")
 
 	// Writing risks should also fail
-	newRisk := &ScoredRiskFactor{
+	newRisk := &policy.ScoredRiskFactor{
 		Mrn:        "finalize-risk-2",
 		Risk:       0.5,
 		IsToxic:    false,
@@ -430,7 +434,7 @@ func TestSqliteScanDataStoreReader_Finalize(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	testScore := &Score{
+	testScore := &policy.Score{
 		QrId:      "reader-finalize-score-1",
 		RiskScore: 75,
 		Type:      1,
@@ -439,7 +443,7 @@ func TestSqliteScanDataStoreReader_Finalize(t *testing.T) {
 		Message:   "Reader finalize test score",
 	}
 
-	err = store.WriteScores(ctx, []*Score{testScore})
+	err = store.WriteScores(ctx, []*policy.Score{testScore})
 	require.NoError(t, err)
 	store.Close()
 
@@ -477,7 +481,7 @@ func TestSqliteScanDataStore_UpsertScores(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial score
-	initialScore := &Score{
+	initialScore := &policy.Score{
 		QrId:      "upsert-score-1",
 		RiskScore: 70,
 		Type:      1,
@@ -487,7 +491,7 @@ func TestSqliteScanDataStore_UpsertScores(t *testing.T) {
 	}
 
 	// Write initial score
-	err = store.WriteScores(ctx, []*Score{initialScore})
+	err = store.WriteScores(ctx, []*policy.Score{initialScore})
 	require.NoError(t, err)
 
 	// Verify initial score
@@ -497,7 +501,7 @@ func TestSqliteScanDataStore_UpsertScores(t *testing.T) {
 	assert.Equal(t, "Initial score", score.Message)
 
 	// Updated score with same qr_id
-	updatedScore := &Score{
+	updatedScore := &policy.Score{
 		QrId:      "upsert-score-1", // Same QR ID
 		RiskScore: 85,               // Different values
 		Type:      2,
@@ -507,7 +511,7 @@ func TestSqliteScanDataStore_UpsertScores(t *testing.T) {
 	}
 
 	// Write updated score (should upsert)
-	err = store.WriteScores(ctx, []*Score{updatedScore})
+	err = store.WriteScores(ctx, []*policy.Score{updatedScore})
 	require.NoError(t, err)
 
 	// Verify the score was updated, not duplicated
@@ -521,7 +525,7 @@ func TestSqliteScanDataStore_UpsertScores(t *testing.T) {
 
 	// Verify there's only one score with this QR ID
 	count := 0
-	err = store.StreamScores(ctx, func(s *Score) error {
+	err = store.StreamScores(ctx, func(s *policy.Score) error {
 		if s.QrId == "upsert-score-1" {
 			count++
 		}
@@ -608,7 +612,7 @@ func TestSqliteScanDataStore_MixedUpsert(t *testing.T) {
 	ctx := context.Background()
 
 	// Write batch with some new and some duplicate qr_ids
-	scores := []*Score{
+	scores := []*policy.Score{
 		{QrId: "score-1", RiskScore: 70, Type: 1, Value: 80, Weight: 35, Message: "Score 1 v1"},
 		{QrId: "score-2", RiskScore: 75, Type: 1, Value: 85, Weight: 40, Message: "Score 2 v1"},
 		{QrId: "score-3", RiskScore: 80, Type: 1, Value: 90, Weight: 45, Message: "Score 3 v1"},
@@ -618,7 +622,7 @@ func TestSqliteScanDataStore_MixedUpsert(t *testing.T) {
 	require.NoError(t, err)
 
 	// Write another batch with updates and new scores
-	updatedScores := []*Score{
+	updatedScores := []*policy.Score{
 		{QrId: "score-1", RiskScore: 85, Type: 2, Value: 95, Weight: 50, Message: "Score 1 v2"},  // Update
 		{QrId: "score-2", RiskScore: 90, Type: 2, Value: 100, Weight: 55, Message: "Score 2 v2"}, // Update
 		{QrId: "score-4", RiskScore: 60, Type: 1, Value: 70, Weight: 30, Message: "Score 4 v1"},  // New
@@ -650,7 +654,7 @@ func TestSqliteScanDataStore_MixedUpsert(t *testing.T) {
 
 	// Count total scores
 	totalCount := 0
-	err = store.StreamScores(ctx, func(s *Score) error {
+	err = store.StreamScores(ctx, func(s *policy.Score) error {
 		totalCount++
 		return nil
 	})
@@ -676,7 +680,7 @@ func TestSqliteScanDataStore_RiskFactors(t *testing.T) {
 	ctx := context.Background()
 
 	// Test risk factors
-	risks := []*ScoredRiskFactor{
+	risks := []*policy.ScoredRiskFactor{
 		{
 			Mrn:        "risk-factor-1",
 			Risk:       0.85,
@@ -717,8 +721,8 @@ func TestSqliteScanDataStore_RiskFactors(t *testing.T) {
 	assert.Contains(t, err.Error(), "risk not found")
 
 	// Test StreamRisk
-	var streamedRisks []*ScoredRiskFactor
-	err = store.StreamRisks(ctx, func(risk *ScoredRiskFactor) error {
+	var streamedRisks []*policy.ScoredRiskFactor
+	err = store.StreamRisks(ctx, func(risk *policy.ScoredRiskFactor) error {
 		streamedRisks = append(streamedRisks, risk)
 		return nil
 	})
@@ -757,7 +761,7 @@ func TestSqliteScanDataStore_UpsertRisk(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial risk
-	initialRisk := &ScoredRiskFactor{
+	initialRisk := &policy.ScoredRiskFactor{
 		Mrn:        "upsert-risk-1",
 		Risk:       0.3,
 		IsToxic:    false,
@@ -776,7 +780,7 @@ func TestSqliteScanDataStore_UpsertRisk(t *testing.T) {
 	assert.Equal(t, false, risk.IsDetected)
 
 	// Updated risk with same mrn
-	updatedRisk := &ScoredRiskFactor{
+	updatedRisk := &policy.ScoredRiskFactor{
 		Mrn:        "upsert-risk-1", // Same MRN
 		Risk:       0.9,             // Different values
 		IsToxic:    true,
@@ -796,7 +800,7 @@ func TestSqliteScanDataStore_UpsertRisk(t *testing.T) {
 
 	// Verify there's only one risk with this MRN
 	count := 0
-	err = store.StreamRisks(ctx, func(r *ScoredRiskFactor) error {
+	err = store.StreamRisks(ctx, func(r *policy.ScoredRiskFactor) error {
 		if r.Mrn == "upsert-risk-1" {
 			count++
 		}

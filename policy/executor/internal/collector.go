@@ -372,34 +372,3 @@ func (c *FuncCollector) SinkScore(scores []*policy.Score) {
 	}
 	c.SinkScoreFunc(scores)
 }
-
-type UploadFileCollector struct {
-	store policy.ScanDataStore
-}
-
-func NewUploadFileCollector(store policy.ScanDataStore) *UploadFileCollector {
-	return &UploadFileCollector{
-		store: store,
-	}
-}
-
-func (c *UploadFileCollector) SinkData(results []*llx.RawResult) {
-	if len(results) == 0 {
-		return
-	}
-	for _, rr := range results {
-		r := rr.Result()
-		if err := c.store.WriteData(context.Background(), []*llx.Result{r}); err != nil {
-			log.Error().Err(err).Msg("failed to write data to upload file")
-		}
-	}
-}
-
-func (c *UploadFileCollector) SinkScore(scores []*policy.Score) {
-	if len(scores) == 0 {
-		return
-	}
-	if err := c.store.WriteScores(context.Background(), scores); err != nil {
-		log.Error().Err(err).Msg("failed to write scores to upload file")
-	}
-}

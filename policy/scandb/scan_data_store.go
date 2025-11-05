@@ -1,7 +1,7 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package policy
+package scandb
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnspec/v12/policy"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -26,21 +27,21 @@ type UploadFileMetadata struct {
 }
 
 type ScanDataStoreReader interface {
-	StreamScores(ctx context.Context, callback func(*Score) error) error
+	StreamScores(ctx context.Context, callback func(*policy.Score) error) error
 	StreamData(ctx context.Context, callback func(string, *llx.Result) error) error
-	StreamRisks(ctx context.Context, callback func(*ScoredRiskFactor) error) error
+	StreamRisks(ctx context.Context, callback func(*policy.ScoredRiskFactor) error) error
 
 	// Reader methods for specific items
-	GetScore(ctx context.Context, qrId string) (*Score, error)
+	GetScore(ctx context.Context, qrId string) (*policy.Score, error)
 	GetData(ctx context.Context, codeId string) (*llx.Result, error)
-	GetRisk(ctx context.Context, mrn string) (*ScoredRiskFactor, error)
+	GetRisk(ctx context.Context, mrn string) (*policy.ScoredRiskFactor, error)
 	Close() error
 }
 
 type ScanDataStoreWriter interface {
-	WriteScores(ctx context.Context, scores []*Score) error
+	WriteScores(ctx context.Context, scores []*policy.Score) error
 	WriteData(ctx context.Context, data []*llx.Result) error
-	WriteRisk(ctx context.Context, risk *ScoredRiskFactor) error
+	WriteRisk(ctx context.Context, risk *policy.ScoredRiskFactor) error
 	WriteResource(ctx context.Context, resource *llx.ResourceRecording) error
 	Finalize() (string, error)
 	Close() error
@@ -177,7 +178,7 @@ func (s *SqliteScanDataStore) insertMetadata() error {
 }
 
 // WriteScores writes multiple scores efficiently
-func (s *SqliteScanDataStore) WriteScores(ctx context.Context, scores []*Score) error {
+func (s *SqliteScanDataStore) WriteScores(ctx context.Context, scores []*policy.Score) error {
 	if s.readOnly {
 		return fmt.Errorf("cannot write scores in read-only mode")
 	}
@@ -228,7 +229,7 @@ func (s *SqliteScanDataStore) WriteResource(ctx context.Context, resource *llx.R
 }
 
 // WriteRisk writes a single risk factor
-func (s *SqliteScanDataStore) WriteRisk(ctx context.Context, risk *ScoredRiskFactor) error {
+func (s *SqliteScanDataStore) WriteRisk(ctx context.Context, risk *policy.ScoredRiskFactor) error {
 	if s.readOnly {
 		return fmt.Errorf("cannot write risk in read-only mode")
 	}
@@ -242,7 +243,7 @@ func (s *SqliteScanDataStore) WriteRisk(ctx context.Context, risk *ScoredRiskFac
 }
 
 // writeScore writes a single score using the provided statement
-func (s *SqliteScanDataStore) writeScore(stmt *sql.Stmt, score *Score) error {
+func (s *SqliteScanDataStore) writeScore(stmt *sql.Stmt, score *policy.Score) error {
 	var riskFactors, sources []byte
 	var err error
 
@@ -307,7 +308,7 @@ func (s *SqliteScanDataStore) GetMetadata() (*UploadFileMetadata, error) {
 }
 
 // StreamScores reads all scores with a callback function for memory-efficient processing
-func (s *SqliteScanDataStore) StreamScores(ctx context.Context, callback func(*Score) error) error {
+func (s *SqliteScanDataStore) StreamScores(ctx context.Context, callback func(*policy.Score) error) error {
 	rows, err := s.db.Query(`
 		SELECT qr_id, risk_score, type, value, weight, message, risk_factors, sources
 		FROM scores ORDER BY qr_id
@@ -361,7 +362,7 @@ func (s *SqliteScanDataStore) StreamData(ctx context.Context, callback func(stri
 }
 
 // GetScore retrieves a specific score by QR ID
-func (s *SqliteScanDataStore) GetScore(ctx context.Context, qrId string) (*Score, error) {
+func (s *SqliteScanDataStore) GetScore(ctx context.Context, qrId string) (*policy.Score, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT qr_id, risk_score, type, value, weight, message, risk_factors, sources
 		FROM scores WHERE qr_id = ?
@@ -401,8 +402,8 @@ func (s *SqliteScanDataStore) GetData(ctx context.Context, codeId string) (*llx.
 }
 
 // GetRisk retrieves a specific risk factor by MRN
-func (s *SqliteScanDataStore) GetRisk(ctx context.Context, mrn string) (*ScoredRiskFactor, error) {
-	var risk ScoredRiskFactor
+func (s *SqliteScanDataStore) GetRisk(ctx context.Context, mrn string) (*policy.ScoredRiskFactor, error) {
+	var risk policy.ScoredRiskFactor
 	err := s.db.QueryRowContext(ctx, `
 		SELECT mrn, risk, is_toxic, is_detected
 		FROM scored_risk_factors WHERE mrn = ?
@@ -410,7 +411,7 @@ func (s *SqliteScanDataStore) GetRisk(ctx context.Context, mrn string) (*ScoredR
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, ErrRiskNotFound
+			return nil, policy.ErrRiskNotFound
 		}
 		return nil, fmt.Errorf("failed to scan risk: %w", err)
 	}
@@ -419,7 +420,7 @@ func (s *SqliteScanDataStore) GetRisk(ctx context.Context, mrn string) (*ScoredR
 }
 
 // StreamRisk reads all risk factors with a callback function for memory-efficient processing
-func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*ScoredRiskFactor) error) error {
+func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*policy.ScoredRiskFactor) error) error {
 	rows, err := s.db.Query(`
 		SELECT mrn, risk, is_toxic, is_detected
 		FROM scored_risk_factors ORDER BY mrn
@@ -430,7 +431,7 @@ func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*Sc
 	defer rows.Close()
 
 	for rows.Next() {
-		var risk ScoredRiskFactor
+		var risk policy.ScoredRiskFactor
 		if err := rows.Scan(&risk.Mrn, &risk.Risk, &risk.IsToxic, &risk.IsDetected); err != nil {
 			return fmt.Errorf("failed to scan risk: %w", err)
 		}
@@ -444,8 +445,8 @@ func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*Sc
 }
 
 // scanScore scans a score row into a Score struct
-func (s *SqliteScanDataStore) scanScore(row interface{ Scan(dest ...any) error }) (*Score, error) {
-	score := &Score{
+func (s *SqliteScanDataStore) scanScore(row interface{ Scan(dest ...any) error }) (*policy.Score, error) {
+	score := &policy.Score{
 		ScoreCompletion: 100,
 		DataCompletion:  100,
 	}
@@ -467,14 +468,14 @@ func (s *SqliteScanDataStore) scanScore(row interface{ Scan(dest ...any) error }
 
 	// Unmarshal protobuf fields
 	if len(riskFactors) > 0 {
-		score.RiskFactors = &ScoredRiskFactors{}
+		score.RiskFactors = &policy.ScoredRiskFactors{}
 		if err := proto.Unmarshal(riskFactors, score.RiskFactors); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal risk factors: %w", err)
 		}
 	}
 
 	if len(sources) > 0 {
-		score.Sources = &Sources{}
+		score.Sources = &policy.Sources{}
 		if err := proto.Unmarshal(sources, score.Sources); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal sources: %w", err)
 		}

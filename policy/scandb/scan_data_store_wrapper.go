@@ -1,13 +1,14 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package policy
+package scandb
 
 import (
 	"context"
 	"fmt"
 
 	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 // ScanDataStoreWrapper wraps a ScanDataStore to implement the DataStore interface
@@ -36,16 +37,16 @@ func NewScanDataStoreWrapper(store ScanDataStore, expectedAssetMrn string) *Scan
 }
 
 // WriteScore writes a single score, verifying the asset MRN matches
-func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, score *Score) error {
+func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, score *policy.Score) error {
 	if assetMrn != w.assetMrn {
 		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
 	}
 
-	return w.store.WriteScores(ctx, []*Score{score})
+	return w.store.WriteScores(ctx, []*policy.Score{score})
 }
 
 // GetScore retrieves a score by ID, verifying the asset MRN matches
-func (w *ScanDataStoreWrapper) GetScore(ctx context.Context, assetMrn string, scoreID string) (*Score, error) {
+func (w *ScanDataStoreWrapper) GetScore(ctx context.Context, assetMrn string, scoreID string) (*policy.Score, error) {
 	if assetMrn != w.assetMrn {
 		return nil, fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
 	}
@@ -79,7 +80,7 @@ func (w *ScanDataStoreWrapper) GetData(ctx context.Context, assetMrn string, qrI
 	return w.store.GetData(ctx, qrId)
 }
 
-func (w *ScanDataStoreWrapper) WriteRisk(ctx context.Context, assetMrn string, risk *ScoredRiskFactor) error {
+func (w *ScanDataStoreWrapper) WriteRisk(ctx context.Context, assetMrn string, risk *policy.ScoredRiskFactor) error {
 	if assetMrn != w.assetMrn {
 		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
 	}
@@ -87,7 +88,7 @@ func (w *ScanDataStoreWrapper) WriteRisk(ctx context.Context, assetMrn string, r
 	return w.store.WriteRisk(ctx, risk)
 }
 
-func (w *ScanDataStoreWrapper) GetRisk(ctx context.Context, assetMrn string, riskID string) (*ScoredRiskFactor, error) {
+func (w *ScanDataStoreWrapper) GetRisk(ctx context.Context, assetMrn string, riskID string) (*policy.ScoredRiskFactor, error) {
 	if assetMrn != w.assetMrn {
 		return nil, fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
 	}
@@ -95,12 +96,12 @@ func (w *ScanDataStoreWrapper) GetRisk(ctx context.Context, assetMrn string, ris
 	return w.store.GetRisk(ctx, riskID)
 }
 
-func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string, f func(risk *ScoredRiskFactor) error) error {
+func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string, f func(risk *policy.ScoredRiskFactor) error) error {
 	if assetMrn != w.assetMrn {
 		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
 	}
 
-	err := w.store.StreamRisks(ctx, func(risk *ScoredRiskFactor) error {
+	err := w.store.StreamRisks(ctx, func(risk *policy.ScoredRiskFactor) error {
 		return f(risk)
 	})
 	return err

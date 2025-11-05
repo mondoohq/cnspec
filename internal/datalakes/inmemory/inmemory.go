@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
 	"go.mondoo.com/cnspec/v12/policy"
 )
 
@@ -140,14 +141,24 @@ func (db *Db) SetDataWriter(writer DataStore) {
 	db.writer = writer
 }
 
-// WithDb creates a new set of policy services and closes everything out once the function is done
-func WithDb(runtime llx.Runtime, f func(*Db, *policy.LocalServices) error) error {
-	db, ls, err := NewServices(runtime)
+func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+	_, ls, err := NewServices(runtime)
 	if err != nil {
 		return err
 	}
 
-	return f(db, ls)
+	var upstream *policy.Services
+	if upstreamClient != nil {
+		var err error
+		upstream, err = policy.NewRemoteServices(upstreamClient.ApiEndpoint, upstreamClient.Plugins, upstreamClient.HttpClient)
+		if err != nil {
+			return err
+		}
+	}
+
+	ls.Upstream = upstream
+
+	return f(ls)
 }
 
 // Prefixes for all keys that are stored in the cache.

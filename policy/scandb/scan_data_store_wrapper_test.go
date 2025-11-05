@@ -1,7 +1,7 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package policy
+package scandb
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnspec/v12/policy"
 )
 
 func TestScanDataStoreWrapper(t *testing.T) {
@@ -36,7 +37,7 @@ func TestScanDataStoreWrapper(t *testing.T) {
 	ctx := context.Background()
 
 	// Test data
-	testScore := &Score{
+	testScore := &policy.Score{
 		QrId:      "wrapper-score-1",
 		RiskScore: 75,
 		Type:      1,
@@ -126,7 +127,7 @@ func TestScanDataStoreWrapper(t *testing.T) {
 		assert.Equal(t, "wrapper-score-1", score.QrId)
 
 		// Writing should fail after finalize
-		newScore := &Score{
+		newScore := &policy.Score{
 			QrId:      "wrapper-score-2",
 			RiskScore: 85,
 			Type:      1,

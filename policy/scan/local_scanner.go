@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -38,6 +37,7 @@ import (
 	"go.mondoo.com/cnquery/v12/utils/slicesx"
 	"go.mondoo.com/cnspec/v12"
 	"go.mondoo.com/cnspec/v12/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v12/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/v12/policy"
 	"go.mondoo.com/cnspec/v12/policy/executor"
 	ranger "go.mondoo.com/ranger-rpc"
@@ -677,8 +677,17 @@ func (s *LocalScanner) upstreamClient(ctx context.Context, conf *upstream.Upstre
 func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var res *AssetReport
 	var policyErr error
+	var client *upstream.UpstreamClient
+	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
+		var err error
+		log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
+		client, err = s.upstreamClient(job.Ctx, job.UpstreamConfig)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	runtimeErr := inmemory.WithDb(s.runtime, func(db *inmemory.Db, services *policy.LocalServices) error {
+	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset.Mrn, client, func(services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
 			client, err := s.upstreamClient(job.Ctx, job.UpstreamConfig)
@@ -694,7 +703,6 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 
 		scanner := &localAssetScanner{
-			db:               db,
 			services:         services,
 			job:              job,
 			fetcher:          s.fetcher,
@@ -834,7 +842,6 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.Up
 }
 
 type localAssetScanner struct {
-	db       *inmemory.Db
 	services *policy.LocalServices
 	job      *AssetJob
 	fetcher  *fetcher
@@ -849,33 +856,6 @@ type localAssetScanner struct {
 func (s *localAssetScanner) run() (*AssetReport, error) {
 	if err := s.prepareAsset(); err != nil {
 		return nil, err
-	}
-
-	var scanDataStore policy.ScanDataStore
-	if cnquery.IsFeatureActive(s.job.Ctx, cnquery.UploadResultsV2) {
-		var err error
-
-		// create a temporary file for the scan data store
-		tmpFile, err := os.CreateTemp("", "cnspec-scan-*.db")
-		if err != nil {
-			log.Error().Err(err).Msg("failed to create temporary file for scan data store")
-			return nil, err
-		}
-		tmpFile.Close() // nolint: errcheck
-		defer func() {
-			if err := os.Remove(tmpFile.Name()); err != nil {
-				log.Warn().Err(err).Msg("failed to remove temporary scan data store file")
-			}
-		}()
-
-		scanDataStore, err = policy.NewSqliteScanDataStore(tmpFile.Name(), s.job.Asset.Mrn)
-		if err != nil {
-			log.Error().Err(err).Msg("failed to create scan data store")
-			return nil, err
-		}
-		defer scanDataStore.Close()
-
-		s.db.SetDataWriter(policy.NewScanDataStoreWrapper(scanDataStore, s.job.Asset.Mrn))
 	}
 
 	resolvedPolicy, err := s.runPolicy()
@@ -900,20 +880,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		}
 	}
 
-	if cnquery.IsFeatureActive(s.job.Ctx, cnquery.UploadResultsV2) {
-		scanDataPath, err := scanDataStore.Finalize()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to finalize scan data store")
-			return nil, err
-		}
-		log.Debug().Str("scan-data-path", scanDataPath).Msg("scan data store finalized")
-
-		if err := s.uploadScanDataStore(scanDataPath); err != nil {
-			log.Error().Err(err).Msg("failed to upload scan data store")
-			return nil, err
-		}
-	}
-
 	ar := &AssetReport{
 		Mrn:            s.job.Asset.Mrn,
 		ResolvedPolicy: resolvedPolicy,
@@ -933,74 +899,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
 	return ar, nil
-}
-
-func (s *localAssetScanner) uploadScanDataStore(scanDataPath string) error {
-	urlResp, err := s.services.GetUploadURL(s.job.Ctx, &policy.GetUploadURLReq{
-		Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0,
-		ScopeMrn: s.job.Asset.Mrn,
-	})
-	if err != nil {
-		return err
-	}
-
-	uploadUrl := urlResp.UploadUrl
-	if uploadUrl == nil {
-		return errors.New("no upload URL for scan data store")
-	}
-
-	headers := uploadUrl.Headers
-	url := uploadUrl.Url
-
-	// Open the scan database file
-	file, err := os.Open(scanDataPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Create HTTP request for upload
-	req, err := http.NewRequestWithContext(s.job.Ctx, "PUT", url, file)
-	if err != nil {
-		return err
-	}
-
-	// Set required headers from the signed URL
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	// Add file size header
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	req.ContentLength = fileInfo.Size()
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	// Perform the upload
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
-	}
-
-	// Confirm the upload
-	_, err = s.services.ReportUploadCompleted(s.job.Ctx, &policy.ReportUploadCompletedReq{
-		UploadSessionId: urlResp.UploadSessionId,
-		ScopeMrn:        s.job.Asset.Mrn,
-	})
-	if err != nil {
-		return err
-	}
-
-	log.Info().Str("session", urlResp.UploadSessionId).Msg("successfully uploaded scan data store")
-	return nil
 }
 
 func filterPolicyMrns(b *policy.Bundle, filters []string) []string {
@@ -1297,4 +1195,14 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 		log.Error().Err(err).Msg("failed to send error to mondoo platform")
 		return
 	}
+}
+
+func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+	var withServicesFunc func(context.Context, llx.Runtime, string, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
+	if cnquery.IsFeatureActive(ctx, cnquery.UploadResultsV2) {
+		withServicesFunc = sqlite.WithServices
+	} else {
+		withServicesFunc = inmemory.WithServices
+	}
+	return withServicesFunc(ctx, runtime, assetMrn, upstreamClient, f)
 }
