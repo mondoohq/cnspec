@@ -6,7 +6,6 @@ package inmemory
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"go.mondoo.com/cnquery/v12/llx"
 	"go.mondoo.com/cnspec/v12/policy"
 )
@@ -16,7 +15,6 @@ import (
 type Db struct {
 	cache               kvStore
 	services            *policy.LocalServices // bidirectional connection between db + services
-	uuid                string                // used for all object identifiers to prevent clashes (eg in-memory pubsub)
 	nowProvider         func() time.Time
 	resolvedPolicyCache *ResolvedPolicyCache
 }
@@ -29,12 +27,11 @@ func NewServices(runtime llx.Runtime) (*Db, *policy.LocalServices, error) {
 
 	db := &Db{
 		cache:               cache,
-		uuid:                uuid.New().String(),
 		nowProvider:         time.Now,
 		resolvedPolicyCache: resolvedPolicyCache,
 	}
 
-	services := policy.NewLocalServices(db, db.uuid, runtime)
+	services := policy.NewLocalServices(db, runtime)
 	db.services = services // close the connection between db and services
 
 	return db, services, nil

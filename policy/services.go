@@ -50,7 +50,7 @@ type LocalServices struct {
 }
 
 // NewLocalServices initializes a reasonably configured local services struct
-func NewLocalServices(datalake DataLake, uuid string, runtime llx.Runtime) *LocalServices {
+func NewLocalServices(datalake DataLake, runtime llx.Runtime) *LocalServices {
 	return &LocalServices{
 		DataLake:    datalake,
 		Upstream:    nil,
