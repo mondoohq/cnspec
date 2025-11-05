@@ -578,7 +578,7 @@ framework_maps:
 
 	checksumToTestCases := map[string][]string{}
 
-	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime())
 	require.NoError(t, err)
 
 	t.Run("no duplicate checksums", func(t *testing.T) {

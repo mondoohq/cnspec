@@ -50,14 +50,13 @@ const (
 )
 
 type LocalScanner struct {
-	resolvedPolicyCache *inmemory.ResolvedPolicyCache
-	queue               *diskQueueClient
-	ctx                 context.Context
-	fetcher             *fetcher
-	upstream            *upstream.UpstreamConfig
-	_upstreamClient     *upstream.UpstreamClient
-	recording           llx.Recording
-	runtime             llx.Runtime
+	queue           *diskQueueClient
+	ctx             context.Context
+	fetcher         *fetcher
+	upstream        *upstream.UpstreamConfig
+	_upstreamClient *upstream.UpstreamClient
+	recording       llx.Recording
+	runtime         llx.Runtime
 
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
@@ -119,9 +118,8 @@ func WithRuntime(r *providers.Runtime) ScannerOption {
 
 func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 	ls := &LocalScanner{
-		resolvedPolicyCache: inmemory.NewResolvedPolicyCache(ResolvedPolicyCacheSize),
-		fetcher:             newFetcher(),
-		ctx:                 context.Background(),
+		fetcher: newFetcher(),
+		ctx:     context.Background(),
 		// By default, auto-update is enabled. It can be explicitly disabled
 		// by passing WithAutoUpdate(false)
 		autoUpdate: true,
@@ -679,7 +677,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var res *AssetReport
 	var policyErr error
 
-	runtimeErr := inmemory.WithDb(s.runtime, s.resolvedPolicyCache, func(db *inmemory.Db, services *policy.LocalServices) error {
+	runtimeErr := inmemory.WithDb(s.runtime, func(db *inmemory.Db, services *policy.LocalServices) error {
 		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
 			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
 			client, err := s.upstreamClient(job.Ctx, job.UpstreamConfig)

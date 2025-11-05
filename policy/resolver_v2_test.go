@@ -727,7 +727,7 @@ policies:
       action: 4
 `)
 
-	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime())
 	require.NoError(t, err)
 
 	_, err = srv.SetBundle(ctx, b)
@@ -1737,7 +1737,7 @@ framework_maps:
         - uid: sshd-ciphers-02
 `
 
-	_, srv, err := inmemory.NewServices(providers.DefaultRuntime(), nil)
+	_, srv, err := inmemory.NewServices(providers.DefaultRuntime())
 	require.NoError(t, err)
 
 	t.Run("resolve with ignored control", func(t *testing.T) {
