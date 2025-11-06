@@ -688,20 +688,6 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	}
 
 	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset.Mrn, client, func(services *policy.LocalServices) error {
-		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
-			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			client, err := s.upstreamClient(job.Ctx, job.UpstreamConfig)
-			if err != nil {
-				return err
-			}
-
-			upstream, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
-			if err != nil {
-				return err
-			}
-			services.Upstream = upstream
-		}
-
 		scanner := &localAssetScanner{
 			services:         services,
 			job:              job,

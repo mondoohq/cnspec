@@ -80,12 +80,6 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 		return nil, err
 	}
 
-	if true {
-		policyResolver = &NoStoreResults{
-			PolicyResolver: policyResolver,
-		}
-	}
-
 	return &Services{
 		PolicyHub:      policyHub,
 		PolicyResolver: policyResolver,
