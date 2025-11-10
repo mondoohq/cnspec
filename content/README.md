@@ -28,7 +28,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 
 - **GitHub** - Security and best practices for GitHub repositories and organizations
 - **GitLab** - `mondoo-gitlab-security.mql.yaml` - GitLab security configuration assessment
-- **Microsoft 365** - `mondoo-ms365-security.mql.yaml` - Microsoft 365 security and compliance checks
+- **Microsoft 365** - `mondoo-m365-security.mql.yaml` - Microsoft 365 security and compliance checks
 - **Google Workspace** - `mondoo-google-workspace-security.mql.yaml` - Google Workspace security validation
 - **Okta** - `mondoo-okta-security.mql.yaml` - Identity provider security assessment
 - **Slack** - `mondoo-slack-security.mql.yaml` - Slack workspace security configuration
