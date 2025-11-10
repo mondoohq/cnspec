@@ -4,9 +4,6 @@
 package policy
 
 import (
-	"errors"
-	"strings"
-
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnquery/v12/providers"
 	"go.mondoo.com/cnquery/v12/utils/multierr"
@@ -31,7 +28,7 @@ func (p *Bundle) EnsureRequirements(installIfNoRequire bool, autoUpdate bool) er
 		}
 
 		for _, require := range policy.Require {
-			if err := ensureRequirement(require, existing); err != nil {
+			if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: require.Id, ProviderName: require.Name}, autoUpdate, existing); err != nil {
 				return multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'")
 			}
 		}
@@ -48,35 +45,4 @@ func (p *Bundle) EnsureRequirements(installIfNoRequire bool, autoUpdate bool) er
 	}
 
 	return nil
-}
-
-// ensureRequirement checks if a required provider is installed, and installs it if not.
-func ensureRequirement(require *Requirement, existing providers.Providers) error {
-	res := existing.Lookup(providers.ProviderLookup{
-		ID:           require.Id,
-		ProviderName: require.Name,
-	})
-	if res != nil {
-		return nil
-	}
-
-	if require.Id != "" {
-		if !strings.HasPrefix(require.Id, "go.mondoo.com/cnquery/") {
-			return errors.New("cannot install providers by ID that are not in the Mondoo releases at this time")
-		}
-
-		idx := strings.LastIndex(require.Id, "/")
-		require.Name = require.Id[idx+1:]
-	}
-
-	if require.Name != "" {
-		installed, err := providers.Install(require.Name, "")
-		if err != nil {
-			return multierr.Wrap(err, "failed to install "+require.Name)
-		}
-		providers.PrintInstallResults([]*providers.Provider{installed})
-		return nil
-	}
-
-	return errors.New("found an empty `require` statement")
 }
