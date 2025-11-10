@@ -191,7 +191,7 @@ var policyUploadCmd = &cobra.Command{
 
 			runtime := providers.DefaultRuntime()
 			result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
-				AutoUpdateProviders: autoUpdate,
+				SkipProviderDownload: autoUpdate,
 			}, files...)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not lint bundle files")
@@ -668,7 +668,7 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 
 	runtime := providers.DefaultRuntime()
 	result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
-		AutoUpdateProviders: autoUpdate,
+		SkipProviderDownload: autoUpdate,
 	}, files...)
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not lint bundle files")
