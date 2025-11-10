@@ -9,8 +9,8 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.10.0
 	github.com/Masterminds/semver v1.5.0
 	github.com/abiosoft/colima v0.9.1
-	github.com/aws/aws-sdk-go-v2/config v1.31.16
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.89.1
+	github.com/aws/aws-sdk-go-v2/config v1.31.17
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.90.0
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -29,7 +29,7 @@ require (
 	github.com/mergestat/timediff v0.0.4
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.16.0
-	github.com/olekukonko/tablewriter v1.1.0
+	github.com/olekukonko/tablewriter v1.1.1
 	github.com/owenrumney/go-sarif/v2 v2.3.3
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
 	github.com/rs/zerolog v1.34.0
@@ -45,7 +45,7 @@ require (
 	go.mondoo.com/mondoo-go v0.0.0-20251029000449-1687c2e9d120
 	go.mondoo.com/ranger-rpc v0.7.1
 	gocloud.dev v0.43.0
-	golang.org/x/sys v0.37.0
+	golang.org/x/sys v0.38.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
@@ -91,30 +91,30 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.39.5 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.2 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.18.20 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.12 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.12 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.12 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.39.6 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.3 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.21 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.13 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.13 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.13 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.4 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.12 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.260.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.32.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.51.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.38.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.12 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.12 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.13 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.39.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.34.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.66.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.30.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.39.0 // indirect
-	github.com/aws/smithy-go v1.23.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.30.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.39.1 // indirect
+	github.com/aws/smithy-go v1.23.2 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.10.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -129,6 +129,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.10.2 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
+	github.com/clipperhouse/displaywidth v0.3.1 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
