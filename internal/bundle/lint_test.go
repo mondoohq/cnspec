@@ -19,7 +19,7 @@ func init() {
 	schema = runtime.Schema()
 }
 
-var testLintOptions = LintOptions{AutoUpdateProviders: true}
+var testLintOptions = LintOptions{SkipProviderDownload: true}
 
 func TestResults_SarifReport(t *testing.T) {
 	file := "./testdata/pass-rules.mql.yaml"

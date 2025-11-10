@@ -119,7 +119,7 @@ var policyPublishCmd = &cobra.Command{
 		if !noLint {
 			runtime := providers.DefaultRuntime()
 			result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
-				AutoUpdateProviders: autoUpdate,
+				SkipProviderDownload: autoUpdate,
 			}, files...)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not lint bundle files")

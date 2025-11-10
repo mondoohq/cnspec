@@ -30,7 +30,7 @@ const (
 )
 
 type LintOptions struct {
-	AutoUpdateProviders bool
+	SkipProviderDownload bool
 }
 
 // Lint loads a file and lints its content
@@ -93,7 +93,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 
 	// We have to check for required dependencies before we do anything else
 	if policyBundleForCompilation != nil {
-		err := policyBundleForCompilation.EnsureRequirements(true, opts.AutoUpdateProviders)
+		err := policyBundleForCompilation.EnsureRequirements(true, opts.SkipProviderDownload)
 		if err != nil {
 			aggregatedEntries = append(aggregatedEntries, &Entry{
 				RuleID:  BundleUnknownFieldRuleID,

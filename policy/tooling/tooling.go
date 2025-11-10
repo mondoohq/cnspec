@@ -22,11 +22,11 @@ func Format(data []byte) ([]byte, error) {
 }
 
 type LintOptions struct {
-	AutoUpdateProviders bool
+	SkipProviderDownload bool
 }
 
 func Lint(schema resources.ResourcesSchema, filename string, data []byte, opts LintOptions) []*bundlefmt.Entry {
 	return bundlefmt.LintPolicyBundle(schema, filename, data, bundlefmt.LintOptions{
-		AutoUpdateProviders: opts.AutoUpdateProviders,
+		SkipProviderDownload: opts.SkipProviderDownload,
 	})
 }
