@@ -142,7 +142,11 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not load policy bundle")
 		}
 
-		// we only need to auto update providers when linting is disabled
+		// Disabling auto-update with linting can lead to the case that users leverage the latest resources added
+		// to a provider but linting will fail if the latest version is not installed. Nevertheless, we want to support
+		// the use-case for ephemeral containers where all the provider versions stay static. This can be achieved by
+		// disabling auto-update. We keep auto-update as default to have a better cli experience.
+		// If linting is enabled, do not need to update the providers as this has been done during linting stage.
 		if err = policyBundle.EnsureRequirements(true, autoUpdate && noLint); err != nil {
 			log.Fatal().Err(err).Msg("could not install requirements")
 		}
