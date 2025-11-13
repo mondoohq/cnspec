@@ -222,6 +222,11 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 		return globalEmpty, err
 	}
 
+	err = s.DataLake.UpdateResources(ctx, req.AssetMrn, req.Resources)
+	if err != nil {
+		return globalEmpty, err
+	}
+
 	if s.Upstream != nil && !s.Incognito {
 		_, err := s.Upstream.PolicyResolver.StoreResults(ctx, req)
 		if err != nil {
@@ -229,6 +234,28 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 		}
 	}
 
+	return globalEmpty, nil
+}
+
+// GetUploadURL provides signed URLs for uploading data to the server
+func (s *LocalServices) GetUploadURL(ctx context.Context, req *GetUploadURLReq) (*GetUploadURLResp, error) {
+	// Only forward to upstream if we have one and are not in incognito mode
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.GetUploadURL(ctx, req)
+	}
+
+	// Local services don't need signed URLs - return empty response
+	return nil, status.Error(codes.Unimplemented, "local services do not support upload URLs")
+}
+
+// ReportUploadCompleted reports that the client has successfully uploaded data
+func (s *LocalServices) ReportUploadCompleted(ctx context.Context, req *ReportUploadCompletedReq) (*Empty, error) {
+	// Only forward to upstream if we have one and are not in incognito mode
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.ReportUploadCompleted(ctx, req)
+	}
+
+	// Local services don't need upload confirmation - return success
 	return globalEmpty, nil
 }
 
@@ -260,7 +287,7 @@ func (s *LocalServices) GetScore(ctx context.Context, req *EntityScoreReq) (*Rep
 	return &Report{
 		EntityMrn:  req.EntityMrn,
 		ScoringMrn: req.ScoreMrn,
-		Score:      &score,
+		Score:      score,
 	}, nil
 }
 
