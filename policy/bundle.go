@@ -1404,7 +1404,7 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 
 	// filters have no dependencies, so we can compile them early
 	if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
-		c.errors = append(c.errors, errors.New("failed to compile filters for query "+query.Mrn))
+		c.errors = append(c.errors, fmt.Errorf("failed to compile filters for query %s: %v", query.Mrn, err))
 		return nil
 	}
 
