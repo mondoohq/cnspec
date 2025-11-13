@@ -4,12 +4,63 @@
 package bundle
 
 import (
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnquery/v12/explorer"
+	"go.mondoo.com/cnquery/v12/utils/timex"
+	"go.mondoo.com/cnspec/v12/policy"
 	"gopkg.in/yaml.v3"
 )
+
+// SortContents the queries, policies and queries' variants in the bundle.
+func (p *Bundle) SortContents() {
+	sort.SliceStable(p.Queries, func(i, j int) bool {
+		if p.Queries[i].Mrn == "" || p.Queries[j].Mrn == "" {
+			return p.Queries[i].Uid < p.Queries[j].Uid
+		}
+		return p.Queries[i].Mrn < p.Queries[j].Mrn
+	})
+
+	sort.SliceStable(p.Policies, func(i, j int) bool {
+		if p.Policies[i].Mrn == "" || p.Policies[j].Mrn == "" {
+			return p.Policies[i].Uid < p.Policies[j].Uid
+		}
+		return p.Policies[i].Mrn < p.Policies[j].Mrn
+	})
+
+	for _, q := range p.Queries {
+		sort.SliceStable(q.Variants, func(i, j int) bool {
+			if q.Variants[i].Mrn == "" || q.Variants[j].Mrn == "" {
+				return q.Variants[i].Uid < q.Variants[j].Uid
+			}
+			return q.Variants[i].Mrn < q.Variants[j].Mrn
+		})
+	}
+	for _, pl := range p.Policies {
+		for _, g := range pl.Groups {
+			for _, q := range g.Queries {
+				sort.SliceStable(q.Variants, func(i, j int) bool {
+					if q.Variants[i].Mrn == "" || q.Variants[j].Mrn == "" {
+						return q.Variants[i].Uid < q.Variants[j].Uid
+					}
+					return q.Variants[i].Mrn < q.Variants[j].Mrn
+				})
+			}
+			for _, c := range g.Checks {
+				sort.SliceStable(c.Variants, func(i, j int) bool {
+					if c.Variants[i].Mrn == "" || c.Variants[j].Mrn == "" {
+						return c.Variants[i].Uid < c.Variants[j].Uid
+					}
+					return c.Variants[i].Mrn < c.Variants[j].Mrn
+				})
+			}
+		}
+	}
+}
 
 func (x *Impact) UnmarshalYAML(node *yaml.Node) error {
 	defer x.addFileContext(node)
@@ -165,4 +216,82 @@ func (x *RiskMagnitude) UnmarshalYAML(node *yaml.Node) error {
 		return errors.Wrap(err, "can't unmarshal risk magnitude")
 	}
 	return nil
+}
+
+func (x *HumanTime) MarshalYAML() (any, error) {
+	ts := time.Unix(x.Seconds, 0)
+	utcTs := ts.UTC()
+	var alias string
+	if utcTs.Hour() == 0 && utcTs.Minute() == 0 && utcTs.Second() == 0 {
+		alias = ts.UTC().Format(time.DateOnly)
+	} else {
+		alias = ts.Format(time.RFC3339)
+	}
+
+	node := yaml.Node{}
+	err := node.Encode(alias)
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = x.Comments.HeadComment
+	node.LineComment = x.Comments.LineComment
+	node.FootComment = x.Comments.FootComment
+	return node, nil
+}
+
+func (x *HumanTime) UnmarshalYAML(node *yaml.Node) error {
+	x.addFileContext(node)
+
+	var i int64
+	if err := node.Decode(&i); err == nil {
+		x.Seconds = i
+		return nil
+	}
+
+	var s string
+	if err := node.Decode(&s); err != nil {
+		return errors.New("failed to parse " + string(node.Value) + " as a time string: " + err.Error())
+	}
+
+	v, err := timex.Parse(s, "")
+	if err != nil {
+		return errors.New("failed to parse " + s + " as time: " + err.Error())
+	}
+
+	x.Seconds = v.Unix()
+	return nil
+}
+
+// MarshalYAML cannot be a pointer since group types are assigned as non-pointer to PolicyGroup
+func (x GroupType) MarshalYAML() (any, error) {
+	value := policy.GroupType_name[int32(x)]
+	value = strings.ToLower(value)
+
+	node := yaml.Node{}
+	err := node.Encode(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
+}
+
+// MarshalYAML cannot be a pointer since action are assigned as non-pointer to Mquery
+// see func (a *Action) UnmarshalJSON(data []byte) error in cnquery explorer package
+func (x Action) MarshalYAML() (any, error) {
+	value := explorer.Action_name[int32(x)]
+	value = strings.ToLower(value)
+
+	// preview into the default in v12 but proto still uses ignore internally
+	if value == "ignore" {
+		value = "preview"
+	}
+
+	node := yaml.Node{}
+	err := node.Encode(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
 }
