@@ -122,8 +122,8 @@ func GetPolicyLintRules() []LintRule {
 		},
 		{
 			ID:          PolicyMissingRequireRuleID,
-			Name:        "Policy Require Existence",
-			Description: "Ensures that policies define require providers.",
+			Name:        "Policy Require Providers",
+			Description: "Ensures that policies define required providers.",
 			Severity:    LevelWarning,
 			Run:         runRulePolicyRequireExist,
 		},
@@ -417,7 +417,7 @@ func runRulePolicyRequireExist(ctx *LintContext, item any) []*Entry {
 	if len(p.Require) == 0 {
 		entries = append(entries, &Entry{
 			RuleID:  PolicyMissingRequireRuleID,
-			Message: fmt.Sprintf("%s does not define any require providers", policyIdentifier(p)),
+			Message: fmt.Sprintf("%s does not define any required providers", policyIdentifier(p)),
 			Level:   LevelWarning,
 			Location: []Location{{
 				File:   ctx.FilePath,
