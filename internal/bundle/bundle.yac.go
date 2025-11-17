@@ -1770,9 +1770,9 @@ func (x *Remediation) addFileContext(node *yaml.Node) {
 }
 
 type Requirement struct {
-	Name        string      `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
 	Version     string      `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
 	Id          string      `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
+	Provider    string      `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty" yaml:"provider,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
 	Comments    Comments    `json:"-" yaml:"-"`
 }

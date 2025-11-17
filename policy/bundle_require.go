@@ -28,7 +28,11 @@ func (p *Bundle) EnsureRequirements(installIfNoRequire bool, autoUpdate bool) er
 		}
 
 		for _, require := range policy.Require {
-			if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: require.Id, ProviderName: require.Name}, autoUpdate, existing); err != nil {
+			// we only pull requirements that are providers for now, expand when we add more types
+			if require.Provider == "" {
+				continue
+			}
+			if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: require.Id, ProviderName: require.Provider}, autoUpdate, existing); err != nil {
 				return multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'")
 			}
 		}
