@@ -25,7 +25,7 @@ func TestParser(t *testing.T) {
 		Value: &ImpactValue{
 			Value: 70,
 		},
-		FileContext: FileContext{76, 13},
+		FileContext: FileContext{79, 13},
 	}, baseline.Queries[0].Impact)
 }
 
@@ -71,6 +71,36 @@ policies:
     - uid: sample-policy
       name: Sample Policy
       version: 1.0.0
+`
+	var b Bundle
+	err := yaml.Unmarshal([]byte(example), &b)
+	require.NoError(t, err)
+
+	out, err := yaml.Marshal(&b)
+	require.NoError(t, err)
+	assert.Equal(t, example, string(out))
+}
+
+// Validity is encoded as HumanTime and we check if this is converted properly
+func TestParseValidity(t *testing.T) {
+	example := `policies:
+    - uid: example1
+      name: Example policy 1
+      groups:
+        - filters: asset.family.contains('unix')
+          checks:
+            - uid: check-05
+              title: SSHd should only use very secure ciphers
+              impact: 95
+              mql: |
+                sshd.config.ciphers.all( _ == /ctr/ )
+        - type: override
+          title: Exception for strong ciphers until September
+          valid:
+            until: "2025-09-01"
+          checks:
+            - uid: check-05
+              action: preview
 `
 	var b Bundle
 	err := yaml.Unmarshal([]byte(example), &b)

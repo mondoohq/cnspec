@@ -58,6 +58,7 @@ const (
 	PolicyMissingVersionRuleID       = "policy-missing-version"
 	PolicyWrongVersionRuleID         = "policy-wrong-version"
 	PolicyRequiredTagsMissingRuleID  = "policy-required-tags-missing"
+	PolicyMissingRequireRuleID       = "policy-missing-require"
 )
 
 // GetPolicyLintRules returns a list of lint checks for policies.
@@ -118,6 +119,13 @@ func GetPolicyLintRules() []LintRule {
 			Description: "Ensures that queries assigned in policy groups exist globally or are valid embedded queries.",
 			Severity:    LevelError,
 			Run:         runRulePolicyAssignedQueriesExist,
+		},
+		{
+			ID:          PolicyMissingRequireRuleID,
+			Name:        "Policy Require Providers",
+			Description: "Ensures that policies define required providers.",
+			Severity:    LevelWarning,
+			Run:         runRulePolicyRequireExist,
 		},
 	}
 }
@@ -396,6 +404,27 @@ func runRulePolicyAssignedQueriesExist(ctx *LintContext, item any) []*Entry {
 				}
 			}
 		}
+	}
+	return entries
+}
+
+func runRulePolicyRequireExist(ctx *LintContext, item any) []*Entry {
+	p, ok := item.(*Policy)
+	if !ok {
+		return nil
+	}
+	var entries []*Entry
+	if len(p.Require) == 0 {
+		entries = append(entries, &Entry{
+			RuleID:  PolicyMissingRequireRuleID,
+			Message: fmt.Sprintf("%s does not define any required providers", policyIdentifier(p)),
+			Level:   LevelWarning,
+			Location: []Location{{
+				File:   ctx.FilePath,
+				Line:   p.FileContext.Line,
+				Column: p.FileContext.Column,
+			}},
+		})
 	}
 	return entries
 }
