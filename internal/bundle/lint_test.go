@@ -234,6 +234,6 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, 1, len(results.Entries))
 		assert.Equal(t, "Bundle file fail-bundle-unknown-field.mql.yaml contains unknown fields: error unmarshaling JSON: while decoding JSON: json: unknown field \"unknown_field\"", results.Entries[0].Message)
 		assert.Equal(t, "bundle-unknown-field", results.Entries[0].RuleID)
-		assert.Equal(t, "error", results.Entries[0].Level)
+		assert.Equal(t, "warning", results.Entries[0].Level)
 	})
 }

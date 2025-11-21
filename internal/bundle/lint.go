@@ -81,7 +81,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 		aggregatedEntries = append(aggregatedEntries, &Entry{
 			RuleID:  BundleUnknownFieldRuleID,
 			Message: fmt.Sprintf("Bundle file %s contains unknown fields: %s", filepath.Base(filename), err.Error()),
-			Level:   LevelError,
+			Level:   LevelWarning,
 			Location: []Location{{
 				File:   filename,
 				Line:   1,
