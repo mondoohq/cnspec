@@ -36,10 +36,17 @@ func NewScanDataStoreWrapper(store ScanDataStore, expectedAssetMrn string) *Scan
 	}
 }
 
-// WriteScore writes a single score, verifying the asset MRN matches
-func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, score *policy.Score) error {
+func (w *ScanDataStoreWrapper) validate(assetMrn string) error {
 	if assetMrn != w.assetMrn {
 		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	}
+	return nil
+}
+
+// WriteScore writes a single score, verifying the asset MRN matches
+func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, score *policy.Score) error {
+	if err := w.validate(assetMrn); err != nil {
+		return err
 	}
 
 	return w.store.WriteScores(ctx, []*policy.Score{score})
@@ -47,8 +54,8 @@ func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, 
 
 // GetScore retrieves a score by ID, verifying the asset MRN matches
 func (w *ScanDataStoreWrapper) GetScore(ctx context.Context, assetMrn string, scoreID string) (*policy.Score, error) {
-	if assetMrn != w.assetMrn {
-		return nil, fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return nil, err
 	}
 
 	return w.store.GetScore(ctx, scoreID)
@@ -56,16 +63,16 @@ func (w *ScanDataStoreWrapper) GetScore(ctx context.Context, assetMrn string, sc
 
 // WriteData writes a single data result, verifying the asset MRN matches
 func (w *ScanDataStoreWrapper) WriteData(ctx context.Context, assetMrn string, data *llx.Result) error {
-	if assetMrn != w.assetMrn {
-		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return err
 	}
 
 	return w.store.WriteData(ctx, []*llx.Result{data})
 }
 
 func (w *ScanDataStoreWrapper) WriteResource(ctx context.Context, assetMrn string, resource *llx.ResourceRecording) error {
-	if assetMrn != w.assetMrn {
-		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return err
 	}
 
 	return w.store.WriteResource(ctx, resource)
@@ -73,32 +80,31 @@ func (w *ScanDataStoreWrapper) WriteResource(ctx context.Context, assetMrn strin
 
 // GetData retrieves data by query ID, verifying the asset MRN matches
 func (w *ScanDataStoreWrapper) GetData(ctx context.Context, assetMrn string, qrId string) (*llx.Result, error) {
-	if assetMrn != w.assetMrn {
-		return nil, fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return nil, err
 	}
 
 	return w.store.GetData(ctx, qrId)
 }
 
 func (w *ScanDataStoreWrapper) WriteRisk(ctx context.Context, assetMrn string, risk *policy.ScoredRiskFactor) error {
-	if assetMrn != w.assetMrn {
-		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return err
 	}
-
 	return w.store.WriteRisk(ctx, risk)
 }
 
 func (w *ScanDataStoreWrapper) GetRisk(ctx context.Context, assetMrn string, riskID string) (*policy.ScoredRiskFactor, error) {
-	if assetMrn != w.assetMrn {
-		return nil, fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return nil, err
 	}
 
 	return w.store.GetRisk(ctx, riskID)
 }
 
 func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string, f func(risk *policy.ScoredRiskFactor) error) error {
-	if assetMrn != w.assetMrn {
-		return fmt.Errorf("asset MRN mismatch: expected %s, got %s", w.assetMrn, assetMrn)
+	if err := w.validate(assetMrn); err != nil {
+		return err
 	}
 
 	err := w.store.StreamRisks(ctx, func(risk *policy.ScoredRiskFactor) error {
