@@ -29,7 +29,7 @@ require (
 	github.com/mergestat/timediff v0.0.4
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.16.0
-	github.com/olekukonko/tablewriter v1.1.1
+	github.com/olekukonko/tablewriter v1.1.0
 	github.com/owenrumney/go-sarif/v2 v2.3.3
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
 	github.com/rs/zerolog v1.34.0
