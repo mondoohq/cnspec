@@ -78,12 +78,12 @@ func sarifLinterRules() []Rule {
 		Description: "UID does not meet naming requirements",
 	})
 	rules = append(rules, Rule{
-		ID:          "policy-uid-unique",
+		ID:          PolicyUidUniqueRuleID,
 		Name:        "Policy UID uniqueness",
 		Description: "Policy UID must be unique within the file",
 	})
 	rules = append(rules, Rule{
-		ID:          "query-uid-unique",
+		ID:          QueryUidUniqueRuleID,
 		Name:        "Query UID uniqueness",
 		Description: "Query UID must be unique within the file",
 	})
@@ -104,7 +104,7 @@ func (r *Results) SarifReport(rootDir string) (*sarif.Report, error) {
 		return nil, err
 	}
 
-	// create a run for tfsec
+	// create a run for cnspec
 	run := sarif.NewRunWithInformationURI("cnspec", "https://cnspec.io")
 
 	// create a new rule for each rule id
