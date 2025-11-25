@@ -177,9 +177,6 @@ var policyUploadCmd = &cobra.Command{
 		}
 		config.DisplayUsedConfig()
 
-		if err := ensureProviders(); err != nil {
-			log.Fatal().Err(err).Msg("could not initialize providers")
-		}
 		noLint := viper.GetBool("no-lint")
 		if !noLint {
 			files, err := policy.WalkPolicyBundleFiles(args[0])
@@ -187,8 +184,15 @@ var policyUploadCmd = &cobra.Command{
 				log.Fatal().Err(err).Msg("could not find bundle files")
 			}
 
+			autoUpdate := true
+			if viper.IsSet("auto-update") {
+				autoUpdate = viper.GetBool("auto-update")
+			}
+
 			runtime := providers.DefaultRuntime()
-			result, err := bundle.Lint(runtime.Schema(), files...)
+			result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
+				SkipProviderDownload: autoUpdate,
+			}, files...)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not lint bundle files")
 			}
@@ -613,11 +617,17 @@ var policyFmtCmd = &cobra.Command{
 
 func runPolicyFmt(cmd *cobra.Command, args []string) {
 	sort, _ := cmd.Flags().GetBool("sort")
-	if err := ensureProviders(); err != nil {
-		log.Fatal().Err(err).Msg("could not initialize providers")
+
+	autoUpdate := true
+	if viper.IsSet("auto-update") {
+		autoUpdate = viper.GetBool("auto-update")
 	}
+
 	for _, path := range args {
-		err := bundle.FormatRecursive(path, sort)
+		err := bundle.FormatRecursive(path, bundle.FormatOptions{
+			SortContents:        sort,
+			AutoUpdateProviders: autoUpdate,
+		})
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -645,15 +655,10 @@ var policyLintCmd = &cobra.Command{
 
 func runPolicyLint(cmd *cobra.Command, args []string) {
 	log.Info().Str("file", args[0]).Msg("lint policy bundle")
+
 	autoUpdate := true
 	if viper.IsSet("auto-update") {
 		autoUpdate = viper.GetBool("auto-update")
-	}
-	if autoUpdate {
-		log.Info().Msg("checking for provider updates...")
-		if err := ensureProviders(); err != nil {
-			log.Fatal().Err(err).Msg("could not initialize providers")
-		}
 	}
 
 	files, err := policy.WalkPolicyBundleFiles(args[0])
@@ -662,7 +667,9 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 	}
 
 	runtime := providers.DefaultRuntime()
-	result, err := bundle.Lint(runtime.Schema(), files...)
+	result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
+		SkipProviderDownload: autoUpdate,
+	}, files...)
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not lint bundle files")
 	}
