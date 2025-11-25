@@ -52,11 +52,6 @@ prep/tools/windows:
 	go get -u gotest.tools/gotestsum
 
 prep/tools:
-	# protobuf tooling
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install go.mondoo.com/ranger-rpc/protoc-gen-rangerrpc@latest
-	go install go.mondoo.com/ranger-rpc/protoc-gen-rangerrpc-swagger@latest
-	go install github.com/planetscale/vtprotobuf/cmd/protoc-gen-go-vtproto@latest
 	# additional helper
 	go install gotest.tools/gotestsum@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest

@@ -18,7 +18,7 @@ import (
 // Why do we want the scan stuff as a proto? Because we have a disk queue
 // and it makes it easier and faster to serialize.
 
-//go:generate protoc --proto_path=../../:../../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. scan.proto
+//go:generate protoc --plugin=protoc-gen-go=../../scripts/protoc/protoc-gen-go --plugin=protoc-gen-rangerrpc=../../scripts/protoc/protoc-gen-rangerrpc --proto_path=../../:../../cnquery:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. scan.proto
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
