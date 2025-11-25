@@ -18,16 +18,9 @@ import (
 	"go.mondoo.com/cnspec/v12/policy/scandb"
 )
 
-func NewServices(runtime llx.Runtime) (*inmemory.Db, *policy.LocalServices, error) {
-	// Reuses the inmemory datalake. All collected data is stored in sqlite via the ScanDataStoreWrapper,
-	// however everything else reuses the inmemory implementation
-	return inmemory.NewServices(runtime)
-}
-
 func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
 	err := withSqliteDataStore(assetMrn, func(scanDataStore scandb.ScanDataStore) error {
-		db, ls, err := NewServices(runtime)
-		db.SetDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn))
+		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
 
 		if err != nil {
 			return err

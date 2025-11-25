@@ -118,8 +118,16 @@ func (n *cacheDataWriter) WriteResource(ctx context.Context, assetMrn string, re
 	return nil
 }
 
+type ServiceOpt func(*Db)
+
+func WithDataWriter(writer DataStore) ServiceOpt {
+	return func(db *Db) {
+		db.writer = writer
+	}
+}
+
 // NewServices creates a new set of policy services
-func NewServices(runtime llx.Runtime) (*Db, *policy.LocalServices, error) {
+func NewServices(runtime llx.Runtime, opts ...ServiceOpt) (*Db, *policy.LocalServices, error) {
 	var cache kvStore = newKissDb()
 
 	resolvedPolicyCache := NewResolvedPolicyCache(0)
@@ -130,15 +138,14 @@ func NewServices(runtime llx.Runtime) (*Db, *policy.LocalServices, error) {
 		resolvedPolicyCache: resolvedPolicyCache,
 		writer:              &cacheDataWriter{cache: cache},
 	}
+	for _, opt := range opts {
+		opt(db)
+	}
 
 	services := policy.NewLocalServices(db, runtime)
 	db.services = services // close the connection between db and services
 
 	return db, services, nil
-}
-
-func (db *Db) SetDataWriter(writer DataStore) {
-	db.writer = writer
 }
 
 func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
