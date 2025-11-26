@@ -174,16 +174,76 @@ message Bundle {
   repeated MigrationGroup migration_groups = 11;
 }
 
-// MigrationGroup contains a set of migrations for a policy collection.
-// The policy should generally contain the UID and affected version.
+// MigrationGroup contains staged migrations for policy version upgrades.
+// Migrations are executed sequentially, stage by stage, to handle complex
+// dependency scenarios including chains, cycles, and splits.
 message MigrationGroup {
-  Policy policy = 1; // only informational fields will be used (version)
+  // Identity policy - only informational fields will be used (version)
+  Policy policy = 1;
+
+  // Deprecated: single stage migration, will be converted to stages server-side
+  // Retained for backwards-compatibility
+  repeated Migration migrations = 2;
+
+  // Tracking metadata for audit purposes (validated server-side)
+  MigrationDetails details = 3;
+
+  // Optional policy MRN/version migration
+  // Used to tie policy bundle sha with source and destination
+  PolicyVersionMigration policy_migration = 4;
+
+  // Migration stages executed in array order (0-4)
+  // All 5 stages must be present, even if empty
+  // [0] = Phase 1: Deletions
+  // [1] = Phase 2: Cycle temp migrations
+  // [2] = Phase 3: Acyclic migrations
+  // [3] = Phase 4: Complete cycle migrations
+  // [4] = Phase 5: Create new exceptions (reverting failed deletions)
+  repeated MigrationStage stages = 5;
+  map<string,string> labels = 6;
+}
+
+// MigrationDetails contains tracking metadata for audit purposes
+message MigrationDetails {
+  // Globally unique migration ID
+  // Auto-incremented by the server; leave blank client-side
+  uint64 id = 1;
+
+  // Time the migration was created (set server-side)
+  int64 created_at = 2;
+}
+
+// PolicyVersionMigration describes a policy version upgrade path
+message PolicyVersionMigration {
+  // Source policy version
+  MigrationSource from = 1;
+
+  // Target policy version
+  MigrationDestination to = 2;
+}
+
+// MigrationStage groups migrations that must execute together in a specific phase.
+// Migrations in a stage can span multiple policies within the bundle.
+message MigrationStage {
+  // Human-readable stage title
+  // Expected values:
+  // - "Phase 1: Deletions (required to come first)"
+  // - "Phase 2: Cycle temp migrations (if cycles detected)"
+  // - "Phase 3: Acyclic migrations (topologically sorted)"
+  // - "Phase 4: Complete cycle migrations"
+  // - "Phase 5: Create new exceptions (optional)"
+  string title = 1;
+
+  // Migrations to execute in this stage (may be empty)
+  // Contains query migrations across all policies in policy_migrations
   repeated Migration migrations = 2;
 }
 
-// Migration is an action performed on a matching policy.
-// This is generally performed to track changes in UIDs from old policies
-// to new policies.
+// Migration describes a single query migration operation.
+// The action is implicit based on which fields are set:
+// - old_mrn empty, new_mrns set = CREATE (new query added)
+// - old_mrn set, new_mrns empty = REMOVE (query deleted)
+// - both set = MODIFY (query uid changed or split)
 message Migration {
   enum Action {
     UNSPECIFIED = 0;
@@ -192,17 +252,34 @@ message Migration {
     MODIFY = 3;
   }
 
-  MigrationMatch match = 1;
-  MigrationDelta target = 2;
-  Action action = 3;
+  // Legacy fields - deprecated but retained for compatibility
+  MigrationSource source = 1;       // deprecated: use old_mrn instead
+  MigrationDestination target = 2;  // deprecated: use new_mrns instead
+  Action action = 3;                // Still valid and required
+
+  // New fields for direct MRN storage
+  // Source query MRN to migrate from
+  // Required for: REMOVE, MODIFY
+  // Must be empty for: CREATE
+  string old_mrn = 4;
+
+  // Target query MRN(s) to migrate to
+  // Required for: CREATE, MODIFY
+  // Must be empty for: REMOVE
+  // Supports 1:N splits when multiple MRNs are specified
+  repeated string new_mrns = 5;
 }
 
-message MigrationMatch {
+// MigrationSource identifies the source query for migration (deprecated)
+message MigrationSource {
   string uid = 1;
+  string sha256 = 2;
 }
 
-message MigrationDelta {
+// MigrationDestination identifies the target query for migration (deprecated)
+message MigrationDestination {
   string uid = 1;
+  string sha256 = 2;
 }
 
 enum ScopeType {
