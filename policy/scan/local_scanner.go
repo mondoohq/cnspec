@@ -37,6 +37,7 @@ import (
 	"go.mondoo.com/cnquery/v12/utils/slicesx"
 	"go.mondoo.com/cnspec/v12"
 	"go.mondoo.com/cnspec/v12/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v12/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/v12/policy"
 	"go.mondoo.com/cnspec/v12/policy/executor"
 	ranger "go.mondoo.com/ranger-rpc"
@@ -676,24 +677,18 @@ func (s *LocalScanner) upstreamClient(ctx context.Context, conf *upstream.Upstre
 func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	var res *AssetReport
 	var policyErr error
-
-	runtimeErr := inmemory.WithDb(s.runtime, func(db *inmemory.Db, services *policy.LocalServices) error {
-		if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
-			log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
-			client, err := s.upstreamClient(job.Ctx, job.UpstreamConfig)
-			if err != nil {
-				return err
-			}
-
-			upstream, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
-			if err != nil {
-				return err
-			}
-			services.Upstream = upstream
+	var client *upstream.UpstreamClient
+	if job.UpstreamConfig.ApiEndpoint != "" && !job.UpstreamConfig.Incognito {
+		var err error
+		log.Debug().Msg("using API endpoint " + job.UpstreamConfig.ApiEndpoint)
+		client, err = s.upstreamClient(job.Ctx, job.UpstreamConfig)
+		if err != nil {
+			return nil, err
 		}
+	}
 
+	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset.Mrn, client, func(services *policy.LocalServices) error {
 		scanner := &localAssetScanner{
-			db:               db,
 			services:         services,
 			job:              job,
 			fetcher:          s.fetcher,
@@ -833,7 +828,6 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.Up
 }
 
 type localAssetScanner struct {
-	db       *inmemory.Db
 	services *policy.LocalServices
 	job      *AssetJob
 	fetcher  *fetcher
@@ -853,6 +847,23 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	resolvedPolicy, err := s.runPolicy()
 	if err != nil {
 		return nil, err
+	}
+
+	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
+		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
+		recording := s.Runtime.Recording()
+		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
+		if !ok {
+			log.Debug().Msg("not storing resource data for this asset, nothing available")
+		} else {
+			_, err = s.services.StoreResults(context.Background(), &policy.StoreResultsReq{
+				AssetMrn:  s.job.Asset.Mrn,
+				Resources: data,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	ar := &AssetReport{
@@ -1105,23 +1116,6 @@ func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*p
 		}, err
 	}
 
-	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
-		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
-		recording := s.Runtime.Recording()
-		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
-		if !ok {
-			log.Debug().Msg("not storing resource data for this asset, nothing available")
-		} else {
-			_, err = resolver.StoreResults(context.Background(), &policy.StoreResultsReq{
-				AssetMrn:  s.job.Asset.Mrn,
-				Resources: data,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
 	report, err := resolver.GetReport(s.job.Ctx, &policy.EntityScoreReq{
 		// NOTE: we assign policies to the asset before we execute the tests, therefore this resolves all policies assigned to the asset
@@ -1187,4 +1181,14 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 		log.Error().Err(err).Msg("failed to send error to mondoo platform")
 		return
 	}
+}
+
+func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+	var withServicesFunc func(context.Context, llx.Runtime, string, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
+	if cnquery.IsFeatureActive(ctx, cnquery.UploadResultsV2) {
+		withServicesFunc = sqlite.WithServices
+	} else {
+		withServicesFunc = inmemory.WithServices
+	}
+	return withServicesFunc(ctx, runtime, assetMrn, upstreamClient, f)
 }
