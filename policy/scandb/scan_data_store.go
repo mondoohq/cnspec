@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/cnspec/v12"
 	"go.mondoo.com/cnspec/v12/policy"
 	"go.mondoo.com/cnspec/v12/policy/scandb/sqlc"
 	"google.golang.org/protobuf/proto"
@@ -27,6 +28,8 @@ type UploadFileMetadata struct {
 	AssetMrn        string `json:"asset_mrn"`
 	UploadSessionId string `json:"upload_session_id"`
 	CreatedAt       string `json:"created_at"`
+	ClientVersion   string `json:"client_version"`
+	ClientBuild     string `json:"client_build"`
 }
 
 type ScanDataStoreReader interface {
@@ -139,6 +142,8 @@ func (s *SqliteScanDataStore) insertMetadata() error {
 		"schema_version": SchemaVersion,
 		"asset_mrn":      s.assetMrn,
 		"created_at":     time.Now().Format(time.RFC3339),
+		"client_version": cnspec.GetVersion(),
+		"client_build":   cnspec.GetBuild(),
 	}
 
 	for key, value := range metadata {
@@ -283,6 +288,8 @@ func (s *SqliteScanDataStore) GetMetadata() (*UploadFileMetadata, error) {
 		AssetMrn:        rawMetadata["asset_mrn"],
 		UploadSessionId: rawMetadata["upload_session_id"],
 		CreatedAt:       rawMetadata["created_at"],
+		ClientVersion:   rawMetadata["client_version"],
+		ClientBuild:     rawMetadata["client_build"],
 	}
 
 	return metadata, nil

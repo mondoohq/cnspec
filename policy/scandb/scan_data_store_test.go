@@ -125,6 +125,8 @@ func TestSqliteScanDataStore(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, SchemaVersion, metadata.SchemaVersion)
 		assert.Equal(t, assetMrn, metadata.AssetMrn)
+		assert.NotEmpty(t, metadata.ClientVersion)
+		assert.NotEmpty(t, metadata.ClientBuild)
 
 		// Read scores
 		var scores []*policy.Score
