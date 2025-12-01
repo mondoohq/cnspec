@@ -744,11 +744,11 @@ func (x *ImpactValue) addFileContext(node *yaml.Node) {
 }
 
 type Migration struct {
-	Match       *MigrationMatch  `protobuf:"bytes,1,opt,name=match,proto3" json:"match,omitempty" yaml:"match,omitempty"`
-	Target      *MigrationDelta  `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty" yaml:"target,omitempty"`
-	Action      Migration_Action `protobuf:"varint,3,opt,name=action,proto3,enum=cnspec.policy.v1.Migration_Action" json:"action,omitempty" yaml:"action,omitempty"`
-	FileContext FileContext      `json:"-" yaml:"-"`
-	Comments    Comments         `json:"-" yaml:"-"`
+	Source      *MigrationSource      `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty" yaml:"source,omitempty"`
+	Destination *MigrationDestination `protobuf:"bytes,2,opt,name=destination,proto3" json:"destination,omitempty" yaml:"destination,omitempty"`
+	Action      Migration_Action      `protobuf:"varint,3,opt,name=action,proto3,enum=cnspec.policy.v1.Migration_Action" json:"action,omitempty" yaml:"action,omitempty"`
+	FileContext FileContext           `json:"-" yaml:"-"`
+	Comments    Comments              `json:"-" yaml:"-"`
 }
 
 func (x *Migration) UnmarshalYAML(node *yaml.Node) error {
@@ -794,15 +794,16 @@ func (d Migration) MarshalYAML() (any, error) {
 	return node, nil
 }
 
-type MigrationDelta struct {
+type MigrationDestination struct {
+	Sha256      string      `protobuf:"bytes,20,opt,name=sha256,proto3" json:"sha256,omitempty" yaml:"sha256,omitempty"`
 	Uid         string      `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
 	Comments    Comments    `json:"-" yaml:"-"`
 }
 
-func (x *MigrationDelta) UnmarshalYAML(node *yaml.Node) error {
+func (x *MigrationDestination) UnmarshalYAML(node *yaml.Node) error {
 	// prevent recursive calls into UnmarshalYAML with a placeholder type
-	type tmp MigrationDelta
+	type tmp MigrationDestination
 	err := node.Decode((*tmp)(x))
 	if err != nil {
 		return err
@@ -830,8 +831,8 @@ func (x *MigrationDelta) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MigrationDelta) MarshalYAML() (any, error) {
-	type alias MigrationDelta
+func (d MigrationDestination) MarshalYAML() (any, error) {
+	type alias MigrationDestination
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
 	if err != nil {
@@ -844,10 +845,13 @@ func (d MigrationDelta) MarshalYAML() (any, error) {
 }
 
 type MigrationGroup struct {
-	Policy      *Policy      `protobuf:"bytes,1,opt,name=policy,proto3" json:"policy,omitempty" yaml:"policy,omitempty"`
-	Migrations  []*Migration `protobuf:"bytes,2,rep,name=migrations,proto3" json:"migrations,omitempty" yaml:"migrations,omitempty"`
-	FileContext FileContext  `json:"-" yaml:"-"`
-	Comments    Comments     `json:"-" yaml:"-"`
+	Policy          *Policy            `protobuf:"bytes,1,opt,name=policy,proto3" json:"policy,omitempty" yaml:"policy,omitempty"`
+	Migrations      []*Migration       `protobuf:"bytes,2,rep,name=migrations,proto3" json:"migrations,omitempty" yaml:"migrations,omitempty"`
+	PolicyMigration *Migration         `protobuf:"bytes,3,opt,name=policy_migration,json=policyMigration,proto3" json:"policy_migration,omitempty" yaml:"policy_migration,omitempty"`
+	Stages          []*MigrationStage  `protobuf:"bytes,4,rep,name=stages,proto3" json:"stages,omitempty" yaml:"stages,omitempty"`
+	Metadata        *MigrationMetadata `protobuf:"bytes,20,opt,name=metadata,proto3" json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	FileContext     FileContext        `json:"-" yaml:"-"`
+	Comments        Comments           `json:"-" yaml:"-"`
 }
 
 func (x *MigrationGroup) UnmarshalYAML(node *yaml.Node) error {
@@ -893,15 +897,17 @@ func (d MigrationGroup) MarshalYAML() (any, error) {
 	return node, nil
 }
 
-type MigrationMatch struct {
-	Uid         string      `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	FileContext FileContext `json:"-" yaml:"-"`
-	Comments    Comments    `json:"-" yaml:"-"`
+type MigrationMetadata struct {
+	Id          string            `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty" yaml:"id,omitempty"`
+	CreatedAt   *Timestamp        `protobuf:"bytes,2,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty" yaml:"created_at,omitempty"`
+	Labels      map[string]string `protobuf:"bytes,20,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"labels,omitempty"`
+	FileContext FileContext       `json:"-" yaml:"-"`
+	Comments    Comments          `json:"-" yaml:"-"`
 }
 
-func (x *MigrationMatch) UnmarshalYAML(node *yaml.Node) error {
+func (x *MigrationMetadata) UnmarshalYAML(node *yaml.Node) error {
 	// prevent recursive calls into UnmarshalYAML with a placeholder type
-	type tmp MigrationMatch
+	type tmp MigrationMetadata
 	err := node.Decode((*tmp)(x))
 	if err != nil {
 		return err
@@ -929,8 +935,108 @@ func (x *MigrationMatch) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d MigrationMatch) MarshalYAML() (any, error) {
-	type alias MigrationMatch
+func (d MigrationMetadata) MarshalYAML() (any, error) {
+	type alias MigrationMetadata
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type MigrationSource struct {
+	Sha256      string      `protobuf:"bytes,20,opt,name=sha256,proto3" json:"sha256,omitempty" yaml:"sha256,omitempty"`
+	Uid         string      `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *MigrationSource) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp MigrationSource
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d MigrationSource) MarshalYAML() (any, error) {
+	type alias MigrationSource
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type MigrationStage struct {
+	Migrations  []*Migration `protobuf:"bytes,2,rep,name=migrations,proto3" json:"migrations,omitempty" yaml:"migrations,omitempty"`
+	Title       string       `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	FileContext FileContext  `json:"-" yaml:"-"`
+	Comments    Comments     `json:"-" yaml:"-"`
+}
+
+func (x *MigrationStage) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp MigrationStage
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d MigrationStage) MarshalYAML() (any, error) {
+	type alias MigrationStage
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
 	if err != nil {
@@ -2090,6 +2196,56 @@ func (x *SoftwareSelector) UnmarshalYAML(node *yaml.Node) error {
 
 func (d SoftwareSelector) MarshalYAML() (any, error) {
 	type alias SoftwareSelector
+	node := yaml.Node{}
+	err := node.Encode(alias(d))
+	if err != nil {
+		return nil, err
+	}
+	node.HeadComment = d.Comments.HeadComment
+	node.LineComment = d.Comments.LineComment
+	node.FootComment = d.Comments.FootComment
+	return node, nil
+}
+
+type Timestamp struct {
+	Seconds     int64       `protobuf:"varint,1,opt,name=seconds,proto3" json:"seconds,omitempty" yaml:"seconds,omitempty"`
+	Nanos       int32       `protobuf:"varint,2,opt,name=nanos,proto3" json:"nanos,omitempty" yaml:"nanos,omitempty"`
+	FileContext FileContext `json:"-" yaml:"-"`
+	Comments    Comments    `json:"-" yaml:"-"`
+}
+
+func (x *Timestamp) UnmarshalYAML(node *yaml.Node) error {
+	// prevent recursive calls into UnmarshalYAML with a placeholder type
+	type tmp Timestamp
+	err := node.Decode((*tmp)(x))
+	if err != nil {
+		return err
+	}
+
+	x.FileContext.Column = node.Column
+	x.FileContext.Line = node.Line
+
+	headComment := node.HeadComment
+	if headComment == "" && len(node.Content) > 1 {
+		headComment = node.Content[0].HeadComment
+	}
+
+	lineComment := node.LineComment
+
+	footComment := node.FootComment
+	if footComment == "" && len(node.Content) > 1 {
+		last := len(node.Content) - 1
+		footComment = node.Content[last].FootComment
+	}
+
+	x.Comments.HeadComment = headComment
+	x.Comments.LineComment = lineComment
+	x.Comments.FootComment = footComment
+	return nil
+}
+
+func (d Timestamp) MarshalYAML() (any, error) {
+	type alias Timestamp
 	node := yaml.Node{}
 	err := node.Encode(alias(d))
 	if err != nil {

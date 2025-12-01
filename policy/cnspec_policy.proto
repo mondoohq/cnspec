@@ -176,60 +176,39 @@ message Bundle {
 }
 
 message MigrationGroup {
-  // identity policy
+  // Information about the policy that is being migrated
   Policy policy = 1;
-  // Deprecated: single stage migration, in server will be converted to stages
-  
-  // stays here for backwards-compatibility
-  repeated Migration migrations = 2;  // Tracking metadata for audit purposes (validated server-side)
-  MigrationDetails details = 3;  // optional policy uid migration
-  // We need to figure out if this is required so that we tie policy bundle
-  // sha with source and destination
-  Migration policy_migration = 4; 
-  // Labels
-  map<string,string> label = 5;  // Migration stages executed in array order (0-3)
-  // All 5 stages must be present, even if empty
-  // [0] = stage 1: Deletions
-  // [1] = stage 2: Cycle temp migrations
-  // [2] = stage 3: Acyclic migrations
-  // [3] = stage 4: Complete cycle migrations
-  // [4] = stage 5: Create new exception (reverting failed deletions)
-  repeated MigrationStage stages = 6; // we are validating the 5 stages in code, maybe we need more stages later
+  // Deprecated: single stage migration
+  repeated Migration migrations = 2;
+  // Optional: Migration for the policy itself
+  Migration policy_migration = 3;
+  // Migration stages defined multiple migration step, order is guaranteed
+  // for the states but not for the migrations within the state
+  repeated MigrationStage stages = 4;
+  // Additional metadata about the migration
+  MigrationMetadata metadata = 20;
 }
 
-// MigrationManifest contains tracking metadata for audit purposes
-message MigrationDetails {
-  // Globally unique migration ID
-  // Most likely we will auto-increment it by the server
-  // Then, the field should be left blank client-side
-  uint64 id = 1;
-
+// MigrationMetadata contains metadata for audit purposes
+message MigrationMetadata {
+  // Migration ID
+  string id = 1;
   // Time the migration was created
   google.protobuf.Timestamp created_at = 2;
+  // Labels
+  map<string,string> labels = 20;
 }
 
-// MigrationStage groups migrations that must execute together in a specific phase
-// Migrations in a stage can span multiple policies within the bundle
+// MigrationStage groups migrations that must execute together in a specific
+// order together
 message MigrationStage {
   // Human-readable stage title
-  // Expected values:
-  // - "Phase 1: Deletions (required to come first)"
-  // - "Phase 2: Cycle temp migrations (if cycles detected)"
-  // - "Phase 3: Acyclic migrations (topologically sorted)"
-  // - "Phase 4: Complete cycle migrations"
-  // - "Phase 5: Create new exceptions (optional)"
   string title = 1;
-
-  // Migrations to execute in this stage (may be empty)
-  // Contains query migrations across all policies in policy_migrations
+  // Migrations to execute, they are not guaranteed to be executed in order.
   repeated Migration migrations = 2;
 }
 
 // Migration describes a single query migration operation.
-// The action is implicit based on which fields are set:
-// - old_mrn empty, new_mrns set = CREATE (new query added)
-// - old_mrn set, new_mrns empty = REMOVE (query deleted)
-// - both set = MODIFY (query uid changed or split)
 message Migration {
   enum Action {
     UNSPECIFIED = 0;
@@ -237,23 +216,26 @@ message Migration {
     REMOVE = 2;
     MODIFY = 3;
   }
-
-  // Legacy fields - re-written to new fields in server
-  MigrationSource source = 1;           // re-written, to take MigrationSource object
+  // Required: Source that is being migration
+  MigrationSource source = 1;
+  // Destination for the migration. Required for MODIFY.
   MigrationDestination destination = 2;
-  Action action = 3;            // Still valid and required
+  // Required: Action that should be applied to the source
+  Action action = 3;
 }
 
 // MigrationSource identifies the source query for migration
 message MigrationSource {
+  // UID of the source
   string uid = 1;
-  string sha256 = 2;
+  string sha256 = 20;
 }
 
 // MigrationDestination identifies the target query for migration
 message MigrationDestination {
+  // UID of the destination
   string uid = 1;
-  string sha256 = 2;
+  string sha256 = 20;
 }
 
 enum ScopeType {
