@@ -80,7 +80,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("report-type")
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
-	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "If any risk is greater or equal to this, exitstatus is 1.")
+	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "If any risk is greater or equal to this, exit status is 1.")
 	_ = scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
 }
 
