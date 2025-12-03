@@ -60,7 +60,7 @@ resource "google_sql_database" "mysql_database" {
 }
 
 # Create a user for the database
-resource "google_sql_user" "user" {
+resource "google_sql_user" "user_mysql" {
   name     = var.user_name
   instance = google_sql_database_instance.mysql_public_instance.name
   password = var.user_password
