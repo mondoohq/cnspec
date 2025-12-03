@@ -7,12 +7,14 @@ resource "google_sql_database_instance" "mysql_public_instance" {
   settings {
     tier = var.tier
 
-    // SSL connection encryption
-    ssl_mode = "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
+
 
     # Configure IP connectivity - public IP enabled
     ip_configuration {
       ipv4_enabled = true # Enable public IP
+
+      // SSL connection encryption
+      ssl_mode = "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
 
       # Configure authorized networks to restrict access
       # This limits public access to specific IP addresses
