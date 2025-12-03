@@ -10,7 +10,7 @@ resource "google_sql_database_instance" "mysql_public_instance" {
 
     # Configure IP connectivity - public IP enabled
     ip_configuration {
-      ipv4_enabled = false # Enable public IP
+      ipv4_enabled = true # Enable public IP
 
       // SSL connection encryption
       ssl_mode = "ENCRYPTED_ONLY"
