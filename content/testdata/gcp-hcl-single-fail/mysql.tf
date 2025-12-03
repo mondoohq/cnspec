@@ -42,13 +42,13 @@ resource "google_sql_database_instance" "mysql_public_instance" {
 }
 
 # Create a database within the MySQL instance
-resource "google_sql_database" "database" {
+resource "google_sql_database" "mysql_database" {
   name     = var.database_name
   instance = google_sql_database_instance.mysql_public_instance.name
 }
 
 # Create a user for the database
-resource "google_sql_user" "user" {
+resource "google_sql_user" "mysql_user" {
   name     = var.user_name
   instance = google_sql_database_instance.mysql_public_instance.name
   password = var.user_password
