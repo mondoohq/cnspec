@@ -41,15 +41,15 @@ resource "google_sql_database_instance" "sqlserver_public_instance" {
   deletion_protection = var.deletion_protection
 }
 
-# Create a database within the MySQL instance
-resource "google_sql_database" "database" {
+# Create a database within the SQL Server instance
+resource "google_sql_database" "sqlserver_database" {
   name     = var.database_name
-  instance = google_sql_database_instance.mysql_public_instance.name
+  instance = google_sql_database_instance.sqlserver_public_instance.name
 }
 
 # Create a user for the database
-resource "google_sql_user" "user" {
+resource "google_sql_user" "sqlserver_user" {
   name     = var.user_name
-  instance = google_sql_database_instance.mysql_public_instance.name
+  instance = google_sql_database_instance.sqlserver_public_instance.name
   password = var.user_password
 }
