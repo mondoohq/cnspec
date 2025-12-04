@@ -3,9 +3,10 @@ resource "google_sql_database_instance" "sqlserver_public_instance" {
   name             = "sqlserver-fail-instance-${random_id.suffix.hex}"
   region           = var.region
   database_version = "SQLSERVER_2019_EXPRESS" # var.database_version
+  root_password    = var.user_password
 
   settings {
-    tier = var.tier
+    tier = "db-custom-1-3840" # SQL Server requires custom tier
 
 
     # Configure IP connectivity - public IP enabled
