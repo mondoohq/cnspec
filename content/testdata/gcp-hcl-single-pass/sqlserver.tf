@@ -25,9 +25,8 @@ resource "google_sql_database_instance" "sqlserver_public_instance" {
 
     # Enable backup configuration
     backup_configuration {
-      enabled            = true
-      binary_log_enabled = true
-      start_time         = "00:00"
+      enabled    = true
+      start_time = "00:00"
     }
 
     # Enable maintenance window
