@@ -1,14 +1,18 @@
+resource "random_id" "kms_suffix" {
+  byte_length = 2
+}
+
 resource "google_kms_key_ring" "keyring" {
-  name     = "keyring-example"
+  name     = "keyring-example-${random_id.kms_suffix.hex}"
   location = "global"
 }
 
 resource "google_kms_crypto_key" "key" {
-  name            = "crypto-key-example"
+  name            = "crypto-key-example-${random_id.kms_suffix.hex}"
   key_ring        = google_kms_key_ring.keyring.id
   rotation_period = "7776000s"
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
