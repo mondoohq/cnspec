@@ -1,6 +1,6 @@
 # Create a Cloud SQL PostgresSQL instance
 resource "google_sql_database_instance" "postgres_public_instance" {
-  name             = "postgres-pass-instance"
+  name             = "postgres-fail-instance-${random_id.suffix.hex}"
   region           = var.region
   database_version = "POSTGRES_15" # var.database_version
 

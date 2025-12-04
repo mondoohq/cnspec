@@ -1,12 +1,12 @@
 # Create a VPC network for the compute instance
 resource "google_compute_network" "vpc_network" {
-  name                    = "my-vpc-network"
+  name                    = "my-vpc-network-${random_id.rnd.hex}"
   auto_create_subnetworks = true
 }
 
 # Private Service Access for Cloud SQL private IP connectivity
 resource "google_compute_global_address" "private_ip_address" {
-  name          = "private-ip-address"
+  name          = "private-ip-address-${random_id.rnd.hex}"
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
   prefix_length = 16
@@ -20,7 +20,7 @@ resource "google_service_networking_connection" "private_vpc_connection" {
 }
 
 resource "google_compute_instance" "default" {
-  name         = "my-instance"
+  name         = "my-instance-${random_id.rnd.hex}"
   machine_type = "n2-standard-2"
   zone         = "us-central1-a"
 

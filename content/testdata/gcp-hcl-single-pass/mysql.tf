@@ -1,6 +1,6 @@
 # Create a Cloud SQL MySQL instance
 resource "google_sql_database_instance" "mysql_public_instance" {
-  name             = "mysql-pass-instance"
+  name             = "mysql-pass-instance-${random_id.rnd.hex}"
   region           = var.region
   database_version = "MYSQL_8_0" # var.database_version
 
