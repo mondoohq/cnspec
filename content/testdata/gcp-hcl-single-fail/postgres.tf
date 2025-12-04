@@ -5,7 +5,7 @@ resource "google_sql_database_instance" "postgres_public_instance" {
   database_version = "POSTGRES_15" # var.database_version
 
   settings {
-    tier = var.tier
+    tier = "db-f1-micro" # PostgreSQL requires shared-core or custom tier
 
 
 
