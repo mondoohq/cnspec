@@ -7,11 +7,18 @@ resource "google_dns_managed_zone" "example-zone" {
   }
 
   dnssec_config {
-    state  = "on"
+    state = "on"
 
     default_key_specs {
-      algorithm = "rsasha512"
-      key_type = "keySigning"
+      algorithm  = "rsasha256"
+      key_type   = "keySigning"
+      key_length = 2048
+    }
+
+    default_key_specs {
+      algorithm  = "rsasha256"
+      key_type   = "zoneSigning"
+      key_length = 1024
     }
   }
 }
