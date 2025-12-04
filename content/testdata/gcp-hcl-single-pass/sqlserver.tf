@@ -1,6 +1,6 @@
 # Create a Cloud SQL SQL Server instance
 resource "google_sql_database_instance" "sqlserver_public_instance" {
-  name             = "sqlserver-pass-instance"
+  name             = "sqlserver-pass-instance-${random_id.rnd.hex}"
   region           = var.region
   database_version = "SQLSERVER_2019_EXPRESS" # var.database_version
 

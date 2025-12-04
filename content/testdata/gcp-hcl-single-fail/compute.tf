@@ -1,11 +1,11 @@
 # Create a VPC network for the compute instance
 resource "google_compute_network" "vpc_network" {
-  name                    = "my-vpc-network"
+  name                    = "my-vpc-network-${random_id.suffix.hex}"
   auto_create_subnetworks = true
 }
 
 resource "google_compute_instance" "default" {
-  name         = "my-instance"
+  name         = "my-instance-${random_id.suffix.hex}"
   machine_type = "n2-standard-2"
   zone         = "us-central1-a"
 
