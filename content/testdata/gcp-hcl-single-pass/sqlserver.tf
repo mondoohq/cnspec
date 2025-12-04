@@ -4,23 +4,19 @@ resource "google_sql_database_instance" "sqlserver_public_instance" {
   region           = var.region
   database_version = "SQLSERVER_2019_EXPRESS" # var.database_version
 
+  depends_on = [google_service_networking_connection.private_vpc_connection]
+
   settings {
     tier = var.tier
 
 
-    # Configure IP connectivity - public IP enabled
+    # Configure IP connectivity - private IP only
     ip_configuration {
-      ipv4_enabled = false # Enable public IP
+      ipv4_enabled    = false
+      private_network = google_compute_network.vpc_network.id
 
       // SSL connection encryption
       ssl_mode = "ENCRYPTED_ONLY"
-
-      # Configure authorized networks to restrict access
-      # This limits public access to specific IP addresses
-      authorized_networks {
-        name  = var.authorized_network_name
-        value = var.authorized_network_cidr
-      }
     }
 
     # Enable backup configuration
