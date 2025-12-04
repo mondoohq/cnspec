@@ -1,3 +1,9 @@
+# Create a VPC network for the compute instance
+resource "google_compute_network" "vpc_network" {
+  name                    = "my-vpc-network"
+  auto_create_subnetworks = true
+}
+
 resource "google_compute_instance" "default" {
   name         = "my-instance"
   machine_type = "n2-standard-2"
@@ -20,7 +26,7 @@ resource "google_compute_instance" "default" {
   }
 
   network_interface {
-    network = "default"
+    network = google_compute_network.vpc_network.id
 
     access_config {
       // Ephemeral public IP

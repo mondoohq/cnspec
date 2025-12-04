@@ -27,7 +27,7 @@ resource "google_sql_database_instance" "mysql_public_instance" {
     # Enable backup configuration
     backup_configuration {
       enabled            = true
-      binary_log_enabled = true
+      binary_log_enabled = false
       start_time         = "00:00"
     }
 
