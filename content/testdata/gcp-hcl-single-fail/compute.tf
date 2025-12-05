@@ -38,7 +38,7 @@ resource "google_compute_instance" "default" {
   metadata = {
     foo = "bar"
     block-project-ssh-keys = "FALSE"
-    enable-oslogin = "TRUE"
+    #enable-oslogin = "FALSE"
   }
 
   metadata_startup_script = "echo hi > /test.txt"
