@@ -12,6 +12,8 @@ resource "google_sql_database_instance" "mysql_public_instance" {
     # Configure IP connectivity - public IP enabled
     # Note: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-terraform-hcl fails if this block is commented out.
     #       This is because the default behavior is to have a public IP.
+    # Based on the documentation, if the ip_configuration subblock exists but ipv4_enabled is not explicitly set, the behavior is:
+    # ipv4_enabled defaults to true when not specified.
     ip_configuration {
       ipv4_enabled = true # Enable public IP
 
