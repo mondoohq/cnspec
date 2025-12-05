@@ -51,6 +51,11 @@ resource "google_compute_instance" "default" {
     enable_confidential_compute = true
   }
 
+  shielded_instance_config {
+    enable_secure_boot = true
+    enable_vtpm         = true
+  }
+
   // see https://docs.cloud.google.com/compute/docs/metadata/predefined-metadata-keys
   metadata = {
     foo = "bar"
