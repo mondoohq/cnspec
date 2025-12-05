@@ -43,3 +43,11 @@ resource "google_compute_instance" "default" {
 
   metadata_startup_script = "echo hi > /test.txt"
 }
+
+resource "google_storage_bucket" "no-public-access" {
+  name          = "fail-public-access-bucket-${random_id.suffix.hex}"
+  location      = "US"
+  force_destroy = true
+
+  #public_access_prevention = "enforced"
+}
