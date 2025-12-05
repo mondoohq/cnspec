@@ -28,6 +28,7 @@ resource "google_compute_instance" "default" {
   network_interface {
     network = google_compute_network.vpc_network.id
 
+    # mondoo-gcp-security-compute-instances-no-public-ip-terraform-hcl also fails if access_config block is commented out!
     access_config {
       // Ephemeral public IP
     }
