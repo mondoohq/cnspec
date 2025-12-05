@@ -18,7 +18,8 @@ resource "google_sql_database_instance" "mysql_public_instance" {
       ipv4_enabled = true # Enable public IP
 
       // SSL connection encryption
-      #ssl_mode = "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
+      // If not set, the default is to allow both encrypted and unencrypted connections.
+      ssl_mode = "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
 
       # Configure authorized networks to restrict access
       # This limits public access to specific IP addresses
