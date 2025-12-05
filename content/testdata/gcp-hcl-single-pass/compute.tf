@@ -2,6 +2,7 @@
 resource "google_compute_network" "vpc_network" {
   name                    = "my-vpc-network-${random_id.rnd.hex}"
   auto_create_subnetworks = true
+  delete_default_routes_on_create = true
 }
 
 # Private Service Access for Cloud SQL private IP connectivity
@@ -11,14 +12,14 @@ resource "google_compute_global_address" "private_ip_address" {
   address_type  = "INTERNAL"
   prefix_length = 16
   network       = google_compute_network.vpc_network.id
-  depends_on = [ google_compute_network.vpc_network.id ]
+  depends_on = [ google_compute_network.vpc_network ]
 }
 
 resource "google_service_networking_connection" "private_vpc_connection" {
   network                 = google_compute_network.vpc_network.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
-  depends_on = [ google_compute_network.vpc_network.id ]
+  depends_on = [ google_compute_network.vpc_network ]
 }
 
 resource "google_compute_instance" "default" {
