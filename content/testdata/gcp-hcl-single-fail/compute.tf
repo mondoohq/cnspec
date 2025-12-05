@@ -35,11 +35,11 @@ resource "google_compute_instance" "default" {
   }
 
   // see https://docs.cloud.google.com/compute/docs/metadata/predefined-metadata-keys
-  metadata = {
-    foo = "bar"
-    block-project-ssh-keys = "FALSE"
-    #enable-oslogin = "FALSE"
-  }
+  #metadata = {
+  #  foo = "bar"
+  #  block-project-ssh-keys = "FALSE"
+  #  #enable-oslogin = "FALSE"
+  #}
 
   metadata_startup_script = "echo hi > /test.txt"
 }
