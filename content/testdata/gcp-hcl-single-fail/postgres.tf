@@ -12,10 +12,10 @@ resource "google_sql_database_instance" "postgres_public_instance" {
     # Configure IP connectivity - public IP enabled
     #ip_configuration {
     #  ipv4_enabled = true # Enable public IP
-#
+    #
     #  // SSL connection encryption
     #  #ssl_mode = "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
-#
+    #
     #  # Configure authorized networks to restrict access
     #  # This limits public access to specific IP addresses
     #  authorized_networks {
@@ -23,7 +23,7 @@ resource "google_sql_database_instance" "postgres_public_instance" {
     #    value = var.authorized_network_cidr
     #  }
     #}
-#
+    #
     # Enable backup configuration
     backup_configuration {
       enabled    = true
