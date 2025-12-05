@@ -11,6 +11,7 @@ resource "google_compute_global_address" "private_ip_address" {
   address_type  = "INTERNAL"
   prefix_length = 16
   network       = google_compute_network.vpc_network.id
+  depends_on = [ google_compute_network.vpc_network.id ]
 }
 
 resource "google_service_networking_connection" "private_vpc_connection" {
@@ -21,7 +22,7 @@ resource "google_service_networking_connection" "private_vpc_connection" {
 
 resource "google_compute_instance" "default" {
   name         = "my-instance-${random_id.rnd.hex}"
-  machine_type = "n2-standard-2"
+  machine_type = "n2d-standard-2" # n2d required for Confidential VM
   zone         = "us-central1-a"
 
   tags = ["foo", "bar"]

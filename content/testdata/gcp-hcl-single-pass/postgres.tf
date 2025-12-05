@@ -7,7 +7,7 @@ resource "google_sql_database_instance" "postgres_public_instance" {
   depends_on = [google_service_networking_connection.private_vpc_connection]
 
   settings {
-    tier = var.tier
+    tier = "db-f1-micro" # PostgreSQL requires shared-core or custom tier
 
 
     # Configure IP connectivity - private IP only
