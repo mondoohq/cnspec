@@ -46,7 +46,7 @@ require (
 	go.mondoo.com/mondoo-go v0.0.0-20251126000421-71207d6ca541
 	go.mondoo.com/ranger-rpc v0.7.1
 	gocloud.dev v0.44.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.39.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251124214823-79d6a2a48846
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
