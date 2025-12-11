@@ -119,11 +119,10 @@ benchmark/go:
 test/go: cnspec/generate test/go/plain
 
 test/go/plain:
-	# TODO /motor/docker/docker_engine cannot be executed inside of docker
-	go test -cover $(shell go list ./... | grep -v '/motor/discovery/docker_engine')
+	go test -cover $(shell go list ./...)
 
 test/go/plain-ci: prep/tools
-	gotestsum --junitfile report.xml --format pkgname -- -cover $(shell go list ./... | grep -v '/vendor/' | grep -v '/motor/discovery/docker_engine')
+	gotestsum --junitfile report.xml --format pkgname -- -cover $(shell go list ./... | grep -v '/vendor/')
 
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
