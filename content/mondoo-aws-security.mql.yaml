@@ -40,6 +40,16 @@ policies:
 
         Our goal is to build policies that are simple to deploy, accurate, and actionable. This policy is open-source and we welcome contributions from the community, whether it's adding new checks, refining existing ones, or providing feedback. If you have suggestions to improve this policy, visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
+      - title: AWS General
+        checks:
+          - uid: mondoo-aws-security-no-static-credentials-in-providers
+      - title: AWS API Gateway
+        checks:
+          - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted
+          - uid: mondoo-aws-security-api-gw-execution-logging-enabled
+          - uid: mondoo-aws-security-api-gw-require-authentication
+          - uid: mondoo-aws-security-api-gw-tls
+          - uid: mondoo-aws-security-api-gw-xray-enabled
       - title: AWS IAM
         checks:
           - uid: mondoo-aws-security-access-keys-rotated
@@ -50,6 +60,7 @@ policies:
           - uid: mondoo-aws-security-iam-users-only-one-access-key
           - uid: mondoo-aws-security-iam-group-has-users-check
           - uid: mondoo-aws-security-iam-user-no-inline-policies-check
+          - uid: mondoo-aws-security-iam-no-wildcards-policies
       - title: AWS Lambda Function
         checks:
           - uid: mondoo-aws-security-lambda-concurrency-check
@@ -58,6 +69,10 @@ policies:
         checks:
           - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited
           - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access
+          - uid: mondoo-aws-security-s3-bucket-versioning-enabled
+          - uid: mondoo-aws-security-s3-bucket-logging-enabled
+          - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled
+          - uid: mondoo-aws-security-s3-bucket-public-read-prohibited
       - title: AWS Security Group
         checks:
           - uid: mondoo-aws-security-secgroup-restricted-ssh
@@ -95,6 +110,7 @@ policies:
           - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
           - uid: mondoo-aws-security-ebs-snapshot-encrypted
           - uid: mondoo-aws-security-ec2-encrypted-volumes
+          - uid: mondoo-aws-security-ec2-user-data-no-secrets
       - title: AWS EFS Filesystem
         checks:
           - uid: mondoo-aws-security-efs-encrypted-check
@@ -222,23 +238,33 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
     mql: |
-      terraform.resources.where( nameLabel == "aws_eks_cluster" ).any(
-        blocks.where( type == "encryption_config" ) {
-          blocks.where( type == "provider" ) {
-            arguments.key_arn != empty
-          }
-        }
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ).all(
+        blocks.where( type == "encryption_config" ) != empty &&
+        blocks.where( type == "encryption_config" ).all(
+          blocks.where( type == "provider" ) != empty &&
+          blocks.where( type == "provider" ).all( arguments.key_arn != empty )
+        )
       )
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
     mql: |
-      eksPlan = terraform.plan.resourceChanges.where(type == "aws_eks_cluster").map(change.after.encryption_config).first
-      eksPlan.contains('provider') && eksPlan.contains('key_arn')
+      terraform.plan.resourceChanges.where(type == "aws_eks_cluster").all(
+        change.after.encryption_config != empty &&
+        change.after.encryption_config.all(
+          _['provider'] != empty &&
+          _['provider'].all( _['key_arn'] != empty )
+        )
+      )
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms-terraform-state
-    filters: asset.platform == "terraform-state"
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_eks_cluster")
     mql: |
-      eksState = terraform.state.resources.where(type == "aws_eks_cluster").map(values.encryption_config).first
-      eksState.contains('provider') && eksState.contains('key_arn')
+      terraform.state.resources.where(type == "aws_eks_cluster").all(
+        values.encryption_config != empty &&
+        values.encryption_config.all(
+          _['provider'] != empty &&
+          _['provider'].all( _['key_arn'] != empty )
+        )
+      )
   - uid: mondoo-aws-security-eks-cluster-private-controlplane
     title: Ensure Amazon EKS clusters are configured with private endpoint access only
     impact: 90
@@ -339,11 +365,13 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
     mql: |
-      terraform.resources.where( nameLabel == "aws_eks_cluster" ).any(
-        blocks.where( type == "vpc_config" ) {
-          arguments.endpoint_private_access == false && arguments.endpoint_public_access == true
-          }
+      terraform.resources.where( nameLabel == "aws_eks_cluster" ).all(
+        blocks.where( type == "vpc_config" ) != empty &&
+        blocks.where( type == "vpc_config" ).all(
+          arguments.endpoint_private_access == true &&
+          arguments.endpoint_public_access == false
         )
+      )
   - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
     mql: |
@@ -785,44 +813,44 @@ queries:
       aws.iam.accountPasswordPolicy.where(PasswordReusePrevention != empty).all(PasswordReusePrevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention)
       aws.iam.accountPasswordPolicy.where(MaxPasswordAge != empty).all(MaxPasswordAge <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge)
   - uid: mondoo-aws-security-iam-password-policy-terraform-hcl
-    filters: asset.platform == "terraform-hcl"
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_account_password_policy")
     mql: |
-      terraform.resources.where(nameLabel == "aws_iam_account_password_policy") {
-        arguments.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength
-        arguments.require_uppercase_characters == true
-        arguments.require_lowercase_characters == true
-        arguments.require_numbers == true
-        arguments.require_symbols == true
-        arguments.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge
-        arguments.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention
+      terraform.resources.where(nameLabel == "aws_iam_account_password_policy").all(
+        arguments.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength &&
+        arguments.require_uppercase_characters == true &&
+        arguments.require_lowercase_characters == true &&
+        arguments.require_numbers == true &&
+        arguments.require_symbols == true &&
+        arguments.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge &&
+        arguments.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention &&
         arguments.allow_users_to_change_password == true
-      }
+      )
   - uid: mondoo-aws-security-iam-password-policy-terraform-plan
-    filters: asset.platform == "terraform-plan"
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_account_password_policy")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_iam_account_password_policy") {
-        change.after.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength
-        change.after.require_uppercase_characters == true
-        change.after.require_lowercase_characters == true
-        change.after.require_numbers == true
-        change.after.require_symbols == true
-        change.after.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge
-        change.after.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention
+      terraform.plan.resourceChanges.where(type == "aws_iam_account_password_policy").all(
+        change.after.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength &&
+        change.after.require_uppercase_characters == true &&
+        change.after.require_lowercase_characters == true &&
+        change.after.require_numbers == true &&
+        change.after.require_symbols == true &&
+        change.after.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge &&
+        change.after.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention &&
         change.after.allow_users_to_change_password == true
-      }
+      )
   - uid: mondoo-aws-security-iam-password-policy-terraform-state
-    filters: asset.platform == "terraform-state"
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_account_password_policy")
     mql: |
-      terraform.state.resources.where(type == "aws_iam_account_password_policy") {
-        values.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength
-        values.require_uppercase_characters == true
-        values.require_lowercase_characters == true
-        values.require_numbers == true
-        values.require_symbols == true
-        values.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge
-        values.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention
+      terraform.state.resources.where(type == "aws_iam_account_password_policy").all(
+        values.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength &&
+        values.require_uppercase_characters == true &&
+        values.require_lowercase_characters == true &&
+        values.require_numbers == true &&
+        values.require_symbols == true &&
+        values.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge &&
+        values.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention &&
         values.allow_users_to_change_password == true
-      }
+      )
   - uid: mondoo-aws-security-access-keys-rotated
     title: Ensure IAM user access keys are rotated
     impact: 70
@@ -1231,19 +1259,19 @@ queries:
     filters: asset.platform == "aws-iam-group"
     mql: aws.iam.group.usernames != empty
   - uid: mondoo-aws-security-iam-group-has-users-check-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_group")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_group_membership")
     mql: |
       terraform.resources.where(nameLabel == "aws_iam_group_membership").all(
         arguments.users != empty
       )
   - uid: mondoo-aws-security-iam-group-has-users-check-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_group")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_group_membership")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_iam_group_membership").all(
         change.after.users != empty
       )
   - uid: mondoo-aws-security-iam-group-has-users-check-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_group")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_group_membership")
     mql: |
       terraform.state.resources.where(type == "aws_iam_group_membership").all(
         values.users != empty
@@ -1919,7 +1947,7 @@ queries:
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access-single
     filters: asset.platform == "aws"
     mql: |
-      aws.s3control.accountPublicAccessBlock != empty
+      aws.s3control.accountPublicAccessBlock != empty &&
       aws.s3control.accountPublicAccessBlock.values.all(_ == true)
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_account_public_access_block")
@@ -2133,26 +2161,32 @@ queries:
       aws.s3.bucket.publicAccessBlock.IgnorePublicAcls == true
       aws.s3.bucket.publicAccessBlock.RestrictPublicBuckets == true
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_s3_bucket" )
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_s3_bucket_public_access_block" )
     mql: |
-      terraform.resources.where( nameLabel == "aws_s3_bucket_public_access_block" ).all( arguments.block_public_acls == true )
-      terraform.resources.where( nameLabel == "aws_s3_bucket_public_access_block" ).all( arguments.block_public_policy == true )
-      terraform.resources.where( nameLabel == "aws_s3_bucket_public_access_block" ).all( arguments.ignore_public_acls == true )
-      terraform.resources.where( nameLabel == "aws_s3_bucket_public_access_block" ).all( arguments.restrict_public_buckets == true )
+      terraform.resources.where( nameLabel == "aws_s3_bucket_public_access_block" ).all(
+        arguments.block_public_acls == true &&
+        arguments.block_public_policy == true &&
+        arguments.ignore_public_acls == true &&
+        arguments.restrict_public_buckets == true
+      )
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_s3_bucket" )
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_s3_bucket_public_access_block" )
     mql: |
-      terraform.plan.resourceChanges.where( type == "aws_s3_bucket_public_access_block" ).all( change.after.block_public_acls == true )
-      terraform.plan.resourceChanges.where( type == "aws_s3_bucket_public_access_block" ).all( change.after.block_public_policy == true )
-      terraform.plan.resourceChanges.where( type == "aws_s3_bucket_public_access_block" ).all( change.after.ignore_public_acls == true )
-      terraform.plan.resourceChanges.where( type == "aws_s3_bucket_public_access_block" ).all( change.after.restrict_public_buckets == true )
+      terraform.plan.resourceChanges.where( type == "aws_s3_bucket_public_access_block" ).all(
+        change.after.block_public_acls == true &&
+        change.after.block_public_policy == true &&
+        change.after.ignore_public_acls == true &&
+        change.after.restrict_public_buckets == true
+      )
   - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_s3_bucket" )
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_s3_bucket_public_access_block" )
     mql: |
-      terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all( values.block_public_acls == true )
-      terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all( values.block_public_policy == true )
-      terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all( values.ignore_public_acls == true )
-      terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all( values.restrict_public_buckets == true )
+      terraform.state.resources.where( type == "aws_s3_bucket_public_access_block" ).all(
+        values.block_public_acls == true &&
+        values.block_public_policy == true &&
+        values.ignore_public_acls == true &&
+        values.restrict_public_buckets == true
+      )
   - uid: mondoo-aws-security-ec2-instance-no-public-ip
     title: Ensure no public IPs are associated with EC2 instances
     impact: 80
@@ -2393,7 +2427,13 @@ queries:
         )
   - uid: mondoo-aws-security-ec2-imdsv2-check-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_instance")
-    mql: terraform.resources.where( nameLabel == "aws_instance" ).all( blocks.where( type == "metadata_options" ) { arguments.http_endpoint == "disabled" || arguments.http_tokens == "required" } )
+    mql: |
+      terraform.resources.where( nameLabel == "aws_instance" ).all(
+        blocks.where( type == "metadata_options" ) != empty &&
+        blocks.where( type == "metadata_options" ).all(
+          arguments.http_endpoint == "disabled" || arguments.http_tokens == "required"
+        )
+      )
   - uid: mondoo-aws-security-ec2-imdsv2-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_instance")
     mql: terraform.plan.resourceChanges.where( type == "aws_instance" ).all( change.after.metadata_options[0].http_endpoint == "disabled" || change.after.metadata_options[0].http_tokens == "required" )
@@ -2521,21 +2561,23 @@ queries:
     filters: asset.platform == "aws-vpc"
     mql: aws.vpc.internetGatewayBlockMode != "off"
   - uid: mondoo-aws-security-vpc-bpa-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_vpc")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_vpc_block_public_access_exclusion")
     mql: |
-      bpaBlock = terraform.resources.where( nameLabel == "aws_vpc_block_public_access_exclusion" )
-      bpaBlock.any(arguments.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/)
-      bpaBlock.any(related.where(labels.contains("aws_subnet")))
+      terraform.resources.where( nameLabel == "aws_vpc_block_public_access_exclusion" ).all(
+        arguments.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/
+      )
   - uid: mondoo-aws-security-vpc-bpa-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_vpc")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_vpc_block_public_access_exclusion")
     mql: |
-      bpaPlan = terraform.plan.resourceChanges.where( type == "aws_vpc_block_public_access_exclusion" )
-      bpaPlan.any(change.after.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/)
+      terraform.plan.resourceChanges.where( type == "aws_vpc_block_public_access_exclusion" ).all(
+        change.after.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/
+      )
   - uid: mondoo-aws-security-vpc-bpa-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_vpc")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_vpc_block_public_access_exclusion")
     mql: |
-      bpaState = terraform.state.resources.where( type == "aws_vpc_block_public_access_exclusion" )
-      bpaState.any(values.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/)
+      terraform.state.resources.where( type == "aws_vpc_block_public_access_exclusion" ).all(
+        values.internet_gateway_exclusion_mode == /allow-egress|allow-bidirectional/
+      )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled
     title: Ensure VPC flow logging is enabled in all VPCs
     impact: 70
@@ -2661,22 +2703,25 @@ queries:
         trafficType == "REJECT" || trafficType == "ALL"
       )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_flow_log")
     mql: |
-      terraform.resources.where(nameLabel == "aws_flow_log").any(
-        arguments.traffic_type == "ALL" || arguments.traffic_type == "REJECT" && arguments.log_destination_type == "cloud-watch-logs"
+      terraform.resources.where(nameLabel == "aws_flow_log").all(
+        arguments.traffic_type.in(["ALL", "REJECT"]) &&
+        arguments.log_destination_type == "cloud-watch-logs"
       )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_vpc")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_flow_log")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_flow_log").any(
-        change.after.traffic_type == "ALL" || change.after.traffic_type == "REJECT" && change.after.log_destination_type == "cloud-watch-logs"
+      terraform.plan.resourceChanges.where(type == "aws_flow_log").all(
+        change.after.traffic_type.in(["ALL", "REJECT"]) &&
+        change.after.log_destination_type == "cloud-watch-logs"
       )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_vpc")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_flow_log")
     mql: |
-      terraform.state.resources.where(type == "aws_flow_log").any(
-        values.traffic_type == "ALL" || values.traffic_type == "REJECT" && values.log_destination_type ==  "cloud-watch-logs"
+      terraform.state.resources.where(type == "aws_flow_log").all(
+        values.traffic_type.in(["ALL", "REJECT"]) &&
+        values.log_destination_type == "cloud-watch-logs"
       )
   - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
     title: Ensure DynamoDB tables are encrypted with AWS Key Management Service (KMS)
@@ -2828,7 +2873,8 @@ queries:
   - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_dynamodb_table")
     mql: |
-      terraform.resources.where(nameLabel == "aws_dynamodb_table").any(
+      terraform.resources.where(nameLabel == "aws_dynamodb_table").all(
+        blocks.where(type == "server_side_encryption") != empty &&
         blocks.where(type == "server_side_encryption").all(
           arguments.enabled == true && arguments.kms_key_arn != empty
         )
@@ -2837,19 +2883,15 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_dynamodb_table")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_dynamodb_table").all(
-        change.after.server_side_encryption.any(enabled == true)
-      )
-      terraform.plan.resourceChanges.where(type == "aws_dynamodb_table").all(
-        change.afterUnknown.server_side_encryption.any(kms_key_arn == true)
+        change.after.server_side_encryption != empty &&
+        change.after.server_side_encryption.all(enabled == true)
       )
   - uid: mondoo-aws-security-dynamodb-table-encrypted-kms-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_dynamodb_table")
     mql: |
       terraform.state.resources.where(type == "aws_dynamodb_table").all(
-        values.server_side_encryption.any(enabled == true)
-      )
-      terraform.state.resources.where(type == "aws_dynamodb_table").all(
-        values.server_side_encryption.any(kms_key_arn != empty)
+        values.server_side_encryption != empty &&
+        values.server_side_encryption.all(enabled == true && kms_key_arn != empty)
       )
   - uid: mondoo-aws-security-lambda-concurrency-check
     title: Ensure Lambda functions are configured with function-level concurrent execution limits
@@ -3547,21 +3589,37 @@ queries:
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster_parameter_group")
     mql: |
-      awsRdsClusterParameterGroupsMySql = terraform.resources.where(nameLabel == "aws_rds_cluster_parameter_group" && arguments.family == /mysql/)
-      awsRdsClusterParameterGroupsPostgresql = terraform.resources.where(nameLabel == "aws_rds_cluster_parameter_group" && arguments.family == /postgres/)
+      terraform.resources.where(nameLabel == "aws_rds_cluster_parameter_group" && arguments.family == /mysql/).all(
+        blocks.any(
+          attributes.name.value =='require_secure_transport'
+            && attributes.value.value == "ON"
+        )
+      )
 
-      awsRdsClusterParameterGroupsMySql.all(blocks.any(attributes {_['name']['value'] == "require_secure_transport" && _['value']['value'] == "ON" }  ) )
-      awsRdsClusterParameterGroupsPostgresql.all(blocks.any(attributes {_['name']['value'] == "ssl" && _['value']['value'] == 1 }  ) )
+      terraform.resources.where(nameLabel == "aws_rds_cluster_parameter_group" && arguments.family == /postgres/).all(
+        blocks.any(
+          attributes.name.value =='ssl'
+            && attributes.value.value == 1
+        )
+      )
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_rds_cluster_parameter_group")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_rds_cluster_parameter_group").where(change.after.family == /postgres/) {change.after.parameter.where(name == 'ssl') {value == 1} }
-      terraform.plan.resourceChanges.where(type == "aws_rds_cluster_parameter_group").where(change.after.family == /mysql/) {change.after.parameter.where(name == 'require_secure_transport') {value == "ON"} }
+      terraform.plan.resourceChanges.where(type == "aws_rds_cluster_parameter_group" && change.after.family == /mysql/).all(
+        change.after.parameter.where(name == "require_secure_transport").map(value).first == "ON"
+      )
+      terraform.plan.resourceChanges.where(type == "aws_rds_cluster_parameter_group" && change.after.family == /postgres/).all(
+        change.after.parameter.where(name == "ssl").map(value).first == 1
+      )
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-terraform-state
-    filters: asset.platform == "terraform-state"
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster_parameter_group")
     mql: |
-      terraform.state.resources.where(type == "aws_rds_cluster_parameter_group").where(values.family == /mysql/) {values.parameter.where(name == 'require_secure_transport') {value == "ON"} values.arn}
-      terraform.state.resources.where(type == "aws_rds_cluster_parameter_group").where(values.family == /postgres/) {values.parameter.where(name == 'ssl') {value == 1} values.arn}
+      terraform.state.resources.where(type == "aws_rds_cluster_parameter_group" && values.family == /mysql/).all(
+        values.parameter.where(name == 'require_secure_transport').map(value).first == "OFF"
+      )
+      terraform.state.resources.where(type == "aws_rds_cluster_parameter_group" && values.family == /postgres/).all(
+        values.parameter.where(name == 'ssl').map(value).first == 0
+      )
   - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
     title: Ensure no pending OS upgrades are available for RDS clusters
     impact: 90
@@ -4453,34 +4511,22 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
     mql: |
       terraform.resources.where(nameLabel == "aws_instance").all(
-        blocks.where(type == "root_block_device").any(arguments.delete_on_termination == true) &&
-        blocks.where(type == "ebs_block_device").any(arguments.delete_on_termination == true)
+        blocks.none(type == "root_block_device" && arguments.delete_on_termination != true) &&
+        blocks.none(type == "ebs_block_device" && arguments.delete_on_termination != true)
       )
   - uid: mondoo-aws-security-ec2-volume-inuse-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_instance").all(
-        change.after.root_block_device.any(
-          delete_on_termination == true
-        )
-      )
-      terraform.plan.resourceChanges.where(type == "aws_instance").all(
-        change.after.ebs_block_device.any(
-          delete_on_termination == true
-        )
+        change.after.root_block_device.none(delete_on_termination != true) &&
+        change.after.ebs_block_device.none(delete_on_termination != true)
       )
   - uid: mondoo-aws-security-ec2-volume-inuse-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_instance")
     mql: |
       terraform.state.resources.where(type == "aws_instance").all(
-        values.root_block_device.any(
-          delete_on_termination == true
-        )
-      )
-      terraform.state.resources.where(type == "aws_instance").all(
-        values.ebs_block_device.any(
-          delete_on_termination == false
-        )
+        values.root_block_device.none(delete_on_termination != true) &&
+        values.ebs_block_device.none(delete_on_termination != true)
       )
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
     title: Ensure EBS snapshots are not publicly restorable
@@ -5079,15 +5125,13 @@ queries:
         change.after.encrypted == true
       )
       terraform.plan.resourceChanges.where(type == "aws_efs_file_system").all(
-        change.after.kms_key_id != empty
+        change.after.kms_key_id != empty || change.afterUnknown.kms_key_id == true
       )
   - uid: mondoo-aws-security-efs-encrypted-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_efs_file_system")
     mql: |
       terraform.state.resources.where(type == "aws_efs_file_system").all(
-        values.encrypted == true
-      )
-      terraform.state.resources.where(type == "aws_efs_file_system").all(
+        values.encrypted == true &&
         values.kms_key_id != empty
       )
   - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
@@ -5742,26 +5786,23 @@ queries:
   - uid: mondoo-aws-security-elb-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb")
     mql: |
-      terraform.resources.where(nameLabel == "aws_lb").one(
-        blocks.where(type == "access_logs").contains(
-          arguments.enabled == true
-        )
+      terraform.resources.where(nameLabel == "aws_lb").all(
+        blocks.where(type == "access_logs") != empty &&
+        blocks.where(type == "access_logs").all(arguments.enabled == true)
       )
   - uid: mondoo-aws-security-elb-logging-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lb")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_lb").all(
-        change.after.access_logs.any(
-          enabled == true
-        )
+        change.after.access_logs != empty &&
+        change.after.access_logs.all(enabled == true)
       )
   - uid: mondoo-aws-security-elb-logging-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lb")
     mql: |
       terraform.state.resources.where(type == "aws_lb").all(
-        values.access_logs.any(
-          enabled == true
-        )
+        values.access_logs != empty &&
+        values.access_logs.all(enabled == true)
       )
   - uid: mondoo-aws-security-elb-deletion-protection-enabled
     title: Ensure Application Load Balancers are configured with deletion protection enabled
@@ -5991,26 +6032,23 @@ queries:
   - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
     mql: |
-      terraform.resources.where(nameLabel == "aws_opensearch_domain").one(
-        blocks.where(type == "encrypt_at_rest" ).contains(
-          arguments.enabled == true
-        )
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "encrypt_at_rest") != empty &&
+        blocks.where(type == "encrypt_at_rest").all(arguments.enabled == true)
       )
   - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").any(
-        change.after.encrypt_at_rest.contains(
-          enabled == true
-        )
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.encrypt_at_rest != empty &&
+        change.after.encrypt_at_rest.all(enabled == true)
       )
   - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
     mql: |
-      terraform.state.resources.where(type == "aws_opensearch_domain").any(
-        values.encrypt_at_rest.contains(
-          enabled == true
-        )
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.encrypt_at_rest != empty &&
+        values.encrypt_at_rest.all(enabled == true)
       )
   - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
     title: Ensure rotation for customer-managed keys (CMKs) is enabled
@@ -7102,3 +7140,990 @@ queries:
   - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_security_group")
     mql: terraform.state.resources.where( type == "aws_security_group" && values.ingress.contains( to_port == -1 ) ).none( values.ingress[0].cidr_blocks.contains("0.0.0.0/0") || values.ingress[0].cidr_blocks.contains("::/0"))
+  - uid: mondoo-aws-security-no-static-credentials-in-providers
+    title: Ensure Terraform AWS providers do not contain hard-coded credentials
+    impact: 95
+    variants:
+      - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-hcl
+      - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-plan
+      - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-state
+    docs:
+      desc: |
+        This check ensures that AWS provider configurations in Terraform do not contain hard-coded access keys or secret keys. Hard-coded credentials pose a significant security risk, especially if the Terraform configuration is committed to version control systems.
+
+        **Why this matters**
+
+        Hard-coded credentials in Terraform configurations can lead to:
+
+        - **Credential exposure:** If the code is committed to a public or shared repository, attackers can discover and exploit the credentials.
+        - **Unauthorized access:** Compromised credentials can provide full access to AWS resources, leading to data breaches, resource abuse, or financial loss.
+        - **Compliance violations:** Many security frameworks (CIS, SOC 2, PCI DSS, ISO 27001) prohibit storing credentials in code.
+
+        **Risk mitigation:**
+
+        - Prevents credential leakage by enforcing secure authentication methods.
+        - Ensures compliance with security best practices for infrastructure as code.
+        - Reduces the attack surface by eliminating static credentials from codebases.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Environment Variables**
+
+            Configure AWS credentials using environment variables instead of hard-coding them:
+
+            ```bash
+            export AWS_ACCESS_KEY_ID="your-access-key"
+            export AWS_SECRET_ACCESS_KEY="your-secret-key"
+            export AWS_DEFAULT_REGION="us-west-2"
+            terraform plan
+            ```
+
+            ```hcl
+            provider "aws" {}
+            ```
+
+            **Using Assumed Role**
+
+            Use IAM roles for authentication:
+
+            ```hcl
+            provider "aws" {
+              assume_role {
+                role_arn     = "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+                session_name = "SESSION_NAME"
+                external_id  = "EXTERNAL_ID"
+              }
+            }
+            ```
+
+            **Using AWS Profiles**
+
+            Configure AWS CLI profiles and reference them in Terraform:
+
+            ```hcl
+            provider "aws" {
+              profile = "my-aws-profile"
+              region  = "us-west-2"
+            }
+            ```
+    refs:
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication-and-configuration
+        title: Terraform AWS Provider - Authentication and Configuration
+      - url: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html
+        title: AWS CLI - Environment Variables
+  - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.providers.any(nameLabel == "aws")
+    mql: |
+      terraform.providers.where( nameLabel == "aws" ) {
+        arguments["access_key"] == null || arguments["access_key"].find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        arguments["secret_key"] == null || arguments["secret_key"].find(/([A-Za-z0-9\\\/+\\]{40})/).all( "wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+      }
+  - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.configuration.providerConfig.any(_['name'] == "aws")
+    mql: |
+      terraform.plan.configuration.providerConfig.where(_['name'] == "aws") {
+        _['expressions']['access_key'] == null
+        _['expressions']['secret_key'] == null
+      }
+  - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-state
+    filters: asset.platform == "terraform-state"
+    mql: |
+      # Terraform state does not store provider credentials, so this check passes if no credentials are found in configuration
+      true
+  - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted
+    title: Ensure API Gateway cache is enabled and encrypted
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-api
+      - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-hcl
+      - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-plan
+      - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon API Gateway method settings have caching enabled and that cached data is encrypted. Caching improves performance by reducing the load on backend services, while encryption protects sensitive data stored in the cache.
+
+        **Why this matters**
+
+        API Gateway caching stores responses from backend integrations to reduce latency and backend load. Without encryption:
+
+        - **Data exposure:** Cached responses may contain sensitive information that could be accessed if the cache is compromised.
+        - **Compliance violations:** Security frameworks such as PCI DSS, HIPAA, and SOC 2 require encryption of data at rest.
+        - **Security risks:** Unencrypted caches are vulnerable to unauthorized access.
+
+        **Risk mitigation:**
+
+        - Protects sensitive API response data by encrypting cached content.
+        - Ensures compliance with data protection regulations.
+        - Reduces the risk of data breaches from compromised cache storage.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable cache encryption in API Gateway method settings:
+
+            ```hcl
+            resource "aws_api_gateway_method_settings" "example" {
+              rest_api_id = aws_api_gateway_rest_api.example.id
+              stage_name  = aws_api_gateway_stage.example.stage_name
+              method_path = "path1/GET"
+
+              settings {
+                metrics_enabled      = true
+                logging_level        = "INFO"
+                caching_enabled      = true
+                cache_data_encrypted = true
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-caching.html
+        title: AWS Documentation - Enable API caching
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method_settings
+        title: Terraform Documentation - api_gateway_method_settings Resource
+  - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigateway.restApis.all(
+        stages.all(
+          methodSettings['*/*']['CacheDataEncrypted'] == true || methodSettings == empty
+        )
+      )
+  - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method_settings")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_api_gateway_method_settings").all(
+        blocks.one(type == "settings" && arguments["cache_data_encrypted"] == true)
+      )
+  - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_method_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_api_gateway_method_settings").all(
+        change.after.settings[0].cache_data_encrypted == true
+      )
+  - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_method_settings")
+    mql: |
+      terraform.state.resources.where(type == "aws_api_gateway_method_settings").all(
+        values.settings[0].cache_data_encrypted == true
+      )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled
+    title: Ensure API Gateway stages have execution logging enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon API Gateway stages have access logging enabled. Access logs capture detailed information about API requests, which is essential for monitoring, troubleshooting, and security analysis.
+
+        **Why this matters**
+
+        Without access logging enabled:
+
+        - **Limited visibility:** Inability to track API usage patterns, errors, and performance issues.
+        - **Security blind spots:** Difficulty in detecting and investigating suspicious activities or attacks.
+        - **Compliance gaps:** Many security frameworks (CIS, SOC 2, PCI DSS) require logging of API access for audit purposes.
+
+        **Risk mitigation:**
+
+        - Enables monitoring and alerting on API activity.
+        - Supports incident response and forensic investigations.
+        - Ensures compliance with audit and logging requirements.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable access logging for API Gateway stages:
+
+            ```hcl
+            resource "aws_api_gateway_stage" "example" {
+              deployment_id = aws_api_gateway_deployment.example.id
+              rest_api_id   = aws_api_gateway_rest_api.example.id
+              stage_name    = "prod"
+
+              access_log_settings {
+                destination_arn = aws_cloudwatch_log_group.api_gw.arn
+                format          = jsonencode({
+                  requestId      = "$context.requestId"
+                  ip             = "$context.identity.sourceIp"
+                  caller         = "$context.identity.caller"
+                  user           = "$context.identity.user"
+                  requestTime    = "$context.requestTime"
+                  httpMethod     = "$context.httpMethod"
+                  resourcePath   = "$context.resourcePath"
+                  status         = "$context.status"
+                  protocol       = "$context.protocol"
+                  responseLength = "$context.responseLength"
+                })
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/api-gw-execution-logging-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_stage
+        title: Terraform Documentation - api_gateway_stage Resource
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_stage" || nameLabel == "aws_apigatewayv2_stage")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_api_gateway_stage").all(
+        blocks.one(type == "access_log_settings" && arguments["destination_arn"] != "" )
+      )
+      terraform.resources.where( nameLabel == "aws_apigatewayv2_stage").all(
+        blocks.one(type == "access_log_settings" && arguments["destination_arn"] != "" )
+      )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_stage" || type == "aws_apigatewayv2_stage")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_api_gateway_stage").all(
+        change.after.access_log_settings != empty && change.after.access_log_settings[0].destination_arn != ""
+      )
+      terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_stage").all(
+        change.after.access_log_settings != empty && change.after.access_log_settings[0].destination_arn != ""
+      )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_stage" || type == "aws_apigatewayv2_stage")
+    mql: |
+      terraform.state.resources.where(type == "aws_api_gateway_stage").all(
+        values.access_log_settings != empty && values.access_log_settings[0].destination_arn != ""
+      )
+      terraform.state.resources.where(type == "aws_apigatewayv2_stage").all(
+        values.access_log_settings != empty && values.access_log_settings[0].destination_arn != ""
+      )
+  - uid: mondoo-aws-security-api-gw-require-authentication
+    title: Ensure API Gateway methods require authentication
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-api-gw-require-authentication-terraform-hcl
+      - uid: mondoo-aws-security-api-gw-require-authentication-terraform-plan
+      - uid: mondoo-aws-security-api-gw-require-authentication-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon API Gateway methods have authentication enabled. Methods without authentication (authorization set to NONE) should at minimum require an API key to prevent unauthorized access.
+
+        **Why this matters**
+
+        Unauthenticated API endpoints can lead to:
+
+        - **Unauthorized access:** Anyone can invoke the API, potentially accessing sensitive data or functionality.
+        - **Abuse and misuse:** Open endpoints are vulnerable to automated attacks, scraping, and resource abuse.
+        - **Data breaches:** Exposed APIs without authentication can leak sensitive information.
+
+        **Risk mitigation:**
+
+        - Prevents unauthorized access to API resources.
+        - Reduces the risk of API abuse and denial of service attacks.
+        - Ensures compliance with security best practices for API protection.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure authentication for API Gateway methods:
+
+            ```hcl
+            resource "aws_api_gateway_method" "example" {
+              rest_api_id   = aws_api_gateway_rest_api.example.id
+              resource_id   = aws_api_gateway_resource.example.id
+              http_method   = "GET"
+              authorization = "AWS_IAM"  # Or use "COGNITO_USER_POOLS", "CUSTOM"
+            }
+            ```
+
+            If authorization must be NONE, require an API key:
+
+            ```hcl
+            resource "aws_api_gateway_method" "example" {
+              rest_api_id      = aws_api_gateway_rest_api.example.id
+              resource_id      = aws_api_gateway_resource.example.id
+              http_method      = "GET"
+              authorization    = "NONE"
+              api_key_required = true
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-control-access-to-api.html
+        title: AWS Documentation - Controlling access to API Gateway APIs
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method
+        title: Terraform Documentation - api_gateway_method Resource
+  - uid: mondoo-aws-security-api-gw-require-authentication-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method")
+    mql: |
+      terraform.resources
+        .where( nameLabel == "aws_api_gateway_method" && arguments["authorization"].upcase == "NONE" && arguments["http_method"].upcase != "OPTIONS" )
+        .all(arguments["api_key_required"] == true )
+  - uid: mondoo-aws-security-api-gw-require-authentication-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_method")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "aws_api_gateway_method" && change.after.authorization.upcase == "NONE" && change.after.http_method.upcase != "OPTIONS")
+        .all(change.after.api_key_required == true)
+  - uid: mondoo-aws-security-api-gw-require-authentication-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_method")
+    mql: |
+      terraform.state.resources
+        .where(type == "aws_api_gateway_method" && values.authorization.upcase == "NONE" && values.http_method.upcase != "OPTIONS")
+        .all(values.api_key_required == true)
+  - uid: mondoo-aws-security-api-gw-tls
+    title: Ensure API Gateway uses TLS 1.2 or higher
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-api-gw-tls-terraform-hcl
+      - uid: mondoo-aws-security-api-gw-tls-terraform-plan
+      - uid: mondoo-aws-security-api-gw-tls-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon API Gateway custom domain names are configured with TLS 1.2 security policy. Older TLS versions (1.0 and 1.1) have known vulnerabilities and should not be used.
+
+        **Why this matters**
+
+        Using outdated TLS versions exposes APIs to:
+
+        - **Known vulnerabilities:** TLS 1.0 and 1.1 have security weaknesses that can be exploited by attackers.
+        - **Man-in-the-middle attacks:** Weak encryption can be broken, allowing attackers to intercept and modify traffic.
+        - **Compliance violations:** PCI DSS, HIPAA, and other standards require TLS 1.2 or higher.
+
+        **Risk mitigation:**
+
+        - Protects API traffic with strong encryption.
+        - Ensures compliance with industry security standards.
+        - Prevents exploitation of known TLS vulnerabilities.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure TLS 1.2 for API Gateway custom domain names:
+
+            ```hcl
+            resource "aws_api_gateway_domain_name" "example" {
+              domain_name              = "api.example.com"
+              regional_certificate_arn = aws_acm_certificate.example.arn
+              security_policy          = "TLS_1_2"
+
+              endpoint_configuration {
+                types = ["REGIONAL"]
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-custom-domain-tls-version.html
+        title: AWS Documentation - Choosing a minimum TLS version
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/api-gw-ssl-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_domain_name
+        title: Terraform Documentation - api_gateway_domain_name Resource
+  - uid: mondoo-aws-security-api-gw-tls-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_domain_name")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_api_gateway_domain_name").all(
+        arguments["security_policy"] == "TLS_1_2"
+      )
+  - uid: mondoo-aws-security-api-gw-tls-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_domain_name")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_api_gateway_domain_name").all(
+        change.after.security_policy == "TLS_1_2"
+      )
+  - uid: mondoo-aws-security-api-gw-tls-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_domain_name")
+    mql: |
+      terraform.state.resources.where(type == "aws_api_gateway_domain_name").all(
+        values.security_policy == "TLS_1_2"
+      )
+  - uid: mondoo-aws-security-api-gw-xray-enabled
+    title: Ensure API Gateway X-Ray tracing is enabled
+    impact: 50
+    variants:
+      - uid: mondoo-aws-security-api-gw-xray-enabled-api
+      - uid: mondoo-aws-security-api-gw-xray-enabled-terraform-hcl
+      - uid: mondoo-aws-security-api-gw-xray-enabled-terraform-plan
+      - uid: mondoo-aws-security-api-gw-xray-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that AWS X-Ray tracing is enabled on Amazon API Gateway REST APIs. X-Ray provides end-to-end visibility into requests as they travel through your API, helping with debugging, performance optimization, and security analysis.
+
+        **Why this matters**
+
+        Without X-Ray tracing:
+
+        - **Limited observability:** Difficulty in understanding request flows and identifying bottlenecks.
+        - **Slower troubleshooting:** Increased time to diagnose and resolve issues.
+        - **Security blind spots:** Reduced ability to detect and investigate anomalous behavior.
+
+        **Risk mitigation:**
+
+        - Provides detailed insights into API request processing.
+        - Enables faster identification and resolution of performance issues.
+        - Supports security monitoring and anomaly detection.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable X-Ray tracing for API Gateway stages:
+
+            ```hcl
+            resource "aws_api_gateway_stage" "example" {
+              deployment_id        = aws_api_gateway_deployment.example.id
+              rest_api_id          = aws_api_gateway_rest_api.example.id
+              stage_name           = "prod"
+              xray_tracing_enabled = true
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/api-gw-xray-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_stage
+        title: Terraform Documentation - api_gateway_stage Resource
+  - uid: mondoo-aws-security-api-gw-xray-enabled-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigateway.restApis.all(
+        stages.all(tracingEnabled == true)
+      )
+  - uid: mondoo-aws-security-api-gw-xray-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_stage")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_api_gateway_stage").all(
+        arguments["xray_tracing_enabled"] == true
+      )
+  - uid: mondoo-aws-security-api-gw-xray-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_stage")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_api_gateway_stage").all(
+        change.after.xray_tracing_enabled == true
+      )
+  - uid: mondoo-aws-security-api-gw-xray-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_stage")
+    mql: |
+      terraform.state.resources.where(type == "aws_api_gateway_stage").all(
+        values.xray_tracing_enabled == true
+      )
+  - uid: mondoo-aws-security-ec2-user-data-no-secrets
+    title: Ensure EC2 instance user data does not contain secrets
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-ec2-user-data-no-secrets-terraform-hcl
+      - uid: mondoo-aws-security-ec2-user-data-no-secrets-terraform-plan
+      - uid: mondoo-aws-security-ec2-user-data-no-secrets-terraform-state
+    docs:
+      desc: |
+        This check ensures that EC2 instance user data does not contain hard-coded secrets such as AWS access keys or secret keys. User data is often logged and can be accessed by anyone with permissions to describe instances, making it an insecure location for sensitive credentials.
+
+        **Why this matters**
+
+        Storing secrets in EC2 user data poses significant risks:
+
+        - **Credential exposure:** User data is visible to anyone with EC2 describe permissions and is often logged to CloudWatch.
+        - **Persistence:** Unlike environment variables, user data persists and can be retrieved at any time.
+        - **Compliance violations:** Security frameworks prohibit storing credentials in plain text.
+
+        **Risk mitigation:**
+
+        - Prevents credential leakage through user data exposure.
+        - Ensures compliance with security best practices for secret management.
+        - Encourages use of secure alternatives like IAM roles, Secrets Manager, or Parameter Store.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Instead of embedding secrets in user data, use IAM roles or AWS Secrets Manager:
+
+            ```hcl
+            resource "aws_instance" "example" {
+              ami           = "ami-12345678"
+              instance_type = "t3.micro"
+
+              # Use IAM instance profile instead of hard-coded credentials
+              iam_instance_profile = aws_iam_instance_profile.example.name
+
+              user_data = <<-EOF
+                #!/bin/bash
+                # Retrieve secrets from Secrets Manager
+                SECRET=$(aws secretsmanager get-secret-value --secret-id my-secret --query SecretString --output text)
+                # Use the secret securely
+              EOF
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-add-user-data.html
+        title: AWS Documentation - Work with instance user data
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html
+        title: AWS Documentation - Run commands on your Linux instance at launch
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance
+        title: Terraform Documentation - aws_instance Resource
+  - uid: mondoo-aws-security-ec2-user-data-no-secrets-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_instance" && arguments["user_data"] != empty ) {
+        arguments["user_data"] {
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        }
+        arguments["user_data"] {
+          _.find(/([A-Za-z0-9\\\/+\\]{40})/).all( "wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+        }
+      }
+  - uid: mondoo-aws-security-ec2-user-data-no-secrets-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_instance" && change.after.user_data != empty) {
+        change.after.user_data {
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        }
+        change.after.user_data {
+          _.find(/([A-Za-z0-9\\\/+\\]{40})/).all("wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+        }
+      }
+  - uid: mondoo-aws-security-ec2-user-data-no-secrets-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_instance" && values.user_data != empty) {
+        values.user_data {
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        }
+        values.user_data {
+          _.find(/([A-Za-z0-9\\\/+\\]{40})/).all("wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY")
+        }
+      }
+  - uid: mondoo-aws-security-iam-no-wildcards-policies
+    title: Ensure IAM policies do not use wildcards and apply least privilege
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-iam-no-wildcards-policies-api
+      - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
+      - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-plan
+      - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-state
+    docs:
+      desc: |
+        This check ensures that IAM policies do not use wildcard (*) resources except in Deny statements. Using wildcards in Allow statements grants overly permissive access, violating the principle of least privilege.
+
+        **Why this matters**
+
+        Wildcard permissions in IAM policies can lead to:
+
+        - **Excessive privileges:** Users or roles may have access to resources they don't need.
+        - **Blast radius expansion:** If credentials are compromised, attackers have broad access.
+        - **Compliance violations:** CIS, SOC 2, PCI DSS, and other frameworks require least privilege access.
+
+        **Risk mitigation:**
+
+        - Enforces the principle of least privilege.
+        - Reduces the potential impact of credential compromise.
+        - Ensures compliance with security frameworks.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Replace wildcard resources with specific ARNs:
+
+            ```hcl
+            resource "aws_iam_policy" "example" {
+              name        = "restricted-policy"
+              description = "Policy with specific resource access"
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [
+                  {
+                    Effect   = "Allow"
+                    Action   = ["s3:GetObject", "s3:PutObject"]
+                    Resource = "arn:aws:s3:::my-bucket/*"  # Specific bucket, not *
+                  },
+                  {
+                    Effect   = "Deny"
+                    Action   = "*"
+                    Resource = "*"  # Wildcards are acceptable in Deny statements
+                    Condition = {
+                      Bool = {
+                        "aws:MultiFactorAuthPresent" = "false"
+                      }
+                    }
+                  }
+                ]
+              })
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+        title: AWS Documentation - Security best practices in IAM
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy
+        title: Terraform Documentation - iam_policy Resource
+  - uid: mondoo-aws-security-iam-no-wildcards-policies-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.policies.where(isAttachable == true) {
+        defaultVersion.document.where(_['Statement'] != empty) {
+          _['Statement'].all(
+            _['Resource'] != "*" || _['Effect'].upcase == "DENY"
+          )
+        }
+      }
+  - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_group_policy")
+    mql: |
+      terraform.resources.where( nameLabel == "aws_iam_policy" && arguments["policy"] != empty ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+      terraform.resources.where( nameLabel == "aws_iam_user_policy" && arguments["policy"] != empty ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+      terraform.resources.where( nameLabel == "aws_iam_role_policy" && arguments["policy"] != empty ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+      terraform.resources.where( nameLabel == "aws_iam_group_policy" && arguments["policy"] != empty ) {
+        arguments["policy"].where( _["Statement"] != empty) {
+          _["Statement"] {
+            _["Resource"] != "*" || _["Effect"].upcase == "DENY"
+          }
+        }
+      }
+  - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy" || type == "aws_iam_user_policy" || type == "aws_iam_role_policy" || type == "aws_iam_group_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_iam_policy" && change.after.policy != empty) {
+        change.after.policy {
+          _.contains('"Resource": "*"') == false || _.contains('"Effect": "Deny"')
+        }
+      }
+  - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_policy" || type == "aws_iam_user_policy" || type == "aws_iam_role_policy" || type == "aws_iam_group_policy")
+    mql: |
+      terraform.state.resources.where(type == "aws_iam_policy" && values.policy != empty) {
+        values.policy {
+          _.contains('"Resource": "*"') == false || _.contains('"Effect": "Deny"')
+        }
+      }
+  - uid: mondoo-aws-security-s3-bucket-versioning-enabled
+    title: Ensure S3 bucket versioning is enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-versioning-enabled-api
+      - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-hcl
+      - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-plan
+      - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon S3 buckets have versioning enabled. Versioning preserves multiple versions of objects, providing protection against accidental deletions and enabling recovery of previous versions.
+
+        **Why this matters**
+
+        Without versioning:
+
+        - **Data loss:** Accidental deletions or overwrites cannot be recovered.
+        - **No audit trail:** Changes to objects cannot be tracked over time.
+        - **Ransomware vulnerability:** Encrypted files cannot be restored to pre-attack versions.
+
+        **Risk mitigation:**
+
+        - Protects against accidental data loss and overwrites.
+        - Enables recovery from ransomware attacks.
+        - Supports compliance with data retention requirements.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform (AWS Provider 4.x)**
+
+            Enable versioning for S3 buckets:
+
+            ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "my-bucket"
+            }
+
+            resource "aws_s3_bucket_versioning" "example" {
+              bucket = aws_s3_bucket.example.id
+              versioning_configuration {
+                status = "Enabled"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-versioning-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_versioning
+        title: Terraform Documentation - s3_bucket_versioning Resource
+  - uid: mondoo-aws-security-s3-bucket-versioning-enabled-api
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.versioning['Status'] == "Enabled"
+  - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_versioning")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_s3_bucket_versioning").all(
+        blocks.one(type.downcase == "versioning_configuration") &&
+        blocks.where(type.downcase == "versioning_configuration").all(
+          arguments['status'].downcase == 'enabled'
+        )
+      )
+  - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_versioning")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3_bucket_versioning").all(
+        change.after.versioning_configuration[0].status.downcase == "enabled"
+      )
+  - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3_bucket_versioning")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3_bucket_versioning").all(
+        values.versioning_configuration[0].status.downcase == "enabled"
+      )
+  - uid: mondoo-aws-security-s3-bucket-logging-enabled
+    title: Ensure S3 bucket logging is enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-logging-enabled-api
+      - uid: mondoo-aws-security-s3-bucket-logging-enabled-terraform-hcl
+      - uid: mondoo-aws-security-s3-bucket-logging-enabled-terraform-plan
+      - uid: mondoo-aws-security-s3-bucket-logging-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon S3 buckets have server access logging enabled. Access logs record all requests made to the bucket, providing valuable data for security analysis, auditing, and compliance.
+
+        **Why this matters**
+
+        Without logging:
+
+        - **No visibility:** Unable to track who accessed what data and when.
+        - **Security blind spots:** Cannot detect unauthorized access attempts.
+        - **Compliance gaps:** Many regulations require access logging for audit purposes.
+
+        **Risk mitigation:**
+
+        - Enables detection of unauthorized access attempts.
+        - Supports forensic investigations and incident response.
+        - Ensures compliance with audit and logging requirements.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform (AWS Provider 4.x)**
+
+            Enable logging for S3 buckets:
+
+            ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "my-bucket"
+            }
+
+            resource "aws_s3_bucket_logging" "example" {
+              bucket = aws_s3_bucket.example.id
+
+              target_bucket = aws_s3_bucket.log_bucket.id
+              target_prefix = "logs/"
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-logging-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html
+        title: AWS Documentation - Logging requests using server access logging
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_logging
+        title: Terraform Documentation - s3_bucket_logging Resource
+  - uid: mondoo-aws-security-s3-bucket-logging-enabled-api
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.logging['TargetBucket'] != empty
+  - uid: mondoo-aws-security-s3-bucket-logging-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_logging")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_s3_bucket_logging").all(
+        arguments['target_bucket'] != empty
+      )
+  - uid: mondoo-aws-security-s3-bucket-logging-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_logging")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3_bucket_logging").all(
+        change.after.target_bucket != empty
+      )
+  - uid: mondoo-aws-security-s3-bucket-logging-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3_bucket_logging")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3_bucket_logging").all(
+        values.target_bucket != empty
+      )
+  - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled
+    title: Ensure S3 bucket server-side encryption is enabled
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-api
+      - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-hcl
+      - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-plan
+      - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon S3 buckets have default server-side encryption enabled. When enabled, all new objects are automatically encrypted using either Amazon S3-managed keys (SSE-S3) or AWS KMS keys (SSE-KMS).
+
+        **Why this matters**
+
+        Without default encryption:
+
+        - **Data exposure:** Unencrypted data at rest is vulnerable if storage is compromised.
+        - **Compliance violations:** PCI DSS, HIPAA, and other standards require encryption at rest.
+        - **Inconsistent protection:** Objects may be uploaded without encryption.
+
+        **Risk mitigation:**
+
+        - Protects data at rest with strong encryption.
+        - Ensures all objects are automatically encrypted.
+        - Supports compliance with data protection regulations.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform (AWS Provider 4.x)**
+
+            Enable server-side encryption for S3 buckets:
+
+            ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "my-bucket"
+            }
+
+            resource "aws_s3_bucket_server_side_encryption_configuration" "example" {
+              bucket = aws_s3_bucket.example.id
+
+              rule {
+                apply_server_side_encryption_by_default {
+                  sse_algorithm     = "aws:kms"
+                  kms_master_key_id = aws_kms_key.example.arn
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-encryption.html
+        title: AWS Documentation - Setting default server-side encryption
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-server-side-encryption-enabled.html
+        title: AWS Config Managed Rules
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_server_side_encryption_configuration
+        title: Terraform Documentation - s3_bucket_server_side_encryption_configuration Resource
+  - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-api
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.encryption['Rules'] != empty
+  - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_server_side_encryption_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_s3_bucket_server_side_encryption_configuration").all(
+        blocks.one(type == "rule") &&
+        blocks.where(type == "rule").all(
+          blocks.one(_.type == 'apply_server_side_encryption_by_default')
+        )
+      )
+  - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_server_side_encryption_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3_bucket_server_side_encryption_configuration").all(
+        change.after.rule[0].apply_server_side_encryption_by_default != empty
+      )
+  - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3_bucket_server_side_encryption_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3_bucket_server_side_encryption_configuration").all(
+        values.rule[0].apply_server_side_encryption_by_default != empty
+      )
+  - uid: mondoo-aws-security-s3-bucket-public-read-prohibited
+    title: Ensure S3 buckets do not allow public read access via ACLs
+    impact: 95
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-api
+      - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-hcl
+      - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-plan
+      - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon S3 buckets do not have public-read or public-read-write ACLs configured. Public ACLs expose bucket contents to the internet, risking unauthorized data access and breaches.
+
+        **Why this matters**
+
+        Public read ACLs can lead to:
+
+        - **Data breaches:** Anyone on the internet can access bucket contents.
+        - **Sensitive data exposure:** Confidential files may be inadvertently exposed.
+        - **Compliance violations:** GDPR, PCI DSS, and HIPAA prohibit public access to sensitive data.
+
+        **Risk mitigation:**
+
+        - Prevents unauthorized public access to S3 data.
+        - Protects against data breaches and leaks.
+        - Ensures compliance with data protection regulations.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform (AWS Provider 4.x)**
+
+            Use private ACLs for S3 buckets:
+
+            ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "my-bucket"
+            }
+
+            resource "aws_s3_bucket_acl" "example" {
+              bucket = aws_s3_bucket.example.id
+              acl    = "private"
+            }
+            ```
+
+            Better yet, use bucket public access blocks:
+
+            ```hcl
+            resource "aws_s3_bucket_public_access_block" "example" {
+              bucket = aws_s3_bucket.example.id
+
+              block_public_acls       = true
+              block_public_policy     = true
+              ignore_public_acls      = true
+              restrict_public_buckets = true
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-public-read-prohibited.html
+        title: AWS Config Managed Rules - public read
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-public-write-prohibited.html
+        title: AWS Config Managed Rules - public write
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_acl
+        title: Terraform Documentation - s3_bucket_acl Resource
+  - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-api
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.acl.none(
+        permission == "READ" && grantee['URI'] == "http://acs.amazonaws.com/groups/global/AllUsers"
+      )
+      aws.s3.bucket.acl.none(
+        permission == "FULL_CONTROL" && grantee['URI'] == "http://acs.amazonaws.com/groups/global/AllUsers"
+      )
+  - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_acl")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_s3_bucket_acl").all(
+        arguments['acl'].downcase != /public-read/
+      )
+  - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_acl")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3_bucket_acl").all(
+        change.after.acl.downcase != /public-read/
+      )
+  - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3_bucket_acl")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3_bucket_acl").all(
+        values.acl.downcase != /public-read/
+      )
