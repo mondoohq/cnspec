@@ -46,6 +46,7 @@ func main() {
 			"Valid":    96,
 			"Variants": 59,
 			"Tags":     70,
+			"Require":  69,
 			"Mql":      60,
 
 			"Authors": 51,
