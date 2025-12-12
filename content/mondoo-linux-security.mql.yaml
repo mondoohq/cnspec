@@ -67,12 +67,17 @@ policies:
           asset.family.contains('linux')
         checks:
           - uid: mondoo-linux-security-window-system-is-not-installed
-          - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
           - uid: mondoo-linux-security-aide-is-installed
           - uid: mondoo-linux-security-core-dumps-are-restricted
           - uid: mondoo-linux-security-filesystem-integrity-is-regularly-checked
           - uid: mondoo-linux-security-mail-transfer-agent-is-configured-for-local-only-mode
           - uid: mondoo-linux-security-prelink-is-disabled
+      - title: Kernel
+        filters: |
+          asset.family.contains('linux')
+        checks:
+          - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
+          - uid: mondoo-linux-security-restrict-kernel-address-access
       - title: Network Stack
         filters: |
           asset.family.contains('linux')
@@ -146,7 +151,7 @@ policies:
           - uid: mondoo-linux-security-ssh-root-login-is-disabled
           - uid: mondoo-linux-security-ssh-warning-banner-is-configured
           - uid: mondoo-linux-security-ssh-x11-forwarding-is-disabled
-      - title: Logging
+      - title: Auditing and Logging
         filters: |
           asset.family.contains('linux')
           asset.kind != "container-image"
@@ -177,7 +182,7 @@ policies:
           - uid: mondoo-linux-security-system-is-disabled-when-audit-logs-are-full
           - uid: mondoo-linux-security-the-audit-configuration-is-immutable
           - uid: mondoo-linux-security-unsuccessful-unauthorized-file-access-attempts-are-collected
-      - title: Users and groups
+      - title: Users and Groups
         filters: |
           asset.family.contains('linux')
         checks:
@@ -722,6 +727,79 @@ queries:
             fi
 
             sysctl -w kernel.randomize_va_space=2
+            ```
+  - uid: mondoo-linux-security-restrict-kernel-address-access
+    title: Restrict access to kernel addresses
+    impact: 70
+    mql : |
+      kernel.parameters["kernel.kptr_restrict"] == 2
+    docs:
+      desc: |
+        This check verifies that access to kernel addresses is restricted by confirming that the kernel parameter kernel.kptr_restrict is set to 2, which limits the exposure of kernel pointers in user-space interfaces.
+
+        **Why this matters**
+        Kernel pointers provide critical information about the memory layout of the kernel. If exposed to unprivileged users, these pointers can be exploited by attackers to facilitate kernel-level attacks, such as privilege escalation or arbitrary code execution. By restricting access to kernel addresses:
+          - The system reduces the risk of information leakage that could aid attackers in crafting exploits.
+          - It enhances the overall security posture by limiting the visibility of sensitive kernel structures.
+          - It helps prevent attacks that rely on knowledge of kernel memory layouts, such as Return-Oriented Programming (ROP) attacks.
+
+        Setting kernel.kptr_restrict to 2 ensures that kernel pointers are only accessible to privileged users, thereby mitigating the risk of kernel address exposure and strengthening the system's defenses against advanced exploitation techniques.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            1. Set the kptr_restrict value to 2:
+
+                ```bash
+                sysctl -w kernel.kptr_restrict=2
+                ```
+
+            2. Make the change permanent:
+                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+
+                ```
+                kernel.kptr_restrict = 2
+                ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to restrict kernel address access:
+
+            ```yaml
+            ---
+            - name: Restrict kernel address access on Linux systems
+              hosts: all
+              become: true
+              tasks:
+                - name: Set kernel.kptr_restrict to 2
+                  ansible.builtin.sysctl:
+                    name: kernel.kptr_restrict
+                    value: '2'
+                    sysctl_file: /etc/sysctl.d/99-kptr-restrict.conf
+                    state: present
+                    sysctl_set: true
+                    reload: yes
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to restrict kernel address access. It will check if the setting is already configured and apply it if not.
+
+            ```bash
+            #!/bin/bash
+            set -e 
+            if grep -q '^kernel.kptr_restrict' /etc/sysctl.conf 2>/dev/null; then
+              echo "Updating kernel.kptr_restrict to 2 in /etc/sysctl.conf"
+              sed -i 's/^kernel.kptr_restrict.*/kernel.kptr_restrict = 2/' /etc/sysctl.conf
+            else
+              echo "Setting kernel.kptr_restrict to 2 in /etc/sysctl.d/99-kptr-restrict.conf"
+              echo 'kernel.kptr_restrict = 2' | tee /etc/sysctl.d/99-kptr-restrict.conf
+            fi 
+
+            sysctl -w kernel.kptr_restrict=2
             ```
   - uid: mondoo-linux-security-prelink-is-disabled
     title: Ensure prelink is disabled
