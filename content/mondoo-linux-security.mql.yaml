@@ -24,6 +24,7 @@ policies:
           - Hardening SSH configurations
           - Ensure users and groups are securely configured
           - Identifying misconfigured Kernel networking configurations
+          - Harden various Kernel parameters
 
         This policy has been developed for Red Hat (RHEL), Debian, Ubuntu, and SUSE (SLES) derivative distributions running on x64 architectures.
         Some queries may be skipped depending on your particular distribution, installation type, or underlying infrastructure.
@@ -78,6 +79,10 @@ policies:
         checks:
           - uid: mondoo-linux-security-address-space-layout-randomization-aslr-is-enabled
           - uid: mondoo-linux-security-restrict-kernel-address-access
+          - uid: mondoo-linux-security-prevent-mapping-low-memory-addresses
+          - uid: mondoo-linux-security-restrict-dmesg-access
+          - uid: mondoo-linux-security-prevent-nonprivileged-ebpf-access
+          - uid: mondoo-linux-security-prevent-nonprivileged-ptrace-access
       - title: Network Stack
         filters: |
           asset.family.contains('linux')
@@ -541,7 +546,7 @@ queries:
                 ulimit -c 0
                 ```
 
-            2. To make the change permanent:
+            2. Make the change permanent:
 
                 Edit `/etc/security/limits.conf` or a separate config file in `/etc/security/limits.d/` and add the following line:
 
@@ -675,6 +680,8 @@ queries:
 
             1. Set the ASLR value to 2:
 
+                Run this command to set the active kernel parameter:
+
                 ```bash
                 sysctl -w kernel.randomize_va_space=2
                 ```
@@ -726,12 +733,16 @@ queries:
               echo 'kernel.randomize_va_space = 2' | tee /etc/sysctl.d/99-aslr.conf
             fi
 
+            echo "Applying kernel.randomize_va_space=2"
             sysctl -w kernel.randomize_va_space=2
             ```
   - uid: mondoo-linux-security-restrict-kernel-address-access
     title: Restrict access to kernel addresses
     impact: 70
-    mql : |
+    filters: |
+      asset.kind != "container-image"
+      asset.runtime != "docker-container"
+    mql: |
       kernel.parameters["kernel.kptr_restrict"] == 2
     docs:
       desc: |
@@ -751,11 +762,14 @@ queries:
 
             1. Set the kptr_restrict value to 2:
 
+                Run this command to set the active kernel parameter:
+
                 ```bash
                 sysctl -w kernel.kptr_restrict=2
                 ```
 
             2. Make the change permanent:
+
                 Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
 
                 ```
@@ -790,16 +804,364 @@ queries:
 
             ```bash
             #!/bin/bash
-            set -e 
+            set -e
+            
             if grep -q '^kernel.kptr_restrict' /etc/sysctl.conf 2>/dev/null; then
               echo "Updating kernel.kptr_restrict to 2 in /etc/sysctl.conf"
               sed -i 's/^kernel.kptr_restrict.*/kernel.kptr_restrict = 2/' /etc/sysctl.conf
             else
               echo "Setting kernel.kptr_restrict to 2 in /etc/sysctl.d/99-kptr-restrict.conf"
               echo 'kernel.kptr_restrict = 2' | tee /etc/sysctl.d/99-kptr-restrict.conf
-            fi 
+            fi
 
+            echo "Applying kernel.kptr_restrict=2"
             sysctl -w kernel.kptr_restrict=2
+            ```
+    refs:
+      - url: https://access.redhat.com/articles/7133962
+        title: 'Red Hat Customer Portal: Implications of enabling kptr_restrict=2'
+  - uid: mondoo-linux-security-prevent-mapping-low-memory-addresses
+    title: Prevent mapping of low memory addresses
+    impact: 70
+    filters: |
+      asset.kind != "container-image"
+      asset.runtime != "docker-container"
+    mql: |
+      kernel.parameters["vm.mmap_min_addr"] >= 65536
+    docs:
+      desc: |
+        This check verifies that the system is configured to prevent mapping of low memory addresses by ensuring that the kernel parameter `vm.mmap_min_addr` is set to at least `65536`. This setting helps mitigate certain types of attacks that exploit low memory address mappings.
+
+        **Why this matters**
+
+        Low memory addresses (typically below 64KB) are often targeted by attackers to exploit vulnerabilities such as null pointer dereferences or buffer overflows. By mapping memory at these low addresses, malicious actors can manipulate program behavior, potentially leading to privilege escalation or arbitrary code execution.
+
+        By setting `vm.mmap_min_addr` to `65536` or higher:
+          - The system reduces the risk of exploitation through low memory address mappings.
+          - It enhances overall security by limiting the ability of unprivileged users to map memory in sensitive regions.
+          - It helps prevent attacks that rely on predictable memory layouts, thereby strengthening the system's defenses against various exploitation techniques.
+
+        Configuring `vm.mmap_min_addr` to at least `65536` is a proactive measure to safeguard against memory-based attacks and improve the security posture of Linux systems.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            1. Set the mmap_min_addr value to 65536:
+
+                Run this command to set the active kernel parameter:
+
+                ```bash
+                sysctl -w vm.mmap_min_addr=65536
+                ```
+            2. Make the change permanent:
+
+                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+
+                ```
+                vm.mmap_min_addr = 65536
+                ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to prevent mapping of low memory addresses:
+
+            ```yaml
+            ---
+            - name: Prevent mapping of low memory addresses on Linux systems
+              hosts: all
+              become: true
+              tasks:
+                - name: Set vm.mmap_min_addr to 65536
+                  ansible.builtin.sysctl:
+                    name: vm.mmap_min_addr
+                    value: '65536'
+                    sysctl_file: /etc/sysctl.d/99-mmap-min-addr.conf
+                    state: present
+                    sysctl_set: true
+                    reload: yes
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to prevent mapping of low memory addresses. It will check if the setting is already configured and apply it if not.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if grep -q '^vm.mmap_min_addr' /etc/sysctl.conf 2>/dev/null; then
+              echo "Updating vm.mmap_min_addr to 65536 in /etc/sysctl.conf"
+              sed -i 's/^vm.mmap_min_addr.*/vm.mmap_min_addr = 65536/' /etc/sysctl.conf
+            else
+              echo "Setting vm.mmap_min_addr to 65536 in /etc/sysctl.d/99-mmap-min-addr.conf"
+              echo 'vm.mmap_min_addr = 65536' | tee /etc/sysctl.d/99-mmap-min-addr.conf
+            fi
+
+            echo "Applying vm.mmap_min_addr=65536"
+            sysctl -w vm.mmap_min_addr=65536
+            ```
+  - uid: mondoo-linux-security-restrict-dmesg-access
+    title: Ensure dmesg access is restricted
+    impact: 40
+    filters: |
+      asset.kind != "container-image"
+      asset.runtime != "docker-container"
+    mql: |
+      kernel.parameters["kernel.dmesg_restrict"] == 1
+    docs:
+      desc: |
+        This check verifies that access to the dmesg command is restricted by confirming that the kernel parameter `kernel.dmesg_restrict` is set to `1`, which limits dmesg output to privileged users only.
+
+        **Why this matters**
+
+        The dmesg command displays kernel ring buffer messages, which can contain sensitive information about the system's hardware, drivers, and kernel operations. If unprivileged users have access to dmesg output, they may be able to glean information that could aid in exploiting vulnerabilities or understanding the system's configuration.
+
+        By restricting dmesg access:
+          - The system reduces the risk of information leakage that could assist attackers in reconnaissance activities.
+          - It enhances overall security by limiting visibility into kernel-level operations.
+          - It helps prevent potential exploitation techniques that rely on knowledge of kernel messages.
+
+        Setting `kernel.dmesg_restrict` to `1` ensures that only privileged users can access dmesg output, thereby mitigating the risk of information exposure and strengthening the system's defenses against potential attacks.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            1. Set the dmesg_restrict value to 1:
+
+                Run this command to set the active kernel parameter:
+
+                ```bash
+                sysctl -w kernel.dmesg_restrict=1
+                ```
+
+            2. Make the change permanent:
+
+                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+
+                ```
+                kernel.dmesg_restrict = 1
+                ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to restrict dmesg access:
+
+            ```yaml
+            ---
+            - name: Restrict dmesg access on Linux systems
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Set kernel.dmesg_restrict to 1
+                  ansible.builtin.sysctl:
+                    name: kernel.dmesg_restrict
+                    value: '1'
+                    sysctl_file: /etc/sysctl.d/99-dmesg-restrict.conf
+                    state: present
+                    sysctl_set: true
+                    reload: yes
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to restrict dmesg access. It will check if the setting is already configured and apply it if not.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if grep -q '^kernel.dmesg_restrict' /etc/sysctl.conf 2>/dev/null; then
+              echo "Updating kernel.dmesg_restrict to 1 in /etc/sysctl.conf"
+              sed -i 's/^kernel.dmesg_restrict.*/kernel.dmesg_restrict = 1/' /etc/sysctl.conf
+            else
+              echo "Setting kernel.dmesg_restrict to 1 in /etc/sysctl.d/99-dmesg-restrict.conf"
+              echo 'kernel.dmesg_restrict = 1' | tee /etc/sysctl.d/99-dmesg-restrict.conf
+            fi
+
+            echo "Applying kernel.dmesg_restrict=1"
+            sysctl -w kernel.dmesg_restrict=1
+            ```
+  - uid: mondoo-linux-security-prevent-nonprivileged-ebpf-access
+    title: Prevent non-privileged eBPF access
+    impact: 60
+    filters: |
+      asset.kind != "container-image"
+      asset.runtime != "docker-container"
+    mql: |
+      kernel.parameters["kernel.unprivileged_bpf_disabled"] >= 1
+    docs:
+      desc: |
+        This check verifies that non-privileged access to eBPF (extended Berkeley Packet Filter) is disabled by confirming that the kernel parameter `kernel.unprivileged_bpf_disabled` is set to `1`. This setting helps mitigate potential security risks associated with unprivileged eBPF usage.
+
+        **Why this matters**
+
+        eBPF is a powerful technology that allows for the execution of custom code within the Linux kernel, enabling advanced networking, tracing, and security functionalities. However, if unprivileged users are allowed to load and execute eBPF programs, it can lead to various security risks, including:
+          - Unauthorized access to kernel memory and data structures.
+          - Potential exploitation of vulnerabilities within eBPF programs.
+          - Increased attack surface for privilege escalation and other kernel-level attacks.
+
+        By disabling unprivileged eBPF access:
+          - The system reduces the risk of exploitation through malicious or poorly written eBPF programs.
+          - It enhances overall security by limiting the ability of unprivileged users to interact with kernel-level functionalities.
+          - It helps maintain the integrity and stability of the kernel by preventing unauthorized code execution.
+
+        Setting `kernel.unprivileged_bpf_disabled` to `1` ensures that only privileged users can utilize eBPF capabilities, thereby mitigating potential security threats and strengthening the system's defenses against kernel-level attacks.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            1. Set the unprivileged_bpf_disabled value to 1:
+
+                Run this command to set the active kernel parameter:
+
+                ```bash
+                sysctl -w kernel.unprivileged_bpf_disabled=1
+                ```
+
+            2. Make the change permanent:
+
+                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+
+                ```
+                kernel.unprivileged_bpf_disabled = 1
+                ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to prevent non-privileged eBPF access:
+
+            ```yaml
+            ---
+            - name: Prevent non-privileged eBPF access on Linux systems
+              hosts: all
+              become: true
+              tasks:
+                - name: Set kernel.unprivileged_bpf_disabled to 1
+                  ansible.builtin.sysctl:
+                    name: kernel.unprivileged_bpf_disabled
+                    value: '1'
+                    sysctl_file: /etc/sysctl.d/99-unprivileged-bpf.conf
+                    state: present
+                    sysctl_set: true
+                    reload: yes
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to prevent non-privileged eBPF access. It will check if the setting is already configured and apply it if not.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if grep -q '^kernel.unprivileged_bpf_disabled' /etc/sysctl.conf 2>/dev/null; then
+              echo "Updating kernel.unprivileged_bpf_disabled to 1 in /etc/sysctl.conf"
+              sed -i 's/^kernel.unprivileged_bpf_disabled.*/kernel.unprivileged_bpf_disabled = 1/' /etc/sysctl.conf
+            else
+              echo "Setting kernel.unprivileged_bpf_disabled to 1 in /etc/sysctl.d/99-unprivileged-bpf.conf"
+              echo 'kernel.unprivileged_bpf_disabled = 1' | tee /etc/sysctl.d/99-unprivileged-bpf.conf
+            fi
+
+            echo "Applying kernel.unprivileged_bpf_disabled=1"
+            sysctl -w kernel.unprivileged_bpf_disabled=1
+            ```
+  - uid: mondoo-linux-security-prevent-nonprivileged-ptrace-access
+    title: Restrict non-privileged access to ptrace
+    impact: 60
+    filters: |
+      asset.kind != "container-image"
+      asset.runtime != "docker-container"
+    mql: |
+      kernel.parameters["kernel.yama.ptrace_scope"] >= 2
+    docs:
+      desc: |
+        This check verifies that non-privileged access to the ptrace system call is restricted by confirming that the kernel parameter `kernel.yama.ptrace_scope` is set to at least `2`. This setting helps mitigate potential security risks associated with unrestricted ptrace usage.
+
+        **Why this matters**
+
+        The ptrace system call allows one process to observe and control the execution of another process, which is commonly used for debugging. However, if unprivileged users are allowed to use ptrace on arbitrary processes, it can lead to various security risks, including:
+
+          - Unauthorized access to sensitive information from other processes.
+          - Potential exploitation of vulnerabilities within the traced processes.
+          - Increased attack surface for privilege escalation and other attacks.
+
+        By restricting ptrace access:
+
+          - The system reduces the risk of exploitation through malicious or unauthorized ptrace usage.
+          - It enhances overall security by limiting the ability of unprivileged users to interact with other processes.
+          - It helps maintain the integrity and confidentiality of process data by preventing unauthorized access.
+
+        Setting `kernel.yama.ptrace_scope` to at least `2` ensures that only privileged users or specific conditions allow ptrace usage, thereby mitigating potential security threats and strengthening the system's defenses against process-level attacks. If ptrace is not required on the system, consider setting this value to `3` to disable ptrace entirely.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            1. Set the ptrace_scope value to 2:
+
+                Run this command to set the active kernel parameter:
+
+                ```bash
+                sysctl -w kernel.yama.ptrace_scope=2
+                ```
+            2. Make the change permanent:
+
+                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+
+                ```
+                kernel.yama.ptrace_scope = 2
+                ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to restrict non-privileged access to ptrace:
+
+            ```yaml
+            ---
+            - name: Restrict non-privileged access to ptrace on Linux systems
+              hosts: all
+              become: true
+              tasks:
+                - name: Set kernel.yama.ptrace_scope to 2
+                  ansible.builtin.sysctl:
+                    name: kernel.yama.ptrace_scope
+                    value: '2'
+                    sysctl_file: /etc/sysctl.d/99-ptrace-scope.conf
+                    state: present
+                    sysctl_set: true
+                    reload: yes
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to restrict non-privileged access to ptrace. It will check if the setting is already configured and apply it if not.
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if grep -q '^kernel.yama.ptrace_scope' /etc/sysctl.conf 2>/dev/null; then
+              echo "Updating kernel.yama.ptrace_scope to 2 in /etc/sysctl.conf"
+              sed -i 's/^kernel.yama.ptrace_scope.*/kernel.yama.ptrace_scope = 2/' /etc/sysctl.conf
+            else
+              echo "Setting kernel.yama.ptrace_scope to 2 in /etc/sysctl.d/99-ptrace-scope.conf"
+              echo 'kernel.yama.ptrace_scope = 2' | tee /etc/sysctl.d/99-ptrace-scope.conf
+            fi
+
+            echo "Applying kernel.yama.ptrace_scope=2"
+            sysctl -w kernel.yama.ptrace_scope=2
             ```
   - uid: mondoo-linux-security-prelink-is-disabled
     title: Ensure prelink is disabled
@@ -1286,13 +1648,13 @@ queries:
     filters: |
       asset.kind != "container-image"
     mql: |
-      service("nfs").enabled == false
-      service("nfs").running == false
+      service("nfs-server").enabled == false
+      service("nfs-server").running == false
       service("rpcbind").enabled == false
       service("rpcbind").running == false
     docs:
       desc: |
-        This check verifies that the NFS (nfs) and RPC (rpcbind) services are not running and are disabled from starting at boot. These services are commonly used to share directories across systems on a network using the Network File System (NFS) protocol.
+        This check verifies that the NFS (nfs-server) and RPC (rpcbind) services are not running and are disabled from starting at boot. These services are commonly used to share directories across systems on a network using the Network File System (NFS) protocol.
 
         **Why this matters**
 
@@ -1312,24 +1674,23 @@ queries:
             1. Run this command to stop and disable `nfs` and `rpcbind`:
 
                 ```bash
-                systemctl stop nfs
+                systemctl stop nfs-server
                 systemctl stop rpcbind
 
-                systemctl disable nfs
+                systemctl disable nfs-server
                 systemctl disable rpcbind
                 ```
 
-            2. To make the service `nfs` and `rpcbind` invisible to other services run this command:
-
+            2. To make the service `nfs-server` and `rpcbind` invisible to other services run this command:
                 ```bash
-                systemctl mask nfs
+                systemctl mask nfs-server
                 systemctl mask rpcbind
                 ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to stop and disable `nfs` and `rpcbind`:
+            Use this Ansible playbook to stop and disable `nfs-server` and `rpcbind`:
 
             ```yaml
             ---
@@ -1345,7 +1706,7 @@ queries:
                     enabled: no
                     masked: true
                   loop:
-                    - nfs
+                    - nfs-server
                     - rpcbind
             ```
         - id: bash
@@ -1359,9 +1720,9 @@ queries:
             set -e
 
             echo "Stopping and disabling NFS and RPC services..."
-            systemctl stop nfs
+            systemctl stop nfs-server
             systemctl stop rpcbind
-            systemctl disable nfs
+            systemctl disable nfs-server
             systemctl disable rpcbind
             ```
   - uid: mondoo-linux-security-dns-server-is-not-enabled
@@ -2039,14 +2400,22 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Configuring Postfix for local-only mode..."
-            sed -i 's/^inet_interfaces = .*/inet_interfaces = loopback-only/' /etc/postfix/main.cf
-            systemctl restart postfix
-
-            echo "Configuring Exim4 for local-only mode..."
-            sed -i "s/^dc_local_interfaces = .*/dc_local_interfaces='127.0.0.1 ; ::1'/" /etc/exim4/update-exim4.conf.conf
-            update-exim4.conf
-            systemctl restart exim4
+            if -f /etc/postfix/main.cf; then
+              echo "Configuring Postfix for local-only mode..."
+              sed -i 's/^inet_interfaces = .*/inet_interfaces = loopback-only/' /etc/postfix/main.cf
+              systemctl restart postfix
+            else
+              echo "Postfix configuration file not found. Skipping Postfix configuration."
+            fi
+            
+            if -f /etc/exim4/update-exim4.conf.conf; then
+              echo "Configuring Exim4 for local-only mode..."
+              sed -i "s/^dc_local_interfaces = .*/dc_local_interfaces='127.0.0.1 ; ::1'/" /etc/exim4/update-exim4.conf.conf
+              update-exim4.conf
+              systemctl restart exim4
+            else
+              echo "Exim4 configuration file not found. Skipping Exim4 configuration."
+            fi
             ```
   - uid: mondoo-linux-security-nis-server-is-not-enabled
     title: Ensure NIS server is stopped and not enabled
@@ -8634,7 +9003,14 @@ queries:
             echo "Setting ownership and permissions on /etc/passwd"
             chown root:root /etc/passwd
             chmod 0644 /etc/passwd
-            echo "f /etc/passwd 0644 root root -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/passwd' /etc/tmpfiles.d/etc.conf; then
+              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/passwd.*|f /etc/passwd 0644 root root -|' /etc/tmpfiles.d/etc.conf
+            else
+              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
+              echo 'f /etc/passwd 0644 root root -' >> /etc/tmpfiles.d/etc.conf
+            fi
             ```
   - uid: mondoo-linux-security-permissions-on-etcshadow-are-configured
     title: Ensure secure permissions on /etc/shadow are set
@@ -8707,7 +9083,14 @@ queries:
             echo "Setting ownership and permissions on /etc/shadow"
             chown root:shadow /etc/shadow
             chmod 0640 /etc/shadow
-            echo "f /etc/shadow 0640 root shadow -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/shadow' /etc/tmpfiles.d/etc.conf; then
+              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/shadow.*|f /etc/shadow 0640 root shadow -|' /etc/tmpfiles.d/etc.conf
+            else
+              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
+              echo 'f /etc/shadow 0640 root shadow -' >> /etc/tmpfiles.d/etc.conf
+            fi
             ```
   - uid: mondoo-linux-security-permissions-on-etcgroup-are-configured
     title: Ensure secure permissions on /etc/group are set
@@ -9105,7 +9488,14 @@ queries:
             echo "Setting ownership and permissions on /etc/group-"
             chown root:root /etc/group-
             chmod 0600 /etc/group-
-            echo "f /etc/group- 0600 root root -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/group-' /etc/tmpfiles.d/etc.conf; then
+              echo "Modifying existing /etc/tmpfiles.d/etc.conf to entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/group-.*|f /etc/group- 0600 root root -|' /etc/tmpfiles.d/etc.conf
+            else
+              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
+              echo 'f /etc/group- 0600 root root -' >> /etc/tmpfiles.d/etc.conf
+            fi
             ```
   - uid: mondoo-linux-security-permissions-on-etcgshadow--are-configured
     title: Ensure secure permissions on /etc/gshadow- are set
@@ -9189,7 +9579,14 @@ queries:
             echo "Setting ownership and permissions on /etc/gshadow-"
             chown root:root /etc/gshadow-
             chmod 0640 /etc/gshadow-
-            echo "f /etc/gshadow- 0640 root root -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/gshadow-' /etc/tmpfiles.d/etc.conf; then
+              echo "Modifying existing /etc/tmpfiles.d/etc.conf to entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/gshadow-.*|f /etc/gshadow- 0640 root root -|' /etc/tmpfiles.d/etc.conf
+            else
+              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
+              echo 'f /etc/gshadow- 0640 root root -' >> /etc/tmpfiles.d/etc.conf
+            fi
             ```
   - uid: mondoo-linux-security-no-duplicate-uids-exist
     title: Ensure no duplicate UIDs exist
