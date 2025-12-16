@@ -237,4 +237,44 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "bundle-unknown-field", results.Entries[0].RuleID)
 		assert.Equal(t, "warning", results.Entries[0].Level)
 	})
+
+	t.Run("fail-migration-missing-sources", func(t *testing.T) {
+		file := "./testdata/fail-migration-missing-source.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		assert.Equal(t, 7, len(results.Entries))
+
+		// Count errors by rule
+		ruleCount := make(map[string]int)
+		for _, entry := range results.Entries {
+			ruleCount[entry.RuleID]++
+		}
+
+		assert.Equal(t, 4, ruleCount["bundle-migrations-configuration-validation"], "Expected 4 configuration validation errors")
+		assert.Equal(t, 2, ruleCount["bundle-migrations-validate-stages"], "Expected 2 stage validation errors")
+		assert.Equal(t, 1, ruleCount["bundle-migrations-validate-cross-stage-produce"], "Expected 1 cross-stage produce error")
+	})
+
+	t.Run("fail-migration-validate-stages", func(t *testing.T) {
+		file := "./testdata/fail-migration-validate-stages.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		assert.Equal(t, 11, len(results.Entries))
+
+		// Count errors by rule
+		ruleCount := make(map[string]int)
+		for _, entry := range results.Entries {
+			ruleCount[entry.RuleID]++
+		}
+
+		assert.Equal(t, 4, ruleCount["bundle-migrations-validate-stages"], "Expected 4 stage validation errors")
+		assert.Equal(t, 7, ruleCount["bundle-migrations-validate-cross-stage-produce"], "Expected 7 cross-stage produce errors")
+	})
+
+	t.Run("fail-migrations-validate-cross-stage-produce", func(t *testing.T) {
+		file := "./testdata/fail-migration-validate-cross-stage-produce.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		assert.Equal(t, 3, len(results.Entries))
+	})
 }
