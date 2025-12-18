@@ -22,6 +22,11 @@ resource "google_service_networking_connection" "private_vpc_connection" {
   depends_on = [ google_compute_network.vpc_network ]
 }
 
+resource "google_service_account" "default" {
+  account_id   = "my-custom-sa"
+  display_name = "Custom SA for VM Instance"
+}
+
 resource "google_compute_instance" "default" {
   name         = "my-instance-${random_id.rnd.hex}"
   machine_type = "n2d-standard-2" # n2d required for Confidential VM
@@ -52,6 +57,7 @@ resource "google_compute_instance" "default" {
   }
 
   shielded_instance_config {
+    enable_integrity_monitoring = true
     enable_secure_boot = true
     enable_vtpm         = true
   }
@@ -61,6 +67,12 @@ resource "google_compute_instance" "default" {
     foo = "bar"
     block-project-ssh-keys = "TRUE"
     enable-oslogin = "TRUE"
+  }
+
+  service_account {
+    # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.
+    email  = google_service_account.default.email
+    scopes = ["cloud-platform"]
   }
 
   metadata_startup_script = "echo hi > /test.txt"
