@@ -40,8 +40,8 @@ func SummarizeStage(stage *MigrationStage, index int) (*StageSummary, []error) {
 			src = m.Source.Uid
 		}
 		dst := ""
-		if m.Destination != nil {
-			dst = m.Destination.Uid
+		if m.Target != nil {
+			dst = m.Target.Uid
 		}
 
 		switch m.Action {
@@ -119,15 +119,15 @@ func (m *Migration) Validate() []error {
 			errs = append(errs, fmt.Errorf("REMOVE migrations must have source.uid defined"))
 		}
 	case Migration_MODIFY:
-		if m.Source == nil || m.Destination == nil {
+		if m.Source == nil || m.Target == nil {
 			errs = append(errs, fmt.Errorf("MODIFY migrations must have both source and destination defined"))
-		} else if m.Source.Uid == "" || m.Destination.Uid == "" {
+		} else if m.Source.Uid == "" || m.Target.Uid == "" {
 			errs = append(errs, fmt.Errorf("MODIFY migrations must have both source.uid and destination.uid defined"))
 		}
 	case Migration_CREATE:
-		if m.Destination == nil {
+		if m.Target == nil {
 			errs = append(errs, fmt.Errorf("CREATE migrations must have destination defined"))
-		} else if m.Destination.Uid == "" {
+		} else if m.Target.Uid == "" {
 			errs = append(errs, fmt.Errorf("CREATE migrations must have destination.uid defined"))
 		}
 	default:

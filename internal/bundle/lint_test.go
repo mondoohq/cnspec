@@ -242,7 +242,11 @@ func TestLinter_Fail(t *testing.T) {
 		file := "./testdata/fail-migration-missing-source.yaml"
 		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
-		assert.Equal(t, 7, len(results.Entries))
+		if !assert.Equal(t, 7, len(results.Entries)) {
+			for _, entry := range results.Entries {
+				t.Logf("Entry: %+v", entry)
+			}
+		}
 
 		// Count errors by rule
 		ruleCount := make(map[string]int)
@@ -259,7 +263,11 @@ func TestLinter_Fail(t *testing.T) {
 		file := "./testdata/fail-migration-validate-stages.yaml"
 		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
-		assert.Equal(t, 11, len(results.Entries))
+		if !assert.Equal(t, 11, len(results.Entries)) {
+			for _, entry := range results.Entries {
+				t.Logf("Entry: %+v", entry)
+			}
+		}
 
 		// Count errors by rule
 		ruleCount := make(map[string]int)
@@ -275,6 +283,10 @@ func TestLinter_Fail(t *testing.T) {
 		file := "./testdata/fail-migration-validate-cross-stage-produce.yaml"
 		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
-		assert.Equal(t, 3, len(results.Entries))
+		if !assert.Equal(t, 3, len(results.Entries)) {
+			for _, entry := range results.Entries {
+				t.Logf("Entry: %+v", entry)
+			}
+		}
 	})
 }

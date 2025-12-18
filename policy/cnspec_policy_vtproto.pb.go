@@ -400,13 +400,33 @@ func (m *Bundle) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
+func (m *MigrationPolicyRef) CloneVT() *MigrationPolicyRef {
+	if m == nil {
+		return (*MigrationPolicyRef)(nil)
+	}
+	r := new(MigrationPolicyRef)
+	r.SourceUid = m.SourceUid
+	r.TargetUid = m.TargetUid
+	r.SourceVersion = m.SourceVersion
+	r.TargetVersion = m.TargetVersion
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *MigrationPolicyRef) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
 func (m *MigrationGroup) CloneVT() *MigrationGroup {
 	if m == nil {
 		return (*MigrationGroup)(nil)
 	}
 	r := new(MigrationGroup)
+	r.Title = m.Title
 	r.Policy = m.Policy.CloneVT()
-	r.PolicyMigration = m.PolicyMigration.CloneVT()
 	r.Metadata = m.Metadata.CloneVT()
 	if rhs := m.Migrations; rhs != nil {
 		tmpContainer := make([]*Migration, len(rhs))
@@ -471,6 +491,13 @@ func (m *MigrationStage) CloneVT() *MigrationStage {
 		}
 		r.Migrations = tmpContainer
 	}
+	if rhs := m.PolicyMigrations; rhs != nil {
+		tmpContainer := make([]*Migration, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.PolicyMigrations = tmpContainer
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -488,7 +515,7 @@ func (m *Migration) CloneVT() *Migration {
 	}
 	r := new(Migration)
 	r.Source = m.Source.CloneVT()
-	r.Destination = m.Destination.CloneVT()
+	r.Target = m.Target.CloneVT()
 	r.Action = m.Action
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -519,11 +546,11 @@ func (m *MigrationSource) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (m *MigrationDestination) CloneVT() *MigrationDestination {
+func (m *MigrationTarget) CloneVT() *MigrationTarget {
 	if m == nil {
-		return (*MigrationDestination)(nil)
+		return (*MigrationTarget)(nil)
 	}
-	r := new(MigrationDestination)
+	r := new(MigrationTarget)
 	r.Uid = m.Uid
 	r.Sha256 = m.Sha256
 	if len(m.unknownFields) > 0 {
@@ -533,7 +560,7 @@ func (m *MigrationDestination) CloneVT() *MigrationDestination {
 	return r
 }
 
-func (m *MigrationDestination) CloneMessageVT() proto.Message {
+func (m *MigrationTarget) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
@@ -3553,6 +3580,67 @@ func (m *Bundle) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *MigrationPolicyRef) MarshalVT() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVT(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MigrationPolicyRef) MarshalToVT(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVT(dAtA[:size])
+}
+
+func (m *MigrationPolicyRef) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.TargetVersion) > 0 {
+		i -= len(m.TargetVersion)
+		copy(dAtA[i:], m.TargetVersion)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.TargetVersion)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.SourceVersion) > 0 {
+		i -= len(m.SourceVersion)
+		copy(dAtA[i:], m.SourceVersion)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.SourceVersion)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.TargetUid) > 0 {
+		i -= len(m.TargetUid)
+		copy(dAtA[i:], m.TargetUid)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.TargetUid)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.SourceUid) > 0 {
+		i -= len(m.SourceUid)
+		copy(dAtA[i:], m.SourceUid)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.SourceUid)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *MigrationGroup) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -3607,8 +3695,8 @@ func (m *MigrationGroup) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 			dAtA[i] = 0x22
 		}
 	}
-	if m.PolicyMigration != nil {
-		size, err := m.PolicyMigration.MarshalToSizedBufferVT(dAtA[:i])
+	if m.Policy != nil {
+		size, err := m.Policy.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -3629,13 +3717,10 @@ func (m *MigrationGroup) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 			dAtA[i] = 0x12
 		}
 	}
-	if m.Policy != nil {
-		size, err := m.Policy.MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+	if len(m.Title) > 0 {
+		i -= len(m.Title)
+		copy(dAtA[i:], m.Title)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Title)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -3743,6 +3828,18 @@ func (m *MigrationStage) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.PolicyMigrations) > 0 {
+		for iNdEx := len(m.PolicyMigrations) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.PolicyMigrations[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
 	if len(m.Migrations) > 0 {
 		for iNdEx := len(m.Migrations) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.Migrations[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
@@ -3800,8 +3897,8 @@ func (m *Migration) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x18
 	}
-	if m.Destination != nil {
-		size, err := m.Destination.MarshalToSizedBufferVT(dAtA[:i])
+	if m.Target != nil {
+		size, err := m.Target.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -3872,7 +3969,7 @@ func (m *MigrationSource) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *MigrationDestination) MarshalVT() (dAtA []byte, err error) {
+func (m *MigrationTarget) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -3885,12 +3982,12 @@ func (m *MigrationDestination) MarshalVT() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *MigrationDestination) MarshalToVT(dAtA []byte) (int, error) {
+func (m *MigrationTarget) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *MigrationDestination) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *MigrationTarget) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -9881,14 +9978,40 @@ func (m *Bundle) SizeVT() (n int) {
 	return n
 }
 
+func (m *MigrationPolicyRef) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.SourceUid)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	l = len(m.TargetUid)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	l = len(m.SourceVersion)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	l = len(m.TargetVersion)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	n += len(m.unknownFields)
+	return n
+}
+
 func (m *MigrationGroup) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	if m.Policy != nil {
-		l = m.Policy.SizeVT()
+	l = len(m.Title)
+	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	if len(m.Migrations) > 0 {
@@ -9897,8 +10020,8 @@ func (m *MigrationGroup) SizeVT() (n int) {
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
-	if m.PolicyMigration != nil {
-		l = m.PolicyMigration.SizeVT()
+	if m.Policy != nil {
+		l = m.Policy.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	if len(m.Stages) > 0 {
@@ -9957,6 +10080,12 @@ func (m *MigrationStage) SizeVT() (n int) {
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
+	if len(m.PolicyMigrations) > 0 {
+		for _, e := range m.PolicyMigrations {
+			l = e.SizeVT()
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -9971,8 +10100,8 @@ func (m *Migration) SizeVT() (n int) {
 		l = m.Source.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.Destination != nil {
-		l = m.Destination.SizeVT()
+	if m.Target != nil {
+		l = m.Target.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	if m.Action != 0 {
@@ -10000,7 +10129,7 @@ func (m *MigrationSource) SizeVT() (n int) {
 	return n
 }
 
-func (m *MigrationDestination) SizeVT() (n int) {
+func (m *MigrationTarget) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -14921,6 +15050,185 @@ func (m *Bundle) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *MigrationPolicyRef) UnmarshalVT(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return protohelpers.ErrIntOverflow
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MigrationPolicyRef: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MigrationPolicyRef: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SourceUid", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.SourceUid = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TargetUid", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.TargetUid = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SourceVersion", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.SourceVersion = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TargetVersion", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.TargetVersion = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.unknownFields = append(m.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -14952,9 +15260,9 @@ func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Policy", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Title", wireType)
 			}
-			var msglen int
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -14964,27 +15272,23 @@ func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + intStringLen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Policy == nil {
-				m.Policy = &Policy{}
-			}
-			if err := m.Policy.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
+			m.Title = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -15022,7 +15326,7 @@ func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PolicyMigration", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Policy", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -15049,10 +15353,10 @@ func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.PolicyMigration == nil {
-				m.PolicyMigration = &Migration{}
+			if m.Policy == nil {
+				m.Policy = &MigrationPolicyRef{}
 			}
-			if err := m.PolicyMigration.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Policy.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -15489,6 +15793,40 @@ func (m *MigrationStage) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PolicyMigrations", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PolicyMigrations = append(m.PolicyMigrations, &Migration{})
+			if err := m.PolicyMigrations[len(m.PolicyMigrations)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -15578,7 +15916,7 @@ func (m *Migration) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Destination", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -15605,10 +15943,10 @@ func (m *Migration) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Destination == nil {
-				m.Destination = &MigrationDestination{}
+			if m.Target == nil {
+				m.Target = &MigrationTarget{}
 			}
-			if err := m.Destination.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Target.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -15768,7 +16106,7 @@ func (m *MigrationSource) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *MigrationDestination) UnmarshalVT(dAtA []byte) error {
+func (m *MigrationTarget) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -15791,10 +16129,10 @@ func (m *MigrationDestination) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: MigrationDestination: wiretype end group for non-group")
+			return fmt.Errorf("proto: MigrationTarget: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MigrationDestination: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: MigrationTarget: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:

@@ -47,10 +47,10 @@ func yacMigration2ProtoMigration(migration *Migration) *policy.Migration {
 			Sha256: migration.Source.Sha256,
 		}
 	}
-	if migration.Destination != nil {
-		res.Destination = &policy.MigrationDestination{
-			Uid:    migration.Destination.Uid,
-			Sha256: migration.Destination.Sha256,
+	if migration.Target != nil {
+		res.Target = &policy.MigrationTarget{
+			Uid:    migration.Target.Uid,
+			Sha256: migration.Target.Sha256,
 		}
 	}
 	return res
