@@ -1,18 +1,19 @@
 // Copyright (c) Mondoo, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-package test
+package integration
 
 import (
 	"context"
 	"errors"
-	"go.mondoo.com/cnquery/v9/logger"
-	"go.mondoo.com/cnquery/v9/providers"
-	"go.mondoo.com/cnquery/v9/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnspec/v9/policy"
-	"go.mondoo.com/cnspec/v9/policy/scan"
 	"os"
 	"testing"
+
+	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/cnquery/v12/providers"
+	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v12/policy/scan"
 )
 
 func init() {
@@ -22,8 +23,8 @@ func init() {
 func TestMain(m *testing.M) {
 	// There seems to be a small timing issue when provider installation is close to schema update.
 	// The provider is registered in the init() function to make sure it is loaded early
-	providers.EnsureProvider(providers.ProviderLookup{ID: "go.mondoo.com/cnquery/v9/providers/terraform"}, true, nil)
-	providers.EnsureProvider(providers.ProviderLookup{ID: "go.mondoo.com/cnquery/v9/providers/k8s"}, true, nil)
+	providers.EnsureProvider(providers.ProviderLookup{ProviderName: "terraform"}, true, nil)
+	providers.EnsureProvider(providers.ProviderLookup{ProviderName: "k8s"}, true, nil)
 
 	// Run tests
 	exitVal := m.Run()
@@ -44,7 +45,7 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 		policyFilters = append(policyFilters, policyMrn)
 	}
 
-	scanner := scan.NewLocalScanner(scan.WithRecording(providers.NullRecording{})) // TODO: fix recording
+	scanner := scan.NewLocalScanner()
 	result, err := scanner.RunIncognito(ctx, &scan.Job{
 		Inventory: &inventory.Inventory{
 			Spec: &inventory.InventorySpec{
@@ -59,7 +60,20 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 		return nil, err
 	}
 
-	reports := result.GetFull().Reports
+	fullResult := result.GetFull()
+	if fullResult == nil {
+		return nil, errors.New("no full report generated")
+	}
+	if len(fullResult.Errors) > 0 {
+		msg := ""
+		for _, e := range fullResult.Errors {
+			msg += e + "; "
+		}
+
+		return nil, errors.New("errors during scan: " + msg)
+	}
+
+	reports := fullResult.Reports
 	if len(reports) > 0 {
 		for _, report := range reports {
 			return report, nil
