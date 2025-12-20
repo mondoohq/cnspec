@@ -135,25 +135,45 @@ func TestBundles(t *testing.T) {
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-kubernetes-security",
 			score:      0x0,
 		},
+		// cnspec scan terraform hcl testdata/mondoo-aws-security-tf-pass -f mondoo-aws-security.mql.yaml
 		{
 			provider:   "terraform",
 			bundleFile: "./mondoo-aws-security.mql.yaml",
 			testDir:    "./testdata/mondoo-aws-security-tf-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-aws-security",
 			score:      100,
-		}, {
+		},
+		{
 			provider:   "terraform",
 			bundleFile: "./mondoo-aws-security.mql.yaml",
 			testDir:    "./testdata/mondoo-aws-security-tf-fail",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-aws-security",
 			score:      0,
-		}, {
+		},
+		// cnspec scan terraform hcl testdata/mondoo-azure-security-tf-pass -f mondoo-azure-security.mql.yaml
+		{
+			provider:   "terraform",
+			bundleFile: "./mondoo-azure-security.mql.yaml",
+			testDir:    "./testdata/mondoo-azure-security-tf-pass",
+			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-azure-security",
+			score:      0x5,
+		},
+		{
+			provider:   "terraform",
+			bundleFile: "./mondoo-azure-security.mql.yaml",
+			testDir:    "./testdata/mondoo-azure-security-tf-fail",
+			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-azure-security",
+			score:      0,
+		},
+		// cnspec scan terraform hcl testdata/mondoo-gcp-security-tf-pass -f mondoo-gcp-security.mql.yaml
+		{
 			provider:   "terraform",
 			bundleFile: "./mondoo-gcp-security.mql.yaml",
 			testDir:    "./testdata/mondoo-gcp-security-tf-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-gcp-security",
 			score:      100,
-		}, {
+		},
+		{
 			provider:   "terraform",
 			bundleFile: "./mondoo-gcp-security.mql.yaml",
 			testDir:    "./testdata/mondoo-gcp-security-tf-fail",
