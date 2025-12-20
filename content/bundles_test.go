@@ -32,6 +32,33 @@ func TestMain(m *testing.M) {
 	os.Exit(exitVal)
 }
 
+func tfAsset(dir string) *inventory.Asset {
+	return &inventory.Asset{
+		Connections: []*inventory.Config{
+			{
+				Type: "terraform-hcl",
+				Options: map[string]string{
+					"path": dir,
+				},
+			},
+		},
+	}
+}
+
+func k8sAsset(dir string) *inventory.Asset {
+	return &inventory.Asset{
+		Connections: []*inventory.Config{{
+			Type: "k8s",
+			Options: map[string]string{
+				"path": dir,
+			},
+			Discover: &inventory.Discovery{
+				Targets: []string{"pods"}, // ignore the manifest which does not return anything
+			},
+		}},
+	}
+}
+
 func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset) (*policy.Report, error) {
 	ctx := context.Background()
 	policyBundle, err := policy.BundleFromPaths(policyBundlePath)
@@ -84,8 +111,9 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 	return nil, errors.New("no report found")
 }
 
-func TestKubernetesBundles(t *testing.T) {
+func TestBundles(t *testing.T) {
 	type TestCase struct {
+		provider   string
 		bundleFile string
 		testDir    string
 		policyMrn  string
@@ -94,66 +122,39 @@ func TestKubernetesBundles(t *testing.T) {
 
 	tests := []TestCase{
 		{
+			provider:   "k8s",
 			bundleFile: "./mondoo-kubernetes-security.mql.yaml",
 			testDir:    "./testdata/mondoo-kubernetes-security-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-kubernetes-security",
 			score:      100,
 		},
 		{
+			provider:   "k8s",
 			bundleFile: "./mondoo-kubernetes-security.mql.yaml",
 			testDir:    "./testdata/mondoo-kubernetes-security-fail",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-kubernetes-security",
 			score:      0x0,
 		},
-	}
-
-	for i := range tests {
-		test := tests[i]
-		t.Run(test.testDir, func(t *testing.T) {
-			report, err := runBundle(test.bundleFile, test.policyMrn, &inventory.Asset{
-				Connections: []*inventory.Config{{
-					Type: "k8s",
-					Options: map[string]string{
-						"path": test.testDir,
-					},
-					Discover: &inventory.Discovery{
-						Targets: []string{"pods"}, // ignore the manifest which does not return anything
-					},
-				}},
-			})
-			require.NoError(t, err)
-
-			score := report.Scores[test.policyMrn]
-			assert.Equal(t, test.score, score.Value)
-		})
-	}
-}
-
-func TestTerraformBundles(t *testing.T) {
-	type TestCase struct {
-		bundleFile string
-		testDir    string
-		policyMrn  string
-		score      uint32
-	}
-
-	tests := []TestCase{
 		{
+			provider:   "terraform",
 			bundleFile: "./mondoo-aws-security.mql.yaml",
 			testDir:    "./testdata/mondoo-aws-security-tf-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-aws-security",
 			score:      100,
 		}, {
+			provider:   "terraform",
 			bundleFile: "./mondoo-aws-security.mql.yaml",
 			testDir:    "./testdata/mondoo-aws-security-tf-fail",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-aws-security",
 			score:      0,
 		}, {
+			provider:   "terraform",
 			bundleFile: "./mondoo-gcp-security.mql.yaml",
 			testDir:    "./testdata/mondoo-gcp-security-tf-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-gcp-security",
 			score:      100,
 		}, {
+			provider:   "terraform",
 			bundleFile: "./mondoo-gcp-security.mql.yaml",
 			testDir:    "./testdata/mondoo-gcp-security-tf-fail",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-gcp-security",
@@ -164,16 +165,16 @@ func TestTerraformBundles(t *testing.T) {
 	for i := range tests {
 		test := tests[i]
 		t.Run(test.testDir, func(t *testing.T) {
-			report, err := runBundle(test.bundleFile, test.policyMrn, &inventory.Asset{
-				Connections: []*inventory.Config{
-					{
-						Type: "terraform-hcl",
-						Options: map[string]string{
-							"path": test.testDir,
-						},
-					},
-				},
-			})
+			var asset *inventory.Asset
+			switch test.provider {
+			case "terraform":
+				asset = tfAsset(test.testDir)
+			case "k8s":
+				asset = k8sAsset(test.testDir)
+			default:
+				t.Fatalf("unknown provider type: %s", test.provider)
+			}
+			report, err := runBundle(test.bundleFile, test.policyMrn, asset)
 			require.NoError(t, err)
 
 			score := report.Scores[test.policyMrn]
