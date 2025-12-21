@@ -24,8 +24,13 @@ func init() {
 
 func TestMain(m *testing.M) {
 	// ensure providers are loaded
-	providers.EnsureProvider(providers.ProviderLookup{ProviderName: "terraform"}, true, nil)
-	providers.EnsureProvider(providers.ProviderLookup{ProviderName: "k8s"}, true, nil)
+	providerList := []string{"terraform", "k8s", "aws", "azure", "gcp"}
+	for _, p := range providerList {
+		_, err := providers.EnsureProvider(providers.ProviderLookup{ProviderName: p}, true, nil)
+		if err != nil {
+			panic(err)
+		}
+	}
 
 	// Run tests
 	exitVal := m.Run()
@@ -61,7 +66,7 @@ func k8sAsset(dir string) *inventory.Asset {
 
 func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset) (*policy.Report, error) {
 	ctx := context.Background()
-	policyBundle, err := policy.BundleFromPaths(policyBundlePath)
+	policyBundle, err := policy.DefaultBundleLoader().BundleFromPaths(policyBundlePath)
 	if err != nil {
 		return nil, err
 	}
