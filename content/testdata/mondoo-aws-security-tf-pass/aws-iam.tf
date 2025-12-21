@@ -52,3 +52,50 @@ resource "aws_iam_policy" "policy" {
     ]
   })
 }
+
+resource "aws_iam_policy" "limit_access_keys" {
+  name        = "LimitAccessKeys"
+  description = "Ensure IAM users have at most one active access key"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Deny",
+        Action   = "iam:CreateAccessKey",
+        Resource = "*",
+        Condition = {
+          NumericGreaterThan = {
+            "iam:AccessKeysCount": 1
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "enforce_mfa" {
+  name        = "EnforceMFA"
+  description = "Require MFA for all IAM users with console access"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Deny",
+        Action   = [
+          "ec2:*",
+          "s3:*",
+          "iam:*",
+          "lambda:*"
+        ],
+        Resource  = "*",
+        Condition = {
+          Bool = {
+            "aws:MultiFactorAuthPresent": "false"
+          }
+        }
+      }
+    ]
+  })
+}

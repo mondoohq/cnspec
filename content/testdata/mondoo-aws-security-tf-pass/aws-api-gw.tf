@@ -47,10 +47,10 @@ resource "aws_api_gateway_method" "pass_example_2" {
 resource "aws_api_gateway_method" "pass_example_3" {
   rest_api_id   = aws_api_gateway_rest_api.SampleAPI.id
   resource_id   = aws_api_gateway_resource.SampleResource.id
-  http_method   = "OPTION"
+  http_method   = "OPTIONS"
   authorization = "NONE"
 }
 
 resource "aws_api_gateway_domain_name" "pass_example" {
-  security_policy = "TLS-1-2"
+  security_policy = "TLS_1_2"
 }

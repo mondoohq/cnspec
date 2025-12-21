@@ -1,6 +1,8 @@
+
 resource "aws_kms_key" "pass_example" {
   description             = "Key is used to encrypt bucket objects"
   deletion_window_in_days = 10
+  enable_key_rotation     = true
 }
 
 resource "aws_s3_bucket" "pass_example" {
