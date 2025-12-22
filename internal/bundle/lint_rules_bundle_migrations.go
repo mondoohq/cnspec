@@ -180,6 +180,20 @@ func runRuleBundleMigrationsValidateCrossStageProduce(ctx *LintContext, item any
 
 	var stages []*policy.StageSummary
 	for _, group := range bundle.MigrationGroups {
+		if group.Conditions == nil || group.Conditions.TargetPolicy == nil {
+			continue
+		}
+		found := false
+		for _, query := range bundle.Policies {
+			if query.Uid == group.Conditions.TargetPolicy.Uid && query.Version == group.Conditions.TargetPolicy.Version {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+
 		for stageIndex, stage := range group.Stages {
 			summary, _ := policy.SummarizeStage(yacStage2ProtoStage(stage), stageIndex)
 			stages = append(stages, summary)
