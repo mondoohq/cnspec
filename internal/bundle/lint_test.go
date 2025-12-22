@@ -238,13 +238,13 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "warning", results.Entries[0].Level)
 	})
 
-	t.Run("fail-migration-missing-sources", func(t *testing.T) {
-		file := "./testdata/fail-migration-missing-source.yaml"
+	t.Run("fail-migration-missing-conditions", func(t *testing.T) {
+		file := "./testdata/fail-migration-missing-conditions.yaml"
 		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
-		if !assert.Equal(t, 7, len(results.Entries)) {
+		if !assert.Equal(t, 9, len(results.Entries)) {
 			for _, entry := range results.Entries {
-				t.Logf("Entry: %+v", entry)
+				t.Logf("Entry: %s\t :%d:%d", entry.RuleID, entry.Location[0].Line, entry.Location[0].Column)
 			}
 		}
 
@@ -257,6 +257,7 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, 4, ruleCount["bundle-migrations-configuration-validation"], "Expected 4 configuration validation errors")
 		assert.Equal(t, 2, ruleCount["bundle-migrations-validate-stages"], "Expected 2 stage validation errors")
 		assert.Equal(t, 1, ruleCount["bundle-migrations-validate-cross-stage-produce"], "Expected 1 cross-stage produce error")
+		assert.Equal(t, 2, ruleCount["bundle-migrations-validate-group-conditions"], "Expected 2 group condition errors")
 	})
 
 	t.Run("fail-migration-validate-stages", func(t *testing.T) {
@@ -265,7 +266,7 @@ func TestLinter_Fail(t *testing.T) {
 		require.NoError(t, err)
 		if !assert.Equal(t, 11, len(results.Entries)) {
 			for _, entry := range results.Entries {
-				t.Logf("Entry: %+v", entry)
+				t.Logf("Entry: %s\t :%d:%d", entry.RuleID, entry.Location[0].Line, entry.Location[0].Column)
 			}
 		}
 
@@ -285,7 +286,7 @@ func TestLinter_Fail(t *testing.T) {
 		require.NoError(t, err)
 		if !assert.Equal(t, 3, len(results.Entries)) {
 			for _, entry := range results.Entries {
-				t.Logf("Entry: %+v", entry)
+				t.Logf("Entry: %s\t :%d:%d", entry.RuleID, entry.Location[0].Line, entry.Location[0].Column)
 			}
 		}
 	})

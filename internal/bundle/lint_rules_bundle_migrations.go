@@ -9,6 +9,7 @@ const (
 	BundleMigrationsConfigurationValidationRuleID   = "bundle-migrations-configuration-validation"
 	BundleMigrationsValidateStagesRuleID            = "bundle-migrations-validate-stages"
 	BundleMigrationsValidateCrossStageProduceRuleID = "bundle-migrations-validate-cross-stage-produce"
+	BundleMigrationsValidateGroupConditions         = "bundle-migrations-validate-group-conditions"
 )
 
 func GetBundleMigrationsLintRules() []LintRule {
@@ -34,6 +35,13 @@ func GetBundleMigrationsLintRules() []LintRule {
 			Severity:    LevelError,
 			Run:         runRuleBundleMigrationsValidateCrossStageProduce,
 		},
+		{
+			ID:          BundleMigrationsValidateGroupConditions,
+			Name:        "Migrations Group Conditions Validation",
+			Description: "Validates that migration groups have valid source and target policy conditions.",
+			Severity:    LevelError,
+			Run:         runRuleBundleMigrationsValidateGroupConditions,
+		},
 	}
 }
 
@@ -58,11 +66,43 @@ func yacMigration2ProtoMigration(migration *Migration) *policy.Migration {
 
 func yacStage2ProtoStage(stage *MigrationStage) *policy.MigrationStage {
 	res := &policy.MigrationStage{
-		Title:      stage.Title,
-		Migrations: []*policy.Migration{},
+		Title:           stage.Title,
+		QueryMigrations: []*policy.Migration{},
 	}
-	for _, m := range stage.Migrations {
-		res.Migrations = append(res.Migrations, yacMigration2ProtoMigration(m))
+	for _, m := range stage.QueryMigrations {
+		res.QueryMigrations = append(res.QueryMigrations, yacMigration2ProtoMigration(m))
+	}
+	return res
+}
+
+func yacConditions2ProtoConditions(conditions *MigrationConditions) *policy.MigrationConditions {
+	if conditions == nil {
+		return nil
+	}
+	res := &policy.MigrationConditions{}
+	if conditions.SourcePolicy != nil {
+		res.SourcePolicy = &policy.MigrationPolicyRef{
+			Uid:     conditions.SourcePolicy.Uid,
+			Version: conditions.SourcePolicy.Version,
+		}
+	}
+	if conditions.TargetPolicy != nil {
+		res.TargetPolicy = &policy.MigrationPolicyRef{
+			Uid:     conditions.TargetPolicy.Uid,
+			Version: conditions.TargetPolicy.Version,
+		}
+	}
+	return res
+}
+
+func yacGroup2ProtoGroup(group *MigrationGroup) *policy.MigrationGroup {
+	res := &policy.MigrationGroup{
+		Title:      group.Title,
+		Conditions: yacConditions2ProtoConditions(group.Conditions),
+		Stages:     []*policy.MigrationStage{},
+	}
+	for _, s := range group.Stages {
+		res.Stages = append(res.Stages, yacStage2ProtoStage(s))
 	}
 	return res
 }
@@ -75,7 +115,7 @@ func runRuleBundleMigrationsConfigurationValidation(ctx *LintContext, item any) 
 
 	for _, group := range bundle.MigrationGroups {
 		for _, stage := range group.Stages {
-			for _, migration := range stage.Migrations {
+			for _, migration := range stage.QueryMigrations {
 				protoMigration := yacMigration2ProtoMigration(migration)
 				errs := protoMigration.Validate()
 
@@ -158,6 +198,33 @@ func runRuleBundleMigrationsValidateCrossStageProduce(ctx *LintContext, item any
 				Column: 1,
 			}},
 		})
+	}
+
+	return res
+}
+
+func runRuleBundleMigrationsValidateGroupConditions(ctx *LintContext, item any) (res []*Entry) {
+	bundle, ok := item.(*Bundle)
+	if !ok {
+		return nil
+	}
+
+	for _, group := range bundle.MigrationGroups {
+		errs := policy.LintMigrationGroupConditions(
+			yacGroup2ProtoGroup(group),
+		)
+		for _, err := range errs {
+			res = append(res, &Entry{
+				RuleID:  BundleMigrationsValidateGroupConditions,
+				Level:   LevelError,
+				Message: err.Error(),
+				Location: []Location{{
+					File:   ctx.FilePath,
+					Line:   group.FileContext.Line,
+					Column: group.FileContext.Column,
+				}},
+			})
+		}
 	}
 
 	return res

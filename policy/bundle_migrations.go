@@ -34,7 +34,7 @@ func SummarizeStage(stage *MigrationStage, index int) (*StageSummary, []error) {
 
 	var errs []error
 
-	for _, m := range stage.Migrations {
+	for _, m := range stage.QueryMigrations {
 		src := ""
 		if m.Source != nil {
 			src = m.Source.Uid
@@ -214,6 +214,36 @@ func LintCrossMigrationStage(
 					}
 				}
 			}
+		}
+	}
+
+	return errs
+}
+
+func LintMigrationGroupConditions(group *MigrationGroup) []error {
+	var errs []error
+
+	if group.Conditions == nil {
+		errs = append(errs, fmt.Errorf("migration group %q must have conditions defined", group.Title))
+		return errs
+	}
+
+	if group.Conditions.SourcePolicy == nil {
+		errs = append(errs, fmt.Errorf("migration group %q must have source_policy defined in conditions", group.Title))
+	} else {
+		if group.Conditions.SourcePolicy.Uid == "" {
+			errs = append(errs, fmt.Errorf("migration group %q source_policy must have uid defined", group.Title))
+		}
+		if group.Conditions.SourcePolicy.Version == "" {
+			errs = append(errs, fmt.Errorf("migration group %q source_policy must have version defined", group.Title))
+		}
+	}
+
+	if group.Conditions.TargetPolicy == nil {
+		errs = append(errs, fmt.Errorf("migration group %q must have target_policy defined in conditions", group.Title))
+	} else {
+		if group.Conditions.TargetPolicy.Version == "" {
+			errs = append(errs, fmt.Errorf("migration group %q target_policy must have version defined", group.Title))
 		}
 	}
 
