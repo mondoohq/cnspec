@@ -160,6 +160,7 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 	bundleRules := GetBundleLintRules()
 	policyRules := GetPolicyLintRules()
 	queryRules := GetQueryLintRules()
+	migrationRules := GetBundleMigrationsLintRules()
 
 	// Initialize LintContext with data from ALL parsed bundles for cross-file context
 	// This context will be shared for checks that need to know about the whole bundle.
@@ -275,6 +276,12 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 				}
 			}
 		}
+	}
+
+	// Run migration rules
+	for _, check := range migrationRules {
+		entries := check.Run(lintCtx, policyBundle)
+		aggregatedEntries = append(aggregatedEntries, entries...)
 	}
 
 	return aggregatedEntries
