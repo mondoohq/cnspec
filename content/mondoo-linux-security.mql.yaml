@@ -4903,7 +4903,7 @@ queries:
               tasks:
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
-                  auditctl -s | grep -q '^enabled.*2$'
+                    auditctl -s | grep -q '^enabled.*2$'
                   register: immutable_check
                   failed_when: false
                   changed_when: false
@@ -6153,8 +6153,10 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / creat /)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / open /)
+      if (asset.arch != /arm|aarch/) {
+        props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / creat /)
+        props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / open /)
+      }
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / openat /)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / truncate /)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == / ftruncate /)
@@ -6177,6 +6179,8 @@ queries:
       desc: |
         This check verifies that the system is configured to monitor unsuccessful attempts to access files by auditing system calls such as `creat`, `open`, `openat`, `truncate`, and `ftruncate`. These system calls control the creation, opening, and truncation of files. The audit log will record events where the user is a non-privileged user (auid >= 1000), is not a daemon event (auid=4294967295), and the system call returned EACCES (permission denied) or EPERM (operation not permitted). All audit records will be tagged with the identifier "access."
 
+        Note: On ARM architectures, the `creat` and `open` system calls may not be available, so only the other system calls are checked.
+
         **Why this matters**
 
         Monitoring unsuccessful file access attempts helps detect potential unauthorized access or misconfigurations. It provides visibility into failed attempts to create, open, or modify files, which may indicate malicious activity or user errors.
@@ -6198,12 +6202,23 @@ queries:
 
             2. Add the following lines to the configuration file:
 
+                **On non-ARM architectures:**
+
                 ```
                 -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
                 -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
                 -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
                 -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
                 ```
+
+                **On ARM architectures:**
+
+                ```
+                -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                ```   
 
             3. To load the newly added rules into the running configuration:
 
@@ -6229,29 +6244,48 @@ queries:
             - name: Configure audit rules for unsuccessful unauthorized file access attempts
               hosts: all
               become: true
+              gather_facts: yes
+
               tasks:
-                - name: Ensure access audit rules are present
-                  ansible.builtin.blockinfile:
-                    path: /etc/audit/rules.d/50-access.rules
-                    block: |
+                - name: Set access rules block for non-ARM architectures
+                  set_fact:
+                    access_rules_block: |-
                       -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
                       -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
                       -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
                       -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                  when: ansible_architecture is not match('^(arm|aarch)')
+
+                - name: Set access rules block for ARM architectures
+                  set_fact:
+                    access_rules_block: |-
+                      -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                  when: ansible_architecture is match('^(arm|aarch)')
+
+                - name: Ensure access audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-access.rules
+                    block: "{{ access_rules_block }}"
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: access_audit_rules_updated
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
                   when: access_audit_rules_updated.changed
+
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
                     auditctl -s | grep -q '^enabled.*2$'
                   register: immutable_check
                   failed_when: false
                   changed_when: false
+
                 - name: Notify if reboot is required due to immutable audit config
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
@@ -6268,13 +6302,29 @@ queries:
             set -e
 
             RULES_FILE="/etc/audit/rules.d/50-access.rules"
+            arch=$(uname -m)
+            is_arm=false
+            if [[ "$arch" == arm* || "$arch" == aarch* ]]; then
+              is_arm=true
+            fi
+
             echo "Ensuring audit rules for unsuccessful unauthorized file access attempts are configured in $RULES_FILE"
-            cat > "$RULES_FILE" <<EOF
+
+            if $is_arm; then
+              cat > "$RULES_FILE" <<'EOF'
+            -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            EOF
+            else
+              cat > "$RULES_FILE" <<'EOF'
             -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
             -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
             -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
             -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
             EOF
+            fi
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
@@ -6542,8 +6592,10 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /unlink/)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /rename/)
+      if (asset.arch != /arm|aarch/) {
+        props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /unlink/)
+        props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /rename/)
+      }
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /unlinkat/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /renameat/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.where(_ == /unlink|rename|unlinkat|renameat/).all(
@@ -6570,6 +6622,10 @@ queries:
 
         Auditing these system calls ensures that all file deletion and renaming activities are logged, providing visibility into potential security incidents and supporting forensic investigations.
 
+        **Note**
+
+        On ARM architectures, the `unlink` and `rename` system calls may not be available, so only the other system calls are checked.
+
         **Note:**
         Systems may have been customized to change the default UID_MIN. To confirm the UID_MIN for your system, run this command:
 
@@ -6589,10 +6645,19 @@ queries:
 
             2. Add the following lines to the configuration file:
 
+                ** On non-ARM architectures:**
+
                 ```
                 -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
                 -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
                 ```
+
+                ** On ARM architectures:**
+
+                ```
+                -a always,exit -F arch=b64 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                -a always,exit -F arch=b32 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                ``` 
 
             3. Load the newly added rules into the running configuration:
 
@@ -6620,7 +6685,7 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure file deletion and renaming audit rules are present
+                - name: Ensure file deletion and renaming audit rules are present (non-ARM)
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-deletion.rules
                     block: |
@@ -6630,16 +6695,34 @@ queries:
                     owner: root
                     group: root
                     mode: '0640'
-                  register: deletion_audit_rules_updated
+                  register: deletion_audit_rules_nonarm
+                  when: ansible_architecture is not match('^(arm|aarch)')
+
+                - name: Ensure file deletion and renaming audit rules are present (ARM)
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-deletion.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                      -a always,exit -F arch=b32 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                    create: yes
+                    owner: root
+                    group: root
+                    mode: '0640'
+                  register: deletion_audit_rules_arm
+                  when: ansible_architecture is match('^(arm|aarch)')
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: deletion_audit_rules_updated.changed
+                  when: (deletion_audit_rules_nonarm is defined and deletion_audit_rules_nonarm.changed) or
+                        (deletion_audit_rules_arm is defined and deletion_audit_rules_arm.changed)
+
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
                     auditctl -s | grep -q '^enabled.*2$'
                   register: immutable_check
                   failed_when: false
                   changed_when: false
+
                 - name: Notify if reboot is required due to immutable audit config
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
@@ -6655,11 +6738,25 @@ queries:
             #!/bin/bash
             set -e
 
+            arch=$(uname -m)
+            is_arm=false
+            if [[ "$arch" == arm* || "$arch" == aarch* ]]; then
+              is_arm=true
+            fi
+
             echo "Configuring audit rules for file deletion and renaming..."
-            cat <<EOF > /etc/audit/rules.d/50-deletion.rules
+
+            if $is_arm; then
+              cat > /etc/audit/rules.d/50-deletion.rules <<'EOF'
+            -a always,exit -F arch=b64 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+            -a always,exit -F arch=b32 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+            EOF
+            else
+              cat > /etc/audit/rules.d/50-deletion.rules <<'EOF'
             -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
             -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
             EOF
+            fi
 
             echo "Loading audit rules..."
             augenrules --load > /dev/null
