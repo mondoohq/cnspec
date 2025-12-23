@@ -5401,9 +5401,13 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/run\/utmp\s+\-p\s+wa\s+\-k\s+session(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
-      props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
+      if (file("/var/run/utmp").exists) {
+        props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/run\/utmp\s+\-p\s+wa\s+\-k\s+session(\s+)?$/))
+      } else if (file("/var/log/wtmp").exists) {
+        props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/wtmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
+      } else if (file("/var/log/btmp").exists) {
+        props.mondooLinuxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/var\/log\/btmp\s+\-p\s+wa\s+\-k\s+(logins|session)(\s+)?$/))
+      }
     docs:
       desc: |
         This check verifies that the system is configured to record session start events in the audit logs, ensuring that audit rules are in place to track successful login sessions using the auditd subsystem.
@@ -5427,7 +5431,7 @@ queries:
 
                 Example: `vi /etc/audit/rules.d/50-session.rules`
 
-            2. Add the following lines to the configuration file:
+            2. Add the following lines to the configuration file *only* if each of these files exist on disk:
 
                 ```
                 -w /var/run/utmp -p wa -k session
@@ -5461,28 +5465,73 @@ queries:
               become: true
 
               tasks:
-                - name: Set session tracking audit rules
-                  ansible.builtin.copy:
-                    dest: /etc/audit/rules.d/50-session.rules
-                    content: |
-                      -w /var/run/utmp -p wa -k session
-                      -w /var/log/wtmp -p wa -k logins
-                      -w /var/log/btmp -p wa -k logins
-                  notify: Load audit rules
+              - name: Stat /var/run/utmp
+                ansible.builtin.stat:
+                path: /var/run/utmp
+                register: utmp_stat
 
-                - name: Check if audit rules are immutable
-                  ansible.builtin.shell: |
-                    auditctl -s | grep '^enabled' | awk '{print $2}'
-                  register: audit_enabled
+              - name: Stat /var/log/wtmp
+                ansible.builtin.stat:
+                path: /var/log/wtmp
+                register: wtmp_stat
 
-                - name: Warn if reboot is required to apply immutable audit rules
-                  debug:
-                    msg: "Reboot required to load audit rules because the configuration is immutable."
-                  when: audit_enabled.stdout == "2"
+              - name: Stat /var/log/btmp
+                ansible.builtin.stat:
+                path: /var/log/btmp
+                register: btmp_stat
+
+              - name: Initialize session rules list
+                ansible.builtin.set_fact:
+                session_rules: []
+
+              - name: Add utmp rule if file exists
+                ansible.builtin.set_fact:
+                session_rules: "{{ session_rules + ['-w /var/run/utmp -p wa -k session'] }}"
+                when: utmp_stat.stat.exists
+
+              - name: Add wtmp rule if file exists
+                ansible.builtin.set_fact:
+                session_rules: "{{ session_rules + ['-w /var/log/wtmp -p wa -k logins'] }}"
+                when: wtmp_stat.stat.exists
+
+              - name: Add btmp rule if file exists
+                ansible.builtin.set_fact:
+                session_rules: "{{ session_rules + ['-w /var/log/btmp -p wa -k logins'] }}"
+                when: btmp_stat.stat.exists
+
+              - name: Write /etc/audit/rules.d/50-session.rules when any targets exist
+                ansible.builtin.copy:
+                dest: /etc/audit/rules.d/50-session.rules
+                content: "{{ session_rules | join('\n') }}\n"
+                owner: root
+                group: root
+                mode: '0640'
+                when: session_rules | length > 0
+                register: session_rules_file
+                notify: Load audit rules
+
+              - name: Remove stale /etc/audit/rules.d/50-session.rules if no targets exist
+                ansible.builtin.file:
+                path: /etc/audit/rules.d/50-session.rules
+                state: absent
+                when: session_rules | length == 0
+                notify: Load audit rules
+
+              - name: Check if audit rules are immutable
+                ansible.builtin.shell: |
+                auditctl -s | grep '^enabled' | awk '{print $2}'
+                register: audit_enabled
+                changed_when: false
+                failed_when: false
+
+              - name: Warn if reboot is required to apply immutable audit rules
+                ansible.builtin.debug:
+                msg: "Reboot required to load rules because the configuration is immutable."
+                when: audit_enabled.stdout == "2"
 
               handlers:
-                - name: Load audit rules
-                  ansible.builtin.command: augenrules --load
+              - name: Load audit rules
+                ansible.builtin.command: augenrules --load
             ```
         - id: bash
           desc: |
@@ -5495,18 +5544,42 @@ queries:
             set -e
 
             RULES_FILE="/etc/audit/rules.d/50-session.rules"
+            TMPFILE="$(mktemp)"
 
             echo "Ensuring audit rules for session initiation are configured in $RULES_FILE"
-            cat > "$RULES_FILE" <<EOF
-            -w /var/run/utmp -p wa -k session
-            -w /var/log/wtmp -p wa -k logins
-            -w /var/log/btmp -p wa -k logins
-            EOF
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
+            # Build rules only for files that exist
+            add_if_exists() {
+              local file="$1"; local rule="$2"
+              if [ -e "$file" ]; then
+                echo "$rule" >> "$TMPFILE"
+              fi
+            }
 
-            if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+            # Clear tmp
+            : > "$TMPFILE"
+
+            add_if_exists "/var/run/utmp"  "-w /var/run/utmp -p wa -k session"
+            add_if_exists "/var/log/wtmp"  "-w /var/log/wtmp -p wa -k logins"
+            add_if_exists "/var/log/btmp"  "-w /var/log/btmp -p wa -k logins"
+
+            if [ -s "$TMPFILE" ]; then
+              # Install the rules file with correct permissions
+              install -o root -g root -m 0640 "$TMPFILE" "$RULES_FILE"
+              echo "Installed $RULES_FILE with rules for existing files"
+              augenrules --load >/dev/null 2>&1 || true
+            elif [ -f "$RULES_FILE" ]; then
+              # No target files exist; remove stale rules file
+              rm -f "$RULES_FILE"
+              echo "No audit targets exist; removed $RULES_FILE"
+              augenrules --load >/dev/null 2>&1 || true
+            else
+              echo "No audit targets exist; nothing to do"
+            fi
+
+            rm -f "$TMPFILE"
+
+            if auditctl -s 2>/dev/null | grep -q '^enabled.*2$'; then
               echo "Reboot required to load rules because auditd is in immutable mode"
             fi
             ```
