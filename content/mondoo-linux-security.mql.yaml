@@ -6003,10 +6003,12 @@ queries:
           mondooLinuxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d",regex:'.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
           return mondooLinuxSecurityAuditFiles.map(file(_).content.lines.where( _ == /^[^#]/ ))
     mql: |
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /chmod/)
+      if (asset.arch != /arm|aarch/) {
+        props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /chmod/)
+        props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /chown/)
+      }
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchmod/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchmodat/)
-      props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /chown/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchown/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /fchownat/)
       props.mondooLinuxSecurityAuditFiles.flat.unique.any(_ == /lchown/)
@@ -6031,6 +6033,8 @@ queries:
       desc: |
         This check verifies that changes to file permissions, attributes, ownership, and group are monitored. It ensures that system calls affecting these properties—such as `chmod`, `fchmod`, `fchmodat` (permissions), `chown`, `fchown`, `fchownat`, `lchown` (ownership), and `setxattr`, `lsetxattr`, `fsetxattr`, `removexattr`, `lremovexattr`, `fremovexattr` (extended attributes)—are audited.
 
+        Note: On ARM architectures, the `chmod` and `chown` system calls may not be available, so only the other system calls are checked.
+
         **Why this matters**
 
         Monitoring changes to file permissions and attributes is critical for maintaining system security. Unauthorized or accidental modifications can lead to privilege escalation, data leakage, or system compromise.
@@ -6052,11 +6056,24 @@ queries:
 
             2. Add the following lines to the configuration file:
 
+                **On non-ARM architectures:**
+
                 ```
                 -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                ```
+
+                **On ARM architectures:**
+
+                ```
+                -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F au  id!=4294967295 -k perm_mod
+                -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 ```
@@ -6085,17 +6102,35 @@ queries:
             - name: Configure audit rules for permission modification events
               hosts: all
               become: true
+              gather_facts: true
+
               tasks:
-                - name: Ensure permission modification audit rules are present
-                  ansible.builtin.blockinfile:
-                    path: /etc/audit/rules.d/50-perm_mod.rules
-                    block: |
+                - name: Set access rules block for non-ARM architectures
+                  set_fact:
+                    access_rules_block: |-
                       -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                  when: ansible_architecture is not match('^(arm|aarch)')
+
+                - name: Set access rules block for ARM architectures
+                  set_fact:
+                    access_rules_block: |-
+                      -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                  when: ansible_architecture is match('^(arm|aarch)')
+
+                - name: Ensure permission modification audit rules are present
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-perm_mod.rules
+                    block: "{{ access_rules_block }}"
                     create: yes
                     owner: root
                     group: root
@@ -6129,15 +6164,33 @@ queries:
             set -e
 
             RULES_FILE="/etc/audit/rules.d/50-perm_mod.rules"
+            arch=$(uname -m)
+            is_arm=false
+            if [[ "$arch" == arm* || "$arch" == aarch* ]]; then
+              is_arm=true
+            fi
+
             echo "Ensuring audit rules for permission modification events are configured in $RULES_FILE"
-            cat > "$RULES_FILE" <<EOF
-            -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-            -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-            -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
-            -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+
+            if [ "$is_arm" = true ]; then
+              cat > "$RULES_FILE" <<EOF
+            -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F au    id!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
             EOF
+            else
+              cat > "$RULES_FILE" <<EOF
+              -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+              -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+              -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+              -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+              -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+              -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+              EOF
+            fi
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
