@@ -42,8 +42,8 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zclconf/go-cty v1.17.0
-	go.mondoo.com/cnquery/v12 v12.16.0
-	go.mondoo.com/mondoo-go v0.0.0-20251224000430-5db65c48db4d
+	go.mondoo.com/cnquery/v12 v12.17.0
+	go.mondoo.com/mondoo-go v0.0.0-20251230082919-30dddec20321
 	go.mondoo.com/ranger-rpc v0.7.1
 	gocloud.dev v0.44.0
 	golang.org/x/sys v0.39.0
@@ -270,6 +270,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/package-url/packageurl-go v0.1.3 // indirect
+	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/petermattis/goid v0.0.0-20251121121749-a11dd1a45f9a // indirect
@@ -369,7 +370,7 @@ require (
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250910181357-589584f1c912 // indirect
 	k8s.io/kubelet v0.33.0-alpha.2 // indirect
-	modernc.org/libc v1.67.2 // indirect
+	modernc.org/libc v1.67.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.42.2 // indirect
