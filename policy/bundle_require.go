@@ -9,6 +9,16 @@ import (
 	"go.mondoo.com/cnquery/v12/utils/multierr"
 )
 
+// HasRequirements returns true if any policy in the bundle has provider requirements defined.
+func (p *Bundle) HasRequirements() bool {
+	for _, policy := range p.Policies {
+		if len(policy.Require) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // EnsureRequirements makes sure that all required providers for the policies
 // in the bundle are installed. If `installIfNoRequire` is true, it will install
 // default providers for policies that do not specify any requirements.
