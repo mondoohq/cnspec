@@ -41,6 +41,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
+	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.17.0
 	go.mondoo.com/cnquery/v12 v12.17.0
 	go.mondoo.com/mondoo-go v0.0.0-20251230082919-30dddec20321
@@ -317,7 +318,6 @@ require (
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde // indirect
 	github.com/tliron/commonlog v0.2.21 // indirect
-	github.com/tliron/glsp v0.2.2 // indirect
 	github.com/tliron/go-kutil v0.4.0 // indirect
 	github.com/tonistiigi/go-csvvalue v0.0.0-20240710180619-ddb21b71c0b4 // indirect
 	github.com/toravir/csd v0.0.0-20200911003203-13ae77ad849c // indirect
