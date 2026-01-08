@@ -393,6 +393,17 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 			return err
 		}
 
+		// ensure all required providers are installed before we try to compile the bundle
+		if bundle.HasRequirements() {
+			autoUpdate := true
+			if viper.IsSet("auto-update") {
+				autoUpdate = viper.GetBool("auto-update")
+			}
+			if err := bundle.EnsureRequirements(false, autoUpdate); err != nil {
+				return errors.Wrap(err, "failed to ensure policy requirements")
+			}
+		}
+
 		// prepare the bundle for compilation
 		bundle.Prepare()
 		conf := mqlc.NewConfig(c.runtime.Schema(), cnquery.DefaultFeatures)

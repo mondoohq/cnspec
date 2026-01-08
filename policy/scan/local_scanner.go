@@ -318,6 +318,15 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, err
 	}
 
+	// Ensure all required providers are installed before we try to run the scan.
+	// We only check here for bundles fetched from the server. Local policy bundles
+	// already have their requirements ensured before compilation in loadPolicies().
+	if job.Bundle != nil && upstream != nil && upstream.Creds != nil && job.Bundle.HasRequirements() {
+		if err := job.Bundle.EnsureRequirements(false, s.autoUpdate); err != nil {
+			return nil, errors.Wrap(err, "failed to ensure policy requirements")
+		}
+	}
+
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
 	discoveredAssets, err := scan.DiscoverAssets(ctx, job.Inventory, upstream, s.recording)
 	if err != nil {
