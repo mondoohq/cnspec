@@ -7307,7 +7307,7 @@ var File_cnspec_policy_proto protoreflect.FileDescriptor
 
 const file_cnspec_policy_proto_rawDesc = "" +
 	"\n" +
-	"\x13cnspec_policy.proto\x12\x10cnspec.policy.v1\x1a\x1fexplorer/cnquery_explorer.proto\x1a3explorer/resources/cnquery_resources_explorer.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\rllx/llx.proto\x1a*providers-sdk/v1/inventory/inventory.proto\x1a'providers-sdk/v1/upstream/mvd/mvd.proto\"\xe9\x05\n" +
+	"\x13cnspec_policy.proto\x12\x10cnspec.policy.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\rllx/llx.proto\x1a\x1fexplorer/cnquery_explorer.proto\x1a3explorer/resources/cnquery_resources_explorer.proto\x1a*providers-sdk/v1/inventory/inventory.proto\x1a'providers-sdk/v1/upstream/mvd/mvd.proto\"\xe9\x05\n" +
 	"\vPolicyGroup\x127\n" +
 	"\bpolicies\x18\x01 \x03(\v2\x1b.cnspec.policy.v1.PolicyRefR\bpolicies\x120\n" +
 	"\x06checks\x18\x02 \x03(\v2\x18.cnquery.explorer.MqueryR\x06checks\x122\n" +
