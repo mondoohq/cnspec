@@ -263,7 +263,7 @@ func TestLinter_Fail(t *testing.T) {
 		file := "./testdata/fail-migration-validate-stages.yaml"
 		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
-		if !assert.Equal(t, 11, len(results.Entries)) {
+		if !assert.Equal(t, 6, len(results.Entries)) {
 			for _, entry := range results.Entries {
 				t.Logf("Entry: %s\t :%d:%d", entry.RuleID, entry.Location[0].Line, entry.Location[0].Column)
 			}
@@ -276,14 +276,14 @@ func TestLinter_Fail(t *testing.T) {
 		}
 
 		assert.Equal(t, 4, ruleCount["bundle-migrations-validate-stages"], "Expected 4 stage validation errors")
-		assert.Equal(t, 7, ruleCount["bundle-migrations-validate-cross-stage-produce"], "Expected 7 cross-stage produce errors")
+		assert.Equal(t, 2, ruleCount["bundle-migrations-validate-cross-stage-produce"], "Expected 7 cross-stage produce errors")
 	})
 
 	t.Run("fail-migrations-validate-cross-stage-produce", func(t *testing.T) {
 		file := "./testdata/fail-migration-validate-cross-stage-produce.yaml"
 		results, err := Lint(schema, testLintOptions, file)
 		require.NoError(t, err)
-		if !assert.Equal(t, 3, len(results.Entries)) {
+		if !assert.Equal(t, 1, len(results.Entries)) {
 			for _, entry := range results.Entries {
 				t.Logf("Entry: %s\t :%d:%d", entry.RuleID, entry.Location[0].Line, entry.Location[0].Column)
 			}

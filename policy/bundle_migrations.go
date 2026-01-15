@@ -191,30 +191,11 @@ func LintCrossMigrationStage(
 		}
 
 		// 2. Handle consumptions (MODIFY source / REMOVE)
-		// These are UIDs being renamed from or deleted
-		for uid := range stage.Consumes {
-			// Check if this consumed UID appears in the final state
-			// If it does, that's an error UNLESS it's recreated by a later stage
-			if final[uid] {
-				if stage.Deletes[uid] {
-					// Check if it's recreated by a later stage
-					if !laterProduces[uid] {
-						errs = append(errs, fmt.Errorf(
-							"stage %q deletes UID %q which is still referenced in final state",
-							stage.Title, uid,
-						))
-					}
-				} else if stage.Renames[uid] != "" {
-					// Check if the original UID is recreated by a later stage
-					if !laterProduces[uid] {
-						errs = append(errs, fmt.Errorf(
-							"stage %q renames UID %q to %q, but %q is still referenced in final state",
-							stage.Title, uid, stage.Renames[uid], uid,
-						))
-					}
-				}
-			}
-		}
+		// Note: Both deletes (REMOVE migrations) and renames (MODIFY migrations) are
+		// allowed even if the source UID exists in the final state. The migrations
+		// simply handle transforming user data while the query can still exist in the bundle.
+		// We don't validate consumed UIDs against the final state since migrations operate
+		// on user data, not bundle definitions.
 	}
 
 	return errs
