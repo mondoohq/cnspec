@@ -1,0 +1,461 @@
+---
+title: Run cnspec as a service
+sidebar_label: Run cnspec as a service
+sidebar_position: 9
+displayed_sidebar: cnspec
+description: This page provides details on running cnspec as a service on supported hosts.
+image: /img/cnspec/mondoo-feature.jpg
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This document covers how to run cnspec as a service on hosts in your environment.
+
+## Configure cnspec to run as a service
+
+When configured as a service, cnspec continuously assesses hosts by running policies configured in Mondoo Platform. By default, every 60 minutes, cnspec service:
+
+1. Connects to your account in the platform
+
+2. Retrieves and validates the latest policies enabled for it.
+
+3. Scans the host.
+
+4. Reports scan results back to the platform.
+
+<Tabs items={['Linux', 'Windows', 'macOS']}>
+<Tab value="Linux">
+
+The installation places a systemd unit file at `/etc/systemd/system/cnspec.service`. However, it does not register or enable the service.
+
+<Callout type="info">
+
+Before starting cnspec as a service, you should have already [registered the host](./registration.md) with your Mondoo Platform account.
+
+</Callout>
+
+#### Enable and start cnspec as a service
+
+```bash title="1. Reload systemd daemon and load the cnspec.service unit file"
+sudo systemctl daemon-reload
+```
+
+```bash title="2. Enable cnspec to run during startup"
+sudo systemctl enable cnspec
+```
+
+```bash title="3. Start cnspec service"
+sudo systemctl start cnspec
+```
+
+```bash title="4. Check the status of cnspec"
+sudo systemctl status cnspec
+```
+
+#### cnspec service logging
+
+cnspec service writes log events to the system logs. You can use this command to tail cnspec service logs on Linux hosts:
+
+```bash title="Tail cnspec service logs"
+sudo journalctl -u cnspec -f
+```
+
+The default log level is `info` but can be configured as defined in [cnspec Configuration options](#cnspec-configuration-options) below
+
+</Tab>
+<Tab value="Windows">
+
+When installed on Windows, the mondoo package automatically registers with the Service Control Manager in Windows, but sets the default **Startup Type** to **Manual** and does not start the service.
+
+![Windows Default Service](/img/cnspec/installation/windows-service-default.png)
+
+#### Running as a service
+
+Launch a PowerShell terminal as an administrator and run these commands:
+
+<Callout type="info">
+
+Before starting cnspec as a service, you should have already [registered the host](./registration.md) with your Mondoo Platform account.
+
+</Callout>
+
+```powershell title="1. Set mondoo service to run automatically at startup"
+Set-Service -Name mondoo -StartupType Automatic
+```
+
+```powershell title="2. Start mondoo service"
+Set-Service -Name mondoo -Status Running
+```
+
+```powershell title="3. Validate mondoo is running as a service"
+Get-Service mondoo | Select-Object -Property Name, StartType, Status
+```
+
+![mondoo running as a service](/img/cnspec/installation/windows-service-running.png)
+
+#### Mondoo service logging
+
+Mondoo service writes logging events to the Windows Event Viewer Application logs. To view logs:
+
+![](/img/cnspec/installation/windows-event-viewer.png)
+
+1. Select the **Start Menu** and launch **Event Viewer**
+2. Expand **Windows Logs**
+3. Select **Application** to view application logs
+4. Use **Find...** to search for "cnspec"
+
+</Tab>
+<Tab value="macOS">
+If you installed cnspec using the PKG installer, a launchd service is created automatically. If you installed cnspec using Homebrew, you can manually create the service plist file at /Library/LaunchDaemons/com.mondoo.client.plist:
+
+```xml title="Create the com.mondoo.client.plist file"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.mondoo.client</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/path/to/cnspec</string>
+		<string>serve</string>
+		<string>-t</string>
+		<string>60</string>
+		<string>--config</string>
+		<string>/etc/opt/mondoo/mondoo.yml</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
+```
+
+You must replace "/path/to/cnspec" with the path to cnspec on your host. You can validate this by opening a terminal and running `which cnspec`. Also, ensure you specify the correct path to Mondoo Platform config ("/etc/opt/mondoo/mondoo.yml" in the example above), which can be validated by opening a terminal and running `cnspec status`. Additionally, you can adjust the scan frequency (60 minutes by default).
+
+```bash title="Load the Launchd Service"
+sudo launchctl load /Library/LaunchDaemons/com.mondoo.client.plist
+```
+
+To start, stop or check the status of the service, use the _launchctl_ tool:
+
+```bash
+$ sudo launchctl start com.mondoo.client
+$ sudo launchctl list | grep cnspec
+-	1	com.mondoo.client
+```
+
+</Tab>
+</Tabs>
+
+## cnspec serve
+
+In addition to leveraging the platform service management system, cnspec includes the `cnspec serve` command, which you can use on any supported platform (Linux, Windows, macOS) to continuously run assessments of hosts.
+
+<Callout type="info">
+
+cnspec serve leverages the default configuration of the host if already [registered](./registration.md).
+
+</Callout>
+
+### Set a custom scan interval
+
+Use the `--timer` flag to set a scan interval in minutes. The default is 60. For example, this runs a scan with `cnspec serve` every 15 minutes:
+
+```bash
+cnspec serve --timer 15
+```
+
+## cnspec configuration options
+
+cnspec configuration is stored on the host at this location:
+
+- **Linux** - `/etc/opt/mondoo/mondoo.yml`
+- **Windows** - `C:\ProgramData\Mondoo\mondoo.yml`
+
+Common cnspec service configuration options:
+
+| Name           | Description                                                                 |
+| -------------- | --------------------------------------------------------------------------- |
+| `agent_mrn`    | Agent Mondoo resource name, identifies the client                           |
+| `api_endpoint` | The URL of Mondoo Platform (`https://us.api.mondoo.com` is the default)     |
+| `certificate`  | Client's public certificate                                                 |
+| `loglevel`     | Service log level: error, warn, info, debug, trace (default is info)        |
+| `mrn`          | Service Account Mondoo resource name, which identifies the service account  |
+| `private_key`  | Client's private key used to sign requests sent to Mondoo Platform          |
+| `space_mrn`    | Space Mondoo resource name, identifies the space that the client belongs to |
+| `annotations`  | Annotations that display in the Mondoo Console `condole.mondoo.com`         |
+
+```yaml title="mondoo.yml"
+# service account mrn
+mrn: //agents.api.mondoo.app/spaces/spacex/serviceaccounts/1utIs5XUQ8XayfB6yiQNTLOqPlD
+# agent mrn
+agent_mrn: //agents.api.mondoo.app/spaces/spacex/agents/1utIqsjg3YSAF8hMMIhg8tBsTPP
+# space mrn
+space_mrn: //captain.api.mondoo.app/spaces/spacex
+# api endpoint
+api_endpoint: https://us.api.mondoo.com
+# pem-encoded certificate
+certificate: |
+  -----BEGIN CERTIFICATE-----
+  ...
+  -----END CERTIFICATE-----
+# pem-encoded private key
+private_key: |
+  -----BEGIN PRIVATE KEY-----
+  ...
+  -----END PRIVATE KEY-----
+# log level: error, warn, info, debug, trace
+loglevel: info
+# tags
+annotations:
+  - key1: value1
+  - key2: value2
+```
+
+## cnspec inventory
+
+cnspec inventory configuration defines a list of targets for cnspec to scan. This example of the inventory.yml file contains an ssh-based scan with annotations:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: cnspec-ssh-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    # linux with password authentication
+    - id: linux-ssh-with-password
+      connections:
+        - host: 192.168.5.89
+          type: ssh
+          credentials:
+            - type: password
+              user: mondoo
+              password: mondoo
+      annotations:
+        key: value
+```
+
+This example scans the local machine and all running containers:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - id: docker-container
+      connections:
+        - type: local
+          discover:
+            targets:
+              - 'container'
+```
+
+This example scans the local machine and all container images:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - id: docker-container
+      connections:
+        - type: local
+          discover:
+            targets:
+              - 'container-images'
+```
+
+This example scans the vSphere environment with embedded credentials:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - name: vsphere
+      connections:
+        - type: vsphere
+          host: 192.168.5.24
+          credentials:
+            - type: password
+              user: mondoo-read@vsphere.local
+              password: test
+          discover:
+            targets:
+              - host-machines
+```
+
+This example scans the vSphere environment with extracted credentials and reference:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - name: vsphere
+      connections:
+        - type: vsphere
+          host: 192.168.5.24
+          credentials:
+            - secret_id: my-secret
+          discover:
+            targets:
+              - host-machines
+  credentials:
+    my-secret:
+      type: password
+      user: mondoo-read@vsphere.local
+      password: test
+```
+
+This example scans the vSphere environment with credentials from HashiCorp Vault:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - name:
+      connections:
+        - type: vsphere
+          host: 192.168.5.24
+          insecure: true
+          credentials:
+            - secret_id: vcenter/mondoo-read
+          discover:
+            targets:
+              - auto
+      annotations:
+        Owner: patrick@mondoo.com
+  vault:
+    name: cnspec-hashivault
+    type: hashicorp-vault
+    options:
+      url: http://127.0.0.1:8200
+      token: XXXXXXXX
+```
+
+Example to scan a Microsoft 365 account:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - connections:
+        - type: ms365
+          credentials:
+            - type: pkcs12
+              private_key_path: '/Users/atomic111/Projects/presales/m365-scanning/certificate.combo.pem'
+          options:
+            client-id: c4b89770-5ed2-4367-b4f6-ff05ffcb3406
+            organization: ''
+            sharepoint-url: ''
+            tenant-id: d9abc6fc-fd88-4480-a931-2f7939adbac2
+          discover:
+            targets:
+              - auto
+```
+
+Example to scan an Azure tenant including all subscriptions:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - connections:
+        - type: azure
+          credentials:
+            - type: pkcs12
+              private_key_path: '</Users/user/tmpjddt4b_y5.pem>'
+          options:
+            client-id: 9f51cb-66c3-4gg9-b525-fbd717384d96
+            lun: '0'
+            tenant-id: f115cf8c-a2d4-51ef-1234-56f7ed7e18ec
+          discover:
+            targets:
+              - auto
+```
+
+Example to scan a Google Workspace account:
+
+```yaml title="inventory.yml"
+apiVersion: v1
+kind: Inventory
+metadata:
+  name: mondoo-inventory
+  labels:
+    environment: production
+spec:
+  assets:
+    - connections:
+        - type: google-workspace
+          credentials:
+            - type: json
+              secret: <base64 encoded secret>
+          options:
+            customer-id: D34dr1r
+            impersonated-user-email: user@lunalectric.com
+```
+
+To execute cnspec with the inventory file, run this command:
+
+```bash
+cnquery scan --inventory-file ./inventory.yml
+```
+
+## cnspec inventory.yml template
+
+cnspec inventory files are useful for a CI/CD pipeline. Inventory templates are useful for scanning different assets for different environments. They allow you to reuse the same template with a custom variable. This example uses the `getenv` function to include an environment variable (the asset name):
+
+```yaml
+spec:
+  assets:
+    - name: { { getenv "ASSET_NAME" } }
+      connections:
+        - type: local
+          discover:
+            targets:
+              - auto
+```
+
+You can use this example inventory template by providing the `ASSET_NAME` and variable with the `cnspec scan` command and specifying the template:
+
+```bash
+ASSET_NAME="my_asset" cnspec scan --inventory-template template.yaml
+```
+
+---

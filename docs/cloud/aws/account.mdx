@@ -1,0 +1,234 @@
+---
+title: Assess an AWS Account
+sidebar_label: Assess an AWS Account
+displayed_sidebar: cnspec
+sidebar_position: 20
+description: Assess the security and compliance of an AWS account configuration
+image: /img/cnspec/mondoo-aws.jpg
+---
+
+Once you've ensured that [cnspec can access your AWS environment](/cnspec/cloud/aws), you can begin testing. The method you choose depends on your goals:
+
+- For widescale assessment of your AWS infrastructure, scan using policy bundles. These collections of tests work together to present a broad picture of your AWS security posture.
+- To run ad hoc checks against your AWS environment, use cnspec's interactive shell. It has auto-complete to guide you, which is especially helpful when you're new to cnspec and learning MQL.
+
+## Assess AWS security with policy-based scanning
+
+The AWS Security by Mondoo policy is available to all in Mondoo's [cnspec-policies GitHub repo](https://github.com/mondoohq/cnspec-policies/tree/main/core). This collection of tests evaluates how well your environment follows fundamental AWS security best practices. It checks for misconfigurations across your entire AWS infrastructure.
+
+To scan using the AWS Security by Mondoo policy, run:
+
+```bash
+cnspec scan aws
+```
+
+cnspec finds the default policy for AWS and runs a scan based on that policy. It returns a report summarizing the scan results:
+
+```coffeescript
+→ discover related assets for 1 asset(s)
+→ verifying connection client type=aws
+
+ AWS Account lunalectric-management (1234567891011) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% score: CRITICAL
+
+
+Asset: (AWS Account) AWS Account lunalectric-management (1234567891011)
+----------------------------------------------------------------------
+
+Passing:
+✓ Ensure Amazon OpenSearch Service domains are configured with encryption-at-rest
+✓ Ensure MFA is enabled for the "root user" account
+✓ Ensure no root user account access key exists
+✓ Ensure strong account password policy requirements are used
+
+Failing:
+✕ HIGH (70):      Ensure IAM user access keys are rotated
+✕ HIGH (80):      Ensure no public IPs are associated with EC2 instances
+✕ CRITICAL (90):  Ensure EBS volume encryption is enabled by default
+✕ CRITICAL (90):  Ensure EC2 instances use IMDSv2 for metadata access
+✕ CRITICAL (90):  Ensure multi-factor authentication is enabled for all IAM users with console access
+✕ CRITICAL (95):  Ensure public access to S3 buckets is blocked at the account level
+
+
+Scanned 1 asset
+
+AWS Account
+  CRITICAL (95):  AWS Account lunalectric-management (1234567891011)
+```
+
+<Callout type="info">
+To examine scan results in detail, run:
+
+```bash
+cnspec scan aws -o full
+```
+
+</Callout>
+You can also create your own policies to meet your specific needs. To learn more about policies, read [Policies](/cnspec/policies-about).
+
+### Discover resources during a scan
+
+Use the `--discover` flag to find and scan resources in your AWS account.
+
+Find and scan all EC2 instances:
+
+```bash
+cnspec scan aws --discover instances
+```
+
+Find and scan all S3 buckets:
+
+```bash
+cnspec scan aws --discover s3-buckets
+```
+
+For a complete list of `--discover` flag options, run the cnspec help:
+
+```bash
+cnspec scan aws -h
+```
+
+### Scan using an assumed role
+
+To assess AWS resources that you don't normally have access to, you can use an [assumed role](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use.html):
+
+```bash
+cnspec scan aws --role ROLE-ARN
+```
+
+For `ROLE-ARN`, substitute the role's Amazon resource name (ARN).
+
+### Run a filtered EC2 scan using tags
+
+Use the `--filters` flag to limit the EC2 instances you scan. To scan only EC2 instances that have a certain tag value, run:
+
+```bash
+cnspec scan aws --discover instances --filters ec2:tag:KEY=VALUE
+```
+
+For example, to include only EC2 instances that have the _owner_ tag _dev_, run:
+
+```bash
+--filters --discover instances ec2:tag:owner=dev
+```
+
+To scan all resources except EC2 instances with certain tag values, run:
+
+```bash
+cnspec scan aws --discover instances --filters exclude:ec2:tag:KEY=VALUE1,VALUE2,VALUEX
+```
+
+For example, to scan all resources except EC2 instances that have the _env_ tag _test_ or _qa_, run:
+
+```bash
+cnspec scan aws --discover instances --filters exclude:ec2:tag:env=test,qa
+```
+
+## Test AWS with the cnspec shell
+
+The cnspec shell is handy for quick checks and tests, or for developing your MQL skills. Its auto-complete and help features guide you in writing checks.
+
+To launch a shell into your AWS environment, enter:
+
+```bash
+cnspec shell aws
+```
+
+### Discover capabilities with the `help` command
+
+Once inside the shell, use the `help` command to learn what AWS resources you can test. This command lists all the AWS resources:
+
+```bash
+help aws
+```
+
+From the resulting list, you can drill down further. For example, enter this command to list all the AWS IAM resources you can test:
+
+```bash
+help aws.iam
+```
+
+From the resulting list, you can drill down even further. You can also learn about available AWS resources in the [Mondoo Amazon Web Services (AWS) Resource Pack Reference](/mql/resources/aws/).
+
+### Run tests in the cnspec shell
+
+Now that you know how to discover what's possible with cnspec, let's run some actual tests in the shell.
+
+#### Assess CloudTrail encryption
+
+This test assures that every CloudTrail has a KMS key:
+
+```bash
+aws.cloudtrail.trails.all(kmsKey != null)
+```
+
+If the test passes (all CloudTrails have KMS keys) then cnspec returns `ok`:
+
+```coffeescript
+[ok] value: true
+```
+
+If the test fails, (one or more CloudTrails do not have KMS keys) then cnspec provides details about the failure:
+
+```coffeescript
+[failed] [].all()
+  actual:   [
+    0: aws.cloudtrail.trail region="us-east-1" name="organizational-trail" {
+      kmsKey: null
+    }
+  ]
+```
+
+The sample results above show that the account's single CloudTrail is not using encryption.
+
+#### Assess IAM
+
+When we explored the help for `aws.iam`, we saw that cnspec can run checks against your account's IAM credential report. For example, this test asserts that all users have MFA enabled:
+
+```bash
+aws.iam.credentialReport.all ( mfaActive == true )
+```
+
+If one or more users aren't using MFA, cnspec lists them:
+
+```coffeescript
+[failed] [].all()
+  actual:   [
+  actual:   [
+    0: aws.iam.usercredentialreportentry arn="arn:aws:iam::921000052404:user/abel" {
+      mfaActive: false
+    }
+    1: aws.iam.usercredentialreportentry arn="arn:aws:iam::921000052404:user/coco" {
+      mfaActive: false
+    }
+    2: aws.iam.usercredentialreportentry arn="arn:aws:iam::921000052404:user/bob" {
+      mfaActive: false
+    }
+    3: aws.iam.usercredentialreportentry arn="arn:aws:iam::921000052404:user/jill" {
+      mfaActive: false
+    }
+  ]
+```
+
+#### Specify fields to include in results
+
+If you're interested in only some details, specify the fields you want in braces. For example, this is the same test as above, but also asks for each user's ARN, when they last changed their password, and whether they have MFA enabled:
+
+```bash
+aws.iam.credentialReport { mfaActive == true arn passwordLastChanged mfaActive }
+```
+
+### Exit the cnspec shell
+
+To exit the cnspec shell, either press `Ctrl + D` or type `exit`.
+
+## Learn more
+
+- To learn more about how the MQL query language works, read [Write Effective MQL](/mql/mql-write).
+
+- Explore the complete [Mondoo AWS Resource Pack Reference](/mql/resources/aws/).
+
+## Next step
+
+Now that you've scanned your AWS environment and run tests using the cnquery shell, you're ready to dive deeper and [test your EC2 instances](/cnspec/cloud/aws/ec2/).
+
+---
