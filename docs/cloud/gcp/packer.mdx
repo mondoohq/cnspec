@@ -1,0 +1,329 @@
+---
+title: Build Secure VM Images in Google Cloud with cnspec and HashiCorp Packer
+sidebar_label: Build Secure VMs with Packer
+displayed_sidebar: cnspec
+sidebar_position: 3
+image: /img/cnspec/mondoo-gcp.jpg
+description: Learn how to build secure machine images in Google Cloud with cnspec and HashiCorp Packer.
+---
+
+[Packer plugin cnspec by Mondoo](https://github.com/mondoohq/packer-plugin-cnspec) lets you run security scans during HashiCorp Packer builds of [Google Cloud VM images](https://cloud.google.com/build/docs/building/build-vm-images-with-packer). This ensures that new VM images meet your security standards before they even reach production.
+
+<Callout type="warn">
+  This tutorial provisions resources in your Google Cloud project. Mondoo is not responsible for
+  charges that you incur.
+</Callout>
+### Requirements
+
+You must have:
+
+- [A Google Platform Account](https://cloud.google.com/free)
+- [The Google Cloud SDK](https://cloud.google.com/sdk/install)
+- [Packer v1.8.1 or later](https://developer.hashicorp.com/packer/tutorials/docker-get-started/get-started-install-cli) installed
+- (Recommended) A code editor such as [Visual Studio Code](https://code.visualstudio.com/)
+
+## Packer Plugin cnspec by Mondoo
+
+[Packer Plugin cnspec by Mondoo](https://github.com/mondoohq/packer-plugin-cnspec) scans Linux and Windows [HashiCorp Packer](https://www.packer.io) builds for vulnerabilities and security misconfigurations. The plugin is designed to work with any of the supported Packer builders, including containers.
+
+### Plugin modes
+
+Packer plugin cnspec is designed to work in one of two modes:
+
+- **Unregistered** - In unregistered mode, the plugin works without being registered to Mondoo Platform, and is designed to provide baseline security scanning with minimal configuration. The plugin runs either the [Linux Security by Mondoo](https://github.com/mondoohq/cnspec-policies/blob/main/core/mondoo-linux-security.mql.yaml) policy on Linux builds, or the [Windows Security by Mondoo](https://github.com/mondoohq/cnspec-policies/blob/main/core/mondoo-windows-security.mql.yaml) policy on Windows builds. Each of these policies provides security hardening checks based off of industry standards for Linux and Windows. Scan results are shown in STDOUT during the Packer run.
+- **Registered** - In registered mode, the plugin is registered to your account in Mondoo Platform using a service account. Registered mode allows you to configure and customize any of the policies in Mondoo Platform including CIS benchmarks and more. Scan results are shown in STDOUT and sent back to Mondoo Platform for your records.
+
+<Callout type="info">
+  To scan for vulnerabilities, you must register cnspec with Mondoo Platform. [Sign up for a free
+  account](https://mondoo.com/pricing) today.
+</Callout>
+### Plugin configuration
+
+Packer plugin cnspec provides this configuration:
+
+- `score_threshold` - This configuration sets an `int` score threshold for security scans. If the scan produces a score that falls below the threshold, the build will fail.
+- `on_failure = "continue"` - This configuration ensures that the Packer build will not fail even if the scan produces a score that falls below the `score_threshold`.
+- `sudo` - Some of the security configuration checks require elevated permissions to scan a given resource such as the `sshd_config`. Setting the `sudo` option to `active = true` configures the plugin to run in `sudo` mode.
+- `asset_name` - Override the asset name on Mondoo Platform. This configuration is only used in registered mode.
+- `annotations` - Custom annotations can be applied to Packer build assets to provide additional metadata for asset tracking. This configuration is only used in registered mode.
+
+### Register with Mondoo Platform
+
+To configure the plugin to work in registered mode, you must first create a Base64-encoded service account. If you do not wish to use custom policies and store results on Mondoo Platform you can skip this step.
+
+To create a Base64-encoded service account:
+
+1. [Navigate](/start/navigate/) to the space in which you want to create a service account.
+2. In the left navigation, select **Settings**. Then select the **Service Accounts** tab.
+3. Select the purple plus sign to add a new service account.
+4. Provide a **Name** and optionally a **Description** for the service account.
+5. Under permissions select **Agent** and select **Generate Service Account**.
+6. Copy the Base64-encoded credentials to the clipboard.
+7. Open a terminal and run:
+
+```bash
+export MONDOO_CONFIG_BASE64=<paste Base64-encoded token>
+```
+
+## Google Cloud setup
+
+Before building an image, you must install the [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) and authenticate using [User Application Default Credentials](https://cloud.google.com/sdk/gcloud/reference/auth/application-default). You don't need to specify an account file if you are using this method. The user or service account must have these roles:
+
+- [`roles/iam.serviceAccountUser`](https://cloud.google.com/compute/docs/access/iam#iam.serviceAccountUser) (Service Account User)
+- [`roles/compute.instanceAdmin.v1`](https://cloud.google.com/compute/docs/access/iam#compute.instanceAdmin.v1) (Compute Instance Admin v1)
+
+To learn more about creating service accounts, read [Create and manage service accounts](https://cloud.google.com/iam/docs/creating-managing-service-accounts#iam-service-accounts-create-console) in the Google Cloud documentation.
+
+<Callout type="info">
+  You can find more authentication methods for the `googlecompute` builder in the [Packer
+  documentation](https://developer.hashicorp.com/packer/integrations/hashicorp/googlecompute/latest/components/builder/googlecompute).
+</Callout>
+### Configure the Google Cloud project
+
+You must create machine images within a Google Cloud project. Run `gcloud projects list` to get a list of the projects you have access to, or run `gcloud projects create` to create a new project to build your images in.
+
+### Enable the required APIs
+
+Enable these APIs in the project:
+
+```bash
+gcloud services enable sourcerepo.googleapis.com
+gcloud services enable compute.googleapis.com
+gcloud services enable servicemanagement.googleapis.com
+gcloud services enable storage-api.googleapis.com
+```
+
+## Run Packer
+
+A Packer template is a configuration file that defines the image you want to build and how to build it. Packer templates use the HashiCorp Configuration Language (HCL).
+
+Create a new directory named `mondoo_packer`. This directory will contain your Packer template for this tutorial.
+
+```bash
+mkdir mondoo_packer
+```
+
+Navigate into the directory.
+
+```bash
+cd mondoo_packer
+```
+
+### Ubuntu 2004 Packer Template
+
+Create a file `gcp-ubuntu2004.pkr.hcl`, add this HCL block to it, and save the file.
+
+```bash
+packer {
+  required_plugins {
+    googlecompute = {
+      version = ">= 1.0.0"
+      source  = "github.com/hashicorp/googlecompute"
+    }
+    cnspec = {
+      version = ">= 12.0.0"
+      source  = "github.com/mondoohq/cnspec"
+    }
+  }
+}
+
+variable "zone" {
+  default = "us-east5-a"
+  description = "Google Cloud zone to build the image in"
+}
+
+variable "project_id" {
+  type = string
+  description = "Google Cloud Project ID to build the image in"
+}
+
+variable "image_prefix" {
+  type        = string
+  description = "Prefix to be applied to image name"
+  default     = "cnspec-tested-ubuntu-2004"
+}
+
+locals { timestamp = regex_replace(timestamp(), "[- TZ:]", "") }
+
+source "googlecompute" "ubuntu2004" {
+  image_name              = "${var.image_prefix}-${local.timestamp}"
+  machine_type            = "e2-small"
+  source_image            = "ubuntu-pro-2004-focal-v20220627a"
+  ssh_username            = "packer"
+  temporary_key_pair_type = "rsa"
+  temporary_key_pair_bits = 2048
+  zone                    = var.zone
+  project_id              = var.project_id
+}
+
+build {
+  sources = ["source.googlecompute.ubuntu2004"]
+  provisioner "shell" {
+    inline = [
+      "echo Hello From ${source.type} ${source.name}"
+    ]
+  }
+
+  provisioner "cnspec" {
+    score_threshold = 80
+    on_failure = "continue"
+    sudo {
+      active = true
+    }
+  }
+}
+```
+
+This is a complete Packer template that you will use to build an Ubuntu 20.04 image in the `us-east5-a` zone. In these sections, you will review each block of this template in more detail.
+
+### Configure template variables
+
+The template provides a `variables` section used to configure the builds.
+
+<Callout type="info">
+  To learn about the various options to override variables set in the Packer template, see [Setting
+  Variables](https://developer.hashicorp.com/packer/docs/templates/legacy_json_templates/user-variables#set-variables)
+  in the HashiCorp Packer documentation.
+</Callout>
+**Zone**
+
+By default the template will build the image in Google Cloud's us-east5-a zone:
+
+```
+variable "zone" {
+  default = "us-east5-a"
+  description = "Google Cloud zone to build the image in"
+}
+```
+
+**Project ID**
+
+You must set the `project_id` variable with the ID of the project from your Google Cloud account:
+
+```
+variable "project_id" {
+  type = string
+  description = "Google Cloud Project ID to build the image in"
+}
+```
+
+**Image prefix**
+
+By default the template will create the VM image using a default naming prefix of `cnspec-tested-ubuntu-2004`. You can override this with the `image_prefix` variable:
+
+```bash
+variable "image_prefix" {
+  type = string
+  description = "Prefix to be applied to image name"
+  default = "cnspec-tested-ubuntu-2004"
+}
+```
+
+### Initialize the Packer configuration
+
+Initialize your Packer configuration.
+
+```bash
+packer init gcp-ubuntu2004.pkr.hcl
+```
+
+Executing `packer init` instructs Packer to download the plugins defined in the `required_plugins` section in the template. Plugins are typically downloaded to the `~/.packer.d/plugins`directory. You can run `packer init` as many times as you'd like. If you already have the plugins you need, Packer will exit without an output.
+
+## Build the Packer image
+
+Build the image with the `packer build gcp-ubuntu2004.pkr.hcl` command. Packer prints output similar to what is shown below.
+
+```bash
+packer build gcp-ubuntu2004.pkr.hcl
+<image-name>: output will be in this color.
+
+==> <image-name>: Checking image does not exist...
+==> <image-name>: Creating temporary RSA SSH key for instance...
+==> <image-name>: Using image: ubuntu-pro-2004-focal-v20220627a
+==> <image-name>: Creating instance...
+    <image-name>: Loading zone: us-east5-a
+    <image-name>: Loading machine type: e2-small
+    <image-name>: Requesting instance creation...
+    <image-name>: Waiting for creation operation to complete...
+    <image-name>: Instance has been created!
+==> <image-name>: Waiting for the instance to become running...
+    <image-name>: IP: 34.162.0.117
+==> <image-name>: Using SSH communicator to connect: 34.162.0.117
+==> <image-name>: Waiting for SSH to become available...
+...
+    <image-name>:
+    <image-name>:
+    <image-name>: Summary
+    <image-name>: ========================
+    <image-name>:
+    <image-name>: Target:     cnspec-tested-ubuntu-2004-20220630154951
+    <image-name>: Score:      A    86/100     (100% completed)
+    <image-name>: ✓ Passed:   ███████ 49% (80)
+    <image-name>: ✕ Failed:   ██████ 37% (61)
+    <image-name>: ! Errors:   ██ 14% (23)
+    <image-name>: » Skipped:  0% (0)
+    <image-name>:
+    <image-name>: Policies:
+    <image-name>: A 100  Platform End-of-Life Policy by Mondoo
+    <image-name>: A 100  Platform Vulnerability Policy by Mondoo
+    <image-name>:
+    <image-name>: Report URL: https://console.mondoo.com/space/inventory/<space>
+==> <image-name>: Deleting instance...
+    <image-name>: Instance has been deleted!
+==> <image-name>: Creating image...
+==> <image-name>: Deleting disk...
+    <image-name>: Disk has been deleted!
+Build '<image-name>' finished after 5 minutes 46 seconds.
+```
+
+## View the scan results in STDOUT
+
+During the build process you will see scan results similar to this:
+
+```bash
+<image-name>: Summary
+<image-name>: ========================
+<image-name>:
+<image-name>: Target:     cnspec-tested-ubuntu-2004-20220630154951
+<image-name>: Score:      A    86/100     (100% completed)
+<image-name>: ✓ Passed:   ███████ 49% (80)
+<image-name>: ✕ Failed:   ██████ 37% (61)
+<image-name>: ! Errors:   ██ 14% (23)
+<image-name>: » Skipped:  0% (0)
+<image-name>:
+<image-name>: Policies:
+<image-name>: A 100  Platform End-of-Life Policy by Mondoo
+<image-name>: A 100  Platform Vulnerability Policy by Mondoo
+<image-name>:
+<image-name>: Report URL: https://console.mondoo.com/space/inventory/<space>
+```
+
+### View the scan report in Mondoo Platform (registered mode only)
+
+Packer Plugin Mondoo sends the scan results to your account in Mondoo Platform. To view the scan report in the Mondoo Console, navigate to **INVENTORY**, then **ASSETS** and select your asset. You may need to refresh your browser.
+
+![Mondoo scan report from HashiCorp Packer build](/img/cnspec/gcp/packer-asset.png)
+
+### View the findings details
+
+Select the Findings tab.
+
+![Findings tab in a Mondoo scan report from HashiCorp Packer build](/img/cnspec/aws/findings-tab.png)
+
+Select any of the findings from your build to show additional documentation, audit, and remediation steps:
+
+![Findings details in a Mondoo scan result](/img/cnspec/aws/findings-details.png)
+
+## View the image Google Cloud Console
+
+![Mondoo secure base image in GCP Cloud Console](/img/cnspec/gcp/gcp-console-machine-image.png)
+
+After running the above example, you can navigate to the [Storage Images](https://console.cloud.google.com/compute/images) of Google Cloud Console.
+
+## Next steps
+
+In this tutorial, you built a Google Cloud machine image and scanned it for vulnerabilities and misconfigurations with cnspec. Although we ran the one policy, you should now have a general idea of how Packer Plugin Mondoo works, and you should be ready to add any additional policies for your builds.
+
+The GitHub repository for Packer plugin cnspec contains [additional templates](https://github.com/mondoohq/packer-plugin-cnspec/tree/main/examples) for other platforms and cloud environments.
+
+---

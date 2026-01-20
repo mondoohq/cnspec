@@ -1,0 +1,220 @@
+---
+title: Install cnspec on Windows
+sidebar_label: Windows
+sidebar_position: 5
+displayed_sidebar: cnspec
+description: This page provides details on installing and configuring cnspec on Windows.
+image: /img/cnspec/mondoo-feature.jpg
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+  The msi package `REGISTRATIONTOKEN` argument allows you to pass in a temporary registration token
+  to the MSI installer. If the argument is provided, cnspec will be registered automatically during
+  installation.
+</Callout>
+
+## Prerequisites
+
+Before you integrate Microsoft Windows with Mondoo:
+
+- Confirm access to the internet using PowerShell or CMD Terminal
+- Confirm access to Mondoo systems using PowerShell or CMD Terminal
+- Synchronize your system clock
+
+import Partial from './_providers-note.mdx';
+
+<Partial />
+
+### Access to the internet using PowerShell or CMD Terminal
+
+<Callout type="info">
+
+If your organization's [region](/platform/start/organize/regions/) (in the Mondoo Console) is US, you must be able to access us.api.mondoo.com. If your region is EU, you must be able to access eu.api.mondoo.com.
+
+</Callout>
+
+```powershell title="Check internet connectivity"
+# from PowerShell
+Test-NetConnection mondoo.com -Port 443
+
+# from CMD terminal (activate telnet client if not already activated)
+Telnet google.com 443
+```
+
+If you have a proxy setting in your environment, you _might_ need to configure it in the PowerShell and CMD Terminal:
+
+```powershell title="Check proxy settings"
+netsh winhttp show proxy
+```
+
+### Systems access
+
+Be sure you have access to these systems from PowerShell or CMD Terminal:
+
+```powershell title="Check the Internet connectivity"
+install.mondoo.com                   Port 443/https
+releases.mondoo.com                  Port 443/https
+eu.api.mondoo.com                 Port 443/https
+us.api.mondoo.com                 Port 443/https
+registry.api.mondoo.com           Port 443/https
+```
+
+To check connectivity, follow the approach in the previous section.
+
+### System clock sync
+
+Make sure your system clock is in sync with your NTP or internet time:
+
+```
+w32tm /query /status
+w32tm /query /peers
+w32tm /resync
+```
+
+## Install cnspec on Windows
+
+There are two ways of installing Mondoo on Windows:
+
+### Option A: Install using the automated install script in PowerShell
+
+Make sure TLS 1.2 is enabled (it's enabled by default in modern Windows systems):
+
+```powershell title="TLS version"
+# To check
+[Net.ServicePointManager]::SecurityProtocol
+
+# If it is not enabled, enable it:
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+```
+
+Install cnspec by downloading a PowerShell script to memory and running it:
+
+If you wish later the scan happens by loading the configured Policy from your Mondoo Console space, you need to register by having a registration token which will be given to you during integration from https://console.mondoo.com/.
+
+Without RegistrationToken set, the policies will be automatically loaded from our registry of open source policies.
+
+```powershell title="Automated installation script"
+# $MONDOO_REGISTRATION_TOKEN="YOUR_TOKEN_HERE"
+iex ((New-Object System.Net.WebClient).DownloadString('https://install.mondoo.com/ps1'))
+Install-Mondoo # -RegistrationToken $MONDOO_REGISTRATION_TOKEN
+```
+
+The installation creates one or two directories:
+
+- The `C:\Program Files\Mondoo` directory contains binaries.
+- The `C:\ProgramData\Mondoo` directory is only created if the registration token is used. It contains the `mondoo.yml` configuration file.
+
+## Option B: Install manually (Mondoo package including cnspec)
+
+1. Download the [Mondoo Windows installer](https://releases.mondoo.com/mondoo/latest).
+2. Execute the installer as administrator.
+
+   Example:
+
+   ```powershell title="manual installation"
+   # PowerShell
+   Start-Process -Wait msiexec -ArgumentList ' /i  mondoo_12.8.1_windows_amd64.msi'
+
+   # CMD Terminal
+   start /wait msiexec /i mondoo_12.8.1_windows_amd64.msi
+   ```
+
+3. Follow the steps and agree to the license agreement.
+4. (Optional) Register cnspec with your Mondoo Platform account.
+
+   If you enter a registration token during the installation wizard, cnspec registers automatically.
+
+   You can also register by token later if needed:
+
+   ```powershell title="CMD Terminal"
+   start /wait msiexec /i mondoo_12.8.1_windows_amd64.msi  REGISTRATIONTOKEN="XXXXXXXXXXXXXXXXX"
+   ```
+
+## Test and troubleshoot
+
+Make sure the service is running and that it runs automatically at startup:
+
+```powershell title="PowerShell"
+Set-Service -Name mondoo -Status Running -StartupType Automatic
+```
+
+Validate that the service is running:
+
+```
+# PowerShell
+Get-Service mondoo
+
+# CMD terminal
+sc query mondoo
+```
+
+Check the cnspec status:
+
+```
+cnspec status
+```
+
+If cnspec is already registered, you should see this line in the status:
+
+```
+loaded configuration from C:\ProgramData\Mondoo\mondoo.yml using source default
+```
+
+The `mondoo.yaml` file has the certificate, private key, and the api endpoint.
+
+Scan the local system:
+
+```
+cnspec scan local
+```
+
+Here the cnspec will automatically load the policies from Mondoo Console spaces provided you have registered the mondoo with the token. Otherwise, the policies will be loaded from our registry.
+
+You can also force the cnspec to load the policies only from registry:
+
+```
+cnspec scan local --incognito
+```
+
+Delete and reinstall:
+
+In some situations, you might need to remove the services and install again.
+
+```
+sc stop mondoo
+sc delete mondoo
+rmdir  "C:\Program Files\Mondoo"
+rmdir  "C:\ProgramData\Mondoo"
+```
+
+## Proxy configuration
+
+cnspec also works behind a forward proxy, such as Squid.
+
+```powershell title="Set https_proxy environment variable"
+$env:https_proxy = "<ip-address>:<port>"
+```
+
+To set the proxy configuration for cnspec permanently, add the proxy configuration during cnspec registration:
+
+```powershell title="Set Proxy via cnspec command"
+cnspec login --token 'YOUR_TOKEN_HERE' --api-proxy 'http://1.1.1.1' --config 'C:\ProgramData\Mondoo\mondoo.yml'
+```
+
+Or add it to the cnspec configuration directly, follow these steps:
+
+1. Navigate to the cnspec configuration file under `C:\ProgramData\Mondoo\mondoo.yml`
+2. Add this line:
+
+```yaml title="Set Proxy via cnspec configuration file"
+api_proxy: http://1.1.1.1
+```
+
+## Learn more
+
+- [Register cnspec](/cnspec/cnspec-adv-install/registration)
+- [Run cnspec as a service](/cnspec/cnspec-adv-install/service)
+
+---

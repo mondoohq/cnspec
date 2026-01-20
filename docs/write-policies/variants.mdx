@@ -1,0 +1,148 @@
+---
+title: Make Policies Flexible with Variants
+sidebar_position: 8
+description: Use variants to change what a policy checks based on different conditions
+image: /img/cnspec/mondoo-feature.jpg
+---
+
+Variants are checks that behave differently based on conditions you define. They're alternative versions of checks.
+
+For example, suppose you want to ensure that Remote Desktop Protocol (RDP) is restricted from the internet. You want to perform this check both in GCP projects and in Terraform files. You can do this by creating one variant for GCP projects and another for Terraform files:
+
+- The GCP variant queries if the asset is a GCP project and checks RDP access using the GCP resource.
+
+- The Terraform variant queries if the asset is a Terraform file and checks RDP access using the Terraform resource.
+
+- If the asset is neither a GCP project nor a Terraform file, cnspec doesn't execute an RDP check.
+
+## Filters
+
+cnspec relies on _filters_ to determine which variant to run against an asset. A filter is a condition written in [MQL](/mql/mql.write/). Any fields you can query about any [resources](/mql/resources/) can be the basis for a filter.
+
+To learn more about filters, read [Limit Target Assets with Filters](/cnspec/write-policies/filters/).
+
+## Create variants
+
+To create variants for a check, you define the variants in a `variants` section of the check. This tells cnspec that the check is made up of variants, and what those variants are.
+
+```yml showLineNumbers
+policies:
+  - uid: okta-security-example-with-variants
+    name: Example of a policy that uses variants
+    version: '1.0.0'
+    scoring_system: highest impact
+    authors:
+      - name: Lunalectric
+        email: security@lunalectric.com
+checks:
+  - uid: password-minimum-length
+    title: Minimum password length
+    impact: 30
+    variants:
+      - uid: password-minimum-length-runtime
+      - uid: password-minimum-length-terraform-hcl
+      - uid: password-minimum-length-terraform-plan
+      - uid: password-minimum-length-terraform-state
+  - uid: password-minimum-length-runtime
+    title: Minimum password length - runtime variant
+    filters: asset.platform == "okta-org"
+    impact: 30
+    mql: |
+      okta.policies.password.all( settings['password']['complexity']['minLength'] >= 15 )
+  - uid: password-minimum-length-terraform-hcl
+    title: Minimum password length - Terraform HCL variant
+    filters: asset.platform == "terraform-hcl" && terraform.providers.one( nameLabel == "okta" )
+    impact: 30
+    mql: |
+      terraform.resources.where( nameLabel == /okta_policy_password/ ).all( arguments['password_min_length'] == /var/ || arguments['password_min_length'] >= 15 )
+  - uid: password-minimum-length-terraform-plan
+    title: Minimum password length - Terraform plan variant
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
+    impact: 30
+    mql: |
+      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['password_min_length'] >= 15 )
+  - uid: password-minimum-length-terraform-state
+    title: Minimum password length - Terraform state variant
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
+    impact: 30
+    mql: |
+      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['password_min_length'] >= 15 )
+```
+
+Lines 13-17 in the `okta-security-example-with-variants` policy establish the variants for the `password-minimum-length` check. These are the four variants:
+
+- Lines 18-23 define the `password-minimum-length-runtime` variant. The filter on line 20 tells cnspec to run this variant only on one condition: The asset is an Okta organization. Line 23 is the check to run if that condition is true.
+
+- Lines 24-29 define the `password-minimum-terraform-hcl` variant. The filter on line 26 tells cnspec to run this variant only on one condition: The asset is an Okta Terraform HCL file. Line 29 is the check to run if that condition is true.
+
+- Lines 30-35 define the `password-minimum-terraform-plan` variant. The filter on line 32 tells cnspec to run this variant only on one condition: The asset is an Okta Terraform plan. Line 35 is the check to run if that condition is true.
+
+- Lines 36-41 define the `password-minimum-terraform-state` variant. The filter on line 38 tells cnspec to run this variant only on one condition: The asset is an Okta Terraform state. Line 41 is the check to run if that condition is true.
+
+## Use one property for multiple variants
+
+Often you use variants to ensure that different types of assets have one common [property](/cnspec/write-policies/properties), as in the example above. All of the variants in the `okta-security-example-with-variants` policy check that the minimum password length is `15`; they just check the value using different resources for different assets.
+
+For efficiency and easier maintenance, you can write all four variants to use one property instead of defining `15` multiple times:
+
+```yml showLineNumbers
+policies:
+  - uid: okta-security-example-with-variants
+    name: Example of a policy that uses variants
+    version: '1.0.0'
+    scoring_system: highest impact
+    authors:
+      - name: Lunalectric
+        email: security@lunalectric.com
+checks:
+  - uid: password-minimum-length
+    title: Minimum password length
+    impact: 30
+    variants:
+      - uid: password-minimum-length-runtime
+      - uid: password-minimum-length-terraform-hcl
+      - uid: password-minimum-length-terraform-plan
+      - uid: password-minimum-length-terraform-state
+  - uid: password-minimum-length-runtime
+    title: Minimum password length - runtime variant
+    filters: asset.platform == "okta-org"
+    impact: 30
+    mql: |
+      okta.policies.password.all( settings['password']['complexity']['minLength'] >= props.minPass )
+  - uid: password-minimum-length-terraform-hcl
+    title: Minimum password length - Terraform HCL variant
+    filters: asset.platform == "terraform-hcl" && terraform.providers.one( nameLabel == "okta" )
+    impact: 30
+    mql: |
+      terraform.resources.where( nameLabel == /okta_policy_password/ ).all( arguments['password_min_length'] == /var/ || arguments['password_min_length'] >= props.minPass )
+  - uid: password-minimum-length-terraform-plan
+    title: Minimum password length - Terraform plan variant
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
+    impact: 30
+    mql: |
+      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['password_min_length'] >= props.minPass )
+  - uid: password-minimum-length-terraform-state
+    title: Minimum password length - Terraform state variant
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
+    impact: 30
+    mql: |
+      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['password_min_length'] >= props.minPass )
+Props:
+  - uid: minPass
+    title: Minimum password length
+    mql: '15'
+```
+
+import Partial from './_include-lint.mdx';
+
+<Partial />
+
+To learn more about properties, read [Define Properties](/cnspec/write-policies/properties).
+
+## Next steps
+
+- If you're ready to create your own policy: To learn how to set up, validate, and store policy bundles, read [Manage Policies](/cnspec/policies-manage/).
+
+- Learn how to [write MQL queries and checks](/mql/mql.write).
+
+- Read about all the different [resources](/mql/resources/) from which MQL can retrieve information.

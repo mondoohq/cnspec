@@ -1,0 +1,210 @@
+---
+title: Scan Using AWS Systems Manager
+sidebar_label: Scan Using AWS SSM
+sidebar_position: 25
+image: /img/cnspec/mondoo-aws.jpg
+description: This document covers the configuration and use of AWS Systems Manager (SSM) to scan EC2 instances without agents.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use AWS Systems Manager (SSM) to securely scan EC2 instances. You don't need to deploy [cnspec](/cnspec/cnspec-about/) to instances in your environment. Any time Mondoo scans an instance, it automatically installs cnspec for the duration of the scan and then uninstalls cnspec when the scan finishes.
+
+## How Mondoo scans with SSM
+
+When Mondoo performs an SSM scan, these steps occur:
+
+1. SSM Run Command calls the AWS-RunShellScript SSM document.
+2. The latest version of cnspec is installed and configured to authenticate with your Mondoo Platform account.
+3. The EC2 instance runs `cnspec scan` to execute policy checks.
+4. cnspec publishes results of the scan to Mondoo Platform.
+5. cnspec is uninstalled from the EC2 instance.
+
+## Configuring AWS SSM
+
+This section covers a new setup of AWS SSM to manage EC2 instances in AWS. If you are brand new to AWS SSM, read the [AWS documentation](https://aws.amazon.com/systems-manager/) for additional implementation details.
+
+### Create an IAM role and instance profile for SSM
+
+Before you can manage EC2 instances using SSM you need to perform these steps either in the AWS Console or the AWS CLI:
+
+1. Set up an IAM Role with a trust policy for EC2.
+2. Attach the AWS managed AmazonSSMManagedInstanceCore policy to the IAM role.
+3. Create an instance profile (if you're using the AWS CLI).
+4. Attach the IAM role to the instance profile (if you're using the AWS CLI).
+
+Select your preferred method for configuring SSM, and follow the steps.
+
+<Tabs items={['AWS Console', 'AWS CLI']}>
+  <Tab value="AWS Console">
+
+#### Requirements
+
+- AWS console access to any account you plan to integrate with Mondoo
+- Administrator privileges in those accounts
+
+#### Create an IAM role for EC2 instances with AmazonSSMManagedInstanceCore policy
+
+![Create IAM SSM Role AWS Console](/img/cnspec/aws/ssm/ssm-role-creation.png)
+
+1. Log in to the AWS Console.
+2. Navigate to **IAM**.
+3. Select **Roles**.
+4. Select **Create Role**.
+5. For the **Trust entity type**, select **AWS service** and for the **Use case**, select **EC2**. Then select the **Next** button.
+6. Search for **SSM** in the **Filter policies** box, select **AmazonSSMManagedInstanceCore**, and then select the **Next** button.
+7. Under **Role details**, give the role a name (such as EC2_SSM_ROLE), tags, and a description (if you want), and then select **Create role**.
+
+Your new role is ready for use and can be attached to existing EC2 instances, or to new EC2 instances as an [instance profile](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html) when launching new instances.
+
+#### Launch a new EC2 instance with the newly created instance profile
+
+Follow the steps below to launch a new EC2 instance using the AWS console, attach the SSM role created in the last section, and then validate the instance is under management in the AWS SSM console.
+
+![Create IAM SSM Role AWS Console](/img/cnspec/aws/ssm/AWS-SSM-01-org.png)
+
+1. Log in to the AWS Console.
+2. Navigate to **EC2**.
+3. Select **Launch Instance**.
+4. Under **Name and tags**, in the **Name** field, enter _EC2 SSM Instance_.
+5. Under **Application and OS Images (Amazon Machine Image)**, select **Amazon Linux 2 AMI (HVM), SSD Volume Type**, which defaults to **64-bit (x86)**.
+6. Under **Instance type** select **t2.micro**.
+   ![Create IAM SSM Role AWS Console](/img/cnspec/aws/ssm/AWS-SSM-02-org.png)
+7. Under **Key pair (login)** you can either add or create a new key pair, but in this instance it's safe to select **Proceed without a key pair (Not recommended)**. If you want remote access to the instance, you can add an SSH key. This is not required.
+8. Under **Network settings - Firewall(security groups)**, select **Select existing security group** and choose the default security group.
+9. Open the block **Advanced details** and under **IAM instance profile**, select the role you created in the instructions above.
+10. Review the details then select **Launch**.
+11. Copy the **instance ID**. You need it in the next steps.
+    ![Create IAM SSM Role AWS Console](/img/cnspec/aws/ssm/AWS-SSM-03-org.png)
+
+#### Validate that the instance is under management of AWS Systems Manager
+
+![Create IAM SSM Role AWS Console](/img/cnspec/aws/ssm/validate_ssm_gui.gif)
+
+To validate that the EC2 instance is under the management of SSM:
+
+1. Log in to the AWS console.
+2. Navigate to **Systems Manager**.
+3. Select **Fleet Manager**
+4. Locate the **instance ID** of the instance you launched in the section above and select it to bring up the **Instance Overview**.
+
+This confirms the instance is under the management of SSM. Mondoo can use it to perform continuous scans of the asset.
+
+</Tab>
+<Tab value="AWS CLI">
+
+#### Requirements
+
+- You must have the AWS CLI installed and configured for your account.
+- You must be a part of the Administrators group.
+
+#### Get the ARN of the SSM policy for the IAM role `AmazonSSMManagedInstanceCore`
+
+![](/img/cnspec/aws/ssm/cli_get_role_arn.gif)
+
+```bash
+aws iam list-policies --scope AWS --query "Policies[?PolicyName == 'AmazonSSMManagedInstanceCore']"
+```
+
+#### Create an AssumeRole policy
+
+1. Create a new file named `ec2-trust.json`.
+2. Copy this code snippet:
+
+```
+{
+   "Version": "2012-10-17",
+   "Statement": {
+     "Effect": "Allow",
+     "Principal": {"Service": "ec2.amazonaws.com"},
+     "Action": "sts:AssumeRole"
+   }
+ }
+```
+
+3. Paste the code snippet into the `ec2-trust.json` file.
+4. Save the file.
+
+#### Create IAM SSM role and attach the role policy document
+
+```bash
+aws iam create-role --role-name EC2_SSM_ROLE --assume-role-policy-document file://ec2-trust.json
+```
+
+```bash
+aws iam attach-role-policy --role-name EC2_SSM_ROLE --policy-arn <SSM-POLICY-ARN>
+```
+
+#### Launch an Amazon Linux 2 EC2 instance with the instance profile
+
+With the instance profile you created, you can now launch EC2 instances that are configured for use with AWS SSM.
+
+<Callout type="info">
+
+Not all AMIs the SSM agent installed by default. For a complete list of AMIs that come with SSM agent pre-installed, read [About SSM Agent](https://docs.aws.amazon.com/systems-manager/latest/userguide/prereqs-ssm-agent.html) in the AWS documentation.
+
+</Callout>
+
+Follow these steps to launch an Amazon Linux 2 EC2 instance in a default VPC using the new instance profile in the previous step:
+
+1. Get the subnet ID:
+
+```bash
+aws ec2 describe-subnets --query "Subnets[?Tags[?Value == 'SubnetA'] ].SubnetId | [0]"
+```
+
+2. Get the security group ID:
+
+```bash
+aws ec2 describe-security-groups \
+--filters Name=group-name,Values=SG \
+--query "SecurityGroups[?GroupName == 'SG'].GroupId | [0]"
+```
+
+3. Get the Amazon Linux 2 AMI ID (SSM agent preinstalled)
+
+```bash
+aws ec2 describe-images \
+--filters "Name=architecture,Values=x86_64" "Name=description,Values=*Amazon Linux 2 AMI 2.0.2019*gp2" "Name=owner-id,Values=137112412989" "Name=image-type,Values=machine" \
+--query "sort_by(Images, &CreationDate)[::-1].ImageId | [0]"
+```
+
+4. Launch a new EC2 instance with the EC2_SSM_ROLE:
+
+```bash
+aws ec2 run-instances --associate-public-ip-address \
+--security-group-ids <SECURITY-GROUP-ID> \
+--iam-instance-profile Arn=<INSTANCE-PROFILE-ARN> \
+--instance-type t2.micro \
+--image-id <AMI-ID> \
+--subnet-id <SUBNET-ID> \
+--tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=SSMTestInstance}]"
+```
+
+#### Confirm that the instance is managed by AWS Systems Manager
+
+1. Get the instance ID of the new instance:
+
+```bash
+aws ec2 describe-instances --filters Name=tag:Name,Values=SSMTestInstance --query "Reservations[].Instances[].InstanceId"
+```
+
+2. Confirm that the instance ID shows up in SSM:
+
+```bash
+aws ssm describe-instance-information --query "InstanceInformationList[?InstanceId == '<INSTANCE-ID>']"
+```
+
+  </Tab>
+</Tabs>
+
+## Learn more
+
+| To learn about...       | Read...                                                                  |
+| ----------------------- | ------------------------------------------------------------------------ |
+| Snapshot scanning       | [Scan an EBS Snapshot](/cnspec/cloud/aws/aws-ebs-snapshot-scan/)         |
+| Continuous AWS scanning | [Continuously Scan AWS](/platform/infra/cloud/aws/aws-integration-scan/) |
+| cnspec                  | [The cnspec documentation](/cnspec/cnspec-about/)                        |
+
+---
