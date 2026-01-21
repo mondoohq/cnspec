@@ -163,7 +163,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to resolve policies")
 	}
 
-	report, err := RunScan(conf, scan.WithReportType(conf.ReportType))
+	report, err := RunScan(conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
