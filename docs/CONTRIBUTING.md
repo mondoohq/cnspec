@@ -52,6 +52,7 @@ Images are stored in the docs repo at `public/img/cnspec/`. Reference them with 
 ```
 
 Available image folders:
+
 - `/img/cnspec/` - Featured images, banners
 - `/img/cnspec/aws/` - AWS screenshots
 - `/img/cnspec/github/` - GitHub app setup screenshots
@@ -62,6 +63,7 @@ Available image folders:
 ### Links
 
 Use absolute paths for links:
+
 ```markdown
 [MQL Reference](/mql/resources/)
 [Other cnspec page](/cnspec/cnspec-about/)

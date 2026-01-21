@@ -42,6 +42,7 @@ make cnspec/generate
 ```
 
 **Important**: Always run `make cnspec/generate` after modifying:
+
 - `.proto` files
 - Policy bundle structures
 - Reporter configurations
@@ -112,12 +113,14 @@ When working on cnspec, you may need to understand or modify cnquery components.
 The policy execution pipeline has four main stages:
 
 #### 1. Bundle Loading & Compilation
+
 - Policy files (`.mql.yaml`) loaded via `BundleLoader` in [policy/bundle.go](policy/bundle.go)
 - Bundles contain: Policies, QueryPacks, Frameworks, Queries, Properties, Migrations
 - MQL code compiled to executable `llx.CodeBundle` (protobuf format) via `mqlc.CompilerConfig`
 - Code bundles are cached and reusable across multiple asset scans
 
 #### 2. Policy Resolution
+
 - Core logic in [policy/resolver.go](policy/resolver.go) and [policy/resolved_policy_builder.go](policy/resolved_policy_builder.go)
 - Asset filters evaluated to determine which policies apply to each asset
 - Builds dependency graph of: Policies → Frameworks → Controls → Checks/Queries
@@ -127,12 +130,14 @@ The policy execution pipeline has four main stages:
   - **CollectorJob**: Score aggregation rules with scoring systems and hierarchy
 
 #### 3. Execution
+
 - Orchestrated by `GraphExecutor` in [policy/executor/graph.go](policy/executor/graph.go)
 - Queries executed via cnquery's `llx.MQLExecutorV2`
 - Results collected through `BufferedCollector` pattern
 - Handles: data points, scores, risk factors, upstream transmission
 
 #### 4. Result Collection & Scoring
+
 - Scores calculated via `ScoreCalculator` in [policy/score_calculator.go](policy/score_calculator.go)
 - Reporting jobs aggregate child scores based on impact ratings
 - Final `Report` structures contain scores, statistics, CVSS data
@@ -142,6 +147,7 @@ The policy execution pipeline has four main stages:
 Main orchestrator: `LocalScanner` in [policy/scan/local_scanner.go](policy/scan/local_scanner.go)
 
 **Scan Flow**:
+
 ```
 Job (Inventory + Bundle + Options)
   ↓
@@ -157,6 +163,7 @@ Results → Reporters (console, SARIF, JUnit, etc.)
 ```
 
 **Key Components**:
+
 - **Inventory**: List of assets to scan (from CLI flags or inventory files)
 - **Asset**: Describes target system (platform, connections, credentials)
 - **Provider Runtime**: Manages provider plugins via gRPC, handles connections
@@ -170,17 +177,20 @@ Results → Reporters (console, SARIF, JUnit, etc.)
 The provider system (inherited from cnquery) enables scanning diverse targets:
 
 **Connection Flow**:
+
 ```
 Inventory Asset → Runtime.Connect() → Provider Plugin (gRPC) → Target System
 ```
 
 **Providers are separate processes**:
+
 - Communicate via gRPC using `providers-sdk`
 - Can be written in any language
 - Support auto-update with versioned protocols
 - Examples: os, aws, k8s, azure, gcp, github, etc.
 
 **Provider Discovery**:
+
 - Can delay discovery (`DelayDiscovery` flag)
 - Detect platform details and update asset info on connect
 - Platform IDs synchronized with Mondoo Platform for asset tracking
@@ -190,16 +200,19 @@ Inventory Asset → Runtime.Connect() → Provider Plugin (gRPC) → Target Syst
 Protobuf is central to cnspec's architecture:
 
 **Data Structures** ([policy/cnspec_policy.proto](policy/cnspec_policy.proto)):
+
 - All major types defined in proto: `Policy`, `Bundle`, `Framework`, `ResolvedPolicy`, `ExecutionJob`, `Report`, `Score`
 - Enables versioning, backwards compatibility, fast serialization
 - vtproto used for optimized marshaling (`cnspec_policy_vtproto.pb.go`)
 
 **RPC Services**:
+
 - `PolicyHub`: CRUD operations for policies and frameworks
 - `PolicyResolver`: Policy resolution, job updates, result storage
 - ranger-rpc (Mondoo's gRPC wrapper) for communication
 
 **Provider Plugins**:
+
 - Each provider implements gRPC service defined in `providers-sdk`
 - Allows distributed provider ecosystem
 - Versioned protocol ensures compatibility
@@ -228,6 +241,7 @@ Protobuf is central to cnspec's architecture:
 ### Error Handling
 
 Use `github.com/cockroachdb/errors` for error handling:
+
 ```go
 import "github.com/cockroachdb/errors"
 
@@ -241,6 +255,7 @@ return errors.New("invalid policy structure")
 ### Generated Code
 
 Never edit these files manually:
+
 - `*.pb.go` - Generated from proto files
 - `*.ranger.go` - Generated ranger-rpc code
 - `*.vtproto.pb.go` - Optimized vtproto marshaling
@@ -251,6 +266,7 @@ Regenerate with `make cnspec/generate` after source changes.
 ### Policy Bundle Development
 
 Policy files (`.mql.yaml`) structure:
+
 ```yaml
 policies:
   - uid: example-policy
@@ -270,6 +286,7 @@ policies:
 ```
 
 **Key concepts**:
+
 - **uid**: Unique identifier for policies, checks, queries
 - **filters**: MQL expressions that determine applicability
 - **impact**: Risk score 0-100 for prioritization
@@ -277,6 +294,7 @@ policies:
 - **queries**: Data collection queries (no scoring)
 
 Test policy files:
+
 ```bash
 # Lint before committing
 cnspec policies lint ./content/your-policy.mql.yaml
@@ -288,6 +306,7 @@ cnspec scan local -f ./content/your-policy.mql.yaml
 ### MQL Development
 
 MQL (Mondoo Query Language) syntax examples:
+
 ```coffee
 # Resource access
 users.where(name == "root")
@@ -316,6 +335,7 @@ When adding/modifying policies:
 ### Working with Providers
 
 To test against specific providers:
+
 ```bash
 # Local system
 cnspec scan local
