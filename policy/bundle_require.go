@@ -43,7 +43,12 @@ func (p *Bundle) EnsureRequirements(installIfNoRequire bool, autoUpdate bool) er
 				continue
 			}
 			if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: require.Id, ProviderName: require.Provider}, autoUpdate, existing); err != nil {
-				return multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'")
+				if !autoUpdate {
+					// only warn if auto update is disabled, as the user might want to manually install providers
+					log.Warn().Str("provider", require.Provider).Msgf("failed to ensure policy requirements for policy %q", policy.Name)
+				} else {
+					return multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'")
+				}
 			}
 		}
 	}
