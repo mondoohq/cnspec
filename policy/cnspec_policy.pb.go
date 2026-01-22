@@ -499,6 +499,7 @@ type DateFilterField int32
 const (
 	DateFilterField_FILTER_LAST_UPDATED DateFilterField = 0
 	DateFilterField_FILTER_CREATED      DateFilterField = 1
+	DateFilterField_FILTER_LAST_SCANNED DateFilterField = 2
 )
 
 // Enum value maps for DateFilterField.
@@ -506,10 +507,12 @@ var (
 	DateFilterField_name = map[int32]string{
 		0: "FILTER_LAST_UPDATED",
 		1: "FILTER_CREATED",
+		2: "FILTER_LAST_SCANNED",
 	}
 	DateFilterField_value = map[string]int32{
 		"FILTER_LAST_UPDATED": 0,
 		"FILTER_CREATED":      1,
+		"FILTER_LAST_SCANNED": 2,
 	}
 )
 
@@ -8065,10 +8068,11 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\n" +
 	"Comparison\x12\x10\n" +
 	"\fGREATER_THAN\x10\x00\x12\r\n" +
-	"\tLESS_THAN\x10\x01*>\n" +
+	"\tLESS_THAN\x10\x01*W\n" +
 	"\x0fDateFilterField\x12\x17\n" +
 	"\x13FILTER_LAST_UPDATED\x10\x00\x12\x12\n" +
-	"\x0eFILTER_CREATED\x10\x012\x8b\x06\n" +
+	"\x0eFILTER_CREATED\x10\x01\x12\x17\n" +
+	"\x13FILTER_LAST_SCANNED\x10\x022\x8b\x06\n" +
 	"\tPolicyHub\x12@\n" +
 	"\tSetBundle\x12\x18.cnspec.policy.v1.Bundle\x1a\x17.cnspec.policy.v1.Empty\"\x00\x12E\n" +
 	"\x0eValidateBundle\x12\x18.cnspec.policy.v1.Bundle\x1a\x17.cnspec.policy.v1.Empty\"\x00\x12>\n" +
