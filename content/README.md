@@ -2,6 +2,31 @@
 
 Security and operational best-practice policies (as code) for use with [cnspec](https://github.com/mondoohq/cnspec), the open-source security scanner that assesses your entire infrastructure using policy as code.
 
+## Getting Started
+
+### Install cnspec
+
+Before using these policies, install cnspec on your system:
+
+```bash
+# macOS / Linux (using Homebrew)
+brew install mondoohq/mondoo/cnspec
+
+# Windows (using Chocolatey)
+choco install cnspec
+
+# Or download directly from GitHub releases
+# https://github.com/mondoohq/cnspec/releases
+```
+
+For more installation options, see the [cnspec installation guide](https://mondoo.com/docs/cnspec/cnspec-adv-install/overview/).
+
+### Verify installation
+
+```bash
+cnspec version
+```
+
 ## Available Security Policies
 
 Our comprehensive collection of security policies covers major platforms and services:
@@ -83,6 +108,35 @@ cnspec scan local --policy mondoohq/mondoo-macos-security
 
 # Windows
 cnspec scan local --policy mondoohq/mondoo-windows-security
+```
+
+## Understanding Scan Results
+
+After running a scan, cnspec displays results showing which checks passed or failed:
+
+- **✓ Pass** - The check passed; the system meets the security requirement
+- **✕ Fail** - The check failed; action is needed to remediate the issue
+- **! Error** - The check encountered an error during execution
+- **- Skip** - The check was skipped (not applicable to this system)
+
+Each failed check includes:
+- **Impact score** (0-100) indicating severity
+- **Description** explaining why this check matters
+- **Remediation steps** to fix the issue
+
+### Output Formats
+
+Export results in different formats for integration with other tools:
+
+```bash
+# JSON output
+cnspec scan local -o json > results.json
+
+# JUnit XML (for CI/CD integration)
+cnspec scan local -o junit > results.xml
+
+# Full detailed output
+cnspec scan local -o full
 ```
 
 ## Policy Structure
