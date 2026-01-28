@@ -259,15 +259,15 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		}
 
 		if r.Conf.printControls {
-			r.printAssetControls(resolved, report, controls, assetMrn, asset)
+			r.printAssetControls(resolved, report, controls)
 		}
 
 		if r.Conf.printData || r.Conf.printChecks {
-			r.printAssetQueries(resolved, report, queries, previewChecks, assetMrn, asset)
+			r.printAssetQueries(resolved, report, queries, previewChecks)
 		}
 
 		if r.Conf.printRisks {
-			r.printAssetRisks(resolved, report, assetMrn, asset)
+			r.printAssetRisks(report)
 		}
 		r.out(NewLineCharacter)
 
@@ -284,7 +284,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 // Remove all this code and migrate it to tap or something
 // ============================= vv ============================================
 
-func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control, assetMrn string, asset *inventory.Asset) {
+func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, report *policy.Report, controls map[string]*policy.Control) {
 	var scores []*policy.Score
 	for _, rj := range resolved.CollectorJob.ReportingJobs {
 		if rj.Type != policy.ReportingJob_CONTROL {
@@ -309,8 +309,7 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 
 	r.out("Compliance controls:" + NewLineCharacter)
 
-	for i := range scores {
-		score := scores[i]
+	for _, score := range scores {
 		control, ok := controls[score.QrId]
 		if !ok {
 			r.out("Couldn't find any controls for " + score.QrId)
@@ -318,13 +317,13 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 			continue
 		}
 
-		r.printControl(score, control, resolved, report)
+		r.printControl(score, control)
 	}
 
 	r.out(NewLineCharacter)
 }
 
-func (r *defaultReporter) printControl(score *policy.Score, control *policy.Control, resolved *policy.ResolvedPolicy, report *policy.Report) {
+func (r *defaultReporter) printControl(score *policy.Score, control *policy.Control) {
 	title := control.Title
 	if title == "" {
 		title = control.Mrn
@@ -344,12 +343,10 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 		r.out(termenv.String(". Unknown:    ").Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
-
 	case policy.ScoreType_Skip:
 		r.out(termenv.String(". Skipped:    ").Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
-
 	case policy.ScoreType_Result:
 		var passfail string
 		if score.Value == 100 {
@@ -358,7 +355,9 @@ func (r *defaultReporter) printControl(score *policy.Score, control *policy.Cont
 			passfail = termenv.String("✕ Fail:  ").Foreground(r.Colors.High).String()
 		}
 
-		r.out(passfail + title + NewLineCharacter)
+		r.out(passfail)
+		r.out(title)
+		r.out(NewLineCharacter)
 
 	default:
 		r.out("unknown result for " + title + NewLineCharacter)
@@ -379,7 +378,7 @@ type previewGroup struct {
 	sortedFailures []string
 }
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, checkToPreview map[string]*policy.PolicyGroup, assetMrn string, asset *inventory.Asset) {
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, checkToPreview map[string]*policy.PolicyGroup) {
 	results := report.RawResults()
 
 	if r.Conf.printData {
@@ -429,6 +428,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			pscore, ok := report.Scores[query.Mrn]
 			if !ok {
 				r.out("Couldn't find any queries for score of " + id)
+				r.out(NewLineCharacter)
 				continue
 			}
 
@@ -497,7 +497,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		})
 
 		prevPrinted := false
-		if len(sortedPassed) != 0 {
+		if len(sortedPassed) > 0 {
 			r.out("Passing:" + NewLineCharacter)
 			for _, id := range sortedPassed {
 				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
@@ -505,7 +505,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			prevPrinted = true
 		}
 
-		if len(sortedWarnings) != 0 {
+		if len(sortedWarnings) > 0 {
 			if prevPrinted {
 				r.out(NewLineCharacter)
 			}
@@ -559,7 +559,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			prevPrinted = true
 		}
 
-		if len(sortedFailed) != 0 {
+		if len(sortedFailed) > 0 {
 			if prevPrinted {
 				r.out(NewLineCharacter)
 			}
@@ -572,11 +572,11 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
 			}
 		}
-
+		r.out(NewLineCharacter)
 	}
 }
 
-func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, report *policy.Report, assetMrn string, asset *inventory.Asset) {
+func (r *defaultReporter) printAssetRisks(report *policy.Report) {
 	if report.Risks == nil || len(report.Risks.Items) == 0 {
 		return
 	}
@@ -625,7 +625,7 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 	}
 	out := res.String()
 
-	r.out(NewLineCharacter + "Risks / Preventive Controls:" + NewLineCharacter)
+	r.out("Risks / Preventive Controls:" + NewLineCharacter)
 	if out != "" {
 		r.out(out)
 	} else {
@@ -679,7 +679,6 @@ func (r *defaultReporter) printCheck(score simpleScore, query *explorer.Mquery, 
 		r.out(termenv.String(checkStatus(".", "Unknown")).Foreground(r.Colors.Disabled).String())
 		r.out(title)
 		r.out(NewLineCharacter)
-
 	case policy.ScoreType_Skip:
 		r.out(termenv.String(checkStatus(".", "Skipped")).Foreground(r.Colors.Disabled).String())
 		r.out(title)
