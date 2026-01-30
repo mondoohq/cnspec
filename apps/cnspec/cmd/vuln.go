@@ -11,10 +11,9 @@ import (
 	"go.mondoo.com/cnquery/v12/providers"
 	"go.mondoo.com/cnquery/v12/providers-sdk/v1/plugin"
 	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v12/sbom/generator"
-	"go.mondoo.com/cnquery/v12/sbom/pack"
 	"go.mondoo.com/cnspec/v12/cli/reporter"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v12/internal/sbom/generator"
+	"go.mondoo.com/cnspec/v12/internal/sbom/pack"
 )
 
 func init() {
@@ -57,7 +56,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	conf.PolicyNames = nil
 	conf.PolicyPaths = nil
-	conf.Bundle = policy.FromQueryPackBundle(pb)
+	conf.Bundle = pb
 	conf.IsIncognito = true
 
 	printConf, err := reporter.ParseConfig(conf.OutputFormat)
