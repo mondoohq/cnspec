@@ -103,6 +103,12 @@ func BuildRootCmd() (*cobra.Command, error) {
 			Action:              "Check for vulnerabilities ",
 			SupportedConnectors: []string{"docker", "container", "filesystem", "local", "ssh", "vagrant", "winrm", "vsphere", "sbom"},
 		},
+		&providers.Command{
+			Command:             sbomCmd,
+			Run:                 sbomCmdRun,
+			Action:              "Collect a software bill of materials (SBOM) for ",
+			SupportedConnectors: []string{"docker", "container", "filesystem", "local", "ssh", "vagrant", "winrm", "sbom"},
+		},
 	)
 	return rootCmd, err
 }
