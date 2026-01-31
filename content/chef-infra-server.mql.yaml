@@ -3,7 +3,7 @@
 policies:
   - uid: chef-infra-server
     name: Chef Infra Server Policy
-    version: 1.2.0
+    version: 1.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -38,6 +38,8 @@ policies:
           file("/opt/opscode").exists
         checks:
           - uid: disable-insecure-addon-compat
+          - uid: postgresql-not-externally-accessible
+          - uid: search-not-externally-accessible
           - uid: secure-tls-only
       - title: Insecure permissions
         filters: |
@@ -775,6 +777,49 @@ queries:
             ```
 
             **Note**: Do not use a `file` resource with `content` here, as it would overwrite the entire chef-server.rb file and erase any existing configuration.
+  - uid: postgresql-not-externally-accessible
+    title: Ensure embedded PostgreSQL is not bound to external interfaces
+    impact: 90
+    mql: |
+      file("/etc/opscode/chef-server.rb").content.contains(/postgresql\['vip'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
+    docs:
+      desc: |
+        The embedded PostgreSQL database contains all Chef Infra Server data including users, organizations, keys, and cookbooks. By default it binds to 127.0.0.1. Binding to 0.0.0.0 exposes the database to the network.
+
+        Note: External PostgreSQL configurations for multi-server deployments are a valid exception to this check.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            If using embedded PostgreSQL, remove any `postgresql['vip']` line binding to `0.0.0.0` from `/etc/opscode/chef-server.rb`, then reconfigure:
+
+            ```bash
+            chef-server-ctl reconfigure
+            ```
+            
+            If using external PostgreSQL in a multi-server deployment, ensure your PostgreSQL server has appropriate firewall rules and authentication configured.
+  - uid: search-not-externally-accessible
+    title: Ensure embedded search is not bound to external interfaces
+    impact: 90
+    mql: |
+      file("/etc/opscode/chef-server.rb") {
+        content.contains(/opscode_solr4\['ip_address'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
+        content.contains(/opensearch\['ip_address'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
+      }
+    docs:
+      desc: |
+        The embedded Elasticsearch (Chef Infra Server < 14) or OpenSearch (Chef Infra Server 14+) contains indexed data from all managed nodes including users, groups, packages, processes, and cloud metadata. By default it binds to 127.0.0.1. Binding to 0.0.0.0 exposes this sensitive data to the network.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Remove any `opscode_solr4['ip_address']` or `opensearch['ip_address']` lines from `/etc/opscode/chef-server.rb` that bind to `0.0.0.0`, then reconfigure:
+
+            ```bash
+            chef-server-ctl reconfigure
+            ```
   - uid: remediate-cve-2023-28864
     title: Remediate against CVE-2023-28864
     impact: 100
