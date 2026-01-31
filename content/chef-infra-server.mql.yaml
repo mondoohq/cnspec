@@ -70,7 +70,14 @@ queries:
       }
     docs:
       desc: |
-        The /etc/opscode directory contains sensitive files configuring Chef Infra Server should not be world writeable
+        The /etc/opscode directory is the primary configuration directory for Chef Infra Server, containing critical files including:
+
+        - **chef-server.rb**: Main configuration file with server settings and potentially sensitive data collector tokens
+        - **pivotal.pem**: Super admin private key with full control over all organizations
+        - **webui_priv.pem**: Web UI private key for Chef Manage authentication
+        - **private-chef-secrets.json**: All secrets for the running server including database credentials and encryption keys
+
+        While this directory needs to be readable by various Infra Server services, it must never be world-writable. An attacker with write access could modify configuration files to intercept credentials, redirect traffic, or disable security controls. The directory should be owned by root:root with 755 permissions.
       remediation:
         - id: cli
           desc: |
@@ -82,6 +89,14 @@ queries:
             chown root:root /etc/opscode
             chmod 755 /etc/opscode
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/opscode
+            ```
+
+            Expected output: `755 root:root /etc/opscode`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -93,7 +108,6 @@ queries:
               owner 'root'
               group 'root'
               mode '0755'
-              action :create
             end
             ```
   - uid: pivotal-pem-permissions
@@ -115,7 +129,17 @@ queries:
       }
     docs:
       desc: |
-        The /etc/opscode/pivotal.pem file gives super admin privileges on the Infra Server and should be properly secured.
+        The pivotal.pem file is the "superuser" private key for Chef Infra Server. This key has unrestricted administrative access and can:
+
+        - Create, modify, and delete any organization on the server
+        - Access all data bags, including encrypted data bags (if the encryption key is known)
+        - Modify any user's permissions or reset their keys
+        - Access node data, run lists, and attributes for every managed system
+        - Create new admin users with full server access
+
+        An attacker who obtains this key gains complete control over your entire Chef infrastructure. They could exfiltrate sensitive data from all managed nodes, inject malicious code into cookbooks, or completely compromise your configuration management system.
+
+        This file must be owned by the opscode user (which runs Infra Server services) with 600 permissions, ensuring only the server process can read it.
       remediation:
         - id: cli
           desc: |
@@ -127,6 +151,14 @@ queries:
             chown opscode:root /etc/opscode/pivotal.pem
             chmod 600 /etc/opscode/pivotal.pem
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/opscode/pivotal.pem
+            ```
+
+            Expected output: `600 opscode:root /etc/opscode/pivotal.pem`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -160,7 +192,22 @@ queries:
       }
     docs:
       desc: |
-        The /etc/opscode/private-chef-secrets.json stores all secrets for the running Infra Server configuration and should be properly secured.
+        The private-chef-secrets.json file is the central secrets vault for Chef Infra Server, containing all credentials and cryptographic keys used by the server components. This file includes:
+
+        - **Database credentials**: PostgreSQL passwords for the bifrost, bookshelf, oc_id, and opscode_chef databases
+        - **Encryption keys**: Keys used to encrypt data at rest and in transit between services
+        - **Service credentials**: Passwords for RabbitMQ, Elasticsearch/OpenSearch, and internal APIs
+        - **OAuth secrets**: Client secrets for Chef Automate and other integrated services
+        - **LDAP bind credentials**: If LDAP authentication is configured
+
+        An attacker with access to this file could:
+
+        - Directly access the PostgreSQL database to extract or modify all Chef data
+        - Decrypt encrypted communications between Infra Server components
+        - Compromise integrated services like Chef Automate
+        - Bypass authentication mechanisms entirely
+
+        This file must be owned by root:root with 600 permissions to ensure only root can read its contents.
       remediation:
         - id: cli
           desc: |
@@ -172,6 +219,14 @@ queries:
             chown root:root /etc/opscode/private-chef-secrets.json
             chmod 600 /etc/opscode/private-chef-secrets.json
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/opscode/private-chef-secrets.json
+            ```
+
+            Expected output: `600 root:root /etc/opscode/private-chef-secrets.json`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -207,7 +262,16 @@ queries:
       }
     docs:
       desc: |
-        The /etc/opscode/webui_priv.pem file gives super admin privileges on the Infra Server and should be properly secured.
+        The webui_priv.pem file is the private key used by Chef Manage (the web management console) to authenticate with Chef Infra Server. This key provides administrative-level access to the server's API.
+
+        An attacker who obtains this key could:
+
+        - Authenticate to the Chef Infra Server API as the web management console
+        - Perform administrative operations including user and organization management
+        - Access node data and cookbooks across all organizations
+        - Potentially pivot to compromise managed nodes through cookbook modifications
+
+        This file may not exist on all installations, as Chef Manage is an optional add-on. When present, it must be owned by the opscode user with 600 permissions to ensure only the Infra Server process can read it.
       remediation:
         - id: cli
           desc: |
@@ -219,6 +283,14 @@ queries:
             chown opscode:root /etc/opscode/webui_priv.pem
             chmod 600 /etc/opscode/webui_priv.pem
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/opscode/webui_priv.pem
+            ```
+
+            Expected output: `600 opscode:root /etc/opscode/webui_priv.pem`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -230,7 +302,7 @@ queries:
               owner 'opscode'
               group 'root'
               mode '0600'
-              action :create
+              only_if { ::File.exist?('/etc/opscode/webui_priv.pem') }
             end
             ```
   - uid: chef-server-rb-permissions
@@ -251,7 +323,24 @@ queries:
         permissions.other_executable == false
       }
     docs:
-      desc: The /etc/opscode/chef-server.rb configuration file contains sensitive Infra Server configuration information. It should be owned by root:root and permissions should be set to 640.
+      desc: |
+        The chef-server.rb file is the main configuration file for Chef Infra Server and may contain sensitive information including:
+
+        - **Data collector settings**: Tokens for Chef Automate integration
+        - **LDAP configuration**: Bind credentials for Active Directory or LDAP authentication
+        - **External database settings**: Connection strings and credentials for external PostgreSQL
+        - **S3 credentials**: Access keys for external bookshelf storage
+        - **SSL certificate paths**: Locations of private keys and certificates
+        - **Custom Ruby code**: Configuration hooks that execute during reconfigure
+
+        An attacker with read access to this file could:
+
+        - Extract credentials to access Chef Automate or external databases
+        - Identify LDAP service accounts to target for credential attacks
+        - Learn the server's architecture to plan further attacks
+        - Potentially discover hardcoded secrets in custom configuration
+
+        This file should be owned by root:root with 640 permissions, allowing root to write and the root group to read (for Infra Server processes).
       remediation:
         - id: cli
           desc: |
@@ -263,6 +352,14 @@ queries:
             chown root:root /etc/opscode/chef-server.rb
             chmod 640 /etc/opscode/chef-server.rb
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/opscode/chef-server.rb
+            ```
+
+            Expected output: `640 root:root /etc/opscode/chef-server.rb`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -274,7 +371,6 @@ queries:
               owner 'root'
               group 'root'
               mode '0640'
-              action :create
             end
             ```
   - uid: non-eol-infra-server
@@ -283,15 +379,62 @@ queries:
     mql: |
       file("/opt/opscode/version-manifest.txt").content == /^chef-server (14|15|16|17)/
     docs:
-      desc: Only the current major release of Chef Infra Server is supported. Prior releases do not receive security updates and should not be used in production environments.
-      remediation: Upgrade to a non-EOL release of Chef Infra Server. Note that this will require downtime for component upgrade processes.
+      desc: |
+        Chef Infra Server follows a continuous release model where only the current major version is supported. Previous major versions are considered end-of-life (EOL) and no longer receive:
+
+        - **Security patches**: Critical vulnerabilities remain unpatched, exposing your infrastructure
+        - **Bug fixes**: Issues that could cause data corruption or service disruption go unresolved
+        - **Compatibility updates**: Newer Chef Infra Client versions may not work correctly
+
+        Running an EOL Chef Infra Server is a significant security risk because the server:
+
+        - Stores credentials for all managed nodes (client.pem keys)
+        - Contains sensitive data bags with passwords, certificates, and API keys
+        - Has network access to potentially hundreds or thousands of managed systems
+        - May be integrated with Chef Automate, exposing compliance data
+
+        Check the [Chef Supported Versions documentation](https://docs.chef.io/versions/) for the current supported releases. As of the policy update, version 14 and later are checked, but verify against official documentation.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            1. Check your current Chef Infra Server version:
+
+            ```bash
+            cat /opt/opscode/version-manifest.txt | head -1
+            ```
+
+            2. Review the [Chef Infra Server upgrade documentation](https://docs.chef.io/server/upgrades/) for your upgrade path.
+
+            3. Download and install the latest supported version from the [Chef Downloads page](https://www.chef.io/downloads/tools/infra-server).
+
+            **Upgrade Planning Considerations**:
+
+            - Schedule a maintenance window as the server will be unavailable during upgrade
+            - Back up your Chef server data before upgrading: `chef-server-ctl backup`
+            - Review release notes for breaking changes between your current and target versions
+            - Test the upgrade in a non-production environment first
+            - Notify users that Chef client runs may fail during the upgrade window
   - uid: eol-reporting-addon
     title: Ensure EOL Reporting add-on package is not installed
     impact: 80
     mql: |
       package("opscode-reporting").installed == false
     docs:
-      desc: The Opscode Reporting add-on for Infra Server is EOL and no longer receives security updates.
+      desc: |
+        The Opscode Reporting add-on was a feature that stored Chef Infra Client run history data directly in the Chef Infra Server. This add-on has been deprecated and replaced by Chef Automate's data collection capabilities.
+
+        Security risks of running EOL Opscode Reporting:
+
+        - **No security patches**: Vulnerabilities in the reporting database or API will not be fixed
+        - **Stored run data exposure**: Historical run data may contain sensitive node attributes
+        - **Increased attack surface**: Additional services and API endpoints increase potential entry points
+        - **Resource consumption**: The reporting database continues to grow, potentially impacting server performance
+
+        **Migration Path**: If you need Chef run history and reporting:
+        - Configure [Chef Automate data collection](https://docs.chef.io/automate/data_collection/) to capture run data
+        - Use the Infra Server's data collector proxy to route data to Automate
       remediation:
         - id: cli
           desc: |
@@ -303,6 +446,12 @@ queries:
             chef-server-ctl uninstall opscode-reporting
             chef-server-ctl reconfigure
             ```
+
+            After uninstallation, verify the package is removed:
+
+            ```bash
+            dpkg -l | grep opscode-reporting || rpm -qa | grep opscode-reporting
+            ```
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -312,7 +461,7 @@ queries:
             ```ruby
             package 'opscode-reporting' do
               action :remove
-              notify :run, 'execute[reconfigure chef server]'
+              notifies :run, 'execute[reconfigure chef server]', :immediately
             end
 
             execute 'reconfigure chef server' do
@@ -326,7 +475,20 @@ queries:
     mql: |
       package("opscode-push-jobs-server").installed == false
     docs:
-      desc: Chef Push Jobs Server is EOL and no longer receives security updates.
+      desc: |
+        Chef Push Jobs Server was a feature that allowed ad-hoc command execution on managed nodes without a full Chef Infra Client run. This add-on has been deprecated and is no longer maintained.
+
+        Security risks of running EOL Push Jobs Server:
+
+        - **No security patches**: Vulnerabilities in the push jobs service will not be fixed
+        - **Remote command execution**: Push Jobs allows running arbitrary commands on nodes, making it a high-value target
+        - **Credential exposure**: Push Jobs client keys on nodes could be exploited if the server is compromised
+        - **Network exposure**: The Push Jobs server opens additional ports and services
+
+        **Migration Alternatives**:
+        - Use Chef Infra's native [chef-client scheduled runs](https://docs.chef.io/chef_client_overview/) for configuration management
+        - Consider modern orchestration tools like Ansible, AWS Systems Manager, or Bolt for ad-hoc tasks
+        - Use Chef Automate's node management features for on-demand actions
       remediation:
         - id: cli
           desc: |
@@ -338,6 +500,14 @@ queries:
             chef-server-ctl uninstall opscode-push-jobs-server
             chef-server-ctl reconfigure
             ```
+
+            After uninstallation, verify the package is removed:
+
+            ```bash
+            dpkg -l | grep opscode-push-jobs-server || rpm -qa | grep opscode-push-jobs-server
+            ```
+
+            **Note**: You will also need to remove the `push-jobs-client` package from managed nodes to complete the migration.
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -347,7 +517,7 @@ queries:
             ```ruby
             package 'opscode-push-jobs-server' do
               action :remove
-              notify :run, 'execute[reconfigure chef server]'
+              notifies :run, 'execute[reconfigure chef server]', :immediately
             end
 
             execute 'reconfigure chef server' do
@@ -361,7 +531,21 @@ queries:
     mql: |
       package("opscode-analytics").installed == false
     docs:
-      desc: Opscode Analytics is EOL and no longer receives security updates.
+      desc: |
+        Opscode Analytics was a real-time visibility and analytics platform for Chef infrastructure. It has been deprecated and replaced by Chef Automate's built-in analytics and compliance features.
+
+        Security risks of running EOL Opscode Analytics:
+
+        - **No security patches**: Vulnerabilities in the analytics platform will not be fixed
+        - **Sensitive data exposure**: Analytics collects detailed information about your infrastructure including configurations and changes
+        - **Additional attack surface**: RabbitMQ message queues and the analytics database add exploitable services
+        - **Integration risks**: The EOL software may have insecure integrations with other Chef components
+
+        **Migration Path**: Chef Automate provides comprehensive analytics and visibility:
+        - Real-time event streaming and historical data
+        - Compliance reporting and trend analysis
+        - Infrastructure change tracking
+        - Integration with modern observability tools
       remediation:
         - id: cli
           desc: |
@@ -373,6 +557,12 @@ queries:
             chef-server-ctl uninstall opscode-analytics
             chef-server-ctl reconfigure
             ```
+
+            After uninstallation, verify the package is removed:
+
+            ```bash
+            dpkg -l | grep opscode-analytics || rpm -qa | grep opscode-analytics
+            ```
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -382,7 +572,7 @@ queries:
             ```ruby
             package 'opscode-analytics' do
               action :remove
-              notify :run, 'execute[reconfigure chef server]'
+              notifies :run, 'execute[reconfigure chef server]', :immediately
             end
 
             execute 'reconfigure chef server' do
@@ -396,7 +586,20 @@ queries:
     mql: |
       package("chef-ha").installed == false
     docs:
-      desc: Chef HA is EOL and not longer receives security updates.
+      desc: |
+        Chef HA (High Availability) was an add-on that provided active-passive failover for Chef Infra Server using DRBD block-level replication. This add-on has been deprecated in favor of Chef Backend and external PostgreSQL clustering.
+
+        Security risks of running EOL Chef HA:
+
+        - **No security patches**: Vulnerabilities in DRBD, Keepalived, or the HA management scripts will not be fixed
+        - **Complex failure modes**: The EOL software may have undiscovered bugs that could cause data corruption or split-brain scenarios
+        - **Outdated cryptography**: Older HA implementations may use insecure replication protocols
+        - **Support gaps**: Issues with failover or data replication cannot be resolved through official channels
+
+        **Migration Alternatives**:
+        - **Chef Backend**: Modern, supported high-availability solution for Chef Infra Server
+        - **External PostgreSQL**: Use managed PostgreSQL services (AWS RDS, Azure Database, etc.) with built-in HA
+        - **Chef Infra Server cluster**: Horizontal scaling with external database backend
       remediation:
         - id: cli
           desc: |
@@ -408,6 +611,14 @@ queries:
             chef-server-ctl uninstall chef-ha
             chef-server-ctl reconfigure
             ```
+
+            After uninstallation, verify the package is removed:
+
+            ```bash
+            dpkg -l | grep chef-ha || rpm -qa | grep chef-ha
+            ```
+
+            **Important**: Before removing Chef HA, ensure you have planned your migration to a supported high-availability solution to avoid service disruption.
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -417,7 +628,7 @@ queries:
             ```ruby
             package 'chef-ha' do
               action :remove
-              notify :run, 'execute[reconfigure chef server]'
+              notifies :run, 'execute[reconfigure chef server]', :immediately
             end
 
             execute 'reconfigure chef server' do
@@ -431,16 +642,139 @@ queries:
     mql: |
       file("/var/opt/opscode/nginx/etc/chef_https_lb.conf").content.contains("ssl_protocols TLSv1.2;")
     docs:
-      desc: Chef Infra Server should be configured to only support modern TLS versions (currently 1.2 only as 1.3 is not supported)
-      remediation: Upgrade to Chef Infra Server 14.3.14 or later where this setting becomes the default.
+      desc: |
+        Chef Infra Server uses nginx as its front-end web server, handling all HTTPS connections from Chef clients, knife, and the management console. Older TLS versions (1.0 and 1.1) have known security vulnerabilities:
+
+        - **TLS 1.0**: Vulnerable to BEAST, POODLE, and other attacks; deprecated by PCI DSS since 2018
+        - **TLS 1.1**: Lacks support for modern cipher suites; deprecated by major browsers since 2020
+
+        Supporting these older protocols exposes your Chef infrastructure to:
+
+        - **Man-in-the-middle attacks**: Attackers could intercept and decrypt traffic between clients and the server
+        - **Credential theft**: Node authentication keys and API tokens could be captured
+        - **Compliance violations**: PCI DSS, HIPAA, and other frameworks require TLS 1.2 or higher
+        - **Data exfiltration**: Sensitive node data, cookbooks, and data bags could be exposed
+
+        Chef Infra Server 14.3.14 and later defaults to TLS 1.2 only. TLS 1.3 support depends on the underlying OpenSSL version.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            The recommended remediation is to upgrade to Chef Infra Server 14.3.14 or later where TLS 1.2 is the default.
+
+            If you cannot upgrade immediately, you can manually configure nginx to disable older TLS versions:
+
+            1. Edit `/etc/opscode/chef-server.rb` and add:
+
+            ```ruby
+            nginx['ssl_protocols'] = 'TLSv1.2'
+            ```
+
+            2. Reconfigure the server:
+
+            ```bash
+            chef-server-ctl reconfigure
+            ```
+
+            3. Verify the configuration:
+
+            ```bash
+            grep ssl_protocols /var/opt/opscode/nginx/etc/chef_https_lb.conf
+            ```
+
+            **Note**: Ensure all Chef Infra Clients support TLS 1.2. Clients older than version 12.0 may need to be upgraded.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            If you manage your Chef Infra Server configuration with Chef, use a `ruby_block` to safely append the setting without overwriting existing configuration:
+
+            ```ruby
+            ruby_block 'configure TLS 1.2 in chef-server.rb' do
+              block do
+                file = Chef::Util::FileEdit.new('/etc/opscode/chef-server.rb')
+                file.insert_line_if_no_match(/nginx\['ssl_protocols'\]/, "nginx['ssl_protocols'] = 'TLSv1.2'")
+                file.write_file
+              end
+              notifies :run, 'execute[reconfigure chef server]', :immediately
+            end
+
+            execute 'reconfigure chef server' do
+              command 'chef-server-ctl reconfigure'
+              action :nothing
+            end
+            ```
+
+            **Note**: Do not use a `file` resource with `content` here, as it would overwrite the entire chef-server.rb file and erase any existing configuration.
   - uid: disable-insecure-addon-compat
     title: Disable insecure_addon_compat feature
     impact: 90
     mql: |
       file("/etc/opscode/chef-server.rb").content.contains("insecure_addon_compat false")
     docs:
-      desc: Chef Infra Server provides backwards compatibility for legacy Infra Server add-ons that require less secure secrets storage. All currently supported add-ons currently support secure secrets management.
-      remediation: Upgrade to Chef Manage 2.5 or later and set `insecure_addon_compat false` in the `chef-server.rb` config.
+      desc: |
+        Chef Infra Server includes a backwards compatibility mode (`insecure_addon_compat`) that allows legacy add-ons to access secrets using an older, less secure storage mechanism. When enabled, this mode:
+
+        - **Stores secrets in plaintext**: Legacy add-ons required secrets to be readable without encryption
+        - **Weaker file permissions**: The compatibility mode may use more permissive file access
+        - **Shared secrets exposure**: Multiple services may share access to the same secrets file
+        - **No secrets rotation**: The legacy mechanism doesn't support automated credential rotation
+
+        Modern Chef add-ons (Chef Manage 2.5+, Chef Automate) use the secure `veil` secrets management system, which provides:
+
+        - Encrypted secrets storage
+        - Per-service credential isolation
+        - Support for external secrets management (HashiCorp Vault, etc.)
+
+        All currently supported Chef add-ons support the secure secrets mechanism, so `insecure_addon_compat` can be safely disabled.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            1. First, ensure all your Chef add-ons are updated to versions that support secure secrets:
+               - Chef Manage: 2.5.0 or later
+               - Chef Automate: Any currently supported version
+
+            2. Edit `/etc/opscode/chef-server.rb` and add:
+
+            ```ruby
+            insecure_addon_compat false
+            ```
+
+            3. Reconfigure the server:
+
+            ```bash
+            chef-server-ctl reconfigure
+            ```
+
+            4. Verify the setting is applied by checking that no errors occur and add-ons continue to function.
+
+            **Important**: Test this change in a non-production environment first to ensure all add-ons are compatible.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            If you manage your Chef Infra Server configuration with Chef, use a `ruby_block` to safely append the setting without overwriting existing configuration:
+
+            ```ruby
+            ruby_block 'disable insecure addon compat' do
+              block do
+                file = Chef::Util::FileEdit.new('/etc/opscode/chef-server.rb')
+                file.insert_line_if_no_match(/insecure_addon_compat/, 'insecure_addon_compat false')
+                file.write_file
+              end
+              notifies :run, 'execute[reconfigure chef server]', :immediately
+            end
+
+            execute 'reconfigure chef server' do
+              command 'chef-server-ctl reconfigure'
+              action :nothing
+            end
+            ```
+
+            **Note**: Do not use a `file` resource with `content` here, as it would overwrite the entire chef-server.rb file and erase any existing configuration.
   - uid: remediate-cve-2023-28864
     title: Remediate against CVE-2023-28864
     impact: 100

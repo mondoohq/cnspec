@@ -64,7 +64,13 @@ queries:
       }
     docs:
       desc: |
-        The /etc/chef directory contains sensitive files configuring Chef Infra Client and should only be writeable by root and readable by root and the root group.
+        The /etc/chef directory contains sensitive files that configure the Chef Infra Client, including the client.rb configuration file and the client.pem private key. These files contain information that could allow an attacker to:
+
+        - Impersonate the node when communicating with Chef Infra Server
+        - Access sensitive configuration data such as server URLs and node names
+        - Modify the client configuration to exfiltrate data or disable security controls
+
+        This directory should only be writeable by root and readable by root and the root group (mode 750) to prevent unauthorized access.
       remediation:
         - id: cli
           desc: |
@@ -74,8 +80,16 @@ queries:
 
             ```bash
             chown root:root /etc/chef
-            chmod 700 /etc/chef
+            chmod 750 /etc/chef
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/chef
+            ```
+
+            Expected output: `750 root:root /etc/chef`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -83,10 +97,10 @@ queries:
             Use this Chef Infra recipe code to set proper permissions on your /etc/chef directory:
 
             ```ruby
-            file '/etc/chef' do
+            directory '/etc/chef' do
               owner 'root'
               group 'root'
-              mode '0700'
+              mode '0750'
             end
             ```
   - uid: var-chef-directory-permissions
@@ -109,7 +123,13 @@ queries:
       }
     docs:
       desc: |
-        The /var/chef directory contains sensitive system configuration backup files and cached remote_file downloads. It should only be writeable by root and readable by root and the root group.
+        The /var/chef directory is the default location for Chef Infra Client's cache and backup files. This directory may contain:
+
+        - Backup copies of files modified by Chef recipes, which could contain sensitive configuration data
+        - Cached downloads from remote_file resources, potentially including secrets or proprietary software
+        - Cached cookbook files that may contain embedded credentials or sensitive business logic
+
+        If an attacker gains access to this directory, they could extract sensitive data or analyze your infrastructure configuration. This directory should only be writeable by root and readable by root and the root group (mode 750).
       remediation:
         - id: cli
           desc: |
@@ -119,8 +139,16 @@ queries:
 
             ```bash
             chown root:root /var/chef
-            chmod 700 /var/chef
+            chmod 750 /var/chef
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /var/chef
+            ```
+
+            Expected output: `750 root:root /var/chef`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -128,10 +156,10 @@ queries:
             Use this Chef Infra recipe code to set proper permissions on your /var/chef directory:
 
             ```ruby
-            file '/var/chef' do
+            directory '/var/chef' do
               owner 'root'
               group 'root'
-              mode '0700'
+              mode '0750'
             end
             ```
   - uid: var-log-chef-directory-permissions
@@ -154,7 +182,14 @@ queries:
       }
     docs:
       desc: |
-        The /var/log/chef directory contains sensitive log files and should only be writeable by root and readable by root and the root group.
+        The /var/log/chef directory contains Chef Infra Client log files that may expose sensitive information including:
+
+        - Node attributes that could reveal infrastructure details, IP addresses, and hostnames
+        - Resource parameters that may include secrets if verbose or debug logging is enabled
+        - Stack traces that could expose internal paths and software versions
+        - Compliance scan results that could reveal security weaknesses
+
+        An attacker with access to these logs could gather reconnaissance information about your infrastructure or identify security vulnerabilities to exploit. This directory should only be writeable by root and readable by root and the root group (mode 750).
       remediation:
         - id: cli
           desc: |
@@ -164,8 +199,16 @@ queries:
 
             ```bash
             chown root:root /var/log/chef
-            chmod 700 /var/log/chef
+            chmod 750 /var/log/chef
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /var/log/chef
+            ```
+
+            Expected output: `750 root:root /var/log/chef`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -173,10 +216,10 @@ queries:
             Use this Chef Infra recipe code to set proper permissions on your /var/log/chef directory:
 
             ```ruby
-            file '/var/log/chef' do
+            directory '/var/log/chef' do
               owner 'root'
               group 'root'
-              mode '0700'
+              mode '0750'
             end
             ```
   - uid: client-rb-permissions
@@ -198,7 +241,16 @@ queries:
         }
       }
     docs:
-      desc: The /etc/chef/client.rb configuration file contains sensitive Infra Client configuration information. It should be owned by root and permissions should be set to 640.
+      desc: |
+        The /etc/chef/client.rb configuration file is the primary configuration file for Chef Infra Client. This file may contain sensitive information including:
+
+        - Chef Infra Server URL and organization details
+        - Node name and environment configuration
+        - Data collector tokens for Chef Automate (if not properly configured)
+        - Custom Ruby code that executes during client runs
+        - Paths to SSL certificates and private keys
+
+        An attacker with read access to this file could identify your Chef infrastructure topology, potentially access your Chef Infra Server if combined with the client.pem key, or modify the configuration to execute malicious code during Chef runs. This file should be owned by root with permissions set to 640.
       remediation:
         - id: cli
           desc: |
@@ -210,6 +262,14 @@ queries:
             chown root:root /etc/chef/client.rb
             chmod 640 /etc/chef/client.rb
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/chef/client.rb
+            ```
+
+            Expected output: `640 root:root /etc/chef/client.rb`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -242,7 +302,21 @@ queries:
         }
       }
     docs:
-      desc: The /etc/chef/client.pem key file contains the key used to communicate with Chef Infra Server. It should be owned by root and permissions should be set to 640.
+      desc: |
+        The /etc/chef/client.pem file is the RSA private key that uniquely identifies this node to the Chef Infra Server. This key is used to:
+
+        - Authenticate all API requests to the Chef Infra Server
+        - Sign requests that modify node data, including run lists and attributes
+        - Access any data bags or secrets the node is authorized to read
+
+        If an attacker obtains this key, they can fully impersonate the node and:
+
+        - Read sensitive data bags containing passwords, API keys, or certificates
+        - Modify the node's run list to execute malicious cookbooks
+        - Access other nodes' data if the compromised node has admin privileges
+        - Pivot to attack other systems using harvested credentials
+
+        This file should be owned by root with permissions set to 640 to prevent unauthorized access.
       remediation:
         - id: cli
           desc: |
@@ -254,6 +328,14 @@ queries:
             chown root:root /etc/chef/client.pem
             chmod 640 /etc/chef/client.pem
             ```
+
+            To verify the permissions were applied correctly:
+
+            ```bash
+            stat -c '%a %U:%G %n' /etc/chef/client.pem
+            ```
+
+            Expected output: `640 root:root /etc/chef/client.pem`
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -273,7 +355,17 @@ queries:
     mql: |
       file("/etc/chef/validation.pem").exists == false
     docs:
-      desc: The /etc/chef/validation.pem file can be used to register any system with Chef Infra Server and should not be left on system after they are bootstrapped into the Chef Infra organization.
+      desc: |
+        The validation.pem file (also known as the organization validator key) is used during the initial bootstrap process to register new nodes with the Chef Infra Server. Once a node is successfully registered and receives its own client.pem key, the validation.pem file is no longer needed and poses a significant security risk if left on the system.
+
+        An attacker who obtains this file can:
+
+        - Register unlimited rogue nodes in your Chef organization
+        - Create nodes with arbitrary names, potentially impersonating existing infrastructure
+        - Gain a foothold in your Chef-managed environment to pivot attacks
+        - Access any data bags or policies available to newly registered nodes
+
+        The validation.pem file should be deleted immediately after a node is successfully bootstrapped. Modern bootstrap methods like `knife bootstrap` with the `--node-ssl-verify-mode` option or using Chef Infra Server's ACLs can eliminate the need for validation keys entirely.
       remediation:
         - id: cli
           desc: |
@@ -284,16 +376,28 @@ queries:
             ```bash
             rm /etc/chef/validation.pem
             ```
+
+            To verify the file has been removed:
+
+            ```bash
+            ls -la /etc/chef/validation.pem 2>&1 | grep -q "No such file" && echo "Successfully removed" || echo "File still exists"
+            ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to remove the validation.pem file:
+            Use this Chef Infra recipe code to remove the validation.pem file. Add this to a recipe that runs on all nodes:
 
             ```ruby
             file '/etc/chef/validation.pem' do
               action :delete
             end
+            ```
+
+            Alternatively, enable the built-in `delete_validation` setting in your client.rb to automatically delete the validation key after the first successful Chef run:
+
+            ```ruby
+            delete_validation true
             ```
   - uid: non-eol-infra-client
     title: Ensure a non-EOL Chef Infra Client release is used
@@ -303,8 +407,76 @@ queries:
         stdout == /^Chef Infra Client: (17|18|19|20|21).*/
       }
     docs:
-      desc: Chef Infra Client is released once a year in April and 2 major versions are supported at any time (N-1). Prior releases do not receive security updates and should not be used in production environments. See the [Chef Supported Versions documentation](https://docs.chef.io/versions/) for an up-to-date list of supported Infra Client releases.
-      remediation: Upgrade to a non-EOL release of Chef Infra Client. Note that this will require validation of cookbook content for compatibility as newer major version releases introduce breaking changes.
+      desc: |
+        Chef Infra Client follows an annual release cadence with new major versions released each April. Chef supports the current major version plus one previous version (N and N-1), meaning only two major versions receive security updates at any given time.
+
+        Running an end-of-life (EOL) Chef Infra Client version poses significant security risks:
+
+        - **No security patches**: Vulnerabilities discovered after EOL will not be fixed
+        - **No bug fixes**: Critical bugs that could cause configuration drift go unresolved
+        - **Compatibility issues**: Newer cookbooks and Chef Infra Server versions may not be compatible
+        - **Compliance violations**: Many security frameworks require running supported software
+
+        Check the [Chef Supported Versions documentation](https://docs.chef.io/versions/) for the current list of supported releases. As of the policy update, versions 17 and later are checked, but you should verify against the official documentation.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            1. Check your current Chef Infra Client version:
+
+            ```bash
+            chef-client -v
+            ```
+
+            2. Download and install the latest supported version from the [Chef Downloads page](https://www.chef.io/downloads/tools/infra-client):
+
+            **For Debian/Ubuntu:**
+
+            ```bash
+            curl -L https://omnitruck.chef.io/install.sh | sudo bash -s -- -P chef -v 18
+            ```
+
+            **For RHEL/CentOS/Amazon Linux:**
+
+            ```bash
+            curl -L https://omnitruck.chef.io/install.sh | sudo bash -s -- -P chef -v 18
+            ```
+
+            3. Verify the upgrade was successful:
+
+            ```bash
+            chef-client -v
+            ```
+
+            **Important**: Before upgrading in production, review the [Chef Infra Client release notes](https://docs.chef.io/release_notes_client/) for breaking changes and test your cookbooks in a non-production environment.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            If you use Chef to manage Chef Infra Client installations, update your cookbook to install a supported version. Using the `chef_client_updater` cookbook:
+
+            ```ruby
+            chef_client_updater 'Install latest Chef 18' do
+              version '18'
+            end
+            ```
+
+            Or using the `chef-ingredient` cookbook:
+
+            ```ruby
+            chef_ingredient 'chef' do
+              version '18'
+              action :upgrade
+            end
+            ```
+
+            **Upgrade Planning Tips**:
+
+            - Test cookbooks against the new version in a development environment first
+            - Review deprecation warnings in your current Chef runs
+            - Check cookbook metadata for `chef_version` constraints that may need updating
+            - Plan for a phased rollout starting with non-critical systems
   - uid: disable-legacy-encrypted-data-bags
     title: Disable support for less secure Encrypted Data Bag versions
     impact: 80
@@ -313,17 +485,54 @@ queries:
         file("/etc/chef/client.rb").content.contains("data_bag_decrypt_minimum_version 3")
       }
     docs:
-      desc: Encrypted Data Bags v0, v1, and v2 are less secure than v3 and should not be used. See https://docs.chef.io/data_bags/#encryption-versions for more details on the encryption versions.
+      desc: |
+        Chef Encrypted Data Bags have evolved through multiple versions, each improving security:
+
+        - **Version 0**: Uses AES-256-CBC with a predictable IV, making it vulnerable to certain cryptographic attacks
+        - **Version 1**: Adds Base64 encoding but still uses predictable IVs
+        - **Version 2**: Introduces random IVs but lacks authentication (vulnerable to padding oracle attacks)
+        - **Version 3**: Uses AES-256-GCM with authenticated encryption, providing both confidentiality and integrity
+
+        Versions 0-2 are vulnerable to various cryptographic attacks that could allow an attacker with access to your Chef Infra Server or data bag files to decrypt sensitive secrets like passwords, API keys, and certificates.
+
+        Setting `data_bag_decrypt_minimum_version 3` ensures that only data bags encrypted with the secure v3 format can be decrypted, forcing an upgrade of any legacy encrypted data bags. See the [Chef Encrypted Data Bag documentation](https://docs.chef.io/data_bags/#encryption-versions) for more details.
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
-            Edit your Chef Infra Client configuration file at `/etc/chef/client.rb` and add the following line to set the minimum version of encrypted data bags to v3:
+            Edit your Chef Infra Client configuration file at `/etc/chef/client.rb` and add the following line:
 
             ```ruby
             data_bag_decrypt_minimum_version 3
             ```
+
+            After making this change, verify the configuration is valid:
+
+            ```bash
+            chef-client --why-run
+            ```
+
+            **Important**: Before enabling this setting, ensure all your encrypted data bags have been re-encrypted using version 3. You can check the version of an encrypted data bag by examining its JSON structure - v3 data bags include an `auth_tag` field.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            If you manage your client.rb configuration with Chef, you can use the `chef_client_config` resource from the `chef-client` cookbook:
+
+            ```ruby
+            chef_client_config 'Set minimum data bag version' do
+              data_bag_decrypt_minimum_version 3
+            end
+            ```
+
+            Alternatively, if you manage client.rb manually with a template, add this line to your template:
+
+            ```ruby
+            data_bag_decrypt_minimum_version 3
+            ```
+
+            **Important**: Ensure all encrypted data bags have been upgraded to v3 encryption before deploying this change to avoid Chef run failures.
   - uid: avoid-reporting-tokens-in-config
     title: Avoid storing Automate tokens in the client.rb config
     impact: 70
@@ -332,5 +541,61 @@ queries:
         file("/etc/chef/client.rb").content.contains("data_collector.token") == false
       }
     docs:
-      desc: When sending reporting data directly to Automate an Automate API token must be stored in the `client.rb` configuration file. Instead of setting the token, proxy Infra Client report data through the Infra Server so that the Automate API token only needs to be stored in the Infra Server.
-      remediation: See https://docs.chef.io/server/config_rb_server_optional_settings/#data_collector-14 for more information on configuring the Infra Server to proxy reporting data. Once the Infra Server has been configured for proxying you can set `data_collector.server_url` in client.rb to the URL of the Infra Server and remove the `data_collector.token` configuration.
+      desc: |
+        When Chef Infra Client sends compliance and converge data directly to Chef Automate, an Automate API token must be configured in the client.rb file using `data_collector.token`. This practice has several security concerns:
+
+        - The token is stored in plaintext on every managed node
+        - Any user or process with read access to client.rb can extract the token
+        - The same token is often shared across all nodes, creating a single point of compromise
+        - Token rotation requires updating every managed node's configuration
+
+        A more secure approach is to proxy reporting data through the Chef Infra Server. With this configuration:
+
+        - The Automate token is stored only on the Infra Server (a single, well-secured location)
+        - Nodes authenticate to the Infra Server using their individual client.pem keys
+        - Token rotation only requires updating the Infra Server configuration
+        - The attack surface for token theft is significantly reduced
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            1. First, configure your Chef Infra Server to proxy data to Automate. Edit `/etc/opscode/chef-server.rb` on your Infra Server and add:
+
+            ```ruby
+            data_collector['root_url'] = 'https://your-automate-server/data-collector/v0/'
+            data_collector['token'] = 'your-automate-token'
+            ```
+
+            2. Reconfigure the Infra Server:
+
+            ```bash
+            chef-server-ctl reconfigure
+            ```
+
+            3. On each managed node, edit `/etc/chef/client.rb` and replace any direct Automate configuration:
+
+            ```ruby
+            # Remove these lines if present:
+            # data_collector.server_url "https://your-automate-server/data-collector/v0/"
+            # data_collector.token "your-automate-token"
+
+            # Add this line to send data through the Infra Server:
+            data_collector.server_url "https://your-chef-server/organizations/your-org/data-collector"
+            ```
+
+            See the [Chef Infra Server Data Collector documentation](https://docs.chef.io/server/config_rb_server_optional_settings/#data_collector-14) for complete configuration options.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            If you manage client.rb with Chef, update your configuration to route through the Infra Server:
+
+            ```ruby
+            chef_client_config 'Configure data collector' do
+              data_collector_server_url 'https://your-chef-server/organizations/your-org/data-collector'
+              # Do NOT set data_collector_token - let the Infra Server handle authentication
+            end
+            ```
+
+            Ensure you have also configured your Chef Infra Server to proxy data to Automate as described in the CLI remediation steps above.
