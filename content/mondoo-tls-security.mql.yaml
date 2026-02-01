@@ -78,14 +78,26 @@ queries:
       checkA1 || checkA2 || checkA3
     docs:
       desc: |
-        The domain name specified in an SSL/TLS certificate must match the hostname being secured. When a certificate does not match the requested domain, clients cannot reliably confirm they are connecting to the intended server. This mismatch may indicate a configuration error or an attempted interception, and it often results in browser warnings or failed connections. Such failures reduce user trust and can lead to service disruptions or loss of confidence in the security of the site.
+        This check verifies that the SSL/TLS certificate's domain name matches the hostname being secured, either through the Common Name (CN) or Subject Alternative Name (SAN) fields.
+
+        **Why this matters**
+
+        Certificate domain mismatches undermine the authentication foundation of TLS, creating both security and operational risks:
+
+          - **Man-in-the-middle exposure**: When domain validation fails, clients cannot confirm they are connecting to the legitimate server, enabling interception attacks.
+          - **Browser security warnings**: Users encounter alarming security warnings that damage brand trust and may train them to ignore legitimate security alerts.
+          - **Service disruptions**: API clients, mobile apps, and automated systems typically reject mismatched certificates, causing integration failures.
+          - **Compliance violations**: PCI DSS, HIPAA, and other standards require valid TLS certificates for data protection.
+          - **Configuration errors undetected**: A mismatch often indicates a deployment mistake that should be identified and corrected.
+
+        Ensure certificates include all required domain names in the SAN field, as modern browsers prefer SAN over Common Name for validation.
       remediation: |
         To resolve this issue:
 
         1. Verify the domain name your server is using by checking your DNS configuration and web server virtual host settings.
 
         2. Check your current certificate's domain coverage using OpenSSL:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 "Subject:"
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 "Subject Alternative Name"
            ```
@@ -96,7 +108,7 @@ queries:
            - A wildcard certificate (e.g., *.example.com) if you need to cover multiple subdomains
 
         4. For free certificates, use Let's Encrypt with Certbot:
-           ```
+           ```bash
            certbot certonly --webroot -w /var/www/html -d yourdomain.com -d www.yourdomain.com
            ```
 
@@ -112,17 +124,29 @@ queries:
       }
     docs:
       desc: |
-        This check confirms that the SSL/TLS certificate is currently valid, has not expired, and is signed by a trusted Certificate Authority (CA). A certificate that is expired, self-signed, or issued by an unknown CA cannot be reliably used to authenticate the server. Invalid certificates cause clients to display security warnings or terminate the connection, which can disrupt service availability and undermine user trust.
+        This check verifies that the SSL/TLS certificate is currently within its validity period and that the certificate validity does not exceed 398 days (per browser policy requirements since September 2020).
+
+        **Why this matters**
+
+        Invalid or non-compliant certificates expose services to security risks and operational disruptions:
+
+          - **Immediate connection failures**: Clients reject certificates that are not yet valid or have expired, causing service outages.
+          - **Browser rejection**: Certificates with validity periods exceeding 398 days are rejected by major browsers, even if otherwise valid.
+          - **Trust chain failures**: Certificates not signed by a trusted CA cannot be verified, enabling man-in-the-middle attacks.
+          - **Compliance requirements**: Industry standards require valid certificates from trusted authorities for handling sensitive data.
+          - **Incident response delays**: Invalid certificates may indicate compromise or misconfiguration requiring immediate investigation.
+
+        Use automated certificate management to ensure certificates are renewed before expiration and comply with current validity period requirements.
       remediation: |
         To resolve this issue:
 
         1. Check the certificate's validity period and ensure it has not expired:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -dates
            ```
 
         2. Verify the certificate chain is complete and trusted:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 | grep -E "verify|depth"
            ```
 
@@ -149,12 +173,24 @@ queries:
       }
     docs:
       desc: |
-        Certificates nearing expiration or expired can lead to service interruptions and browser security warnings. This can affect user trust and potentially allow MITM attacks if not addressed promptly.
+        This check monitors the certificate's remaining validity period and provides graduated scoring based on proximity to expiration (full score above 30 days, decreasing as expiration approaches).
+
+        **Why this matters**
+
+        Certificate expiration creates a time-sensitive security and operational risk that worsens as the deadline approaches:
+
+          - **Service outages**: Expired certificates cause immediate connection failures across all clients, with no graceful degradation.
+          - **Emergency renewals**: Last-minute certificate replacements are error-prone and often occur during off-hours when the issue is discovered.
+          - **Trust degradation**: Users encountering certificate warnings lose confidence in the service's security practices.
+          - **Compliance gaps**: Many security frameworks require proactive certificate lifecycle management with documented renewal processes.
+          - **Attack window**: During the confusion of an expired certificate, users may be more susceptible to phishing or bypass security warnings.
+
+        Implement certificate monitoring with alerts at 30, 14, and 7 days before expiration, and use automated renewal tools like cert-manager or Certbot.
       remediation: |
         To resolve this issue:
 
         1. Check your certificate's current expiration date:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate
            ```
 
@@ -185,12 +221,24 @@ queries:
       }
     docs:
       desc: |
-        The expiration of intermediate or root certificates can disrupt the trust chain, rendering SSL/TLS communications insecure. This affects multiple services relying on the expired certificate.
+        This check verifies that all certificates in the trust chain (including intermediate and root certificates) have not expired.
+
+        **Why this matters**
+
+        Expired intermediate or root certificates break the entire trust chain, creating widespread service disruption:
+
+          - **Cascading failures**: A single expired intermediate certificate can simultaneously affect all services using that trust chain.
+          - **Silent trust failures**: Unlike leaf certificates, intermediate expiration may not trigger renewal automation, catching teams off-guard.
+          - **Client verification failures**: Even with a valid leaf certificate, clients cannot complete chain validation if intermediates are expired.
+          - **Cross-signed complexity**: Root and intermediate certificate expirations may have complex cross-signing relationships that require careful management.
+          - **Delayed diagnosis**: Trust chain issues are often harder to diagnose than simple leaf certificate problems.
+
+        Regularly audit the complete certificate chain and monitor all certificates for expiration, not just the leaf certificate.
       remediation: |
         To resolve this issue:
 
         1. Identify which certificates in the chain have expired:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null | openssl x509 -noout -subject -enddate
            ```
 
@@ -213,7 +261,7 @@ queries:
         5. Update your web server configuration to use the new chain file and restart the service.
 
         6. Verify the complete chain is valid:
-           ```
+           ```bash
            openssl verify -CAfile /path/to/ca-bundle.crt /path/to/your-certificate.crt
            ```
   - uid: mondoo-tls-security-cert-not-self-signed
@@ -223,13 +271,25 @@ queries:
       tls.certificates.last.isCA
     docs:
       desc: |
-        Self-signed certificates are not trusted by default in browsers or operating systems. They lack authentication from a trusted CA, exposing the service to MITM attacks and reducing user trust.
+        This check verifies that the certificate chain terminates at a trusted Certificate Authority root certificate, rather than being self-signed.
+
+        **Why this matters**
+
+        Self-signed certificates bypass the trust model that TLS depends on, creating significant security and usability risks:
+
+          - **No third-party verification**: Self-signed certificates provide no external validation of server identity, enabling impersonation attacks.
+          - **User warning fatigue**: Clients display security warnings that users must bypass, training them to ignore legitimate security alerts.
+          - **Integration failures**: APIs, automated systems, and mobile apps typically reject self-signed certificates without manual override.
+          - **Man-in-the-middle vulnerability**: Attackers can present their own self-signed certificate and users may accept it as "normal."
+          - **Compliance failures**: Security standards and audits require certificates from trusted CAs for production systems.
+
+        Use certificates from recognized Certificate Authorities. Free options like Let's Encrypt provide trusted certificates with automated renewal.
       remediation: |
         To resolve this issue:
 
         1. Obtain a certificate from a trusted Certificate Authority (CA). Options include:
            - Let's Encrypt (free, automated):
-             ```
+             ```bash
              apt install certbot  # or yum install certbot
              certbot certonly --standalone -d yourdomain.com
              ```
@@ -237,7 +297,7 @@ queries:
            - Your organization's internal CA if one exists and is trusted by your clients
 
         2. Generate a Certificate Signing Request (CSR) if required by your CA:
-           ```
+           ```bash
            openssl req -new -newkey rsa:2048 -nodes -keyout server.key -out server.csr
            ```
 
@@ -250,7 +310,7 @@ queries:
         5. Restart your web server to apply the changes.
 
         6. Verify the certificate is properly trusted:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
            ```
            A return code of 0 indicates the certificate is trusted.
@@ -264,12 +324,24 @@ queries:
       }
     docs:
       desc: |
-        Revoked certificates are flagged as compromised or untrustworthy by the CA. Continuing to use them exposes the service to significant security risks and compliance violations.
+        This check verifies that none of the certificates in the chain have been revoked by their issuing Certificate Authority.
+
+        **Why this matters**
+
+        Certificate revocation indicates that a certificate should no longer be trusted, often due to security compromise:
+
+          - **Active security incident**: Revocation typically occurs after private key compromise, meaning attackers may have the ability to impersonate your service.
+          - **Continued vulnerability**: Using a revoked certificate maintains the security exposure that triggered the revocation.
+          - **Client rejection**: Modern clients check revocation status via OCSP or CRL and will reject connections to revoked certificates.
+          - **Compliance violations**: Using revoked certificates violates virtually all security frameworks and may trigger audit findings.
+          - **Reputation damage**: Security-conscious users and partners will lose trust when encountering revoked certificates.
+
+        Replace revoked certificates immediately with newly-generated key pairs, and investigate the cause of revocation to prevent recurrence.
       remediation: |
         To resolve this issue:
 
         1. Check if your certificate has been revoked using OCSP (Online Certificate Status Protocol):
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -ocsp_uri
            # Then query the OCSP responder with the URI returned
            ```
@@ -304,19 +376,31 @@ queries:
       }
     docs:
       desc: |
-        Weak certificate signatures (e.g., SHA-1) are vulnerable to cryptographic attacks. Using them undermines the encryption and allows attackers to forge certificates.
+        This check verifies that certificates do not use weak signature algorithms such as MD2, MD5, or SHA-1.
+
+        **Why this matters**
+
+        Weak signature algorithms can be exploited to forge certificates, completely undermining TLS security:
+
+          - **Certificate forgery**: MD5 and SHA-1 collision attacks allow creation of fraudulent certificates that appear legitimately signed.
+          - **Historical attacks**: Real-world attacks like Flame malware used MD5 weaknesses to forge Windows Update certificates.
+          - **Browser deprecation**: Major browsers reject certificates signed with SHA-1 and weaker algorithms.
+          - **Compliance requirements**: PCI DSS, NIST, and other frameworks prohibit weak signature algorithms.
+          - **Future vulnerability**: As computing power increases, even SHA-1 becomes more vulnerable to practical attacks.
+
+        Ensure all certificates use SHA-256 or stronger (SHA-384, SHA-512) signature algorithms, and verify the complete chain uses strong signatures.
       remediation: |
         To resolve this issue:
 
         1. Check your current certificate's signature algorithm:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep "Signature Algorithm"
            ```
 
         2. If the certificate uses MD2, MD5, or SHA-1, you must replace it with a certificate using SHA-256 or stronger (SHA-384, SHA-512).
 
         3. Generate a new private key and CSR specifying a strong signature algorithm:
-           ```
+           ```bash
            openssl req -new -newkey rsa:2048 -sha256 -nodes -keyout server.key -out server.csr
            ```
 
@@ -330,7 +414,7 @@ queries:
         6. Install the new certificate and restart your web server.
 
         7. Verify the new signature algorithm is in use:
-           ```
+           ```bash
            openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep "Signature Algorithm"
            ```
   - uid: mondoo-tls-security-no-weak-tls-versions
@@ -340,7 +424,19 @@ queries:
       tls.versions.containsOnly(["tls1.2", "tls1.3"])
     docs:
       desc: |
-        Weak SSL/TLS versions (e.g., SSL 3.0, TLS 1.0) are vulnerable to numerous exploits like POODLE. Their continued use compromises encrypted communication security.
+        This check verifies that only TLS 1.2 and TLS 1.3 are enabled, and that older, vulnerable protocol versions (SSL 2.0, SSL 3.0, TLS 1.0, TLS 1.1) are disabled.
+
+        **Why this matters**
+
+        Older SSL/TLS versions have fundamental cryptographic weaknesses that cannot be mitigated through configuration:
+
+          - **POODLE attack**: SSL 3.0 can be exploited to decrypt sensitive data through padding oracle attacks.
+          - **BEAST attack**: TLS 1.0's CBC implementation allows chosen-plaintext attacks against session cookies.
+          - **Downgrade attacks**: Attackers can force connections to use weaker protocols if they remain enabled.
+          - **Compliance requirements**: PCI DSS 3.2+ requires TLS 1.2 minimum; many frameworks now mandate TLS 1.2 or 1.3 exclusively.
+          - **Browser deprecation**: Major browsers have removed support for TLS 1.0 and 1.1 entirely.
+
+        Enable only TLS 1.2 and TLS 1.3, which provide modern cryptographic protections and are required by current security standards.
       remediation:
         - id: apache
           desc: |
@@ -454,7 +550,7 @@ queries:
 
             3. For each protocol to disable (SSL 2.0, SSL 3.0, TLS 1.0, TLS 1.1), create the following structure:
 
-                ```
+                ```text
                 [Protocol Name]\Server\Enabled = 0 (DWORD)
                 [Protocol Name]\Server\DisabledByDefault = 1 (DWORD)
                 [Protocol Name]\Client\Enabled = 0 (DWORD)
@@ -473,7 +569,19 @@ queries:
       tls.ciphers.none( /rc4/i )
     docs:
       desc: |
-        RC4 is a weak cipher prone to cryptographic attacks. Its use is discouraged as it does not provide sufficient encryption strength for modern applications.
+        This check verifies that RC4 cipher suites are not enabled, as RC4 has known cryptographic weaknesses that compromise data confidentiality.
+
+        **Why this matters**
+
+        RC4 has fundamental cryptographic flaws that enable practical attacks against encrypted traffic:
+
+          - **Statistical biases**: RC4's keystream has detectable biases that allow plaintext recovery with sufficient captured traffic.
+          - **Bar mitzvah attack**: Weak keys in RC4 create exploitable patterns in the first bytes of ciphertext.
+          - **RFC 7465 prohibition**: The IETF has officially prohibited RC4 in all TLS versions due to its weaknesses.
+          - **Browser removal**: All major browsers have removed RC4 support entirely, causing connection failures.
+          - **Real-world exploitation**: Attacks against RC4 are practical with modern computing resources, not just theoretical.
+
+        Remove all RC4 cipher suites and use only modern AEAD ciphers like AES-GCM or ChaCha20-Poly1305.
       remediation:
         - id: apache
           desc: |
@@ -556,7 +664,19 @@ queries:
       tls.ciphers.none( /null/i )
     docs:
       desc: |
-        NULL cipher suites do not encrypt data during transmission, exposing the data to interception and unauthorized access. Their use undermines the purpose of secure communication.
+        This check verifies that NULL cipher suites are not enabled, as these provide no encryption whatsoever despite using TLS.
+
+        **Why this matters**
+
+        NULL ciphers transmit data in plaintext, completely defeating the purpose of TLS:
+
+          - **No confidentiality**: All data is transmitted in cleartext, fully visible to anyone monitoring the network.
+          - **False security**: Applications believe they have a "secure" TLS connection while data is actually unprotected.
+          - **Credential exposure**: Passwords, session tokens, and sensitive data are transmitted without any encryption.
+          - **Compliance violations**: NULL ciphers violate every security standard requiring encrypted data transmission.
+          - **Downgrade attacks**: Attackers may attempt to negotiate NULL ciphers if they remain enabled.
+
+        Ensure NULL ciphers (including aNULL and eNULL variants) are explicitly disabled in your TLS configuration.
       remediation:
         - id: apache
           desc: |
@@ -642,7 +762,19 @@ queries:
       tls.ciphers.none( /export/i )
     docs:
       desc: |
-        Export cipher suites are intentionally weakened cryptographic algorithms designed to meet outdated export regulations. They are vulnerable to brute-force attacks and compromise encryption security.
+        This check verifies that export-grade cipher suites are not enabled, as these use intentionally weakened encryption that can be easily broken.
+
+        **Why this matters**
+
+        Export ciphers were deliberately weakened to comply with 1990s-era US export restrictions and provide minimal security:
+
+          - **40/56-bit keys**: Export ciphers use key sizes that can be brute-forced in minutes to hours on modern hardware.
+          - **FREAK attack**: Attackers can force servers to use export-grade RSA keys, enabling decryption of captured traffic.
+          - **Logjam attack**: Export-grade Diffie-Hellman parameters allow downgrade attacks against supposedly secure connections.
+          - **Historical artifact**: Export restrictions were lifted decades ago, making these ciphers serve no legitimate purpose.
+          - **Active exploitation**: These attacks are practical and have been demonstrated against real-world servers.
+
+        Remove all export cipher suites and ensure only ciphers with adequate key sizes (128-bit or higher) are enabled.
       remediation:
         - id: apache
           desc: |
@@ -725,7 +857,19 @@ queries:
       tls.ciphers.none( /dh_anon/i )
     docs:
       desc: |
-        Anonymous Diffie-Hellman suites lack authentication, allowing attackers to impersonate the server or client. This can lead to man-in-the-middle (MITM) attacks and data compromise.
+        This check verifies that anonymous Diffie-Hellman cipher suites are not enabled, as these provide no server authentication.
+
+        **Why this matters**
+
+        Anonymous Diffie-Hellman performs key exchange without verifying server identity, enabling trivial man-in-the-middle attacks:
+
+          - **No authentication**: The server cannot prove its identity, allowing any attacker to intercept and relay traffic.
+          - **Trivial MITM**: Unlike attacks requiring certificate forgery, anonymous DH makes interception straightforward.
+          - **Full traffic visibility**: Attackers can decrypt, inspect, and modify all traffic in both directions.
+          - **Credential theft**: Session tokens, passwords, and sensitive data can be captured without detection.
+          - **Certificate bypass**: The entire PKI trust model is circumvented when authentication is skipped.
+
+        Disable all ADH (anonymous Diffie-Hellman) cipher suites and use only authenticated key exchange mechanisms like ECDHE with certificate verification.
       remediation:
         - id: apache
           desc: |
@@ -807,7 +951,19 @@ queries:
     mql: tls.ciphers.none( /des|rc2|idea/i )
     docs:
       desc: |
-        Weak block ciphers, such as DES or 3DES, are vulnerable to modern cryptographic attacks, including brute force and collision attacks, reducing the overall security of the communication.
+        This check verifies that weak block ciphers (DES, 3DES, RC2, IDEA) are not enabled, as these have insufficient security for modern threats.
+
+        **Why this matters**
+
+        Legacy block ciphers have fundamental weaknesses that make them unsuitable for protecting sensitive data:
+
+          - **DES brute-force**: 56-bit DES keys can be cracked in hours using dedicated hardware or cloud computing.
+          - **Sweet32 attack**: 3DES and other 64-bit block ciphers are vulnerable to birthday attacks that recover plaintext after capturing enough traffic.
+          - **RC2 weaknesses**: RC2 has known related-key attacks and provides inadequate security margins.
+          - **IDEA obsolescence**: While not broken, IDEA is obsolete and lacks the security margin of modern algorithms.
+          - **Compliance failures**: Current security standards require AES or equivalent strength ciphers.
+
+        Replace weak block ciphers with AES-GCM or ChaCha20-Poly1305, which provide both strong encryption and authenticated data integrity.
       remediation:
         - id: apache
           desc: |
@@ -893,7 +1049,19 @@ queries:
     mql: tls.ciphers.none( /cbc/i )
     docs:
       desc: |
-        Weak block cipher modes, such as CBC when used without proper padding or initialization vector (IV) handling, expose encrypted traffic to well-known cryptographic attacks including BEAST and padding oracle attacks. These vulnerabilities can allow an attacker to gradually recover plaintext, manipulate encrypted data, or compromise session confidentiality. Using modern authenticated encryption modes, such as GCM or ChaCha20-Poly1305, provides stronger protection because they are designed to resist these classes of attacks and enforce data integrity.
+        This check verifies that CBC (Cipher Block Chaining) mode cipher suites are not enabled, as CBC is vulnerable to multiple well-documented attacks.
+
+        **Why this matters**
+
+        CBC mode has fundamental vulnerabilities that authenticated encryption modes like GCM address:
+
+          - **BEAST attack**: TLS 1.0's predictable IV selection in CBC mode enables chosen-plaintext attacks.
+          - **POODLE attack**: Padding oracle vulnerabilities in CBC allow byte-by-byte plaintext recovery.
+          - **Lucky Thirteen**: Timing side-channels in CBC padding verification leak information about plaintext.
+          - **No integrity protection**: CBC provides only confidentiality; attackers can modify ciphertext without detection in some scenarios.
+          - **Implementation complexity**: CBC's padding requirements create opportunities for implementation errors.
+
+        Use AEAD (Authenticated Encryption with Associated Data) modes like AES-GCM or ChaCha20-Poly1305, which provide both confidentiality and integrity protection by design.
       remediation:
         - id: apache
           desc: |
@@ -979,7 +1147,19 @@ queries:
     mql: tls.ciphers.none( /^tls_rsa/i )
     docs:
       desc: |
-        Cipher suites that use RSA for key exchange do not provide forward secrecy. If an attacker obtains the server's private key, whether through compromise, theft, or future cryptographic advances, they can retroactively decrypt any previously captured TLS traffic. This means the confidentiality of past communications depends entirely on the long-term protection of the private key, making RSA key-exchange suites significantly less secure than modern alternatives such as ECDHE.
+        This check verifies that cipher suites using RSA key exchange (TLS_RSA_*) are not enabled, as these lack forward secrecy.
+
+        **Why this matters**
+
+        RSA key exchange creates long-term cryptographic risk because past traffic can be decrypted if the private key is ever compromised:
+
+          - **No forward secrecy**: Captured traffic can be decrypted retroactively if the server's private key is later obtained.
+          - **"Store now, decrypt later"**: Adversaries may capture encrypted traffic today and decrypt it years later when the key becomes available.
+          - **Key compromise impact**: A single key compromise exposes all historical communications, not just future ones.
+          - **Quantum computing threat**: Future quantum computers may break RSA, exposing all traffic encrypted with RSA key exchange.
+          - **TLS 1.3 exclusion**: RSA key exchange was intentionally removed from TLS 1.3 due to its security limitations.
+
+        Use cipher suites with ECDHE or DHE key exchange, which generate ephemeral keys for each session and provide forward secrecy.
       remediation:
         - id: apache
           desc: |
@@ -1063,7 +1243,19 @@ queries:
     mql: tls.ciphers.none( /^old/i )
     docs:
       desc: |
-        Old cipher suites are outdated, less secure sets of encryption algorithms (like those using MD5, RC4, 3DES, or older CBC modes) used in older TLS/SSL versions (SSLv3, TLS 1.0, 1.1, and even some in 1.2) that are vulnerable to modern attacks. Modern cipher suites offer stronger encryption, better performance, and improved security features.
+        This check verifies that legacy cipher suites from older TLS/SSL versions are not enabled, as these use outdated algorithms with known vulnerabilities.
+
+        **Why this matters**
+
+        Legacy cipher suites accumulate multiple security weaknesses that make them unsuitable for modern use:
+
+          - **Weak hash functions**: Older suites use MD5 or SHA-1, which have known collision vulnerabilities.
+          - **Weak encryption**: Algorithms like RC4, DES, and 3DES provide insufficient protection against current threats.
+          - **Vulnerable modes**: CBC mode implementations are susceptible to padding oracle and timing attacks.
+          - **No forward secrecy**: Many legacy suites use static RSA key exchange without ephemeral keys.
+          - **Cumulative risk**: The combination of weaknesses in old cipher suites compounds overall vulnerability.
+
+        Configure your server to use only modern cipher suites with AEAD encryption, forward secrecy, and SHA-256 or stronger hash functions.
       remediation:
         - id: apache
           desc: |
@@ -1148,7 +1340,19 @@ queries:
     mql: tls.ciphers.any( /chacha20_poly1305|gcm|ccm/i )
     docs:
       desc: |
-        AEAD (Authenticated Encryption with Associated Data) ciphers provide both confidentiality and integrity protection, making them a critical component of modern secure communication protocols.
+        This check verifies that the server's preferred cipher suites include AEAD ciphers such as AES-GCM, ChaCha20-Poly1305, or AES-CCM.
+
+        **Why this matters**
+
+        AEAD ciphers provide superior security by combining encryption and authentication in a single operation:
+
+          - **Built-in integrity**: AEAD ciphers detect any tampering with ciphertext, preventing manipulation attacks.
+          - **No padding oracle attacks**: Unlike CBC mode, AEAD ciphers are not vulnerable to padding-based timing attacks.
+          - **Performance benefits**: AES-GCM leverages hardware acceleration on modern CPUs for high throughput.
+          - **TLS 1.3 standard**: TLS 1.3 exclusively uses AEAD ciphers, making them the direction of secure communication.
+          - **Simpler implementation**: Combining encryption and authentication reduces the risk of implementation errors.
+
+        Prioritize AES-GCM and ChaCha20-Poly1305 cipher suites, which are widely supported and provide excellent security and performance.
       remediation:
         - id: apache
           desc: |
@@ -1236,7 +1440,19 @@ queries:
     mql: tls.ciphers.any( /ecdhe_(rsa|ecdsa)|dhe_(rsa|dss)|cecpq/i )
     docs:
       desc: |
-        PFS ensures that session keys cannot be derived from a compromised private key, protecting past communications even if future keys are exposed.
+        This check verifies that the server's cipher suites include options providing Perfect Forward Secrecy (PFS) through ECDHE or DHE key exchange.
+
+        **Why this matters**
+
+        Perfect Forward Secrecy protects past communications even if the server's private key is compromised in the future:
+
+          - **Ephemeral keys**: Each session uses unique key exchange parameters that are discarded after use.
+          - **Retroactive protection**: Previously captured traffic cannot be decrypted even with the server's long-term private key.
+          - **Quantum resistance**: PFS limits the impact of future quantum computing attacks on historical data.
+          - **Regulatory compliance**: Many security frameworks now require forward secrecy for sensitive data protection.
+          - **Defense in depth**: PFS provides an additional layer of protection if other security controls fail.
+
+        Enable ECDHE-based cipher suites for optimal forward secrecy with good performance. TLS 1.3 provides forward secrecy by design for all connections.
       remediation:
         - id: apache
           desc: |
@@ -1336,7 +1552,19 @@ queries:
       }
     docs:
       desc: |
-        BEAST attacks exploit vulnerabilities in SSL/TLS protocols using CBC encryption. This allows attackers to decrypt sensitive data by manipulating block boundaries.
+        This check evaluates the server's mitigation of BEAST (Browser Exploit Against SSL/TLS) attacks by verifying protocol versions and cipher configuration.
+
+        **Why this matters**
+
+        BEAST exploits a vulnerability in TLS 1.0's CBC implementation to decrypt sensitive data like session cookies:
+
+          - **Predictable IV**: TLS 1.0 uses the last ciphertext block as the IV for the next record, enabling chosen-plaintext attacks.
+          - **Session hijacking**: Attackers can recover authentication cookies to impersonate users.
+          - **Client-side targeting**: The attack requires malicious code running in the victim's browser to inject chosen plaintext.
+          - **Protocol-level flaw**: BEAST cannot be fully mitigated without disabling TLS 1.0 or using non-CBC ciphers.
+          - **Historical significance**: BEAST demonstrated that TLS 1.0 has fundamental security weaknesses requiring protocol upgrades.
+
+        The recommended mitigation is to disable TLS 1.0 and TLS 1.1 entirely, using only TLS 1.2 and TLS 1.3 with AEAD cipher suites.
       remediation:
         - id: apache
           desc: |
