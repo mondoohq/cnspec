@@ -377,7 +377,7 @@ Provider development happens in separate repos but can be tested with cnspec.
 
 ## Resources
 
-- [cnspec Documentation](https://mondoo.com/docs/cnspec/home/)
-- [MQL Documentation](https://mondoo.com/docs/mql/home/)
-- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/cnspec-policies/write/)
+- [cnspec Documentation](https://mondoo.com/docs/cnspec/)
+- [MQL Documentation](https://mondoo.com/docs/mql/)
+- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
 - [cnquery Repository](https://github.com/mondoohq/cnquery)

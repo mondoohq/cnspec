@@ -183,7 +183,7 @@ Policies use MQL to query system configurations, cloud resources, and applicatio
 - **Assertions**: Validate configurations meet security requirements
 - **Cross-Platform**: Same query syntax works across different operating systems and cloud providers
 
-For detailed MQL syntax and available resources, see the [MQL documentation](https://mondoo.com/docs/mql/home/).
+For detailed MQL syntax and available resources, see the [MQL documentation](https://mondoo.com/docs/mql/).
 
 ### Example Policy Check
 
