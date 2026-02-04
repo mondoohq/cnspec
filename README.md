@@ -164,7 +164,7 @@ The Mondoo unified security platform finds and prioritizes vulnerabilities and m
 
 To get started, [contact us](https://mondoo.com/contact).
 
-To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/platform/home/) or visit [mondoo.com](https://mondoo.com).
+To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.com/docs/) or visit [mondoo.com](https://mondoo.com).
 
 ### Register cnspec with Mondoo Platform
 
@@ -198,7 +198,7 @@ A few examples can be found in the `examples` folder in this repo. You can run a
 cnspec scan local -f examples/example.mql.yaml
 ```
 
-If you're interested in writing your own policies or contributing policies back to the cnspec community, read Mondoo's [Policy Authoring Guide](https://mondoo.com/docs/cnspec/cnspec-policies/write/).
+If you're interested in writing your own policies or contributing policies back to the cnspec community, read Mondoo's [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/).
 
 ## Supported targets
 
@@ -254,8 +254,8 @@ There are so many things cnspec can do, from testing your entire fleet for vulne
 
 Explore our:
 
-- [cnspec docs](https://mondoo.com/docs/cnspec/home)
-- [Policy as code](https://mondoo.com/docs/cnspec/cnspec-policies/write/)
+- [cnspec docs](https://mondoo.com/docs/cnspec/)
+- [Policy as code](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources/)
 - [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
