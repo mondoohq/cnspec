@@ -350,6 +350,7 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 		})
 		if err != nil {
 			log.Error().Err(err).Msg("failed to send datapoints and scores")
+			health.ReportError("cnspec", cnspec.Version, cnspec.Build, err.Error())
 		}
 	}
 }
