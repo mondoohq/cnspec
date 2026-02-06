@@ -1,0 +1,424 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-cloudflare-security
+    name: Mondoo Cloudflare Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: cloudflare,cloud,saas
+    require:
+      - provider: cloudflare
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Mondoo Cloudflare Security policy identifies misconfigurations in Cloudflare zones and accounts that could weaken your security posture. Improperly configured SSL/TLS settings, disabled security features, or weak access controls can expose your infrastructure to man-in-the-middle attacks, data interception, and unauthorized access.
+
+        This policy validates critical security controls including SSL/TLS encryption, HTTPS enforcement, Web Application Firewall (WAF) enablement, browser integrity checks, and account-level two-factor authentication.
+
+        ## Scan a Cloudflare zone
+
+        ```bash
+        cnspec scan cloudflare --zone <zone-name>
+        ```
+
+        ## Scan a Cloudflare account
+
+        ```bash
+        cnspec scan cloudflare --account <account-name>
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+        If you have any suggestions for how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
+    groups:
+      - title: Zone Security
+        filters: asset.platform == "cloudflare-zone"
+        checks:
+          - uid: mondoo-cloudflare-security-ssl-not-off
+          - uid: mondoo-cloudflare-security-ssl-strict
+          - uid: mondoo-cloudflare-security-always-use-https
+          - uid: mondoo-cloudflare-security-min-tls-1-2
+          - uid: mondoo-cloudflare-security-tls-1-3-enabled
+          - uid: mondoo-cloudflare-security-automatic-https-rewrites
+          - uid: mondoo-cloudflare-security-waf-enabled
+          - uid: mondoo-cloudflare-security-security-level-not-off
+          - uid: mondoo-cloudflare-security-browser-check
+          - uid: mondoo-cloudflare-security-email-obfuscation
+          - uid: mondoo-cloudflare-security-hotlink-protection
+          - uid: mondoo-cloudflare-security-opportunistic-encryption
+      - title: Account Security
+        filters: asset.platform == "cloudflare-account"
+        checks:
+          - uid: mondoo-cloudflare-security-enforce-two-factor
+    scoring_system: highest impact
+queries:
+  # ---------------------------------------------------------------------------
+  # Zone Security
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-cloudflare-security-ssl-not-off
+    title: Ensure SSL/TLS encryption is not disabled
+    impact: 100
+    mql: |
+      cloudflare.zones.all(settings.ssl != "off")
+    docs:
+      desc: |
+        This check ensures that SSL/TLS encryption is not disabled on any Cloudflare zone.
+
+        **Why this matters**
+
+        When SSL/TLS is set to "off", all traffic between visitors and your origin server is transmitted in plaintext. This exposes sensitive data such as credentials, session tokens, and personal information to interception via man-in-the-middle attacks.
+
+        By ensuring SSL/TLS is enabled, the system achieves:
+          - Protection of data in transit between visitors and your infrastructure
+          - Prevention of credential theft and session hijacking
+          - Compliance with modern security standards that require encryption
+          - Trust from visitors who expect secure connections
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Overview.
+        3. Set the encryption mode to at least "Flexible", though "Full" or "Full (Strict)" is strongly recommended.
+        4. Verify that your origin server supports HTTPS if using "Full" or "Full (Strict)" mode.
+    refs:
+      - url: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/
+        title: Cloudflare SSL/TLS encryption modes
+
+  - uid: mondoo-cloudflare-security-ssl-strict
+    title: Ensure SSL/TLS encryption mode is Full (Strict)
+    impact: 80
+    mql: |
+      cloudflare.zones.all(settings.ssl == "strict")
+    docs:
+      desc: |
+        This check ensures that the SSL/TLS encryption mode is set to "Full (Strict)" on all Cloudflare zones.
+
+        **Why this matters**
+
+        The "Full (Strict)" mode enforces end-to-end encryption and validates the origin server's SSL certificate against a trusted certificate authority. Lower modes such as "Flexible" or "Full" leave gaps:
+
+          - **Flexible**: Encrypts traffic between the visitor and Cloudflare only, leaving traffic between Cloudflare and your origin unencrypted.
+          - **Full**: Encrypts all traffic but does not validate the origin certificate, making it vulnerable to man-in-the-middle attacks at the origin.
+
+        By using "Full (Strict)" mode, the system ensures:
+          - End-to-end encryption with certificate validation
+          - Protection against origin-level man-in-the-middle attacks
+          - Compliance with security best practices for TLS configuration
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Overview.
+        3. Set the encryption mode to "Full (Strict)".
+        4. Ensure your origin server has a valid SSL certificate from a trusted CA or a Cloudflare Origin CA certificate.
+        5. If using a self-signed certificate, replace it with a Cloudflare Origin CA certificate or a certificate from a public CA.
+    refs:
+      - url: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/
+        title: Full (Strict) SSL/TLS encryption mode
+
+  - uid: mondoo-cloudflare-security-always-use-https
+    title: Ensure Always Use HTTPS is enabled
+    impact: 80
+    mql: |
+      cloudflare.zones.all(settings.alwaysUseHttps == "on")
+    docs:
+      desc: |
+        This check ensures that the "Always Use HTTPS" setting is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        When "Always Use HTTPS" is disabled, visitors can access your site over plaintext HTTP. This exposes them to:
+
+          - **Data interception**: Unencrypted traffic can be read by anyone on the network path.
+          - **Session hijacking**: Cookies and tokens transmitted over HTTP can be stolen.
+          - **Content injection**: Attackers can modify unencrypted responses to inject malicious scripts or content.
+          - **Downgrade attacks**: Users may be tricked into staying on HTTP instead of being redirected to HTTPS.
+
+        By enabling "Always Use HTTPS", all HTTP requests are automatically redirected to HTTPS, ensuring encrypted connections for all visitors.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Edge Certificates.
+        3. Enable the "Always Use HTTPS" toggle.
+        4. Verify that your site loads correctly over HTTPS and there are no mixed-content issues.
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/
+        title: Always Use HTTPS
+
+  - uid: mondoo-cloudflare-security-min-tls-1-2
+    title: Ensure minimum TLS version is 1.2 or higher
+    impact: 90
+    mql: |
+      cloudflare.zones.all(settings.minTlsVersion == "1.2" || settings.minTlsVersion == "1.3")
+    docs:
+      desc: |
+        This check ensures that the minimum TLS version is set to 1.2 or higher on all Cloudflare zones.
+
+        **Why this matters**
+
+        TLS 1.0 and 1.1 have known security vulnerabilities including susceptibility to BEAST, POODLE, and other cryptographic attacks. These older protocol versions are deprecated by major browsers and standards bodies including IETF, PCI DSS, and NIST.
+
+        By enforcing TLS 1.2 or higher:
+          - Known cryptographic weaknesses in older TLS versions are mitigated
+          - Compliance with PCI DSS 3.2+ and other security frameworks is maintained
+          - Modern cipher suites with forward secrecy are guaranteed
+          - Connections from outdated and potentially vulnerable clients are blocked
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Edge Certificates.
+        3. Set the "Minimum TLS Version" to 1.2 (or 1.3 if your audience supports it).
+        4. Monitor traffic for any impact on legitimate clients that may not support TLS 1.2.
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/minimum-tls/
+        title: Minimum TLS version
+      - url: https://blog.pcisecuritystandards.org/are-you-ready-for-30-june-2018-sayin-goodbye-to-ssl-early-tls
+        title: PCI DSS TLS requirements
+
+  - uid: mondoo-cloudflare-security-tls-1-3-enabled
+    title: Ensure TLS 1.3 is enabled
+    impact: 60
+    mql: |
+      cloudflare.zones.all(settings.tls13 != "off")
+    docs:
+      desc: |
+        This check ensures that TLS 1.3 support is not disabled on any Cloudflare zone.
+
+        **Why this matters**
+
+        TLS 1.3 is the latest version of the TLS protocol, offering significant improvements over TLS 1.2:
+
+          - **Faster handshakes**: TLS 1.3 reduces the handshake from two round trips to one, improving connection latency.
+          - **Stronger security**: Removes support for legacy cryptographic algorithms and mandates forward secrecy.
+          - **Simplified protocol**: Eliminates vulnerable features like renegotiation and compression.
+
+        Disabling TLS 1.3 denies clients the most secure protocol version available and may impact performance.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Edge Certificates.
+        3. Enable TLS 1.3 (set to "on" or "zrt" for Zero Round Trip Time resumption).
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/tls-13/
+        title: TLS 1.3
+
+  - uid: mondoo-cloudflare-security-automatic-https-rewrites
+    title: Ensure Automatic HTTPS Rewrites is enabled
+    impact: 60
+    mql: |
+      cloudflare.zones.all(settings.automaticHttpsRewrites == "on")
+    docs:
+      desc: |
+        This check ensures that Automatic HTTPS Rewrites is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        Mixed content occurs when an HTTPS page loads sub-resources (images, scripts, stylesheets) over HTTP. This weakens the security of the page because:
+
+          - Unencrypted sub-resources can be intercepted and modified by attackers
+          - Browsers may block mixed content, breaking page functionality
+          - Users see security warnings that erode trust
+
+        Automatic HTTPS Rewrites fixes mixed content by changing HTTP URLs to HTTPS in HTML responses before they reach the visitor, without requiring changes to your origin server code.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Edge Certificates.
+        3. Enable "Automatic HTTPS Rewrites".
+        4. Review your site for any remaining mixed-content issues that cannot be automatically resolved.
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/automatic-https-rewrites/
+        title: Automatic HTTPS Rewrites
+
+  - uid: mondoo-cloudflare-security-waf-enabled
+    title: Ensure Web Application Firewall (WAF) is enabled
+    impact: 85
+    mql: |
+      cloudflare.zones.all(settings.waf == "on")
+    docs:
+      desc: |
+        This check ensures that the Web Application Firewall (WAF) is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        The WAF protects web applications by inspecting incoming HTTP traffic and blocking malicious requests. Without the WAF enabled, your application is exposed to:
+
+          - **SQL injection**: Attackers can manipulate database queries through user input
+          - **Cross-site scripting (XSS)**: Malicious scripts can be injected into pages viewed by other users
+          - **Remote code execution**: Attackers may exploit application vulnerabilities to execute arbitrary code
+          - **OWASP Top 10 threats**: The WAF provides managed rule sets targeting common web application attacks
+
+        Enabling the WAF provides an additional layer of defense that operates independently of your application code.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to Security > WAF.
+        3. Enable the WAF and review the managed rule sets.
+        4. Configure any necessary exceptions for legitimate traffic that may be flagged.
+        5. Monitor WAF logs to tune rules and reduce false positives.
+    refs:
+      - url: https://developers.cloudflare.com/waf/
+        title: Cloudflare Web Application Firewall
+
+  - uid: mondoo-cloudflare-security-security-level-not-off
+    title: Ensure security level is not set to essentially off
+    impact: 70
+    mql: |
+      cloudflare.zones.all(settings.securityLevel != "essentially_off")
+    docs:
+      desc: |
+        This check ensures that the Cloudflare security level is not set to "Essentially Off" on any zone.
+
+        **Why this matters**
+
+        The security level controls how aggressively Cloudflare challenges visitors based on their IP reputation. Setting it to "Essentially Off" disables most challenge-based protections, meaning:
+
+          - Visitors with known malicious IP addresses are not challenged
+          - Bot traffic and automated attacks face no friction
+          - DDoS mitigation effectiveness is reduced
+          - Your site is more vulnerable to credential stuffing and brute-force attacks
+
+        The recommended setting is "Medium" or higher for most sites. Even "Low" provides basic protection against the most threatening visitors.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to Security > Settings.
+        3. Set the Security Level to "Medium" (recommended) or at minimum "Low".
+        4. Monitor traffic to ensure legitimate visitors are not being blocked unnecessarily.
+    refs:
+      - url: https://developers.cloudflare.com/waf/tools/security-level/
+        title: Security level
+
+  - uid: mondoo-cloudflare-security-browser-check
+    title: Ensure Browser Integrity Check is enabled
+    impact: 50
+    mql: |
+      cloudflare.zones.all(settings.browserCheck == "on")
+    docs:
+      desc: |
+        This check ensures that Browser Integrity Check is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        Browser Integrity Check evaluates incoming HTTP headers for common characteristics of abusive traffic. It checks for headers commonly associated with spammers, bots, and crawlers, and presents a challenge page to visitors that fail the check.
+
+        Disabling this feature allows:
+          - Automated bots to access your site without friction
+          - Spammers to more easily scrape content or submit forms
+          - Malicious crawlers to probe your application for vulnerabilities
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to Security > Settings.
+        3. Enable "Browser Integrity Check".
+    refs:
+      - url: https://developers.cloudflare.com/waf/tools/browser-integrity-check/
+        title: Browser Integrity Check
+
+  - uid: mondoo-cloudflare-security-email-obfuscation
+    title: Ensure Email Address Obfuscation is enabled
+    impact: 40
+    mql: |
+      cloudflare.zones.all(settings.emailObfuscation == "on")
+    docs:
+      desc: |
+        This check ensures that Email Address Obfuscation is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        Email Address Obfuscation prevents email harvesters and bots from collecting email addresses displayed on your website. When enabled, Cloudflare modifies email addresses in HTML before serving them to visitors, making them invisible to bots while remaining functional for human visitors.
+
+        Without this feature:
+          - Email addresses on your site are easily scraped by automated tools
+          - Harvested addresses are used for spam campaigns and phishing attacks
+          - Employees and contacts receive increased volumes of unwanted email
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to Scrape Shield > Email Address Obfuscation.
+        3. Enable "Email Address Obfuscation".
+    refs:
+      - url: https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/
+        title: Email Address Obfuscation
+
+  - uid: mondoo-cloudflare-security-hotlink-protection
+    title: Ensure Hotlink Protection is enabled
+    impact: 30
+    mql: |
+      cloudflare.zones.all(settings.hotlinkProtection == "on")
+    docs:
+      desc: |
+        This check ensures that Hotlink Protection is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        Hotlink protection prevents other websites from embedding your images and media directly, which can:
+
+          - Consume your bandwidth without authorization
+          - Allow third-party sites to appear as if they own your content
+          - Increase your infrastructure costs from unauthorized traffic
+          - Enable abuse of your content delivery resources
+
+        When enabled, Cloudflare checks the HTTP Referer header and blocks requests from unauthorized origins.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to Scrape Shield > Hotlink Protection.
+        3. Enable "Hotlink Protection".
+        4. If certain external sites need to embed your content, configure exceptions as needed.
+    refs:
+      - url: https://developers.cloudflare.com/waf/tools/scrape-shield/hotlink-protection/
+        title: Hotlink Protection
+
+  - uid: mondoo-cloudflare-security-opportunistic-encryption
+    title: Ensure Opportunistic Encryption is enabled
+    impact: 50
+    mql: |
+      cloudflare.zones.all(settings.opportunisticEncryption == "on")
+    docs:
+      desc: |
+        This check ensures that Opportunistic Encryption is enabled on all Cloudflare zones.
+
+        **Why this matters**
+
+        Opportunistic Encryption allows browsers to access HTTP URLs over an encrypted TLS channel using the HTTP/2 protocol. This provides an additional encryption layer for resources that have not yet migrated to HTTPS:
+
+          - Encrypts traffic that would otherwise be transmitted in plaintext
+          - Works transparently without requiring changes to existing HTTP URLs
+          - Provides defense-in-depth alongside "Always Use HTTPS" and "Automatic HTTPS Rewrites"
+          - Protects users on networks where traffic interception is a risk
+
+        While not a substitute for full HTTPS migration, Opportunistic Encryption strengthens the overall encryption posture of the zone.
+      remediation: |
+        1. Log in to the Cloudflare dashboard and select the affected zone.
+        2. Navigate to SSL/TLS > Edge Certificates.
+        3. Enable "Opportunistic Encryption".
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/opportunistic-encryption/
+        title: Opportunistic Encryption
+
+  # ---------------------------------------------------------------------------
+  # Account Security
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-cloudflare-security-enforce-two-factor
+    title: Ensure two-factor authentication is enforced on the account
+    impact: 90
+    mql: |
+      cloudflare.accounts.all(settings.enforceTwoFactor == true)
+    docs:
+      desc: |
+        This check ensures that two-factor authentication (2FA) is enforced for all members of the Cloudflare account.
+
+        **Why this matters**
+
+        Cloudflare accounts control critical infrastructure including DNS, SSL/TLS, WAF, and access policies. A compromised account can lead to:
+
+          - **Domain hijacking**: Attackers can modify DNS records to redirect traffic
+          - **SSL certificate manipulation**: Malicious certificates can be issued or existing ones revoked
+          - **Security policy bypass**: WAF rules, access policies, and rate limits can be disabled
+          - **Data exfiltration**: Access to analytics, logs, and configuration data
+          - **Service disruption**: Zones can be paused, deleted, or misconfigured
+
+        Enforcing two-factor authentication ensures that even if a password is compromised through phishing, credential stuffing, or data breaches, attackers cannot access the account without the second factor.
+      remediation: |
+        1. Log in to the Cloudflare dashboard.
+        2. Navigate to Manage Account > Members.
+        3. Go to Authentication settings.
+        4. Enable "Enforce two-factor authentication" for all account members.
+        5. Notify all team members to set up 2FA on their individual accounts before enforcement takes effect.
+    refs:
+      - url: https://developers.cloudflare.com/fundamentals/setup/account/account-security/2fa/
+        title: Cloudflare two-factor authentication
