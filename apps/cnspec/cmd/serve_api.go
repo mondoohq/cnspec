@@ -26,9 +26,9 @@ import (
 )
 
 func init() {
-	serveApiCmd.Flags().String("address", "127.0.0.1", "address to listen on")
-	serveApiCmd.Flags().Uint("port", 8080, "port to listen on")
-	serveApiCmd.Flags().Uint("http-timeout", 30, "timeout for http requests in seconds")
+	serveApiCmd.Flags().String("address", "127.0.0.1", "Set the address to listen on")
+	serveApiCmd.Flags().Uint("port", 8080, "Set the port to listen on")
+	serveApiCmd.Flags().Uint("http-timeout", 30, "Set the timeout for HTTP requests in seconds")
 	serveApiCmd.Flags().MarkHidden("http-timeout")
 	rootCmd.AddCommand(serveApiCmd)
 }

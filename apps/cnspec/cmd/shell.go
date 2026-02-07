@@ -15,8 +15,8 @@ import (
 func init() {
 	rootCmd.AddCommand(shellCmd)
 
-	shellCmd.Flags().StringP("command", "c", "", "MQL query to executed in the shell.")
-	shellCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
+	shellCmd.Flags().StringP("command", "c", "", "MQL query to execute in the shell")
+	shellCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
 }
 
 var shellCmd = &cobra.Command{

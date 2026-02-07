@@ -38,50 +38,50 @@ const (
 func init() {
 	rootCmd.AddCommand(scanCmd)
 
-	_ = scanCmd.Flags().StringP("output", "o", "compact", "Set output format: "+reporter.AllFormats())
-	_ = scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure.")
-	_ = scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID.")
+	_ = scanCmd.Flags().StringP("output", "o", "compact", "Set the output format: "+reporter.AllFormats())
+	_ = scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure")
+	_ = scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
 
-	_ = scanCmd.Flags().String("inventory-file", "", "Set the path to the inventory file.")
-	_ = scanCmd.Flags().String("inventory-template", "", "Set the path to the inventory template.")
+	_ = scanCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
+	_ = scanCmd.Flags().String("inventory-template", "", "Set the path to the inventory template")
 	_ = scanCmd.Flags().MarkHidden("inventory-template")
 
-	_ = scanCmd.Flags().Bool("inventory-format-ansible", false, "Set the inventory format to Ansible.")
+	_ = scanCmd.Flags().Bool("inventory-format-ansible", false, "Set the inventory format to Ansible")
 	// "inventory-ansible" is deprecated, use "inventory-format-ansible" instead
-	_ = scanCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible.")
+	_ = scanCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
 	_ = scanCmd.Flags().MarkDeprecated("inventory-ansible", "use --inventory-format-ansible")
 	_ = scanCmd.Flags().MarkHidden("inventory-ansible")
 
-	_ = scanCmd.Flags().Bool("inventory-format-domainlist", false, "Set the inventory format to domain list.")
+	_ = scanCmd.Flags().Bool("inventory-format-domainlist", false, "Set the inventory format to domain list")
 	// "inventory-domainlist" is deprecated, use "inventory-format-domainlist" instead
-	_ = scanCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list.")
+	_ = scanCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
 	_ = scanCmd.Flags().MarkDeprecated("inventory-domainlist", "use --inventory-format-domainlist")
 	_ = scanCmd.Flags().MarkHidden("inventory-domainlist")
 
 	// bundles, packs & incognito mode
-	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to Mondoo Platform.")
-	_ = scanCmd.Flags().StringSlice("policy", nil, "Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.")
-	_ = scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Path to local policy file")
+	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to Mondoo Platform")
+	_ = scanCmd.Flags().StringSlice("policy", nil, "Specify policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY")
+	_ = scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Set the path to a local policy file")
 	// flag completion command
 	_ = scanCmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
 	})
-	_ = scanCmd.Flags().String("asset-name", "", "User-override for the asset name")
-	_ = scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset in this format: key=value.") // user-added, editable
-	_ = scanCmd.Flags().StringToString("props", nil, "Custom values for properties")
-	_ = scanCmd.Flags().String("trace-id", "", "Trace identifier")
+	_ = scanCmd.Flags().String("asset-name", "", "Override the asset name")
+	_ = scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset") // user-added, editable
+	_ = scanCmd.Flags().StringToString("props", nil, "Set custom values for properties")
+	_ = scanCmd.Flags().String("trace-id", "", "Set a trace identifier")
 
 	// v6 should make detect-cicd and category flag public
-	_ = scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'.")
-	_ = scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'.")
+	_ = scanCmd.Flags().Bool("detect-cicd", true, "Try to detect CI/CD environments. If detected, set the asset category to 'cicd'")
+	_ = scanCmd.Flags().String("category", "inventory", "Set the category for the assets to 'inventory|cicd'")
 	_ = scanCmd.Flags().MarkHidden("category")
 	// Experimental: This is not intended to be used by users. It is internal use only.
-	_ = scanCmd.Flags().String("report-type", "full", "Experimental: Set the report type for the output. Valid options are 'full', 'error'. Default is 'full'.")
+	_ = scanCmd.Flags().String("report-type", "full", "Experimental: Set the report type for the output: full, error")
 	_ = scanCmd.Flags().MarkHidden("report-type")
-	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1.")
+	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1")
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
-	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "If any risk is greater or equal to this, exit status is 1.")
-	_ = scanCmd.Flags().String("output-target", "", "Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files")
+	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
+	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report. Currently only supports AWS SQS topic URLs and local files")
 }
 
 var scanCmd = &cobra.Command{

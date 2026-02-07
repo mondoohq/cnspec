@@ -28,8 +28,8 @@ func init() {
 	rootCmd.AddCommand(frameworkCmd)
 
 	// list
-	frameworkListCmd.Flags().StringP("file", "f", "", "a local bundle file")
-	frameworkListCmd.Flags().BoolP("all", "a", false, "list all frameworks, not only the active ones (applicable only for upstream)")
+	frameworkListCmd.Flags().StringP("file", "f", "", "Set the path to a local bundle file")
+	frameworkListCmd.Flags().BoolP("all", "a", false, "List all frameworks, not only the active ones (applicable only for upstream)")
 	frameworkCmd.AddCommand(frameworkListCmd)
 
 	// preview
@@ -39,10 +39,10 @@ func init() {
 	// disabled
 	frameworkCmd.AddCommand(frameworkDisabledCmd)
 	// download
-	frameworkDownloadCmd.Flags().StringP("file", "f", "", "output file")
+	frameworkDownloadCmd.Flags().StringP("file", "f", "", "Set the output file")
 	frameworkCmd.AddCommand(frameworkDownloadCmd)
 	// upload
-	frameworkUploadCmd.Flags().StringP("file", "f", "", "input file")
+	frameworkUploadCmd.Flags().StringP("file", "f", "", "Set the input file")
 	frameworkCmd.AddCommand(frameworkUploadCmd)
 }
 
