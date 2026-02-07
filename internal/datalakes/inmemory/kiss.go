@@ -5,7 +5,7 @@ package inmemory
 
 import "sync"
 
-// kvStore is an general-purpose abstraction for key-value stores
+// kvStore is a general-purpose abstraction for key-value stores
 type kvStore interface {
 	Get(key any) (any, bool)
 	Set(key any, value any, cost int64) bool

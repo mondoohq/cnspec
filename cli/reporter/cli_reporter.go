@@ -165,7 +165,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 	// case FormatCSV:
 	// 	res, err = data.ToCsv()
 	default:
-		return errors.New("unknown reporter type, don't recognize this Format")
+		return errors.New("unknown reporter type, don't recognize this format")
 	}
 }
 
@@ -210,6 +210,6 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToJSON(target, data, &writer)
 	default:
-		return errors.New("unknown reporter type, don't recognize this Format")
+		return errors.New("unknown reporter type, don't recognize this format")
 	}
 }

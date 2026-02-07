@@ -19,7 +19,7 @@ import (
 
 func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 	log.Info().Msg("start cnspec background service")
-	log.Info().Msgf("scan interval is %d minute(s) with a splay of %d minutes(s)", int(timer.Minutes()), int(splay.Minutes()))
+	log.Info().Msgf("scan interval is %d minute(s) with a splay of %d minute(s)", int(timer.Minutes()), int(splay.Minutes()))
 
 	quitChannel := make(chan os.Signal)
 	signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)

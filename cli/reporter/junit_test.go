@@ -128,7 +128,7 @@ func TestJunitConverter(t *testing.T) {
 	assert.Contains(t, junitReport, "<property name=\"report.packages.total\" value=\"1\"></property>")
 	assert.Contains(t, junitReport, "<property name=\"report.packages.critical\" value=\"1\"></property>")
 	assert.Contains(t, junitReport, "<testcase name=\"libssl1.1\" classname=\"vulnerability\">")
-	assert.Contains(t, junitReport, "<failure message=\"Update libssl1.1 to 1.1.1f-3ubuntu2.20\"><![CDATA[libssl1.1 with version1.1.1f-3ubuntu2.19 has known vulnerabilities (score 10)]]></failure>")
+	assert.Contains(t, junitReport, "<failure message=\"Update libssl1.1 to 1.1.1f-3ubuntu2.20\"><![CDATA[libssl1.1 with version 1.1.1f-3ubuntu2.19 has known vulnerabilities (score 10)]]></failure>")
 }
 
 func TestJunitNilReport(t *testing.T) {

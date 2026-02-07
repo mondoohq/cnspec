@@ -85,12 +85,12 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	// Note 2: We don't need to compute the checksum since the GraphChecksum depends
 	// on it and will force it in case it is missing (no graph checksum => no checksum)
 
-	// NOTE: its important to update the checksum AFTER the queries have been changed,
+	// NOTE: it's important to update the checksum AFTER the queries have been changed,
 	// otherwise we generate the old GraphChecksum
-	var recalcuateAt *time.Time
+	var recalculateAt *time.Time
 	if policyObj.GraphExecutionChecksum == "" || policyObj.GraphContentChecksum == "" {
 		logCtx.Trace().Str("policy", policyObj.Mrn).Msg("marketplace> update graphchecksum")
-		recalcuateAt, err = policyObj.UpdateChecksums(
+		recalculateAt, err = policyObj.UpdateChecksums(
 			ctx,
 			s.NowProvider(),
 			s.DataLake.GetValidatedPolicy,
@@ -118,7 +118,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 		return nil, nil, nil, err
 	}
 
-	return policyObj, filters, recalcuateAt, nil
+	return policyObj, filters, recalculateAt, nil
 }
 
 // PrepareFramework takes a framework and an optional bundle and gets it
@@ -145,7 +145,7 @@ func (s *LocalServices) PrepareFramework(ctx context.Context, frameworkObj *Fram
 	// Note 2: We don't need to compute the checksum since the GraphChecksum depends
 	// on it and will force it in case it is missing (no graph checksum => no checksum)
 
-	// NOTE: its important to update the checksum AFTER the queries have been changed,
+	// NOTE: it's important to update the checksum AFTER the queries have been changed,
 	// otherwise we generate the old GraphChecksum
 	if frameworkObj.GraphExecutionChecksum == "" || frameworkObj.GraphContentChecksum == "" {
 		logCtx.Trace().Str("framework", frameworkObj.Mrn).Msg("update graphchecksum")
