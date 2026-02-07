@@ -71,7 +71,7 @@ func (c *CheckinHandler) CheckIn(ctx context.Context) error {
 
 	client, err := upstream.NewAgentManagerClient(c.endpoint, c.httpClient, plugins...)
 	if err != nil {
-		return errors.Wrap(err, "could not connect to mondoo platform")
+		return errors.Wrap(err, "could not connect to Mondoo Platform")
 	}
 
 	_, err = client.HealthCheck(ctx, &upstream.AgentInfo{

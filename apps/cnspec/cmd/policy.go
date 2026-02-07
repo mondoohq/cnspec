@@ -42,8 +42,8 @@ func init() {
 
 	// list
 	policyCmd.AddCommand(policyListCmd)
-	policyListCmd.Flags().StringP("file", "f", "", "a local bundle file")
-	policyListCmd.Flags().BoolP("all", "a", false, "list all policies, not only the enabled ones (applicable only for upstream)")
+	policyListCmd.Flags().StringP("file", "f", "", "A local bundle file")
+	policyListCmd.Flags().BoolP("all", "a", false, "List all policies, not only the enabled ones (applicable only for upstream)")
 
 	// upload
 	policyUploadCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
@@ -56,20 +56,20 @@ func init() {
 	policyCmd.AddCommand(policyLintCmd)
 
 	// fmt
-	policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
+	policyFmtCmd.Flags().Bool("sort", false, "Sort the bundle")
 	policyCmd.AddCommand(policyFmtCmd)
 
 	// info
-	policyInfoCmd.Flags().StringP("file", "f", "", "a local bundle file")
+	policyInfoCmd.Flags().StringP("file", "f", "", "A local bundle file")
 	policyCmd.AddCommand(policyInfoCmd)
 
 	// download
-	policyDownloadCmd.Flags().StringP("file", "f", "", "output file")
+	policyDownloadCmd.Flags().StringP("file", "f", "", "Output file")
 	policyCmd.AddCommand(policyDownloadCmd)
 
 	// docs
-	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
-	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyDocsCmd.Flags().Bool("no-code", false, "Disable code blocks inside of docs")
+	policyDocsCmd.Flags().Bool("no-ids", false, "Disable the printing of ID fields")
 	policyCmd.AddCommand(policyDocsCmd)
 }
 
@@ -452,7 +452,7 @@ var policyInfoCmd = &cobra.Command{
 
 var policyDownloadCmd = &cobra.Command{
 	Use:   "download UID/MRN",
-	Short: "download a policy to a local bundle file",
+	Short: "Download a policy to a local bundle file",
 	Args:  cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.BindPFlag("file", cmd.Flags().Lookup("file")); err != nil {
@@ -507,7 +507,7 @@ var policyDownloadCmd = &cobra.Command{
 
 var policyEnableCmd = &cobra.Command{
 	Use:   "enable UID/MRN",
-	Short: "Enables a policy in the connected space",
+	Short: "Enable a policy in the connected space",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, err := config.Read()
@@ -543,7 +543,7 @@ var policyEnableCmd = &cobra.Command{
 
 var policyDisableCmd = &cobra.Command{
 	Use:   "disable UID/MRN",
-	Short: "Disables a policy in the connected space",
+	Short: "Disable a policy in the connected space",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, err := config.Read()
@@ -570,7 +570,7 @@ var policyDisableCmd = &cobra.Command{
 			PolicyMrns: []string{policyMrn},
 		})
 		if err != nil {
-			log.Error().Msgf("failed to disable policy to space: %s", err)
+			log.Error().Msgf("failed to disable policy in space: %s", err)
 			os.Exit(1)
 		}
 		log.Info().Msg(theme.DefaultTheme.Success("successfully disabled policy in space"))

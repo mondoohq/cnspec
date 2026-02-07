@@ -253,7 +253,7 @@ type edgeImpact struct {
 type rpBuilderNode interface {
 	// getId returns the id of the node. This is used to identify the node in the graph, a mrn or code id
 	getId() string
-	// isPrunable returns whether the node can be pruned from the graph. It will be pruned if it a non-prunable node
+	// isPrunable returns whether the node can be pruned from the graph. It will be pruned if a non-prunable node
 	// doesn't have a path TO it. In context of building the resolved policy, this means that the node is not connected
 	// to an executable query, or is the root node.
 	isPrunable() bool
@@ -809,7 +809,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		}
 
 		for _, c := range g.Checks {
-			// Check the action. If its an override, we don't need to add the check
+			// Check the action. If it's an override, we don't need to add the check
 			// because it will get included in a policy that wants it run.
 			// This will prevent the check from being connected to the policy that
 			// overrides its action
@@ -838,7 +838,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		}
 
 		for _, q := range g.Queries {
-			// Check the action. If its an override, we don't need to add the query
+			// Check the action. If it's an override, we don't need to add the query
 			// because it will get included in a policy that wants it run.
 			// This will prevent the query from being connected to the policy that
 			// overrides its action
@@ -1015,11 +1015,11 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 		return false
 	}
 
-	// Create a node for the framework, but only if its a valid framework mrn
+	// Create a node for the framework, but only if it's a valid framework mrn
 	// Otherwise, we have the asset / space policies which we will connect
 	// to. We need to do this because we cannot have a space framework and space
 	// policy reporting job because they would have the same qr id.
-	// If the node already exists, its represented by the asset or space policy
+	// If the node already exists, it's represented by the asset or space policy
 	// and is not a valid framework mrn
 	var impact *explorer.Impact
 	if _, ok := b.nodes[framework.Mrn]; !ok {
@@ -1097,7 +1097,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 
 	for _, c := range control.Controls {
 		// We will just assume that the control is in the graph
-		// If its not, it will get filtered out later when we build
+		// If it's not, it will get filtered out later when we build
 		// the resolved policy
 		// Doing this so we don't need to topologically sort the dependency
 		// tree for the controls
@@ -1166,7 +1166,7 @@ func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderDat
 				return nil, nil, errors.New("resolver> failed to compile query for MRN " + prop.Mrn + ": " + err.Error())
 			}
 			if dataChecksum == "" {
-				return nil, nil, errors.New("property returns too many value, cannot determine entrypoint checksum: '" + prop.Mql + "'")
+				return nil, nil, errors.New("property returns too many values, cannot determine entrypoint checksum: '" + prop.Mql + "'")
 			}
 			rp.ExecutionJob.Queries[prop.CodeId] = executionQuery
 

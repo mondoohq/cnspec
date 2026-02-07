@@ -93,7 +93,7 @@ func createAssetsTable(assetsByPlatform map[string][]*inventory.Asset) table.Mod
 	return createTable(columns, rows)
 }
 
-// createTable is a helper method to render tables with an specific style.
+// createTable is a helper method to render tables with a specific style.
 func createTable(cols []table.Column, rows []table.Row) table.Model {
 	t := table.New(
 		table.WithColumns(cols),

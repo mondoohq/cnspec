@@ -18,7 +18,7 @@ import (
 const (
 	// ExecutionQueryNodeType represents a node that will execute
 	// a query. It can be notified by datapoint nodes, representing
-	// its dependant properties
+	// its dependent properties
 	ExecutionQueryNodeType NodeType = "execution_query"
 	// DatapointNodeType represents a node that is a datapoint/entrypoint.
 	// These nodes are implicitly notified when results are received from
@@ -39,14 +39,14 @@ const (
 	// information is sourced from the resolved policy. Nodes of this type are
 	// notified by datapoints to indicate collection of data, reporting query
 	// nodes to be notified of query scores, and other reporting job nodes to
-	// be notified of scores of dependant reporting jobs
+	// be notified of scores of dependent reporting jobs
 	ReportingJobNodeType NodeType = "reporting_job"
 	// DatapointCollectorNodeType represents a sink for datapoints in the graph.
 	// There is only one of these nodes in the graph, and it can only be notified
 	// by datapoint nodes
 	DatapointCollectorNodeType NodeType = "datapoint_collector"
 	// ScoreCollectorNodeType represents a sink for scores in the graph. There is
-	// only of of these nodes in the graph, and can be notified by reporting query
+	// only one of these nodes in the graph, and can be notified by reporting query
 	// nodes and reporting job nodes (nodes that pass a score)
 	ScoreCollectorNodeType NodeType = "score_collector"
 	// CollectionFinisherNodeType represents a node that collects datapoints. It is
@@ -242,7 +242,7 @@ func (nodeData *DatapointNodeData) set(res *llx.RawResult) {
 	}
 }
 
-// recalculate passes on the datapoint's result if its available
+// recalculate passes on the datapoint's result if it's available
 func (nodeData *DatapointNodeData) recalculate() *envelope {
 	if !nodeData.invalidated {
 		return nil
@@ -551,7 +551,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
 					s.Type = policy.ScoreType_Disabled
 				} else if s.Type == policy.ScoreType_Result {
-					// We cant just forward the score if impact is set and we have a result.
+					// We can't just forward the score if impact is set and we have a result.
 					// We still need to apply impact to the score
 					if c.impact != nil {
 						if c.impact.Value != nil {

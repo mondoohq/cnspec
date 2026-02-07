@@ -642,7 +642,7 @@ func (db *Db) SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy 
 
 		ok = db.cache.Set(dbIDPolicy+mrn, policyw, 1)
 		if !ok {
-			return errors.New("failed to save resolved policy as cached entryin this client, failed to update parent policy locally: '" + mrn + "'")
+			return errors.New("failed to save resolved policy as cached entry in this client, failed to update parent policy locally: '" + mrn + "'")
 		}
 	}
 

@@ -87,11 +87,11 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	ctx := cmd.Context()
 	upstreamConf := conf.runtime.UpstreamConfig
 	if upstreamConf == nil {
-		log.Fatal().Err(err).Msg("run `cnspec login` to authenticate with Mondoo platform")
+		log.Fatal().Err(err).Msg("run `cnspec login` to authenticate with Mondoo Platform")
 	}
 	client, err := upstreamConf.InitClient(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize authentication with Mondoo platform")
+		log.Fatal().Err(err).Msg("failed to initialize authentication with Mondoo Platform")
 	}
 
 	scannerClient, err := mvd.NewAdvisoryScannerClient(client.ApiEndpoint, client.HttpClient, client.Plugins...)

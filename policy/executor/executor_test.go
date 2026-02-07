@@ -238,7 +238,7 @@ func TestMinMondooVersion(t *testing.T) {
 	require.True(t, ok)
 
 	require.Error(t, recordedErr)
-	require.Contains(t, recordedErr.Error(), "Unable to run query, cnspec version 999.999.999 required")
+	require.Contains(t, recordedErr.Error(), "unable to run query, cnspec version 999.999.999 required")
 }
 
 func TestMinMondooVersionLocal(t *testing.T) {

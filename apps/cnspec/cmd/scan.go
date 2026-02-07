@@ -254,7 +254,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	platformID := viper.GetString("platform-id")
 	if platformID != "" && cliRes.Asset != nil {
-		log.Info().Str("platform-id", platformID).Msg("platform-id overridden by by user")
+		log.Info().Str("platform-id", platformID).Msg("platform-id overridden by user")
 		cliRes.Asset.PlatformIds = append(cliRes.Asset.PlatformIds, platformID)
 	}
 

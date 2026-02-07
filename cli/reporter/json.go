@@ -84,7 +84,7 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 	out.WriteString(
 		"{" +
 			"\"assets\":")
-	// preserve json output to ignore recently introduce fields
+	// preserve json output to ignore recently introduced fields
 	printableAssets := prepareAssetsForPrinting(data.Assets)
 	// assets, err := json.Marshal(data.Assets)
 	assets, err := json.Marshal(printableAssets)

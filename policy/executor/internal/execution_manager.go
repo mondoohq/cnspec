@@ -84,7 +84,7 @@ func (em *executionManager) Start() {
 				for k, r := range item.props {
 					if r.Error != "" {
 						// This case is tricky to handle. If we cannot run the query at
-						// all, its unclear what to report for the datapoint. If we
+						// all, it's unclear what to report for the datapoint. If we
 						// report them in, then another query can't report them, at least
 						// with the way things are right now. If we don't report them,
 						// things will wait around for datapoint results that will never

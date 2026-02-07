@@ -281,7 +281,7 @@ func isRunSafe(codeBundle *llx.CodeBundle) (bool, error) {
 		reqMin, err := vrs.NewVersion(requiredVer)
 		curMin, err1 := vrs.NewVersion(currentVer)
 		if err == nil && err1 == nil && curMin.LessThan(reqMin) {
-			return false, fmt.Errorf("Unable to run query, cnspec version %s required", requiredVer)
+			return false, fmt.Errorf("unable to run query, cnspec version %s required", requiredVer)
 		}
 	}
 	return true, nil

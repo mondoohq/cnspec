@@ -27,12 +27,12 @@ func init() {
 	policyBundlesCmd.AddCommand(policyLintDeprecatedCmd)
 
 	// fmt
-	policyFmtDeprecatedCmd.Flags().Bool("sort", false, "sort the bundle.")
+	policyFmtDeprecatedCmd.Flags().Bool("sort", false, "Sort the bundle")
 	policyBundlesCmd.AddCommand(policyFmtDeprecatedCmd)
 
 	// docs
-	policyDocsDeprecatedCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
-	policyDocsDeprecatedCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyDocsDeprecatedCmd.Flags().Bool("no-code", false, "Disable code blocks inside of docs")
+	policyDocsDeprecatedCmd.Flags().Bool("no-ids", false, "Disable the printing of ID fields")
 	policyBundlesCmd.AddCommand(policyDocsDeprecatedCmd)
 
 	// publish

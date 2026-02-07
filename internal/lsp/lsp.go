@@ -28,7 +28,7 @@ const (
 )
 
 func RunStdio() error {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	// Create the server using GLSP
 	server := server.NewServer(handler, lsName, true)
@@ -46,8 +46,8 @@ type MQLHandler struct {
 	yamlBundles     map[protocol.DocumentUri]*YAMLBundle // Cache for parsed YAML bundles
 }
 
-// NewMQLandler creates a new MQL language server handler
-func NewMQLandler() *MQLHandler {
+// NewMQLHandler creates a new MQL language server handler
+func NewMQLHandler() *MQLHandler {
 	handler := &MQLHandler{
 		documents:   make(map[protocol.DocumentUri]string),
 		yamlBundles: make(map[protocol.DocumentUri]*YAMLBundle),
