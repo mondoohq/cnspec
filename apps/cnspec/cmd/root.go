@@ -140,8 +140,8 @@ func init() {
 	config.DefaultConfigFile = "mondoo.yml"
 
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().String("log-level", "info", "Set log level: error, warn, info, debug, trace")
-	rootCmd.PersistentFlags().String("api-proxy", "", "Set proxy for communications with Mondoo API")
+	rootCmd.PersistentFlags().String("log-level", "info", "Set the log level: error, warn, info, debug, trace")
+	rootCmd.PersistentFlags().String("api-proxy", "", "Set the proxy for communications with Mondoo Platform API")
 	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic provider installation and update")
 	_ = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))

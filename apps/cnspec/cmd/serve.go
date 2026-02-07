@@ -35,11 +35,11 @@ const ConfigurationErrorCode = 78
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	// background scan flags
-	serveCmd.Flags().Int("timer", cnspec_config.DefaultScanIntervalTimer, "scan interval in minutes")
-	serveCmd.Flags().Int("splay", cnspec_config.DefaultScanIntervalSplay, "randomize the timer by up to this many minutes")
+	serveCmd.Flags().Int("timer", cnspec_config.DefaultScanIntervalTimer, "Set the scan interval in minutes")
+	serveCmd.Flags().Int("splay", cnspec_config.DefaultScanIntervalSplay, "Randomize the timer by up to this many minutes")
 	// set inventory
 	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
-	_ = serveCmd.Flags().String("inventory-template", "", "Set the path to the inventory template.")
+	_ = serveCmd.Flags().String("inventory-template", "", "Set the path to the inventory template")
 	_ = serveCmd.Flags().MarkHidden("inventory-template")
 }
 

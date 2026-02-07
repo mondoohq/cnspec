@@ -31,18 +31,18 @@ func init() {
 
 	// global flags for the integrate command
 	integrateCmd.PersistentFlags().String("space", "", "Set the space to create the integration")
-	integrateCmd.PersistentFlags().String("output", "", "Location to write automation code")
-	integrateCmd.PersistentFlags().String("integration-name", "", "The name of the integration")
+	integrateCmd.PersistentFlags().String("output", "", "Set the location to write automation code")
+	integrateCmd.PersistentFlags().String("integration-name", "", "Set the name of the integration")
 
 	// cnspec integrate aws
 	integrateCmd.AddCommand(integrateAwsCmd)
 
 	// cnspec integrate azure
 	integrateCmd.AddCommand(integrateAzureCmd)
-	integrateAzureCmd.Flags().String("subscription-id", "", "Azure subscription used to create resources")
+	integrateAzureCmd.Flags().String("subscription-id", "", "Set the Azure subscription used to create resources")
 	integrateAzureCmd.Flags().Bool("scan-vms", false, "Enable scanning Azure VMs using RunCommand")
-	integrateAzureCmd.Flags().StringSlice("allow", []string{}, "Choose the Azure subscriptions to scan")
-	integrateAzureCmd.Flags().StringSlice("deny", []string{}, "List of Azure subscriptions to avoid scanning")
+	integrateAzureCmd.Flags().StringSlice("allow", []string{}, "Set the Azure subscriptions to include in scanning")
+	integrateAzureCmd.Flags().StringSlice("deny", []string{}, "Set the Azure subscriptions to exclude from scanning")
 	// providing both, --deny and --allow, is not allowed
 	integrateAzureCmd.MarkFlagsMutuallyExclusive("allow", "deny")
 
