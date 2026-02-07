@@ -1187,7 +1187,7 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 
 	_, err = cl.SendError(context.Background(), event)
 	if err != nil {
-		log.Error().Err(err).Msg("failed to send error to mondoo platform")
+		log.Error().Err(err).Msg("failed to send error to Mondoo Platform")
 		return
 	}
 }

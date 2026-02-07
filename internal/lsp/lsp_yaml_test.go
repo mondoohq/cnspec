@@ -13,7 +13,7 @@ import (
 )
 
 func TestParseYAMLBundle_SimpleQuery(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	yamlContent := `queries:
   - uid: simple-test
@@ -31,7 +31,7 @@ func TestParseYAMLBundle_SimpleQuery(t *testing.T) {
 }
 
 func TestParseYAMLBundle_BlockScalar(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	yamlContent := `queries:
   - uid: multi-line-query
@@ -55,7 +55,7 @@ func TestParseYAMLBundle_BlockScalar(t *testing.T) {
 }
 
 func TestParseYAMLBundle_WithProps(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	yamlContent := `queries:
   - uid: query-with-props
@@ -101,7 +101,7 @@ func TestParseYAMLBundle_WithProps(t *testing.T) {
 }
 
 func TestParseYAMLBundle_MultipleQueries(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	yamlContent := `queries:
   - uid: first-query
@@ -139,7 +139,7 @@ func TestParseYAMLBundle_MultipleQueries(t *testing.T) {
 }
 
 func TestFindMQLNodeAtPosition(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name            string
@@ -217,7 +217,7 @@ func TestFindMQLNodeAtPosition(t *testing.T) {
 }
 
 func TestMapYAMLToVirtual(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name              string
@@ -262,7 +262,7 @@ func TestMapYAMLToVirtual(t *testing.T) {
 }
 
 func TestMapVirtualToYAML(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name              string
@@ -307,7 +307,7 @@ func TestMapVirtualToYAML(t *testing.T) {
 }
 
 func TestExtractPartialMQLForCompletion(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name           string
@@ -342,7 +342,7 @@ func TestExtractPartialMQLForCompletion(t *testing.T) {
 }
 
 func TestYAMLPropsHandler_Get(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name       string
@@ -397,7 +397,7 @@ func TestYAMLPropsHandler_Get(t *testing.T) {
 }
 
 func TestYAMLPropsHandler_Available(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	prop1 := &MQLNode{Content: "asset.name", Context: &MQLNodeContext{PropUID: "prop1", IsProp: true}}
 	prop2 := &MQLNode{Content: "asset.platform", Context: &MQLNodeContext{PropUID: "prop2", IsProp: true}}
@@ -415,7 +415,7 @@ func TestYAMLPropsHandler_Available(t *testing.T) {
 }
 
 func TestIsYAMLPolicy(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name     string
@@ -459,7 +459,7 @@ func TestIsYAMLPolicy(t *testing.T) {
 }
 
 func TestParseYAMLBundle_WithPacks(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	// Test with the actual format from os.mql.yaml
 	yamlContent := `packs:
@@ -487,7 +487,7 @@ func TestParseYAMLBundle_WithPacks(t *testing.T) {
 }
 
 func TestExtractExpressionAtPosition(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name     string
@@ -530,7 +530,7 @@ func TestExtractExpressionAtPosition(t *testing.T) {
 }
 
 func TestCompletion_ChainedFields(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name              string
@@ -581,7 +581,7 @@ func TestCompletion_ChainedFields(t *testing.T) {
 }
 
 func TestCompletion_ChainedFieldsInStandalone(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name          string
@@ -644,7 +644,7 @@ func TestCompletion_ChainedFieldsInStandalone(t *testing.T) {
 }
 
 func TestCompletion_ChainedFieldsInYAML(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name           string
@@ -725,7 +725,7 @@ func TestCompletion_ChainedFieldsInYAML(t *testing.T) {
 }
 
 func TestCompletion_InProp(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name                string
@@ -888,7 +888,7 @@ func TestCompletion_InProp(t *testing.T) {
 // TestYAMLCompletionTextEdits tests that completion items have correct TextEdit ranges
 // This is crucial for VS Code to properly apply completions in YAML files
 func TestYAMLCompletionTextEdits(t *testing.T) {
-	handler := NewMQLandler()
+	handler := NewMQLHandler()
 
 	tests := []struct {
 		name                string

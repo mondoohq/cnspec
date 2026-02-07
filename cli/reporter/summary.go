@@ -137,11 +137,11 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 	res.WriteString(NewLineCharacter + NewLineCharacter)
 
 	// render policy list
-	mircoScoreCard := components.NewMicroScoreCard()
+	microScoreCard := components.NewMicroScoreCard()
 	for k := range summaryStats.assetScores {
 		score := summaryStats.assetScores[k]
 		res.WriteString("■ ")
-		res.WriteString(mircoScoreCard.Render(score))
+		res.WriteString(microScoreCard.Render(score))
 		res.WriteString(" ")
 		res.WriteString(summaryStats.assetNames[k])
 		res.WriteString(NewLineCharacter)

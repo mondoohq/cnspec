@@ -43,7 +43,7 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 	}
 
 	// this sorts the list of policies by name but ensures all unrated policies are following below
-	// TODO: we need to improve that for data policies, will be solved once we can distingush between
+	// TODO: we need to improve that for data policies, will be solved once we can distinguish between
 	// not applicable and unrated
 	sort.Slice(policyList, func(i, j int) bool {
 		// check for asset overview policy
@@ -71,7 +71,7 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 	})
 
 	// render policy list
-	mircoScoreCard := components.NewMicroScoreCard()
+	microScoreCard := components.NewMicroScoreCard()
 	for i := range policyList {
 		k := policyList[i]
 		score := report.Scores[k]
@@ -82,7 +82,7 @@ func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *
 		}
 
 		res.WriteString("■ ")
-		res.WriteString(mircoScoreCard.Render(score))
+		res.WriteString(microScoreCard.Render(score))
 		res.WriteString(" ")
 		res.WriteString(policies[k])
 		res.WriteString(NewLineCharacter)

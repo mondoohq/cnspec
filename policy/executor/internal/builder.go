@@ -276,7 +276,7 @@ func (ge *GraphExecutor) handleUnrunnableQueries(unrunnableQueries []query) {
 				&llx.RawResult{
 					CodeID: checksum,
 					Data: &llx.RawData{
-						Error: fmt.Errorf("Unable to run query, cnspec version %s required", q.codeBundle.MinMondooVersion),
+						Error: fmt.Errorf("unable to run query, cnspec version %s required", q.codeBundle.MinMondooVersion),
 					},
 				})
 		}

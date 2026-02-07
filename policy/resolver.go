@@ -291,12 +291,12 @@ func (s *LocalServices) GetScore(ctx context.Context, req *EntityScoreReq) (*Rep
 	}, nil
 }
 
-// SynchronizeAssets is not require for local services
+// SynchronizeAssets is not required for local services
 func (s *LocalServices) SynchronizeAssets(ctx context.Context, req *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error) {
 	return nil, nil
 }
 
-// DeleteAssets is not require for local services
+// DeleteAssets is not required for local services
 func (s *LocalServices) PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error) {
 	return nil, nil
 }
@@ -577,7 +577,7 @@ func connectDatapointsToReportingJob(query *ExecutionQuery, job *ReportingJob, d
 	for _, dpId := range query.Datapoints {
 		datapointInfo, ok := datapoints[dpId]
 		if !ok {
-			return errors.New("failed to identity datapoint in collectorjob")
+			return errors.New("failed to identify datapoint in collectorjob")
 		}
 
 		datapointInfo.Notify = append(datapointInfo.Notify, job.Uuid)

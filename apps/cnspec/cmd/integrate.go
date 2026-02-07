@@ -61,7 +61,7 @@ var (
 	integrateAwsCmd = &cobra.Command{
 		Use:   "aws",
 		Short: "Onboard Amazon Web Services",
-		Long: `Use this command to connect your AWS environment into the Mondoo platform.
+		Long: `Use this command to connect your AWS environment into the Mondoo Platform.
 
 		To onboard your AWS account, you need to create an AWS user with read-only access. For more info, see: https://mondoo.com/docs/platform/infra/cloud/aws/hosted/integration-hosted/index.html#create-an-aws-user-and-access-key-for-mondoo.
 
@@ -91,7 +91,7 @@ var (
 			accessKey := os.Getenv("TF_VAR_aws_access_key")
 			secretKey := os.Getenv("TF_VAR_aws_secret_key")
 
-			// Verify if space exists, which verifies we have access to the Mondoo platform
+			// Verify if space exists, which verifies we have access to the Mondoo Platform
 			opts, err := config.Read()
 			if err != nil {
 				return err
@@ -171,12 +171,12 @@ To choose the subscriptions to scan, pass the list of subscriptions using the --
 
 	cnspec integrate azure --allow <subscription_id_1> --allow <subscription_id_2>
 
-To scan all subscriptions expect those you specify, pass the list of subscriptions you don't
+To scan all subscriptions except those you specify, pass the list of subscriptions you don't
 want Mondoo to scan using the --deny flag.
 
 	cnspec integrate azure --deny "<subscription_id_1>,<subscription_id_2>"
 
-NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
+NOTE that --allow and --deny are mutually exclusive and can't be used together.`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
@@ -200,7 +200,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be use together.`,
 				scanVMs         = viper.GetBool("scan-vms")
 			)
 
-			// Verify if space exists, which verifies we have access to the Mondoo platform
+			// Verify if space exists, which verifies we have access to the Mondoo Platform
 			opts, err := config.Read()
 			if err != nil {
 				return err
