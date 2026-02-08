@@ -42,34 +42,34 @@ func init() {
 
 	// list
 	policyCmd.AddCommand(policyListCmd)
-	policyListCmd.Flags().StringP("file", "f", "", "a local bundle file")
-	policyListCmd.Flags().BoolP("all", "a", false, "list all policies, not only the enabled ones (applicable only for upstream)")
+	policyListCmd.Flags().StringP("file", "f", "", "Set the path to a local bundle file")
+	policyListCmd.Flags().BoolP("all", "a", false, "List all policies, not only the enabled ones (applicable only for upstream)")
 
 	// upload
-	policyUploadCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
-	policyUploadCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
+	policyUploadCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing")
+	policyUploadCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle")
 	policyCmd.AddCommand(policyUploadCmd)
 
 	// lint
-	policyLintCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
-	policyLintCmd.Flags().String("output-file", "", "Set output file")
+	policyLintCmd.Flags().StringP("output", "o", "cli", "Set the output format: compact, sarif")
+	policyLintCmd.Flags().String("output-file", "", "Set the output file")
 	policyCmd.AddCommand(policyLintCmd)
 
 	// fmt
-	policyFmtCmd.Flags().Bool("sort", false, "sort the bundle.")
+	policyFmtCmd.Flags().Bool("sort", false, "Sort the bundle")
 	policyCmd.AddCommand(policyFmtCmd)
 
 	// info
-	policyInfoCmd.Flags().StringP("file", "f", "", "a local bundle file")
+	policyInfoCmd.Flags().StringP("file", "f", "", "Set the path to a local bundle file")
 	policyCmd.AddCommand(policyInfoCmd)
 
 	// download
-	policyDownloadCmd.Flags().StringP("file", "f", "", "output file")
+	policyDownloadCmd.Flags().StringP("file", "f", "", "Set the output file")
 	policyCmd.AddCommand(policyDownloadCmd)
 
 	// docs
-	policyDocsCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
-	policyDocsCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyDocsCmd.Flags().Bool("no-code", false, "Disable code blocks in documentation")
+	policyDocsCmd.Flags().Bool("no-ids", false, "Disable printing of ID fields")
 	policyCmd.AddCommand(policyDocsCmd)
 }
 

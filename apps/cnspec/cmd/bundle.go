@@ -22,22 +22,22 @@ func init() {
 	policyBundlesCmd.AddCommand(policyInitDeprecatedCmd)
 
 	// validate
-	policyLintDeprecatedCmd.Flags().StringP("output", "o", "cli", "Set output format: compact, sarif")
-	policyLintDeprecatedCmd.Flags().String("output-file", "", "Set output file")
+	policyLintDeprecatedCmd.Flags().StringP("output", "o", "cli", "Set the output format: compact, sarif")
+	policyLintDeprecatedCmd.Flags().String("output-file", "", "Set the output file")
 	policyBundlesCmd.AddCommand(policyLintDeprecatedCmd)
 
 	// fmt
-	policyFmtDeprecatedCmd.Flags().Bool("sort", false, "sort the bundle.")
+	policyFmtDeprecatedCmd.Flags().Bool("sort", false, "Sort the bundle")
 	policyBundlesCmd.AddCommand(policyFmtDeprecatedCmd)
 
 	// docs
-	policyDocsDeprecatedCmd.Flags().Bool("no-code", false, "enable/disable code blocks inside of docs")
-	policyDocsDeprecatedCmd.Flags().Bool("no-ids", false, "enable/disable the printing of ID fields")
+	policyDocsDeprecatedCmd.Flags().Bool("no-code", false, "Disable code blocks in documentation")
+	policyDocsDeprecatedCmd.Flags().Bool("no-ids", false, "Disable printing of ID fields")
 	policyBundlesCmd.AddCommand(policyDocsDeprecatedCmd)
 
 	// publish
-	policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing.")
-	policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle.")
+	policyPublishCmd.Flags().Bool("no-lint", false, "Disable linting of the bundle before publishing")
+	policyPublishCmd.Flags().String("policy-version", "", "Override the version of each policy in the bundle")
 	policyBundlesCmd.AddCommand(policyPublishCmd)
 
 	rootCmd.AddCommand(policyBundlesCmd)
