@@ -1,0 +1,547 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-snowflake-security
+    name: Mondoo Snowflake Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: snowflake,saas
+    require:
+      - provider: snowflake
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Mondoo Snowflake Security policy identifies misconfigurations in Snowflake accounts that could expose sensitive data or enable unauthorized access. This policy covers identity and access management, password policies, network access controls, and privileged role management.
+
+        ## Authentication
+
+        Scanning a Snowflake account requires key-pair or password authentication.
+
+        ### Using key-pair authentication (recommended)
+
+        ```bash
+        cnspec scan snowflake --account ACCOUNT_IDENTIFIER --user USERNAME --role ACCOUNTADMIN --private-key /path/to/rsa_key.p8
+        ```
+
+        ### Using password authentication
+
+        ```bash
+        cnspec scan snowflake --account ACCOUNT_IDENTIFIER --user USERNAME --role ACCOUNTADMIN --password PASSWORD
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable. This policy is open-source and we welcome contributions from the community, whether it's adding new checks, refining existing ones, or providing feedback. If you have suggestions to improve this policy, visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Identity and Access Management
+        filters: asset.platform == 'snowflake'
+        checks:
+          - uid: mondoo-snowflake-security-mfa-enabled-for-active-users
+          - uid: mondoo-snowflake-security-accountadmin-role-limited
+          - uid: mondoo-snowflake-security-no-users-pending-password-change
+          - uid: mondoo-snowflake-security-no-accountadmin-default-role
+      - title: Password Policies
+        filters: asset.platform == 'snowflake'
+        checks:
+          - uid: mondoo-snowflake-security-password-policy-minimum-length
+          - uid: mondoo-snowflake-security-password-policy-lockout-configured
+          - uid: mondoo-snowflake-security-password-policy-complexity-configured
+          - uid: mondoo-snowflake-security-password-policy-max-age-configured
+          - uid: mondoo-snowflake-security-password-policy-history-configured
+      - title: Network Access Controls
+        filters: asset.platform == 'snowflake'
+        checks:
+          - uid: mondoo-snowflake-security-network-policies-configured
+          - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access
+      - title: Data Protection
+        filters: asset.platform == 'snowflake'
+        checks:
+          - uid: mondoo-snowflake-security-databases-retention-configured
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-snowflake-security-mfa-enabled-for-active-users
+    title: Ensure MFA is enabled for all active users
+    impact: 90
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.users.where(disabled == false).all(extAuthnDuo == true)
+    docs:
+      desc: |
+        This check ensures that multi-factor authentication (MFA) via Duo is enabled for all active Snowflake users. MFA adds a critical layer of security beyond passwords, significantly reducing the risk of account compromise.
+
+        **Why this matters**
+
+        Without MFA, Snowflake accounts are protected only by passwords:
+          •  Credential stuffing and brute-force attacks can compromise accounts with weak or reused passwords.
+          •  Phishing attacks can steal user credentials, granting attackers full access to the data warehouse.
+          •  Compromised accounts can access, exfiltrate, or modify sensitive data across the entire Snowflake account.
+
+        Snowflake has been the target of high-profile attacks where stolen credentials were used to access customer data. MFA would have prevented many of these breaches.
+
+        Risk mitigation:
+          •  Enable Duo MFA for all active users.
+          •  Prioritize MFA for users with ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN roles.
+          •  Consider using key-pair authentication for service accounts.
+          •  Regularly audit MFA enrollment status.
+      remediation: |
+        **Enable MFA for a user**
+
+        Each Snowflake user must enroll in MFA through the Snowflake UI:
+
+        1. Log in to the Snowflake web interface.
+        2. Select your username in the top-left corner.
+        3. Select **Profile**.
+        4. In the **Multi-factor authentication** section, select **Enroll**.
+        5. Follow the Duo enrollment instructions.
+
+        **Enforce MFA with a Snowflake account parameter**
+
+        Administrators can require MFA enrollment for all users:
+
+        ```sql
+        ALTER ACCOUNT SET REQUIRE_MFA = TRUE;
+        ```
+    refs:
+      - title: Snowflake MFA documentation
+        url: https://docs.snowflake.com/en/user-guide/security-mfa
+  - uid: mondoo-snowflake-security-accountadmin-role-limited
+    title: Ensure the ACCOUNTADMIN role is assigned to a limited number of users
+    impact: 80
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.roles.where(name == "ACCOUNTADMIN").all(assignedToUsers <= 3)
+    docs:
+      desc: |
+        This check ensures that the ACCOUNTADMIN role, which has the highest privileges in Snowflake, is assigned to no more than 3 users. Limiting privileged access reduces the attack surface and aligns with the principle of least privilege.
+
+        **Why this matters**
+
+        The ACCOUNTADMIN role has unrestricted access to the entire Snowflake account:
+          •  ACCOUNTADMIN can manage all objects, users, roles, and account settings.
+          •  Each user with this role is a high-value target for attackers.
+          •  Excessive ACCOUNTADMIN assignments increase the risk of accidental or malicious misuse.
+          •  Audit and accountability are harder to maintain with many privileged users.
+
+        Risk mitigation:
+          •  Limit ACCOUNTADMIN to 2-3 trusted administrators.
+          •  Use SECURITYADMIN and SYSADMIN for day-to-day administration.
+          •  Ensure all ACCOUNTADMIN users have MFA enabled.
+          •  Regularly review and prune ACCOUNTADMIN role assignments.
+      remediation: |
+        **Review ACCOUNTADMIN assignments**
+
+        ```sql
+        SHOW GRANTS OF ROLE ACCOUNTADMIN;
+        ```
+
+        **Revoke ACCOUNTADMIN from users who don't need it**
+
+        ```sql
+        REVOKE ROLE ACCOUNTADMIN FROM USER username;
+        ```
+
+        Assign more appropriate roles like SYSADMIN or SECURITYADMIN for day-to-day administration tasks.
+    refs:
+      - title: Snowflake access control overview
+        url: https://docs.snowflake.com/en/user-guide/security-access-control-overview
+  - uid: mondoo-snowflake-security-no-users-pending-password-change
+    title: Ensure no active users have a pending forced password change
+    impact: 60
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.users.where(disabled == false).none(mustChangePassword == true)
+    docs:
+      desc: |
+        This check ensures that no active users still have the `MUST_CHANGE_PASSWORD` flag set, which indicates they are using a temporary or initial password that has not been updated.
+
+        **Why this matters**
+
+        Users with pending password changes are security risks:
+          •  Temporary passwords may have been shared via insecure channels (email, chat).
+          •  Initial passwords are often weak or follow predictable patterns.
+          •  Users who have not completed their password change may be inactive or orphaned accounts.
+          •  Attackers who intercept temporary passwords have access until the password is changed.
+
+        Risk mitigation:
+          •  Follow up with users who have not changed their initial passwords.
+          •  Set expiration policies for temporary passwords.
+          •  Disable accounts that have not completed initial setup within a reasonable time frame.
+      remediation: |
+        **Identify users with pending password changes**
+
+        ```sql
+        SELECT NAME, MUST_CHANGE_PASSWORD, CREATED_ON, LAST_SUCCESS_LOGIN
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+        WHERE MUST_CHANGE_PASSWORD = 'true' AND DISABLED = 'false';
+        ```
+
+        **Notify users or disable unused accounts**
+
+        For users who have not logged in:
+
+        ```sql
+        ALTER USER username SET DISABLED = TRUE;
+        ```
+    refs:
+      - title: Snowflake user management documentation
+        url: https://docs.snowflake.com/en/sql-reference/sql/create-user
+  - uid: mondoo-snowflake-security-password-policy-minimum-length
+    title: Ensure password policies enforce a minimum length of at least 14 characters
+    impact: 80
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMinLength >= 14)
+    docs:
+      desc: |
+        This check ensures that all Snowflake password policies enforce a minimum password length of at least 14 characters. Longer passwords are significantly more resistant to brute-force attacks and credential cracking.
+
+        **Why this matters**
+
+        Short passwords are the most common weakness in password-based authentication:
+          •  Passwords under 14 characters can be cracked quickly with modern hardware.
+          •  Credential stuffing attacks are more likely to succeed with short, commonly used passwords.
+          •  NIST SP 800-63B recommends a minimum of 8 characters, but longer passwords (14+) provide substantially better protection.
+          •  Snowflake accounts with weak passwords are prime targets for data exfiltration.
+
+        Risk mitigation:
+          •  Set minimum password length to 14 or more characters in all password policies.
+          •  Encourage use of passphrases for easier memorization of long passwords.
+          •  Combine password length requirements with MFA for defense-in-depth.
+      remediation: |
+        **Create or update a password policy**
+
+        ```sql
+        CREATE OR REPLACE PASSWORD POLICY my_password_policy
+          PASSWORD_MIN_LENGTH = 14;
+        ```
+
+        **Apply the password policy to the account**
+
+        ```sql
+        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
+        ```
+    refs:
+      - title: Snowflake password policy documentation
+        url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
+  - uid: mondoo-snowflake-security-password-policy-lockout-configured
+    title: Ensure password policies enforce account lockout
+    impact: 80
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMaxRetries > 0 && passwordMaxRetries <= 10)
+    docs:
+      desc: |
+        This check ensures that all Snowflake password policies have account lockout configured with a reasonable number of maximum retries (between 1 and 10). Account lockout protects against brute-force password attacks.
+
+        **Why this matters**
+
+        Without account lockout, attackers can make unlimited password guessing attempts:
+          •  Automated brute-force tools can try thousands of passwords per second.
+          •  Credential stuffing attacks systematically try known compromised credentials.
+          •  Even strong passwords can be eventually guessed without rate limiting or lockout.
+
+        Account lockout provides:
+          •  Protection against brute-force and credential stuffing attacks.
+          •  Detection of unauthorized access attempts through lockout events.
+          •  A forced pause that limits the speed of automated attacks.
+
+        Risk mitigation:
+          •  Configure password lockout retry limits between 3 and 5 attempts.
+          •  Set reasonable lockout duration (e.g., 15-30 minutes).
+          •  Monitor lockout events for signs of attack.
+          •  Combine lockout with MFA for defense-in-depth.
+      remediation: |
+        **Create or update a password policy**
+
+        ```sql
+        CREATE OR REPLACE PASSWORD POLICY my_password_policy
+          PASSWORD_MAX_RETRIES = 5
+          PASSWORD_LOCKOUT_TIME_MINS = 15;
+        ```
+
+        **Apply the password policy to the account**
+
+        ```sql
+        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
+        ```
+    refs:
+      - title: Snowflake password policy documentation
+        url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
+  - uid: mondoo-snowflake-security-network-policies-configured
+    title: Ensure network policies are configured for the account
+    impact: 80
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.networkPolicies.length > 0
+    docs:
+      desc: |
+        This check ensures that at least one network policy is configured in the Snowflake account. Network policies restrict which IP addresses or network ranges can connect to Snowflake, providing network-level access control.
+
+        **Why this matters**
+
+        Without network policies, Snowflake accepts connections from any IP address on the internet:
+          •  Stolen credentials can be used from anywhere in the world.
+          •  There is no network-level defense against unauthorized access.
+          •  Compliance frameworks require network-level access restrictions for data platforms.
+
+        Network policies provide:
+          •  IP-based allowlisting to restrict access to trusted networks.
+          •  Blocklisting of known malicious IP ranges.
+          •  An additional layer of defense beyond authentication.
+
+        Risk mitigation:
+          •  Create network policies that restrict access to corporate networks and VPNs.
+          •  Apply network policies at the account level for broad protection.
+          •  Use network rules for more granular control.
+          •  Regularly review and update IP allowlists as network infrastructure changes.
+      remediation: |
+        **Create a network policy**
+
+        ```sql
+        CREATE NETWORK POLICY my_network_policy
+          ALLOWED_IP_LIST = ('192.168.1.0/24', '10.0.0.0/8')
+          BLOCKED_IP_LIST = ();
+        ```
+
+        **Apply the network policy to the account**
+
+        ```sql
+        ALTER ACCOUNT SET NETWORK_POLICY = my_network_policy;
+        ```
+    refs:
+      - title: Snowflake network policy documentation
+        url: https://docs.snowflake.com/en/user-guide/network-policies
+  - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access
+    title: Ensure network policies do not allow unrestricted access from 0.0.0.0/0
+    impact: 90
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0"))
+    docs:
+      desc: |
+        This check ensures that no network policies contain 0.0.0.0/0 in their allowed IP list, which would permit access from any IP address and effectively nullify the network policy.
+
+        **Why this matters**
+
+        A network policy that allows 0.0.0.0/0 provides no network-level access control:
+          •  The policy exists but offers no protection, creating a false sense of security.
+          •  All the risks of having no network policy apply equally.
+          •  Audit and compliance checks may incorrectly pass because a network policy exists.
+
+        Risk mitigation:
+          •  Replace 0.0.0.0/0 entries with specific trusted IP ranges.
+          •  Audit network policies regularly for overly permissive entries.
+          •  Use the smallest CIDR blocks that cover your organization's legitimate access points.
+      remediation: |
+        **Update the network policy to restrict access**
+
+        ```sql
+        ALTER NETWORK POLICY my_network_policy
+          SET ALLOWED_IP_LIST = ('192.168.1.0/24', '10.0.0.0/8');
+        ```
+
+        Replace the IP ranges above with the specific CIDR blocks used by your organization.
+    refs:
+      - title: Snowflake network policy documentation
+        url: https://docs.snowflake.com/en/user-guide/network-policies
+  - uid: mondoo-snowflake-security-no-accountadmin-default-role
+    title: Ensure no active user has ACCOUNTADMIN as their default role
+    impact: 80
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.users.where(disabled == false).none(defaultRole == "ACCOUNTADMIN")
+    docs:
+      desc: |
+        This check ensures that no active Snowflake user has ACCOUNTADMIN set as their default role. When ACCOUNTADMIN is the default role, every session for that user automatically inherits the highest privilege level, increasing the risk of accidental or malicious actions.
+
+        **Why this matters**
+
+        Using ACCOUNTADMIN as a default role violates the principle of least privilege:
+          •  Every query and operation runs with full administrative privileges by default.
+          •  Accidental operations (DROP, DELETE, ALTER) have maximum blast radius.
+          •  If the user's session is compromised, the attacker immediately has the highest privileges.
+          •  Proper privilege separation requires using lower-privilege roles for routine work.
+
+        Risk mitigation:
+          •  Set default roles to the minimum privilege level needed for daily tasks.
+          •  Use ACCOUNTADMIN only when explicitly required by switching roles.
+          •  Assign SYSADMIN, SECURITYADMIN, or custom roles as defaults.
+          •  Regularly audit user default role assignments.
+      remediation: |
+        **Change a user's default role**
+
+        ```sql
+        ALTER USER username SET DEFAULT_ROLE = SYSADMIN;
+        ```
+
+        **Identify users with ACCOUNTADMIN as default role**
+
+        ```sql
+        SELECT NAME, DEFAULT_ROLE
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+        WHERE DEFAULT_ROLE = 'ACCOUNTADMIN' AND DISABLED = 'false';
+        ```
+    refs:
+      - title: Snowflake access control best practices
+        url: https://docs.snowflake.com/en/user-guide/security-access-control-overview
+  - uid: mondoo-snowflake-security-password-policy-complexity-configured
+    title: Ensure password policies enforce character complexity requirements
+    impact: 70
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMinUpperCaseChars >= 1 && passwordMinLowerCaseChars >= 1 && passwordMinNumericChars >= 1 && passwordMinSpecialChars >= 1)
+    docs:
+      desc: |
+        This check ensures that all Snowflake password policies require a mix of character types: at least one uppercase letter, one lowercase letter, one numeric digit, and one special character. Password complexity requirements increase resistance to dictionary and brute-force attacks.
+
+        **Why this matters**
+
+        Without complexity requirements, users may choose simple, easily guessable passwords:
+          •  Passwords consisting of only lowercase letters are significantly easier to crack.
+          •  Dictionary attacks are effective against passwords that don't mix character types.
+          •  Complexity requirements force passwords into a larger search space, making brute-force attacks less feasible.
+
+        Risk mitigation:
+          •  Require at least one character from each category (uppercase, lowercase, numeric, special).
+          •  Combine complexity requirements with minimum length requirements for maximum protection.
+          •  Use MFA as an additional layer of protection.
+      remediation: |
+        **Create or update a password policy**
+
+        ```sql
+        CREATE OR REPLACE PASSWORD POLICY my_password_policy
+          PASSWORD_MIN_UPPER_CASE_CHARS = 1
+          PASSWORD_MIN_LOWER_CASE_CHARS = 1
+          PASSWORD_MIN_NUMERIC_CHARS = 1
+          PASSWORD_MIN_SPECIAL_CHARS = 1;
+        ```
+
+        **Apply the password policy to the account**
+
+        ```sql
+        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
+        ```
+    refs:
+      - title: Snowflake password policy documentation
+        url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
+  - uid: mondoo-snowflake-security-password-policy-max-age-configured
+    title: Ensure password policies enforce a maximum password age
+    impact: 70
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMaxAgeDays > 0 && passwordMaxAgeDays <= 90)
+    docs:
+      desc: |
+        This check ensures that all Snowflake password policies enforce a maximum password age of no more than 90 days. Regular password rotation limits the window of exposure for compromised credentials.
+
+        **Why this matters**
+
+        Without a maximum password age, passwords may remain unchanged indefinitely:
+          •  Compromised credentials remain valid until the user voluntarily changes their password.
+          •  Stale passwords are more likely to appear in credential dumps and breach databases.
+          •  Regular rotation ensures that even if a password is compromised, it has a limited useful lifetime.
+
+        Risk mitigation:
+          •  Set maximum password age to 90 days or less.
+          •  Combine password rotation with MFA for defense-in-depth.
+          •  Notify users in advance of upcoming password expiration.
+          •  Monitor for users who have not rotated passwords on schedule.
+      remediation: |
+        **Create or update a password policy**
+
+        ```sql
+        CREATE OR REPLACE PASSWORD POLICY my_password_policy
+          PASSWORD_MAX_AGE_DAYS = 90;
+        ```
+
+        **Apply the password policy to the account**
+
+        ```sql
+        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
+        ```
+    refs:
+      - title: Snowflake password policy documentation
+        url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
+  - uid: mondoo-snowflake-security-password-policy-history-configured
+    title: Ensure password policies enforce password history
+    impact: 60
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordHistory >= 5)
+    docs:
+      desc: |
+        This check ensures that all Snowflake password policies enforce a password history of at least 5 previous passwords. Password history prevents users from cycling back to previously used passwords, which may have been compromised.
+
+        **Why this matters**
+
+        Without password history enforcement, users can reuse old passwords:
+          •  Users may alternate between two passwords, effectively bypassing rotation requirements.
+          •  Previously compromised passwords can be reused, negating the benefit of password rotation.
+          •  Password history enforcement ensures each rotation uses a genuinely new password.
+
+        Risk mitigation:
+          •  Set password history to at least 5 previous passwords.
+          •  Combine password history with maximum age and complexity requirements.
+          •  Educate users about the importance of using unique passwords.
+      remediation: |
+        **Create or update a password policy**
+
+        ```sql
+        CREATE OR REPLACE PASSWORD POLICY my_password_policy
+          PASSWORD_HISTORY = 5;
+        ```
+
+        **Apply the password policy to the account**
+
+        ```sql
+        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
+        ```
+    refs:
+      - title: Snowflake password policy documentation
+        url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
+  - uid: mondoo-snowflake-security-databases-retention-configured
+    title: Ensure databases have Time Travel retention configured
+    impact: 60
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.databases.all(retentionTime > 0)
+    docs:
+      desc: |
+        This check ensures that all Snowflake databases have Time Travel retention configured (retention time greater than 0 days). Time Travel allows querying, cloning, and restoring historical data, providing protection against accidental or malicious data modifications and deletions.
+
+        **Why this matters**
+
+        Without Time Travel retention, data modifications and deletions are permanent:
+          •  Accidental DROP or DELETE operations cannot be undone.
+          •  Malicious data destruction by compromised accounts is irreversible.
+          •  There is no ability to audit or investigate what data existed before a change.
+          •  Compliance requirements often mandate data recovery capabilities.
+
+        Time Travel provides:
+          •  Recovery from accidental data loss using UNDROP and AT/BEFORE clauses.
+          •  Forensic investigation of data changes for security incidents.
+          •  Point-in-time cloning for testing and analysis.
+
+        Risk mitigation:
+          •  Set retention time to at least 1 day for all databases.
+          •  Use longer retention periods (up to 90 days with Enterprise edition) for critical data.
+          •  Monitor databases with zero retention time and remediate promptly.
+      remediation: |
+        **Set retention time for a database**
+
+        ```sql
+        ALTER DATABASE my_database SET DATA_RETENTION_TIME_IN_DAYS = 1;
+        ```
+
+        **Set default retention for new databases at the account level**
+
+        ```sql
+        ALTER ACCOUNT SET DATA_RETENTION_TIME_IN_DAYS = 1;
+        ```
+    refs:
+      - title: Snowflake Time Travel documentation
+        url: https://docs.snowflake.com/en/user-guide/data-time-travel
