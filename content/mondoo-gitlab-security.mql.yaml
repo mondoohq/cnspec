@@ -57,6 +57,19 @@ policies:
         filters: asset.platform == "gitlab-project"
         checks:
           - uid: mondoo-gitlab-security-private-project
+      - title: Merge Request Security
+        filters: asset.platform == "gitlab-project"
+        checks:
+          - uid: mondoo-gitlab-security-approvals-required
+          - uid: mondoo-gitlab-security-no-author-approval
+          - uid: mondoo-gitlab-security-reset-approvals-on-push
+          - uid: mondoo-gitlab-security-no-committer-approval
+          - uid: mondoo-gitlab-security-pipeline-must-succeed
+      - title: Branch Protection
+        filters: asset.platform == "gitlab-project"
+        checks:
+          - uid: mondoo-gitlab-security-no-force-push-default-branch
+    scoring_system: highest impact
 queries:
   - uid: mondoo-gitlab-security-private-group
     title: Ensure the group is private
@@ -273,6 +286,280 @@ queries:
               path         = "example"
               visibility   = "private"
               namespace_id = gitlab_group.example.id
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project).
+  - uid: mondoo-gitlab-security-approvals-required
+    title: Ensure merge request approvals are required
+    impact: 90
+    mql: |
+      gitlab.project.approvalSettings.approvalsBeforeMerge >= 1
+    docs:
+      desc: |
+        This check ensures that at least one approval is required before a merge request can be merged. Without required approvals, any developer with merge access can push code changes directly without peer review.
+
+        **Why this matters**
+
+        Merge request approvals are a fundamental code review control:
+          •  Without required approvals, a single compromised account can push malicious code directly to production branches.
+          •  Code review catches bugs, security vulnerabilities, and logic errors before they reach production.
+          •  Required approvals create an audit trail of who reviewed and approved each change.
+          •  Many compliance frameworks (SOC 2, ISO 27001) require separation of duties for code changes.
+
+        Risk mitigation:
+          •  Require at least one approval on all projects.
+          •  For critical projects, consider requiring two or more approvals.
+          •  Combine with protected branches to enforce approval requirements.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project.
+            2. Go to **Settings** > **Merge requests**.
+            3. Under **Merge request approvals**, set **Approvals required** to at least 1.
+            4. Click **Save changes**.
+
+            For more details, see [Merge request approval rules](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/rules.html).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_project_level_mr_approvals" "example" {
+              project = gitlab_project.example.id
+            }
+
+            resource "gitlab_project_approval_rule" "example" {
+              project            = gitlab_project.example.id
+              name               = "default"
+              approvals_required = 1
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_level_mr_approvals).
+  - uid: mondoo-gitlab-security-no-author-approval
+    title: Ensure merge request authors cannot approve their own requests
+    impact: 90
+    mql: |
+      gitlab.project.approvalSettings.mergeRequestsAuthorApproval == false
+    docs:
+      desc: |
+        This check ensures that merge request authors cannot approve their own merge requests. Allowing self-approval defeats the purpose of code review and eliminates the separation of duties control.
+
+        **Why this matters**
+
+        Self-approval of merge requests undermines code review integrity:
+          •  A compromised developer account can both create and approve malicious changes.
+          •  Self-approval eliminates the independent verification of code changes.
+          •  Regulatory and compliance frameworks require separation of duties between code authors and reviewers.
+          •  Supply chain attacks often exploit the ability to self-approve changes.
+
+        Risk mitigation:
+          •  Disable author approval for all projects.
+          •  Combine with required approvals to ensure independent review.
+          •  Monitor merge request activity for unusual approval patterns.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project.
+            2. Go to **Settings** > **Merge requests**.
+            3. Under **Merge request approvals**, uncheck **Allow author approval**.
+            4. Click **Save changes**.
+
+            For more details, see [Merge request approval settings](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/settings.html).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_project_level_mr_approvals" "example" {
+              project                        = gitlab_project.example.id
+              merge_requests_author_approval  = false
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_level_mr_approvals).
+  - uid: mondoo-gitlab-security-reset-approvals-on-push
+    title: Ensure approvals are reset when new commits are pushed
+    impact: 80
+    mql: |
+      gitlab.project.approvalSettings.resetApprovalsOnPush == true
+    docs:
+      desc: |
+        This check ensures that merge request approvals are reset when new commits are pushed to the source branch. Without this setting, a developer could get a merge request approved and then add unapproved changes before merging.
+
+        **Why this matters**
+
+        Stale approvals on modified merge requests create a security gap:
+          •  An attacker can get a benign change approved, then add malicious code before merging.
+          •  Reviewers may not notice additional commits pushed after their approval.
+          •  This bypasses the intent of code review by allowing unapproved code to be merged.
+          •  Compliance requirements for code review are not met if approved code is modified post-approval.
+
+        Risk mitigation:
+          •  Enable reset approvals on push for all projects.
+          •  Combine with required approvals and branch protection rules.
+          •  Educate developers to re-review merge requests after new commits are pushed.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project.
+            2. Go to **Settings** > **Merge requests**.
+            3. Under **Merge request approvals**, check **Remove all approvals when commits are added to the source branch**.
+            4. Click **Save changes**.
+
+            For more details, see [Merge request approval settings](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/settings.html).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_project_level_mr_approvals" "example" {
+              project                  = gitlab_project.example.id
+              reset_approvals_on_push  = true
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_level_mr_approvals).
+  - uid: mondoo-gitlab-security-no-committer-approval
+    title: Ensure committers cannot approve merge requests they contributed to
+    impact: 80
+    mql: |
+      gitlab.project.approvalSettings.mergeRequestsDisableCommittersApproval == true
+    docs:
+      desc: |
+        This check ensures that users who have committed to a merge request cannot also approve it. This enforces separation between contributors and reviewers for each change.
+
+        **Why this matters**
+
+        Allowing committers to approve their own contributions weakens code review:
+          •  A developer who contributed code to a merge request has a conflict of interest when reviewing it.
+          •  Committer approval allows a single person to both write and approve code in collaboration scenarios.
+          •  This setting closes a gap where multiple contributors to a branch could approve each other's changes without independent review.
+          •  Strengthens the audit trail by ensuring approvals come from independent reviewers.
+
+        Risk mitigation:
+          •  Disable committer approval for all projects.
+          •  Combine with author approval restrictions for comprehensive separation of duties.
+          •  Use code owner approvals for additional review requirements on critical paths.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project.
+            2. Go to **Settings** > **Merge requests**.
+            3. Under **Merge request approvals**, check **Prevent approvals by users who add commits**.
+            4. Click **Save changes**.
+
+            For more details, see [Merge request approval settings](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/settings.html).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_project_level_mr_approvals" "example" {
+              project                                     = gitlab_project.example.id
+              merge_requests_disable_committers_approval   = true
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_level_mr_approvals).
+  - uid: mondoo-gitlab-security-no-force-push-default-branch
+    title: Ensure force push is disabled on the default branch
+    impact: 90
+    mql: |
+      gitlab.project.protectedBranches.where(defaultBranch == true).all(allowForcePush == false)
+    docs:
+      desc: |
+        This check ensures that force push is disabled on the default (protected) branch. Force pushing allows rewriting Git history, which can be used to remove audit trails, overwrite security fixes, or inject malicious code.
+
+        **Why this matters**
+
+        Force push to the default branch is a high-severity risk:
+          •  An attacker can rewrite Git history to inject malicious code that appears to have always been present.
+          •  Force pushing can remove commits that contain security fixes or audit trails.
+          •  History rewriting makes incident investigation and forensic analysis extremely difficult.
+          •  Accidental force pushes can cause data loss and disrupt development workflows.
+
+        Risk mitigation:
+          •  Disable force push on all protected branches, especially the default branch.
+          •  Use branch protection rules to enforce this at the project level.
+          •  Monitor for any changes to branch protection settings.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project.
+            2. Go to **Settings** > **Repository**.
+            3. Expand the **Protected branches** section.
+            4. For the default branch, ensure **Allowed to force push** is disabled.
+            5. Click **Protect** or **Save changes**.
+
+            For more details, see [Protected branches](https://docs.gitlab.com/ee/user/project/protected_branches.html).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_branch_protection" "default" {
+              project            = gitlab_project.example.id
+              branch             = "main"
+              allow_force_push   = false
+              push_access_level  = "maintainer"
+              merge_access_level = "maintainer"
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/branch_protection).
+  - uid: mondoo-gitlab-security-pipeline-must-succeed
+    title: Ensure pipeline must succeed before merging
+    impact: 80
+    mql: |
+      gitlab.project.onlyAllowMergeIfPipelineSucceeds == true
+    docs:
+      desc: |
+        This check ensures that merge requests can only be merged when the CI/CD pipeline succeeds. Without this requirement, code that fails tests, security scans, or other automated checks can be merged into protected branches.
+
+        **Why this matters**
+
+        Bypassing CI/CD pipeline requirements undermines automated security controls:
+          •  Security scanning tools (SAST, DAST, dependency scanning) in the pipeline are bypassed.
+          •  Failed tests may indicate bugs or regressions that reach production.
+          •  Compliance checks and policy validations in the pipeline are skipped.
+          •  Attackers can merge malicious code that would otherwise be caught by automated checks.
+
+        Risk mitigation:
+          •  Require pipeline success on all projects with CI/CD pipelines.
+          •  Include security scanning jobs in your pipeline configuration.
+          •  Combine with the "don't allow merge on skipped pipeline" setting.
+          •  Monitor for projects that have this setting disabled.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project.
+            2. Go to **Settings** > **Merge requests**.
+            3. Under **Merge checks**, check **Pipelines must succeed**.
+            4. Click **Save changes**.
+
+            For more details, see [Merge request checks](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_project" "example" {
+              name                                  = "example"
+              only_allow_merge_if_pipeline_succeeds = true
             }
             ```
 
