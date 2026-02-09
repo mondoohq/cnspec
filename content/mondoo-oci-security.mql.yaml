@@ -1,0 +1,558 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-oci-security
+    name: Mondoo Oracle Cloud Infrastructure (OCI) Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: oci,cloud
+    require:
+      - provider: oci
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Mondoo Oracle Cloud Infrastructure (OCI) Security policy identifies critical misconfigurations that could leave your OCI tenancy vulnerable to attackers. This policy covers IAM (Identity and Access Management), Object Storage, and VCN (Virtual Cloud Network) security. It helps organizations detect and remediate security risks before they can be exploited, reducing the likelihood of unauthorized access, data breaches, and operational disruptions.
+
+        ## Authentication
+
+        Scanning OCI requires API key authentication configured in your OCI CLI config file (`~/.oci/config`).
+
+        ## Scan an OCI tenancy
+
+        ```bash
+        cnspec scan oci
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable. This policy is open-source and we welcome contributions from the community, whether it's adding new checks, refining existing ones, or providing feedback. If you have suggestions to improve this policy, visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Identity and Access Management
+        filters: asset.platform == 'oci'
+        checks:
+          - uid: mondoo-oci-security-iam-mfa-enabled-for-active-users
+          - uid: mondoo-oci-security-iam-user-emails-verified
+          - uid: mondoo-oci-security-iam-no-overly-permissive-policies
+          - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
+          - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
+      - title: Object Storage
+        filters: asset.platform == 'oci'
+        checks:
+          - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
+          - uid: mondoo-oci-security-object-storage-buckets-versioning-enabled
+          - uid: mondoo-oci-security-object-storage-buckets-event-logging-enabled
+          - uid: mondoo-oci-security-object-storage-buckets-customer-managed-encryption
+      - title: Virtual Cloud Network
+        filters: asset.platform == 'oci'
+        checks:
+          - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols
+          - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports
+          - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-oci-security-iam-mfa-enabled-for-active-users
+    title: Ensure MFA is enabled for all active IAM users
+    impact: 90
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state == "ACTIVE").all(mfaActivated == true)
+    docs:
+      desc: |
+        This check ensures that multi-factor authentication (MFA) is enabled for all active IAM users in the OCI tenancy. MFA adds an additional layer of security beyond passwords, requiring users to provide a second authentication factor when signing in.
+
+        **Why this matters**
+
+        Without MFA, user accounts are protected only by passwords, which are vulnerable to:
+          •  Brute-force and credential stuffing attacks.
+          •  Phishing attacks that trick users into revealing passwords.
+          •  Password reuse across multiple services.
+
+        If MFA is not enabled, it can lead to:
+          •  Unauthorized access to the OCI console and APIs.
+          •  Privilege escalation if an administrator account is compromised.
+          •  Non-compliance with CIS OCI Foundations Benchmark, NIST 800-53, and PCI DSS.
+
+        Risk mitigation:
+          •  Enable MFA for all active IAM users, especially those with administrative privileges.
+          •  Use TOTP-based authenticator apps for the second factor.
+          •  Regularly audit MFA enrollment status.
+      remediation: |
+        **Using OCI Console**
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Identity & Security > Users**.
+        3. Select the user.
+        4. Under **Resources**, select **Multi-Factor Authentication**.
+        5. Select **Enable Multi-Factor Authentication** and follow the setup instructions.
+
+        **Using OCI CLI**
+
+        MFA must be enabled by each user through the Console. Administrators can verify MFA status:
+
+        ```bash
+        oci iam user list --query "data[?\"is-mfa-activated\"==\`false\`].{Name:name, MFA:\"is-mfa-activated\"}" --output table
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 1.7
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/usingmfa.htm
+  - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
+    title: Ensure Object Storage buckets are not publicly accessible
+    impact: 90
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.objectStorage.buckets.all(publicAccessType == "NoPublicAccess")
+    docs:
+      desc: |
+        This check ensures that OCI Object Storage buckets do not allow public access. Public buckets can be accessed by anyone on the internet, which significantly increases the risk of data exposure.
+
+        **Why this matters**
+
+        Publicly accessible buckets expose stored data to the internet:
+          •  Sensitive data such as PII, credentials, backups, or application data can be accessed by unauthorized parties.
+          •  Automated scanners continuously search for publicly accessible cloud storage.
+          •  Public access may be set accidentally and go unnoticed without regular audits.
+
+        If buckets are publicly accessible, it can lead to:
+          •  Data breaches and regulatory violations (GDPR, HIPAA, PCI DSS).
+          •  Exposure of internal application data, configuration files, or database backups.
+          •  Non-compliance with CIS OCI Foundations Benchmark.
+
+        Risk mitigation:
+          •  Set all buckets to `NoPublicAccess` unless there is an explicit, documented business requirement.
+          •  Use IAM policies and pre-authenticated requests for controlled access.
+          •  Regularly audit bucket access types.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Object Storage > Buckets**.
+        2. Select the bucket.
+        3. Select **Edit Visibility**.
+        4. Set visibility to **Private**.
+        5. Select **Save Changes**.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci os bucket update --bucket-name BUCKET_NAME --public-access-type NoPublicAccess
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 4.1.1
+        url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/managingbuckets.htm
+  - uid: mondoo-oci-security-object-storage-buckets-versioning-enabled
+    title: Ensure Object Storage buckets have versioning enabled
+    impact: 70
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.objectStorage.buckets.all(versioning == "Enabled")
+    docs:
+      desc: |
+        This check ensures that object versioning is enabled on OCI Object Storage buckets. Versioning preserves, retrieves, and restores every version of every object in a bucket, providing protection against accidental deletion or overwriting.
+
+        **Why this matters**
+
+        Without versioning, deleted or overwritten objects are permanently lost:
+          •  Accidental deletions cannot be recovered.
+          •  Ransomware or malicious actors can permanently destroy data.
+          •  There is no audit trail of object modifications.
+
+        Versioning provides:
+          •  Recovery from accidental deletions and overwrites.
+          •  An audit trail of all object changes.
+          •  Protection against ransomware that attempts to encrypt or destroy data.
+
+        Risk mitigation:
+          •  Enable versioning on all buckets containing important data.
+          •  Configure lifecycle policies to manage version retention and storage costs.
+          •  Regularly test recovery from versioned objects.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Object Storage > Buckets**.
+        2. Select the bucket.
+        3. Select **Edit Versioning**.
+        4. Enable versioning.
+        5. Select **Save Changes**.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci os bucket update --bucket-name BUCKET_NAME --versioning Enabled
+        ```
+    refs:
+      - title: OCI Object Storage versioning documentation
+        url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingversioning.htm
+  - uid: mondoo-oci-security-object-storage-buckets-event-logging-enabled
+    title: Ensure Object Storage buckets have event logging enabled
+    impact: 60
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.objectStorage.buckets.all(objectEventsEnabled == true)
+    docs:
+      desc: |
+        This check ensures that object event logging is enabled on OCI Object Storage buckets. Event logging emits events when objects are created, updated, or deleted, enabling audit trails and automated responses.
+
+        **Why this matters**
+
+        Without event logging, there is no visibility into object-level operations:
+          •  Unauthorized data access or modification goes undetected.
+          •  Incident response is hampered by lack of activity records.
+          •  Compliance audits cannot verify data access patterns.
+
+        Event logging provides:
+          •  Visibility into all object operations for security monitoring.
+          •  Integration with OCI Events and Notifications for automated alerting.
+          •  Audit trail for compliance requirements.
+
+        Risk mitigation:
+          •  Enable object events on all buckets.
+          •  Configure event rules to alert on suspicious activity.
+          •  Integrate events with SIEM or logging platforms.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Object Storage > Buckets**.
+        2. Select the bucket.
+        3. Select **Edit**.
+        4. Enable **Emit Object Events**.
+        5. Select **Save Changes**.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci os bucket update --bucket-name BUCKET_NAME --object-events-enabled true
+        ```
+    refs:
+      - title: OCI Object Storage events documentation
+        url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/managingbuckets.htm
+  - uid: mondoo-oci-security-object-storage-buckets-customer-managed-encryption
+    title: Ensure Object Storage buckets use customer-managed encryption keys
+    impact: 70
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.objectStorage.buckets.all(kmsKeyId != "")
+    docs:
+      desc: |
+        This check ensures that OCI Object Storage buckets are encrypted using customer-managed keys from the OCI Vault service (KMS) rather than Oracle-managed default encryption keys. Customer-managed keys provide greater control over the encryption lifecycle.
+
+        **Why this matters**
+
+        While OCI encrypts all Object Storage data at rest by default using Oracle-managed keys, customer-managed keys provide additional security controls:
+          •  Full control over key creation, rotation, and deletion.
+          •  Ability to revoke access to encrypted data by disabling or deleting the key.
+          •  Compliance with regulations that require customer-controlled encryption (HIPAA, PCI DSS, FedRAMP).
+          •  Separation of duties between data management and key management.
+
+        Risk mitigation:
+          •  Create encryption keys in OCI Vault.
+          •  Assign customer-managed keys to all Object Storage buckets.
+          •  Configure key rotation policies.
+          •  Monitor key usage through OCI Audit logs.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Object Storage > Buckets**.
+        2. Select the bucket.
+        3. Select **Assign** next to Encryption Key.
+        4. Choose **Encrypt using customer-managed keys**.
+        5. Select the vault, master encryption key, and key version.
+        6. Select **Assign**.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci os bucket update --bucket-name BUCKET_NAME --kms-key-id KEY_OCID
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 4.1.2
+        url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/managingbuckets_topic-Server_Side_Encryption_SSE.htm
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols
+    title: Ensure VCN security lists do not allow unrestricted ingress for all protocols from 0.0.0.0/0
+    impact: 90
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        ingressSecurityRules.none(_['source'] == "0.0.0.0/0" && _['protocol'] == "all")
+      )
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not contain ingress rules that allow all traffic (all protocols) from any source (0.0.0.0/0). Such rules effectively disable network-level access control for inbound traffic.
+
+        **Why this matters**
+
+        Allowing all inbound traffic from the internet exposes every service running on instances within the subnet:
+          •  All ports and protocols are accessible from any IP address on the internet.
+          •  Attackers can discover and exploit any vulnerable service.
+          •  The security list provides no defense-in-depth against network-based attacks.
+
+        If unrestricted ingress is allowed, it can lead to:
+          •  Exploitation of vulnerable services running on compute instances.
+          •  Unauthorized access to databases, management interfaces, and internal services.
+          •  Non-compliance with CIS OCI Foundations Benchmark, PCI DSS, and NIST 800-53.
+
+        Risk mitigation:
+          •  Remove or restrict overly permissive ingress rules.
+          •  Use specific protocol and port ranges in security list rules.
+          •  Restrict source CIDR blocks to known trusted IP ranges.
+          •  Use Network Security Groups (NSGs) for fine-grained access control.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Networking > Virtual Cloud Networks**.
+        2. Select the VCN.
+        3. Select **Security Lists**.
+        4. Select the security list with the overly permissive rule.
+        5. Edit or remove the ingress rule that allows all protocols from 0.0.0.0/0.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci network security-list update --security-list-id SECURITY_LIST_OCID \
+          --ingress-security-rules '<updated-rules-json>'
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 2.1
+        url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports
+    title: Ensure VCN security lists do not allow unrestricted TCP ingress from 0.0.0.0/0
+    impact: 80
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcpOptions'] == empty
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not contain TCP ingress rules from 0.0.0.0/0 that allow all TCP ports. When a TCP ingress rule has no port restrictions, every TCP service on the instance is accessible from the internet.
+
+        **Why this matters**
+
+        Unrestricted TCP access from the internet exposes all TCP services:
+          •  SSH (22), RDP (3389), databases, and management interfaces become internet-accessible.
+          •  Automated scanners continuously probe all ports, exploiting any vulnerable service.
+          •  The broad exposure makes it difficult to maintain a secure attack surface.
+
+        If unrestricted TCP ingress is allowed, it can lead to:
+          •  Brute-force attacks against SSH, RDP, and other authentication services.
+          •  Exploitation of unpatched or misconfigured services.
+          •  Data exfiltration through exposed database or application ports.
+          •  Non-compliance with CIS OCI Foundations Benchmark.
+
+        Risk mitigation:
+          •  Always specify destination port ranges in TCP ingress rules.
+          •  Restrict source CIDR blocks to known trusted IP ranges.
+          •  Use the minimum set of ports required for each workload.
+          •  Prefer Network Security Groups (NSGs) for instance-level access control.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Networking > Virtual Cloud Networks**.
+        2. Select the VCN.
+        3. Select **Security Lists**.
+        4. Select the security list.
+        5. Edit TCP ingress rules from 0.0.0.0/0 to specify destination port ranges.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci network security-list update --security-list-id SECURITY_LIST_OCID \
+          --ingress-security-rules '<updated-rules-with-port-ranges-json>'
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 2.2
+        url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+  - uid: mondoo-oci-security-iam-user-emails-verified
+    title: Ensure IAM user email addresses are verified
+    impact: 60
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state == "ACTIVE" && email != "").all(emailVerified == true)
+    docs:
+      desc: |
+        This check ensures that all active IAM users with email addresses have verified their email. Unverified emails may indicate misconfigured accounts or accounts that were never properly set up.
+
+        **Why this matters**
+
+        Unverified email addresses create security and operational risks:
+          •  Password reset and account recovery notifications may not reach the intended user.
+          •  Security alerts about suspicious account activity cannot be delivered.
+          •  Unverified accounts may indicate orphaned or misconfigured user identities.
+
+        Risk mitigation:
+          •  Require email verification for all IAM users during account creation.
+          •  Periodically audit user accounts for unverified email addresses.
+          •  Disable accounts with unverified emails that have not been resolved within a set timeframe.
+      remediation: |
+        Contact users with unverified email addresses and ask them to verify their email through the OCI Console under their user profile settings.
+    refs:
+      - title: OCI IAM user management
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingusers.htm
+  - uid: mondoo-oci-security-iam-no-overly-permissive-policies
+    title: Ensure no IAM policies grant manage all-resources in tenancy
+    impact: 90
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.policies.none(
+        statements.any(_ == /allow.*manage\s+all-resources\s+in\s+tenancy/i)
+      )
+    docs:
+      desc: |
+        This check ensures that no IAM policies grant the `manage all-resources in tenancy` permission, which gives unrestricted administrative access to all resources in the entire tenancy.
+
+        **Why this matters**
+
+        The `manage all-resources in tenancy` statement is the most permissive policy possible in OCI:
+          •  It grants full administrative control over every resource in every compartment.
+          •  Groups assigned this policy can create, modify, and delete any resource including IAM configurations.
+          •  A compromised user in such a group has unlimited blast radius across the entire tenancy.
+          •  This violates the principle of least privilege and makes access auditing difficult.
+
+        Risk mitigation:
+          •  Replace broad tenancy-level policies with compartment-scoped policies.
+          •  Use specific resource types instead of `all-resources`.
+          •  Grant only the minimum permissions required for each group's function.
+          •  Regularly audit IAM policies for overly permissive statements.
+      remediation: |
+        **Review and restrict overly permissive policies**
+
+        1. Navigate to **Identity & Security > Policies** in the OCI Console.
+        2. Identify policies containing `manage all-resources in tenancy`.
+        3. Replace with scoped policies:
+
+        ```
+        # Instead of:
+        Allow group Admins to manage all-resources in tenancy
+
+        # Use scoped policies:
+        Allow group NetworkAdmins to manage virtual-network-family in compartment NetworkCompartment
+        Allow group ComputeAdmins to manage instance-family in compartment ComputeCompartment
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 1.1
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm
+  - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
+    title: Ensure inactive users have no active API keys
+    impact: 80
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state != "ACTIVE").all(
+        apiKeys.none(state == "ACTIVE")
+      )
+    docs:
+      desc: |
+        This check ensures that IAM users in an inactive state do not have active API keys. Active API keys on inactive accounts represent unused credentials that could be exploited if compromised.
+
+        **Why this matters**
+
+        API keys on inactive user accounts are a significant credential hygiene risk:
+          •  Inactive users have left the organization or no longer need access, but their API keys may still function.
+          •  Compromised API keys provide programmatic access to OCI resources.
+          •  Orphaned credentials are a common vector in cloud security breaches.
+
+        Risk mitigation:
+          •  Delete or deactivate API keys when user accounts are deactivated.
+          •  Implement automated credential cleanup as part of user offboarding.
+          •  Regularly audit API keys across all users for stale or unnecessary credentials.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Identity & Security > Users**.
+        2. Select the inactive user.
+        3. Under **Resources**, select **API Keys**.
+        4. Delete active API keys.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci iam user api-key delete --user-id USER_OCID --fingerprint KEY_FINGERPRINT
+        ```
+    refs:
+      - title: OCI API key management
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
+  - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
+    title: Ensure inactive users have no active auth tokens
+    impact: 80
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state != "ACTIVE").all(
+        authTokens.none(state == "ACTIVE")
+      )
+    docs:
+      desc: |
+        This check ensures that IAM users in an inactive state do not have active authentication tokens. Active auth tokens on inactive accounts represent unused credentials that could be exploited if compromised.
+
+        **Why this matters**
+
+        Authentication tokens on inactive accounts pose a credential hygiene risk:
+          •  Auth tokens provide access to OCI APIs and can be used independently of user account status.
+          •  Orphaned tokens may go unnoticed during security audits if not linked to active user reviews.
+          •  Compromised tokens allow unauthorized API access to OCI resources.
+
+        Risk mitigation:
+          •  Delete auth tokens when user accounts are deactivated.
+          •  Implement automated credential cleanup during user offboarding.
+          •  Regularly audit auth tokens across all users.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Identity & Security > Users**.
+        2. Select the inactive user.
+        3. Under **Resources**, select **Auth Tokens**.
+        4. Delete active auth tokens.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci iam auth-token delete --user-id USER_OCID --auth-token-id TOKEN_OCID
+        ```
+    refs:
+      - title: OCI auth token management
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
+  - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols
+    title: Ensure VCN security lists do not allow unrestricted egress for all protocols to 0.0.0.0/0
+    impact: 70
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        egressSecurityRules.none(_['destination'] == "0.0.0.0/0" && _['protocol'] == "all")
+      )
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not contain egress rules that allow all outbound traffic to any destination. Unrestricted egress rules can facilitate data exfiltration and command-and-control communications from compromised instances.
+
+        **Why this matters**
+
+        Unrestricted egress to the internet allows compromised instances to:
+          •  Exfiltrate sensitive data to attacker-controlled servers.
+          •  Communicate with command-and-control (C2) infrastructure.
+          •  Download additional malware or tools.
+          •  Participate in DDoS attacks or cryptocurrency mining.
+
+        Risk mitigation:
+          •  Restrict egress rules to specific destination CIDR blocks and protocols.
+          •  Use a NAT gateway or proxy for controlled internet access.
+          •  Monitor outbound traffic for anomalies.
+          •  Apply the principle of least privilege to egress rules.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Networking > Virtual Cloud Networks**.
+        2. Select the VCN.
+        3. Select **Security Lists**.
+        4. Select the security list.
+        5. Edit egress rules to restrict destination and protocol.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci network security-list update --security-list-id SECURITY_LIST_OCID \
+          --egress-security-rules '<updated-rules-json>'
+        ```
+    refs:
+      - title: OCI security list documentation
+        url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
