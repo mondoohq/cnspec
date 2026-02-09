@@ -43,12 +43,17 @@ policies:
           - uid: mondoo-http-security-no-x-aspnet-version
           - uid: mondoo-http-security-no-x-aspnetmvc-version
           - uid: mondoo-http-security-no-public-key-pins
+          - uid: mondoo-http-security-x-frame-options
+          - uid: mondoo-http-security-referrer-policy
       - title: Headers for HTTPS communication
         filters: |
           asset.platform == 'host'
           tls.certificates != empty
         checks:
           - uid: mondoo-http-security-strict-transport-security
+          - uid: mondoo-http-security-hsts-max-age
+          - uid: mondoo-http-security-hsts-include-subdomains
+          - uid: mondoo-http-security-hsts-preload
     scoring_system: highest impact
 queries:
   - uid: mondoo-http-security-x-content-type-options-nosniff
@@ -581,3 +586,340 @@ queries:
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#public-key-pins-hpkp
         title: OWASP HTTP Security Response Headers Cheat Sheet
+  - uid: mondoo-http-security-x-frame-options
+    title: Set X-Frame-Options HTTP header
+    mql: http.get.header.xFrameOptions != ""
+    docs:
+      desc: |
+        This check ensures that the X-Frame-Options HTTP header is set to prevent clickjacking attacks.
+
+        **Why this matters**
+
+        The X-Frame-Options header controls whether a browser should render a page inside a `<frame>`, `<iframe>`, `<embed>`, or `<object>` element. Without this header, attackers can embed your site in a malicious page to trick users into interacting with it unknowingly:
+
+        - **Clickjacking attacks**: Attackers overlay invisible frames on legitimate pages, tricking users into clicking hidden elements that perform unintended actions such as changing account settings or initiating transactions.
+        - **UI redressing**: Malicious sites can position transparent iframes over buttons or links, redirecting user interactions to attacker-controlled content.
+        - **Session hijacking**: Combined with other vulnerabilities, clickjacking can be used to steal session tokens or credentials.
+
+        Valid values are `DENY` (prevents all framing), `SAMEORIGIN` (allows framing only from the same origin), or `ALLOW-FROM uri` (allows framing from a specific URI).
+      remediation:
+        - id: nginx
+          desc: |
+            **Using NGINX**
+
+            1. Open your NGINX configuration file.
+            2. Inside the `server` or `location` block, add:
+
+                ```nginx
+                add_header X-Frame-Options "SAMEORIGIN";
+                ```
+
+            3. Save and reload NGINX:
+
+                ```bash
+                nginx -s reload
+                ```
+        - id: apache
+          desc: |
+            **Using Apache HTTPD**
+
+            1. Open your Apache configuration file or `.htaccess` file.
+            2. Add:
+
+                ```apache
+                Header set X-Frame-Options "SAMEORIGIN"
+                ```
+
+            3. Enable the headers module and restart:
+
+                ```bash
+                a2enmod headers
+                systemctl restart apache2
+                ```
+        - id: iis
+          desc: |
+            **Using IIS**
+
+            1. Open the IIS Manager.
+            2. Select your site and go to `HTTP Response Headers`.
+            3. Add `X-Frame-Options` with value `SAMEORIGIN`.
+            4. Restart IIS:
+
+                ```bash
+                iisreset
+                ```
+    refs:
+      - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options
+        title: MDN Web Docs X-Frame-Options
+      - url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-frame-options
+        title: OWASP HTTP Security Response Headers Cheat Sheet
+  - uid: mondoo-http-security-referrer-policy
+    title: Set Referrer-Policy HTTP header
+    mql: http.get.header.referrerPolicy != ""
+    docs:
+      desc: |
+        This check ensures that the Referrer-Policy HTTP header is set to control how much referrer information is sent with requests.
+
+        **Why this matters**
+
+        Without a Referrer-Policy header, browsers use their default policy, which may leak sensitive information in the Referer header:
+
+        - **URL information disclosure**: The full URL, including query parameters that may contain tokens, session IDs, or other sensitive data, can be sent to third-party sites.
+        - **Privacy concerns**: Referrer information reveals browsing patterns and internal URL structures to external sites.
+        - **Data leakage via embedded resources**: Third-party scripts, images, and stylesheets loaded by the page receive the referrer, potentially exposing sensitive URL paths.
+
+        Recommended values include `strict-origin-when-cross-origin` (sends only the origin for cross-origin requests), `no-referrer` (never sends referrer), or `same-origin` (sends referrer only for same-origin requests).
+      remediation:
+        - id: nginx
+          desc: |
+            **Using NGINX**
+
+            1. Open your NGINX configuration file.
+            2. Inside the `server` or `location` block, add:
+
+                ```nginx
+                add_header Referrer-Policy "strict-origin-when-cross-origin";
+                ```
+
+            3. Save and reload NGINX:
+
+                ```bash
+                nginx -s reload
+                ```
+        - id: apache
+          desc: |
+            **Using Apache HTTPD**
+
+            1. Open your Apache configuration file or `.htaccess` file.
+            2. Add:
+
+                ```apache
+                Header set Referrer-Policy "strict-origin-when-cross-origin"
+                ```
+
+            3. Enable the headers module and restart:
+
+                ```bash
+                a2enmod headers
+                systemctl restart apache2
+                ```
+        - id: iis
+          desc: |
+            **Using IIS**
+
+            1. Open the IIS Manager.
+            2. Select your site and go to `HTTP Response Headers`.
+            3. Add `Referrer-Policy` with value `strict-origin-when-cross-origin`.
+            4. Restart IIS:
+
+                ```bash
+                iisreset
+                ```
+    refs:
+      - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Referrer-Policy
+        title: MDN Web Docs Referrer-Policy
+      - url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#referrer-policy
+        title: OWASP HTTP Security Response Headers Cheat Sheet
+  - uid: mondoo-http-security-hsts-max-age
+    title: Ensure HSTS max-age is at least one year
+    mql: http.get.header.sts.maxAge >= 365 * time.day
+    docs:
+      desc: |
+        This check ensures that the Strict-Transport-Security (HSTS) header specifies a max-age of at least 365 days (31536000 seconds). A short max-age reduces the effectiveness of HSTS, as browsers will stop enforcing HTTPS-only connections sooner.
+
+        **Why this matters**
+
+        The max-age directive controls how long browsers remember to enforce HTTPS for the site:
+
+        - **Short max-age values**: With a short max-age, the HSTS protection expires quickly, leaving a window where an attacker could perform an SSL stripping attack after the cache expires.
+        - **Browser preload requirement**: To be eligible for browser HSTS preload lists, a max-age of at least 31536000 seconds (1 year) is required.
+        - **First-visit vulnerability**: After the HSTS cache expires, the next visit is vulnerable to interception until the browser receives the HSTS header again over a secure connection.
+
+        A max-age of at least 31536000 seconds (1 year) is recommended by OWASP and required for HSTS preload eligibility.
+      remediation:
+        - id: nginx
+          desc: |
+            **Using NGINX**
+
+            1. Open your NGINX configuration file.
+            2. Update the HSTS header to include a max-age of at least one year:
+
+                ```nginx
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                ```
+
+            3. Save and reload NGINX:
+
+                ```bash
+                nginx -s reload
+                ```
+        - id: apache
+          desc: |
+            **Using Apache HTTPD**
+
+            1. Open your Apache configuration file or `.htaccess` file.
+            2. Update the HSTS header:
+
+                ```apache
+                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                ```
+
+            3. Restart Apache:
+
+                ```bash
+                systemctl restart apache2
+                ```
+        - id: iis
+          desc: |
+            **Using IIS**
+
+            1. Open the IIS Manager.
+            2. Select your site and go to `HTTP Response Headers`.
+            3. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
+            4. Restart IIS:
+
+                ```bash
+                iisreset
+                ```
+    refs:
+      - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
+        title: MDN Web Docs Strict-Transport-Security
+      - url: https://hstspreload.org/
+        title: HSTS Preload List Submission
+  - uid: mondoo-http-security-hsts-include-subdomains
+    title: Ensure HSTS includes subdomains
+    mql: http.get.header.sts.includeSubDomains == true
+    docs:
+      desc: |
+        This check ensures that the Strict-Transport-Security (HSTS) header includes the `includeSubDomains` directive. Without this directive, subdomains are not protected by HSTS and may be vulnerable to protocol downgrade attacks.
+
+        **Why this matters**
+
+        Without the `includeSubDomains` directive, HSTS only applies to the exact domain that sets the header:
+
+        - **Subdomain attacks**: Attackers can target unprotected subdomains (e.g., `api.example.com`, `mail.example.com`) with SSL stripping or man-in-the-middle attacks.
+        - **Cookie scope exploitation**: Cookies set for the parent domain can be intercepted via unprotected subdomains, leading to session hijacking.
+        - **Preload requirement**: The `includeSubDomains` directive is required for HSTS preload list eligibility.
+
+        Including subdomains ensures comprehensive HSTS protection across the entire domain hierarchy.
+      remediation:
+        - id: nginx
+          desc: |
+            **Using NGINX**
+
+            1. Open your NGINX configuration file.
+            2. Update the HSTS header to include `includeSubDomains`:
+
+                ```nginx
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                ```
+
+            3. Save and reload NGINX:
+
+                ```bash
+                nginx -s reload
+                ```
+        - id: apache
+          desc: |
+            **Using Apache HTTPD**
+
+            1. Open your Apache configuration file or `.htaccess` file.
+            2. Update the HSTS header:
+
+                ```apache
+                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                ```
+
+            3. Restart Apache:
+
+                ```bash
+                systemctl restart apache2
+                ```
+        - id: iis
+          desc: |
+            **Using IIS**
+
+            1. Open the IIS Manager.
+            2. Select your site and go to `HTTP Response Headers`.
+            3. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
+            4. Restart IIS:
+
+                ```bash
+                iisreset
+                ```
+    refs:
+      - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
+        title: MDN Web Docs Strict-Transport-Security
+  - uid: mondoo-http-security-hsts-preload
+    title: Ensure HSTS preload is enabled
+    impact: 40
+    mql: http.get.header.sts.preload == true
+    docs:
+      desc: |
+        This check ensures that the Strict-Transport-Security (HSTS) header includes the `preload` directive. HSTS preload allows the domain to be hardcoded into browsers' built-in HSTS lists, providing protection from the very first connection.
+
+        **Why this matters**
+
+        Standard HSTS has a fundamental limitation: the browser must visit the site at least once over HTTPS to receive the HSTS header. This creates a trust-on-first-use (TOFU) vulnerability:
+
+        - **First-visit attack window**: The initial connection to a site is unprotected, allowing an attacker to intercept or downgrade the connection before the HSTS header is received.
+        - **Cache expiration**: When the HSTS max-age expires, the next visit is again vulnerable until the header is refreshed.
+        - **Browser preload lists**: With the `preload` directive (along with `includeSubDomains` and a sufficient `max-age`), the domain can be submitted to browser preload lists, eliminating the first-visit vulnerability entirely.
+
+        Note: Submitting to preload lists is a separate step that must be done at https://hstspreload.org/ after setting the header.
+      remediation:
+        - id: nginx
+          desc: |
+            **Using NGINX**
+
+            1. Open your NGINX configuration file.
+            2. Update the HSTS header to include `preload`:
+
+                ```nginx
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                ```
+
+            3. Save and reload NGINX:
+
+                ```bash
+                nginx -s reload
+                ```
+
+            4. After deploying the header, submit your domain at https://hstspreload.org/.
+        - id: apache
+          desc: |
+            **Using Apache HTTPD**
+
+            1. Open your Apache configuration file or `.htaccess` file.
+            2. Update the HSTS header:
+
+                ```apache
+                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                ```
+
+            3. Restart Apache:
+
+                ```bash
+                systemctl restart apache2
+                ```
+
+            4. After deploying the header, submit your domain at https://hstspreload.org/.
+        - id: iis
+          desc: |
+            **Using IIS**
+
+            1. Open the IIS Manager.
+            2. Select your site and go to `HTTP Response Headers`.
+            3. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
+            4. Restart IIS:
+
+                ```bash
+                iisreset
+                ```
+
+            4. After deploying the header, submit your domain at https://hstspreload.org/.
+    refs:
+      - url: https://hstspreload.org/
+        title: HSTS Preload List Submission
+      - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
+        title: MDN Web Docs Strict-Transport-Security

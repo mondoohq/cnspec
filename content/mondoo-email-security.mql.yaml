@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-email-security
     name: Mondoo Email Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -49,6 +49,7 @@ policies:
           - uid: mondoo-email-security-spf-length
           - uid: mondoo-email-security-spf-whitespaces
           - uid: mondoo-email-security-spf-fail
+          - uid: mondoo-email-security-spf-no-permit-all
           - uid: mondoo-email-security-spf-dns-record
       - title: DKIM (DomainKeys Identified Mail)
         filters: |
@@ -370,6 +371,67 @@ queries:
         dig +short TXT lunalectric.com
         ```
     refs:
+      - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
+        title: M3AAWG Email Authentication Recommended Best Practices (2020)
+  - uid: mondoo-email-security-spf-no-permit-all
+    title: Ensure SPF does not use permissive +all
+    impact: 90
+    mql: dns.params['TXT']['rData'].where(/v=spf1/).none(/\+all/)
+    docs:
+      desc: |
+        This check ensures that the SPF record does not use the `+all` mechanism, which explicitly permits all servers to send email on behalf of your domain.
+
+        **Why this matters**
+
+        The `+all` mechanism in an SPF record tells receiving mail servers to accept email from any source as authorized, completely defeating the purpose of SPF. This is the most dangerous SPF misconfiguration possible:
+
+        - **Complete bypass of SPF protection**: Any server in the world is treated as an authorized sender for your domain, making SPF checks meaningless
+        - **Enables unrestricted email spoofing**: Attackers can send phishing emails that pass SPF authentication, appearing fully legitimate to recipients and mail filters
+        - **Undermines DMARC enforcement**: Since DMARC relies on SPF (and DKIM) alignment, a passing SPF result from `+all` can cause DMARC to pass for spoofed messages, even with a strict DMARC policy
+        - **Damages domain reputation**: Mail providers may flag or blocklist your domain if it is seen authorizing all senders, as this pattern is commonly associated with compromised or negligently managed domains
+
+        SPF records should end with `-all` (hard fail) or `~all` (soft fail) to restrict unauthorized senders.
+
+        **If you don't fix this**
+
+        - Attackers can send emails from any server that pass SPF checks as if they were sent by your organization.
+        - Phishing campaigns using your domain will bypass email security filters that rely on SPF validation.
+      audit: |
+        Run the `dig +short TXT <domain>` command and check the SPF record for the `+all` mechanism.
+
+        Example of a dangerous SPF record:
+
+        ```text
+        "v=spf1 +all"
+        ```
+
+        A safe SPF record uses `-all` or `~all`:
+
+        ```text
+        "v=spf1 include:_spf.google.com -all"
+        ```
+      remediation: |
+        Replace `+all` in your SPF record with `-all` (hard fail) or `~all` (soft fail).
+
+        - `-all` (recommended): Instructs receivers to reject email from unauthorized servers.
+        - `~all`: Instructs receivers to flag email from unauthorized servers as suspicious but still deliver it.
+
+        Example:
+
+        ```dns
+        <domain> IN TXT "v=spf1 include:_spf.google.com -all"
+        ```
+
+        You can verify the change using the following command:
+
+        ```bash
+        dig +short TXT lunalectric.com
+        ```
+
+        Ensure the output shows `-all` or `~all` at the end of the SPF record.
+    refs:
+      - url: https://datatracker.ietf.org/doc/html/rfc7208#section-5.1
+        title: "RFC 7208: Sender Policy Framework - \"all\" Mechanism"
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
   - uid: mondoo-email-security-spf-dns-record

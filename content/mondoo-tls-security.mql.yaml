@@ -47,6 +47,8 @@ policies:
           - uid: mondoo-tls-security-no-weak-block-cipher-modes
           - uid: mondoo-tls-security-no-weak-block-ciphers
           - uid: mondoo-tls-security-no-weak-tls-versions
+          - uid: mondoo-tls-security-tls13-supported
+          - uid: mondoo-tls-security-no-sni-certificate-leak
       - title: Valid TLS/SSL certificate
         filters: |
           asset.platform == 'host' && tls.params != empty
@@ -58,6 +60,8 @@ policies:
           - uid: mondoo-tls-security-cert-no-weak-signature
           - uid: mondoo-tls-security-cert-not-revoked
           - uid: mondoo-tls-security-cert-not-self-signed
+          - uid: mondoo-tls-security-cert-chain-verified
+          - uid: mondoo-tls-security-cert-ocsp-configured
     scoring_system: highest impact
 queries:
   - uid: mondoo-tls-security-cert-domain-name-match
@@ -1661,3 +1665,240 @@ queries:
     refs:
       - url: https://kb.vmware.com/s/article/2008784
         title: VMware mitigation of CVE-2011-3389 (BEAST) for web server administrators
+  - uid: mondoo-tls-security-cert-chain-verified
+    title: Ensure the certificate chain is verified and trusted
+    impact: 95
+    mql: |
+      tls.certificates.first.isVerified == true
+    docs:
+      desc: |
+        This check verifies that the server's certificate chain is fully validated and trusted by a recognized Certificate Authority. While individual checks for expiration, revocation, and self-signed certificates catch specific issues, this check holistically validates the entire trust chain.
+
+        **Why this matters**
+
+        A certificate chain that fails verification indicates a fundamental trust failure:
+          •  Clients cannot confirm they are communicating with the legitimate server.
+          •  Missing or incorrect intermediate certificates break the chain even if the leaf certificate is valid.
+          •  Chain ordering errors can cause validation failures in strict TLS implementations.
+          •  Cross-signed certificate transitions may leave gaps if the chain is not properly updated.
+          •  Some clients silently fall back to insecure connections when chain verification fails.
+
+        Ensure your server presents the complete and correct certificate chain, including all required intermediate certificates in the proper order.
+      remediation: |
+        To resolve this issue:
+
+        1. Check the certificate chain verification status:
+           ```bash
+           openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+           ```
+
+           A return code of 0 indicates the chain is trusted. Any other value indicates a problem.
+
+        2. Common causes of chain verification failure:
+           - **Missing intermediate certificates**: Your server must present the full chain. Download intermediates from your CA and concatenate them with your certificate.
+           - **Incorrect chain order**: Certificates must be ordered from leaf to root (leaf first, intermediates next, root optional).
+           - **Expired intermediate or root**: Check all certificates in the chain for expiration.
+           - **Untrusted root CA**: The root CA must be in the client's trust store.
+
+        3. Build the correct chain file:
+           ```bash
+           cat your-certificate.crt intermediate.crt > fullchain.crt
+           ```
+
+        4. Configure your web server to use the full chain:
+           - Apache: `SSLCertificateChainFile /path/to/fullchain.crt`
+           - Nginx: `ssl_certificate /path/to/fullchain.crt;`
+
+        5. Verify the complete chain:
+           ```bash
+           openssl verify -CAfile /path/to/ca-bundle.crt /path/to/fullchain.crt
+           ```
+    refs:
+      - title: OpenSSL certificate chain verification
+        url: https://www.openssl.org/docs/man1.1.1/man1/verify.html
+  - uid: mondoo-tls-security-tls13-supported
+    title: Ensure TLS 1.3 is supported
+    impact: 60
+    mql: |
+      tls.versions.contains("tls1.3")
+    docs:
+      desc: |
+        This check verifies that the server supports TLS 1.3, the latest version of the TLS protocol. While TLS 1.2 remains acceptable, TLS 1.3 provides significant security and performance improvements.
+
+        **Why this matters**
+
+        TLS 1.3 addresses many weaknesses present in earlier TLS versions:
+          •  Mandatory forward secrecy: All cipher suites in TLS 1.3 provide forward secrecy by design, eliminating the risk of retroactive decryption.
+          •  Reduced handshake: TLS 1.3 completes in one round-trip (vs two in TLS 1.2), reducing latency and attack surface during negotiation.
+          •  Simplified cipher suites: Only AEAD ciphers are supported, removing weak algorithm options entirely.
+          •  Encrypted handshake: More of the handshake is encrypted, reducing information leakage to passive observers.
+          •  No renegotiation: TLS 1.3 removes the insecure renegotiation mechanism that has been exploited in past attacks.
+
+        Enable TLS 1.3 alongside TLS 1.2 for maximum compatibility and security.
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
+
+            1. Ensure you are running Apache 2.4.36+ with OpenSSL 1.1.1+.
+
+            2. Open your Apache SSL configuration file and enable TLS 1.3:
+
+                ```apache
+                SSLProtocol -all +TLSv1.2 +TLSv1.3
+                ```
+
+            3. Save the file and restart Apache:
+
+                ```bash
+                systemctl restart apache2   # Debian/Ubuntu
+                systemctl restart httpd     # RHEL/CentOS
+                ```
+
+            4. Verify TLS 1.3 is supported:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -tls1_3
+                ```
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Ensure you are running Nginx 1.13.0+ with OpenSSL 1.1.1+.
+
+            2. Open your Nginx configuration file and enable TLS 1.3:
+
+                ```nginx
+                ssl_protocols TLSv1.2 TLSv1.3;
+                ```
+
+            3. Save the file and reload Nginx:
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Verify TLS 1.3 is supported:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -tls1_3
+                ```
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Ensure you are running HAProxy 1.9.1+ with OpenSSL 1.1.1+.
+
+            2. Open your HAProxy configuration file and enable TLS 1.3:
+
+                ```haproxy
+                ssl-default-bind-options ssl-min-ver TLSv1.2
+                ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+                ```
+
+            3. Save the file and restart HAProxy:
+
+                ```bash
+                systemctl restart haproxy
+                ```
+
+            4. Verify TLS 1.3 is supported:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -tls1_3
+                ```
+    refs:
+      - title: TLS 1.3 RFC 8446
+        url: https://datatracker.ietf.org/doc/html/rfc8446
+  - uid: mondoo-tls-security-cert-ocsp-configured
+    title: Ensure OCSP responder is configured for the certificate
+    impact: 60
+    mql: |
+      tls.certificates.first.ocspServer.length > 0
+    docs:
+      desc: |
+        This check verifies that the server's leaf certificate includes at least one OCSP (Online Certificate Status Protocol) responder URL in its Authority Information Access (AIA) extension. OCSP enables clients to check the real-time revocation status of certificates.
+
+        **Why this matters**
+
+        Without an OCSP responder, clients have limited ability to verify certificate revocation status:
+          •  Revoked certificates may continue to be trusted because clients cannot check their status.
+          •  CRL-only revocation checking requires downloading potentially large lists, causing performance issues.
+          •  OCSP stapling (a performance optimization) requires an OCSP responder URL in the certificate.
+          •  Browser behavior varies when revocation checking is unavailable: some fail open (accept the certificate), creating a security gap.
+          •  Compliance frameworks increasingly require functional revocation checking mechanisms.
+
+        Ensure your Certificate Authority includes OCSP responder URLs in issued certificates. Most reputable CAs include this by default.
+      remediation: |
+        To resolve this issue:
+
+        1. Check if your certificate has an OCSP responder URL:
+           ```bash
+           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -ocsp_uri
+           ```
+
+        2. If no OCSP URL is present, you need a new certificate from a CA that includes OCSP in their certificates. Most major CAs (Let's Encrypt, DigiCert, Sectigo, GlobalSign) include OCSP responder URLs by default.
+
+        3. Enable OCSP stapling on your server for better performance:
+           - **Apache**: Add `SSLUseStapling on` and `SSLStaplingCache shmcb:/tmp/stapling_cache(128000)`
+           - **Nginx**: Add `ssl_stapling on;` and `ssl_stapling_verify on;`
+           - **HAProxy**: Add `ssl-default-bind-options ... no-tls-tickets` with OCSP stapling support
+
+        4. Verify OCSP stapling is working:
+           ```bash
+           openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 | grep -A5 "OCSP Response"
+           ```
+    refs:
+      - title: OCSP RFC 6960
+        url: https://datatracker.ietf.org/doc/html/rfc6960
+  - uid: mondoo-tls-security-no-sni-certificate-leak
+    title: Ensure non-SNI connections do not expose a different certificate
+    impact: 50
+    mql: |
+      if (tls.nonSniCertificates.length > 0) {
+        tls.nonSniCertificates.first.subject.commonName == tls.certificates.first.subject.commonName
+      }
+    docs:
+      desc: |
+        This check verifies that when a client connects without Server Name Indication (SNI), the server does not expose a different certificate that could reveal internal hostnames, other hosted services, or infrastructure details.
+
+        **Why this matters**
+
+        Exposing a different certificate on non-SNI connections can leak sensitive information:
+          •  Internal hostnames or service names may be revealed through the default certificate's Common Name or SAN fields.
+          •  Attackers can enumerate other services hosted on the same server or IP address.
+          •  The default certificate may belong to a different organization or service, revealing shared hosting relationships.
+          •  Information gathered from certificate leakage aids reconnaissance for targeted attacks.
+          •  Legacy or outdated certificates served as defaults may have weaker security properties.
+
+        Configure your server to either require SNI or serve the same certificate regardless of whether SNI is present.
+      remediation: |
+        To resolve this issue:
+
+        1. Check what certificate is served without SNI:
+           ```bash
+           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -subject
+           ```
+
+        2. Compare with the SNI certificate:
+           ```bash
+           openssl s_client -connect yourdomain.com:443 -servername yourdomain.com </dev/null 2>/dev/null | openssl x509 -noout -subject
+           ```
+
+        3. To fix, configure the default certificate to match your primary domain:
+           - **Apache**: Ensure the first `<VirtualHost>` block for port 443 uses the correct certificate, as Apache serves the first configured certificate when SNI is not present.
+           - **Nginx**: Set the `default_server` directive on the `server` block with the correct certificate.
+           - **HAProxy**: Configure the primary certificate first in your `bind` line.
+
+        4. Alternatively, reject connections without SNI:
+           - **Nginx**: Create a default server that rejects connections:
+             ```nginx
+             server {
+               listen 443 ssl default_server;
+               ssl_reject_handshake on;
+             }
+             ```
+    refs:
+      - title: TLS Server Name Indication (SNI) RFC 6066
+        url: https://datatracker.ietf.org/doc/html/rfc6066
+

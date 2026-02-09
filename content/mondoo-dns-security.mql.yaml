@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-dns-security
     name: Mondoo DNS Security
-    version: 1.2.0
+    version: 1.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -42,6 +42,8 @@ policies:
           - uid: mondoo-dns-security-no-legacy-ms-365-mx-records
           - uid: mondoo-dns-security-dnssec-enabled
           - uid: mondoo-dns-security-no-wildcard
+          - uid: mondoo-dns-security-ns-redundancy
+          - uid: mondoo-dns-security-reasonable-ttls
 queries:
   - uid: mondoo-dns-security-no-cname-for-root-domain
     title: Ensure no CNAME is used for root domain
@@ -229,3 +231,62 @@ queries:
         * Avoid using wildcard DNS records (*.example.com) unless absolutely necessary for a specific and well-documented use case.
         * Replace wildcard records with explicit DNS records for each required subdomain to maintain precise control over DNS resolution.
         * If wildcard records are required, ensure they are monitored and secured to prevent misuse or exploitation.
+  - uid: mondoo-dns-security-ns-redundancy
+    title: Ensure at least two NS records exist
+    impact: 60
+    mql: dns.records.where(type == "NS").length >= 2
+    docs:
+      desc: |
+        This check ensures that at least two Name Server (NS) records are configured for the domain to provide DNS redundancy and resilience.
+
+        **Why this matters**
+
+        NS records identify the authoritative DNS servers for a domain. Having only a single NS record creates a single point of failure that can make the entire domain unreachable if that nameserver experiences an outage, network disruption, or attack.
+
+        By maintaining at least two NS records, the system achieves:
+          - High availability through redundant name resolution, ensuring the domain remains reachable even if one nameserver fails
+          - Resilience against targeted attacks such as DDoS, since traffic can be distributed across multiple servers
+          - Compliance with DNS best practices and RFC 1034, which recommends multiple nameservers
+          - Improved query performance through geographic distribution of DNS resolution
+
+        Without these protections, a single nameserver failure could render the entire domain and all associated services (web, email, APIs) unreachable.
+      remediation: |
+        Configure at least two authoritative NS records for your domain, ideally hosted on separate networks or with different DNS providers for maximum resilience.
+
+        Steps to remediate:
+          1. Identify your current NS records using `dig NS <domain>`.
+          2. If only one NS record exists, add a secondary nameserver through your DNS provider or a third-party DNS service.
+          3. Ensure the additional nameserver is on a different network or subnet to avoid correlated failures.
+          4. Verify the configuration using DNS validation tools to confirm all nameservers respond correctly.
+    refs:
+      - url: https://datatracker.ietf.org/doc/html/rfc1034#section-4.1
+        title: "RFC 1034: Domain Names - Concepts and Facilities"
+  - uid: mondoo-dns-security-reasonable-ttls
+    title: Ensure DNS record TTLs are not suspiciously low
+    impact: 50
+    mql: dns.records.where(type == "A" || type == "AAAA").all(ttl == null || ttl >= 60)
+    docs:
+      desc: |
+        This check ensures that A and AAAA record TTLs (Time-To-Live) are not set to suspiciously low values (below 60 seconds).
+
+        **Why this matters**
+
+        TTL values control how long DNS resolvers cache a record before querying the authoritative server again. While low TTLs have legitimate uses during migrations, excessively low values can indicate security concerns or misconfigurations:
+
+          - **Fast-flux DNS attacks**: Malware and botnets use very low TTLs (often under 60 seconds) to rapidly rotate IP addresses, making malicious infrastructure harder to block
+          - **Increased attack surface**: Low TTLs cause more frequent DNS queries, increasing exposure to DNS spoofing and cache poisoning attacks
+          - **Performance degradation**: Excessive DNS queries slow down resolution and increase load on authoritative nameservers
+          - **Potential misconfiguration**: TTLs left at very low values after a migration or troubleshooting session may indicate an incomplete change
+
+        By maintaining reasonable TTL values, the system ensures:
+          - Reduced exposure to fast-flux and DNS rebinding attacks
+          - Better caching performance and faster resolution for end users
+          - Lower load on authoritative DNS servers
+      remediation: |
+        Review and increase TTL values for A and AAAA records that have been set below 60 seconds.
+
+        Steps to remediate:
+          1. Identify records with low TTLs using `dig <domain>` and checking the TTL column.
+          2. For production records that are not undergoing migration, set TTLs to at least 300 seconds (5 minutes). Common production values range from 300 to 3600 seconds.
+          3. If low TTLs were set temporarily for a migration or troubleshooting, restore them to normal production values once the change is complete.
+          4. Verify the updated TTL values are in effect by querying the domain and confirming the new TTL is returned.
