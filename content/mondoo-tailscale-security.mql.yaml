@@ -1,0 +1,351 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-tailscale-security
+    name: Mondoo Tailscale Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: tailscale,network
+    require:
+      - provider: tailscale
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Mondoo Tailscale Security policy identifies misconfigurations in Tailscale tailnets that could weaken your zero-trust network security posture. This policy covers device authorization, key management, software updates, and user access controls.
+
+        ## Authentication
+
+        Scanning a Tailscale tailnet requires an API key or OAuth client credentials.
+
+        ### Using an API key
+
+        ```bash
+        export TAILSCALE_API_KEY=tskey-api-...
+        cnspec scan tailscale --tailnet TAILNET_NAME
+        ```
+
+        ### Using OAuth credentials
+
+        ```bash
+        export TAILSCALE_OAUTH_CLIENT_ID=...
+        export TAILSCALE_OAUTH_CLIENT_SECRET=...
+        cnspec scan tailscale --tailnet TAILNET_NAME
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable. This policy is open-source and we welcome contributions from the community, whether it's adding new checks, refining existing ones, or providing feedback. If you have suggestions to improve this policy, visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Tailscale Devices
+        checks:
+          - uid: mondoo-tailscale-security-devices-authorized
+          - uid: mondoo-tailscale-security-devices-key-expiry-enabled
+          - uid: mondoo-tailscale-security-devices-client-up-to-date
+          - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors
+      - title: Tailscale Users
+        checks:
+          - uid: mondoo-tailscale-security-no-users-pending-approval
+          - uid: mondoo-tailscale-security-admin-owner-roles-limited
+          - uid: mondoo-tailscale-security-no-idle-users
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-tailscale-security-devices-authorized
+    title: Ensure all devices are authorized to join the tailnet
+    impact: 90
+    variants:
+      - uid: mondoo-tailscale-security-devices-authorized-device
+      - uid: mondoo-tailscale-security-devices-authorized-tailnet
+    docs:
+      desc: |
+        This check ensures that all devices connected to the Tailscale tailnet are explicitly authorized. Unauthorized devices may have been added without proper review and could pose a security risk to the network.
+
+        **Why this matters**
+
+        Tailscale device authorization is a critical gate that controls which machines can join your network:
+          •  Unauthorized devices may belong to former employees or compromised systems.
+          •  Without device authorization enforcement, any user with access can add devices without admin review.
+          •  Unauthorized devices can access internal services and resources on the tailnet.
+
+        Risk mitigation:
+          •  Enable device authorization in the Tailscale admin console.
+          •  Regularly review the device list and remove unauthorized or unknown devices.
+          •  Use device tags and ACLs to restrict access even after authorization.
+      remediation: |
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
+        2. Review devices that are not authorized.
+        3. Authorize legitimate devices or remove unknown ones.
+
+        To require device authorization for all new devices:
+
+        1. Go to **Settings > Device management**.
+        2. Enable **Device approval**.
+    refs:
+      - title: Tailscale device authorization documentation
+        url: https://tailscale.com/kb/1099/device-authorization
+  - uid: mondoo-tailscale-security-devices-authorized-device
+    filters: asset.platform == 'tailscale-device'
+    mql: |
+      tailscale.device.authorized == true
+  - uid: mondoo-tailscale-security-devices-authorized-tailnet
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.devices.all(authorized == true)
+  - uid: mondoo-tailscale-security-devices-key-expiry-enabled
+    title: Ensure device key expiry is not disabled
+    impact: 80
+    variants:
+      - uid: mondoo-tailscale-security-devices-key-expiry-enabled-device
+      - uid: mondoo-tailscale-security-devices-key-expiry-enabled-tailnet
+    docs:
+      desc: |
+        This check ensures that key expiry is not disabled on Tailscale devices. Key expiry forces devices to periodically re-authenticate, which limits the window of exposure if a device key is compromised.
+
+        **Why this matters**
+
+        When key expiry is disabled, a device remains authenticated indefinitely:
+          •  Compromised device keys provide permanent access to the tailnet.
+          •  Lost or stolen devices retain network access until manually removed.
+          •  There is no forced re-authentication to verify the device owner's identity.
+          •  Violates the principle of limiting credential lifetime.
+
+        Key expiry provides:
+          •  Automatic revocation of access after the expiry period.
+          •  Forced re-authentication that verifies the user still has valid credentials.
+          •  Reduced blast radius for compromised device keys.
+
+        Risk mitigation:
+          •  Enable key expiry on all devices.
+          •  Set appropriate expiry periods based on device risk (e.g., shorter for mobile devices).
+          •  Monitor for devices with disabled key expiry and re-enable as needed.
+      remediation: |
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
+        2. Find devices with key expiry disabled (shown as "Key expiry disabled").
+        3. Select the device and re-enable key expiry.
+
+        **Using Tailscale CLI**
+
+        Key expiry settings are managed per-device through the admin console. Devices can disable key expiry using:
+
+        ```bash
+        # To check key expiry status
+        tailscale status --json | jq '.Self.KeyExpiry'
+        ```
+    refs:
+      - title: Tailscale key expiry documentation
+        url: https://tailscale.com/kb/1028/key-expiry
+  - uid: mondoo-tailscale-security-devices-key-expiry-enabled-device
+    filters: asset.platform == 'tailscale-device'
+    mql: |
+      tailscale.device.keyExpiryDisabled == false
+  - uid: mondoo-tailscale-security-devices-key-expiry-enabled-tailnet
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.devices.all(keyExpiryDisabled == false)
+  - uid: mondoo-tailscale-security-devices-client-up-to-date
+    title: Ensure devices are running up-to-date Tailscale client software
+    impact: 60
+    variants:
+      - uid: mondoo-tailscale-security-devices-client-up-to-date-device
+      - uid: mondoo-tailscale-security-devices-client-up-to-date-tailnet
+    docs:
+      desc: |
+        This check ensures that Tailscale devices are running the latest available client software. Outdated clients may contain security vulnerabilities or lack important security features.
+
+        **Why this matters**
+
+        Running outdated Tailscale client software introduces security risks:
+          •  Known vulnerabilities in older versions may be exploitable.
+          •  Security features and protocol improvements are only available in newer versions.
+          •  Outdated clients may not support the latest authentication and encryption mechanisms.
+
+        Keeping clients up to date ensures:
+          •  Protection against known vulnerabilities.
+          •  Access to the latest security features and bug fixes.
+          •  Compatibility with the latest tailnet security settings.
+
+        Risk mitigation:
+          •  Enable automatic updates where possible.
+          •  Monitor for devices with available updates and ensure they are applied promptly.
+          •  Include Tailscale client updates in your organization's patch management process.
+      remediation: |
+        **Update Tailscale client**
+
+        Update the Tailscale client on each device:
+
+        - **macOS**: Update through the Mac App Store or `brew upgrade tailscale`.
+        - **Windows**: Update through the Microsoft Store or download from tailscale.com.
+        - **Linux**: Update via your package manager (e.g., `apt upgrade tailscale` or `dnf upgrade tailscale`).
+
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
+        2. Devices with available updates are flagged.
+        3. Notify device owners to update their clients.
+    refs:
+      - title: Tailscale download and update
+        url: https://tailscale.com/download
+  - uid: mondoo-tailscale-security-devices-client-up-to-date-device
+    filters: |
+      asset.platform == 'tailscale-device'
+      tailscale.device.isExternal == false
+    mql: |
+      tailscale.device.updateAvailable == false
+  - uid: mondoo-tailscale-security-devices-client-up-to-date-tailnet
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.devices.where(isExternal == false).all(updateAvailable == false)
+  - uid: mondoo-tailscale-security-no-users-pending-approval
+    title: Ensure no users are pending approval to join the tailnet
+    impact: 70
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.users.none(status == "needs-approval")
+    docs:
+      desc: |
+        This check ensures that there are no users stuck in a "needs-approval" state. Users pending approval have requested access to the tailnet but have not been reviewed by an administrator, which may indicate a backlog in access management.
+
+        **Why this matters**
+
+        Users in a pending approval state represent unresolved access requests:
+          •  Legitimate users may be blocked from accessing resources they need.
+          •  A backlog of pending requests may indicate that access review processes are not functioning effectively.
+          •  Pending requests should be reviewed and either approved or denied promptly.
+
+        Timely access review ensures:
+          •  Users have appropriate access when needed.
+          •  Unauthorized access requests are identified and denied.
+          •  The organization maintains an active access governance process.
+
+        Risk mitigation:
+          •  Review pending user approvals regularly.
+          •  Approve legitimate users and deny unknown access requests.
+          •  Configure notifications for new approval requests.
+      remediation: |
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/users).
+        2. Review users with "Needs approval" status.
+        3. Approve legitimate users or deny unauthorized requests.
+    refs:
+      - title: Tailscale user management documentation
+        url: https://tailscale.com/kb/1138/user-management
+  - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors
+    title: Ensure no devices have tailnet lock errors
+    impact: 80
+    variants:
+      - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors-device
+      - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors-tailnet
+    docs:
+      desc: |
+        This check ensures that no devices in the tailnet have tailnet lock signature errors. Tailnet lock errors indicate that a device's node key has not been properly signed, which may prevent it from functioning correctly in a locked tailnet or may indicate a compromised device.
+
+        **Why this matters**
+
+        Tailnet lock adds a layer of security by requiring devices to have their node keys signed by trusted devices:
+          •  Devices with lock errors have not been properly verified by the tailnet lock process.
+          •  Lock errors may indicate that a device was added without proper authorization.
+          •  Unresolved lock errors can prevent devices from communicating properly in the tailnet.
+          •  In a locked tailnet, only devices with properly signed keys should be trusted.
+
+        Risk mitigation:
+          •  Review and resolve all tailnet lock errors promptly.
+          •  Sign legitimate devices using a trusted signing node.
+          •  Remove devices that cannot be properly verified.
+          •  Enable tailnet lock to strengthen device authentication.
+      remediation: |
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
+        2. Review devices showing tailnet lock errors.
+        3. For legitimate devices, sign them using a trusted node:
+
+        ```bash
+        tailscale lock sign NODE_KEY
+        ```
+
+        4. Remove any devices that should not be on the tailnet.
+    refs:
+      - title: Tailscale tailnet lock documentation
+        url: https://tailscale.com/kb/1226/tailnet-lock
+  - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors-device
+    filters: asset.platform == 'tailscale-device'
+    mql: |
+      tailscale.device.tailnetLockError == ""
+  - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors-tailnet
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.devices.all(tailnetLockError == "")
+  - uid: mondoo-tailscale-security-admin-owner-roles-limited
+    title: Ensure admin and owner roles are limited to a small number of users
+    impact: 70
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.users.where(role == "owner").length <= 2
+      tailscale.users.where(role == "admin").length <= 3
+    docs:
+      desc: |
+        This check ensures that the number of users with administrative privileges in the tailnet is limited. Owner and admin roles have elevated permissions that can modify tailnet configuration, manage devices, and control user access.
+
+        **Why this matters**
+
+        Excessive administrative access increases the attack surface:
+          •  Each admin or owner account is a high-value target for attackers.
+          •  Compromised admin accounts can modify ACLs, approve devices, and change tailnet settings.
+          •  Too many administrators makes it harder to maintain accountability and audit trails.
+          •  The principle of least privilege requires minimizing the number of highly privileged users.
+
+        Risk mitigation:
+          •  Limit owner roles to 1-2 primary tailnet owners.
+          •  Limit admin roles to 2-3 trusted administrators.
+          •  Use member roles for most users who only need device connectivity.
+          •  Regularly review and prune admin and owner role assignments.
+      remediation: |
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/users).
+        2. Review users with "Admin" and "Owner" roles.
+        3. Downgrade users who do not need elevated privileges to "Member" role.
+    refs:
+      - title: Tailscale user roles documentation
+        url: https://tailscale.com/kb/1138/user-management
+  - uid: mondoo-tailscale-security-no-idle-users
+    title: Ensure no users have been idle for an extended period
+    impact: 50
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.users.none(status == "idle")
+    docs:
+      desc: |
+        This check ensures that there are no idle users in the tailnet. Idle users have not been seen for more than 28 days and may represent dormant accounts that increase the attack surface.
+
+        **Why this matters**
+
+        Idle user accounts are a common security risk:
+          •  Dormant accounts may belong to former employees or contractors who no longer need access.
+          •  Idle accounts can be targeted by attackers, especially if credentials are reused or compromised.
+          •  Unused accounts still have network access and may have overly permissive configurations.
+          •  Maintaining unused accounts violates the principle of least privilege.
+
+        Risk mitigation:
+          •  Regularly review idle users and determine if they still need access.
+          •  Suspend or remove users who no longer need tailnet access.
+          •  Implement an offboarding process that includes removing tailnet access.
+          •  Set up alerts for accounts that become idle.
+      remediation: |
+        **Using Tailscale Admin Console**
+
+        1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/users).
+        2. Review users with "Idle" status (inactive for more than 28 days).
+        3. Contact idle users to verify they still need access.
+        4. Suspend or remove users who no longer require tailnet access.
+    refs:
+      - title: Tailscale user management documentation
+        url: https://tailscale.com/kb/1138/user-management
