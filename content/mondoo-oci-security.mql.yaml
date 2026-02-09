@@ -99,6 +99,153 @@ queries:
     refs:
       - title: CIS OCI Foundations Benchmark 1.7
         url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/usingmfa.htm
+  - uid: mondoo-oci-security-iam-user-emails-verified
+    title: Ensure IAM user email addresses are verified
+    impact: 60
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state == "ACTIVE" && email != "").all(emailVerified == true)
+    docs:
+      desc: |
+        This check ensures that all active IAM users with email addresses have verified their email. Unverified emails may indicate misconfigured accounts or accounts that were never properly set up.
+
+        **Why this matters**
+
+        Unverified email addresses create security and operational risks:
+          •  Password reset and account recovery notifications may not reach the intended user.
+          •  Security alerts about suspicious account activity cannot be delivered.
+          •  Unverified accounts may indicate orphaned or misconfigured user identities.
+
+        Risk mitigation:
+          •  Require email verification for all IAM users during account creation.
+          •  Periodically audit user accounts for unverified email addresses.
+          •  Disable accounts with unverified emails that have not been resolved within a set time frame.
+      remediation: |
+        Contact users with unverified email addresses and ask them to verify their email through the OCI Console under their user profile settings.
+    refs:
+      - title: OCI IAM user management
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingusers.htm
+  - uid: mondoo-oci-security-iam-no-overly-permissive-policies
+    title: Ensure no IAM policies grant manage all-resources in tenancy
+    impact: 90
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.policies.none(
+        statements.any(_ == /allow.*manage\s+all-resources\s+in\s+tenancy/i)
+      )
+    docs:
+      desc: |
+        This check ensures that no IAM policies grant the `manage all-resources in tenancy` permission, which gives unrestricted administrative access to all resources in the entire tenancy.
+
+        **Why this matters**
+
+        The `manage all-resources in tenancy` statement is the most permissive policy possible in OCI:
+          •  It grants full administrative control over every resource in every compartment.
+          •  Groups assigned this policy can create, modify, and delete any resource including IAM configurations.
+          •  A compromised user in such a group has unlimited blast radius across the entire tenancy.
+          •  This violates the principle of least privilege and makes access auditing difficult.
+
+        Risk mitigation:
+          •  Replace broad tenancy-level policies with compartment-scoped policies.
+          •  Use specific resource types instead of `all-resources`.
+          •  Grant only the minimum permissions required for each group's function.
+          •  Regularly audit IAM policies for overly permissive statements.
+      remediation: |
+        **Review and restrict overly permissive policies**
+
+        1. Navigate to **Identity & Security > Policies** in the OCI Console.
+        2. Identify policies containing `manage all-resources in tenancy`.
+        3. Replace with scoped policies:
+
+        ```
+        # Instead of:
+        Allow group Admins to manage all-resources in tenancy
+
+        # Use scoped policies:
+        Allow group NetworkAdmins to manage virtual-network-family in compartment NetworkCompartment
+        Allow group ComputeAdmins to manage instance-family in compartment ComputeCompartment
+        ```
+    refs:
+      - title: CIS OCI Foundations Benchmark 1.1
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm
+  - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
+    title: Ensure inactive users have no active API keys
+    impact: 80
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state != "ACTIVE").all(
+        apiKeys.none(state == "ACTIVE")
+      )
+    docs:
+      desc: |
+        This check ensures that IAM users in an inactive state do not have active API keys. Active API keys on inactive accounts represent unused credentials that could be exploited if compromised.
+
+        **Why this matters**
+
+        API keys on inactive user accounts are a significant credential hygiene risk:
+          •  Inactive users have left the organization or no longer need access, but their API keys may still function.
+          •  Compromised API keys provide programmatic access to OCI resources.
+          •  Orphaned credentials are a common vector in cloud security breaches.
+
+        Risk mitigation:
+          •  Delete or deactivate API keys when user accounts are deactivated.
+          •  Implement automated credential cleanup as part of user offboarding.
+          •  Regularly audit API keys across all users for stale or unnecessary credentials.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Identity & Security > Users**.
+        2. Select the inactive user.
+        3. Under **Resources**, select **API Keys**.
+        4. Delete active API keys.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci iam user api-key delete --user-id USER_OCID --fingerprint KEY_FINGERPRINT
+        ```
+    refs:
+      - title: OCI API key management
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
+  - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
+    title: Ensure inactive users have no active auth tokens
+    impact: 80
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.users.where(state != "ACTIVE").all(
+        authTokens.none(state == "ACTIVE")
+      )
+    docs:
+      desc: |
+        This check ensures that IAM users in an inactive state do not have active authentication tokens. Active auth tokens on inactive accounts represent unused credentials that could be exploited if compromised.
+
+        **Why this matters**
+
+        Authentication tokens on inactive accounts pose a credential hygiene risk:
+          •  Auth tokens provide access to OCI APIs and can be used independently of user account status.
+          •  Orphaned tokens may go unnoticed during security audits if not linked to active user reviews.
+          •  Compromised tokens allow unauthorized API access to OCI resources.
+
+        Risk mitigation:
+          •  Delete auth tokens when user accounts are deactivated.
+          •  Implement automated credential cleanup during user offboarding.
+          •  Regularly audit auth tokens across all users.
+      remediation: |
+        **Using OCI Console**
+
+        1. Navigate to **Identity & Security > Users**.
+        2. Select the inactive user.
+        3. Under **Resources**, select **Auth Tokens**.
+        4. Delete active auth tokens.
+
+        **Using OCI CLI**
+
+        ```bash
+        oci iam auth-token delete --user-id USER_OCID --auth-token-id TOKEN_OCID
+        ```
+    refs:
+      - title: OCI auth token management
+        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
   - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
     title: Ensure Object Storage buckets are not publicly accessible
     impact: 90
@@ -366,153 +513,6 @@ queries:
     refs:
       - title: CIS OCI Foundations Benchmark 2.2
         url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
-  - uid: mondoo-oci-security-iam-user-emails-verified
-    title: Ensure IAM user email addresses are verified
-    impact: 60
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.identity.users.where(state == "ACTIVE" && email != "").all(emailVerified == true)
-    docs:
-      desc: |
-        This check ensures that all active IAM users with email addresses have verified their email. Unverified emails may indicate misconfigured accounts or accounts that were never properly set up.
-
-        **Why this matters**
-
-        Unverified email addresses create security and operational risks:
-          •  Password reset and account recovery notifications may not reach the intended user.
-          •  Security alerts about suspicious account activity cannot be delivered.
-          •  Unverified accounts may indicate orphaned or misconfigured user identities.
-
-        Risk mitigation:
-          •  Require email verification for all IAM users during account creation.
-          •  Periodically audit user accounts for unverified email addresses.
-          •  Disable accounts with unverified emails that have not been resolved within a set timeframe.
-      remediation: |
-        Contact users with unverified email addresses and ask them to verify their email through the OCI Console under their user profile settings.
-    refs:
-      - title: OCI IAM user management
-        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingusers.htm
-  - uid: mondoo-oci-security-iam-no-overly-permissive-policies
-    title: Ensure no IAM policies grant manage all-resources in tenancy
-    impact: 90
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.identity.policies.none(
-        statements.any(_ == /allow.*manage\s+all-resources\s+in\s+tenancy/i)
-      )
-    docs:
-      desc: |
-        This check ensures that no IAM policies grant the `manage all-resources in tenancy` permission, which gives unrestricted administrative access to all resources in the entire tenancy.
-
-        **Why this matters**
-
-        The `manage all-resources in tenancy` statement is the most permissive policy possible in OCI:
-          •  It grants full administrative control over every resource in every compartment.
-          •  Groups assigned this policy can create, modify, and delete any resource including IAM configurations.
-          •  A compromised user in such a group has unlimited blast radius across the entire tenancy.
-          •  This violates the principle of least privilege and makes access auditing difficult.
-
-        Risk mitigation:
-          •  Replace broad tenancy-level policies with compartment-scoped policies.
-          •  Use specific resource types instead of `all-resources`.
-          •  Grant only the minimum permissions required for each group's function.
-          •  Regularly audit IAM policies for overly permissive statements.
-      remediation: |
-        **Review and restrict overly permissive policies**
-
-        1. Navigate to **Identity & Security > Policies** in the OCI Console.
-        2. Identify policies containing `manage all-resources in tenancy`.
-        3. Replace with scoped policies:
-
-        ```
-        # Instead of:
-        Allow group Admins to manage all-resources in tenancy
-
-        # Use scoped policies:
-        Allow group NetworkAdmins to manage virtual-network-family in compartment NetworkCompartment
-        Allow group ComputeAdmins to manage instance-family in compartment ComputeCompartment
-        ```
-    refs:
-      - title: CIS OCI Foundations Benchmark 1.1
-        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm
-  - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
-    title: Ensure inactive users have no active API keys
-    impact: 80
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.identity.users.where(state != "ACTIVE").all(
-        apiKeys.none(state == "ACTIVE")
-      )
-    docs:
-      desc: |
-        This check ensures that IAM users in an inactive state do not have active API keys. Active API keys on inactive accounts represent unused credentials that could be exploited if compromised.
-
-        **Why this matters**
-
-        API keys on inactive user accounts are a significant credential hygiene risk:
-          •  Inactive users have left the organization or no longer need access, but their API keys may still function.
-          •  Compromised API keys provide programmatic access to OCI resources.
-          •  Orphaned credentials are a common vector in cloud security breaches.
-
-        Risk mitigation:
-          •  Delete or deactivate API keys when user accounts are deactivated.
-          •  Implement automated credential cleanup as part of user offboarding.
-          •  Regularly audit API keys across all users for stale or unnecessary credentials.
-      remediation: |
-        **Using OCI Console**
-
-        1. Navigate to **Identity & Security > Users**.
-        2. Select the inactive user.
-        3. Under **Resources**, select **API Keys**.
-        4. Delete active API keys.
-
-        **Using OCI CLI**
-
-        ```bash
-        oci iam user api-key delete --user-id USER_OCID --fingerprint KEY_FINGERPRINT
-        ```
-    refs:
-      - title: OCI API key management
-        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
-  - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
-    title: Ensure inactive users have no active auth tokens
-    impact: 80
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.identity.users.where(state != "ACTIVE").all(
-        authTokens.none(state == "ACTIVE")
-      )
-    docs:
-      desc: |
-        This check ensures that IAM users in an inactive state do not have active authentication tokens. Active auth tokens on inactive accounts represent unused credentials that could be exploited if compromised.
-
-        **Why this matters**
-
-        Authentication tokens on inactive accounts pose a credential hygiene risk:
-          •  Auth tokens provide access to OCI APIs and can be used independently of user account status.
-          •  Orphaned tokens may go unnoticed during security audits if not linked to active user reviews.
-          •  Compromised tokens allow unauthorized API access to OCI resources.
-
-        Risk mitigation:
-          •  Delete auth tokens when user accounts are deactivated.
-          •  Implement automated credential cleanup during user offboarding.
-          •  Regularly audit auth tokens across all users.
-      remediation: |
-        **Using OCI Console**
-
-        1. Navigate to **Identity & Security > Users**.
-        2. Select the inactive user.
-        3. Under **Resources**, select **Auth Tokens**.
-        4. Delete active auth tokens.
-
-        **Using OCI CLI**
-
-        ```bash
-        oci iam auth-token delete --user-id USER_OCID --auth-token-id TOKEN_OCID
-        ```
-    refs:
-      - title: OCI auth token management
-        url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols
     title: Ensure VCN security lists do not allow unrestricted egress for all protocols to 0.0.0.0/0
     impact: 70
