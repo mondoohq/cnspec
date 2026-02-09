@@ -159,7 +159,7 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inv
 	return ts
 }
 
-// assetPolicyTests converts asset vulnerability results to Junit test cases
+// assetMvdTests converts asset vulnerability results to Junit test cases
 func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset) *junit.Testsuite {
 	// check if we have a vulnerability report
 	vulnReport, ok := r.VulnReports[assetMrn]
@@ -214,7 +214,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 				ts.Failures++
 
 				var content string
-				content += pkg.Name + " with version" + pkg.Version + " has known vulnerabilities"
+				content += pkg.Name + " with version " + pkg.Version + " has known vulnerabilities"
 				if pkg.Score > 0 {
 					content += " (score " + fmt.Sprintf("%v", float32(pkg.Score)/10) + ")"
 				}

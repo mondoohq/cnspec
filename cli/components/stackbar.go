@@ -17,7 +17,7 @@ import (
 func sanitizeDatapoints(datapoints []float64) []float64 {
 	for i := range datapoints {
 		val := datapoints[i]
-		// ensure the datapoint it a real value
+		// ensure the datapoint is a real value
 		if math.IsNaN(val) {
 			val = 0.0
 			datapoints[i] = val
@@ -201,7 +201,7 @@ func (m StackBarChart) Render(data StackBarData) string {
 		shouldWrap := l > maxLen
 
 		if shouldWrap {
-			// if the line is too long, we'll wrap it it and then make
+			// if the line is too long, we'll wrap it and then make
 			// the bar multiline as well
 			wrappedKey := wordwrap.String(entry.Key, maxLen)
 			bar := m.bar.Render(data.Color, datapoints, maxLen+1)

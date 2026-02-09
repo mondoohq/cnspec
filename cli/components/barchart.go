@@ -106,7 +106,7 @@ func (m BarChart) Render(datapoints []float64, colorMap []termenv.Color, labels 
 
 	boxWidth := m.width
 
-	// if its rendered with a box, we need to subtract two char from each end
+	// if it's rendered with a box, we need to subtract two char from each end
 	if m.border {
 		boxWidth = boxWidth - 4
 	}

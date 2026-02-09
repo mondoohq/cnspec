@@ -83,7 +83,7 @@ func assetScanErrToString(assetObj *inventory.Asset, err error) string {
 			if t.Domain == policy.POLICY_SERVICE_NAME {
 				switch t.Reason {
 				case "no-matching-policy":
-					builder.WriteString("We could not find a policy that fits to your asset.\n")
+					builder.WriteString("We could not find a policy that matches your asset.\n")
 					if t.Metadata != nil {
 						builder.WriteString("Enable policies at: ")
 						builder.WriteString(theme.DefaultTheme.Secondary(assetObj.Url))

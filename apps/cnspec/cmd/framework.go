@@ -192,7 +192,7 @@ var frameworkUploadCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		inputFile := viper.GetString("file")
 		if inputFile == "" {
-			log.Error().Msgf("output file is required")
+			log.Error().Msgf("input file is required")
 			os.Exit(1)
 		}
 

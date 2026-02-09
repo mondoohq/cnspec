@@ -142,7 +142,7 @@ func renderAdvisoryPolicy(print *printer.Printer, policyObj *policy.Policy, repo
 
 	ignoreList := []string{"no-platform-advisories", "no-platform-cves", "installed-kernels"}
 	ignore := func(k string) bool {
-		// skip query its already included
+		// skip query, it's already included
 		for j := range ignoreList {
 			if strings.HasSuffix(k, ignoreList[j]) {
 				return true

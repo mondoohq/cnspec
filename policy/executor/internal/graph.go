@@ -37,16 +37,16 @@ type envelope struct {
 // be attached to the Node struct. Pushing data through the
 // graph involves 2 calls for each node. First, the graph
 // will ask the node to consume any new data is has from
-// the nodes dependants (in edges). Once all the data has
+// the nodes dependents (in edges). Once all the data has
 // been sent, it will ask the node to recalculate and return
 // any data that it should send from this node to its out
 // edges.
 type nodeData interface {
 	initialize()
-	// consume sends data to this node from a dependant node.
-	// consume should be defer as much work to recalculate as
+	// consume sends data to this node from a dependent node.
+	// consume should defer as much work to recalculate as
 	// possible, as recalculate will only be called after all
-	// available dependant data has been sent
+	// available dependent data has been sent
 	consume(from NodeID, data *envelope)
 	// recalculate is used to recalculate data for this node.
 	// If nothing has changed and the out edges do not need

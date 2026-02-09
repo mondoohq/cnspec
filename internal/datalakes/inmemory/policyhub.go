@@ -87,12 +87,12 @@ func (db *Db) GetProperty(ctx context.Context, mrn string) (*explorer.Property, 
 	return proto.Clone(q.(*explorer.Property)).(*explorer.Property), nil
 }
 
-// SetProperty stores a given query
-// Note: the query must be defined, it cannot be nil
+// SetProperty stores a given property
+// Note: the property must be defined, it cannot be nil
 func (db *Db) SetProperty(ctx context.Context, mrn string, prop *explorer.Property) error {
 	ok := db.cache.Set(dbIDProp+mrn, prop, 1)
 	if !ok {
-		return errors.New("failed to save query '" + mrn + "' to cache")
+		return errors.New("failed to save property '" + mrn + "' to cache")
 	}
 	return nil
 }
@@ -247,7 +247,7 @@ func (db *Db) invalidatePolicyAndBundleAncestors(ctx context.Context, wrap *wrap
 	mrn := wrap.Policy.Mrn
 	log.Debug().Str("policy", mrn).Msg("invalidate policy cache")
 
-	// invalidate the policy if it isn't invalided
+	// invalidate the policy if it isn't invalidated
 	if !wrap.invalidated {
 		wrap.invalidated = true
 		db.cache.Set(dbIDPolicy+mrn, *wrap, 2)
@@ -257,7 +257,7 @@ func (db *Db) invalidatePolicyAndBundleAncestors(ctx context.Context, wrap *wrap
 	if ok {
 		wrapB := x.(wrapBundle)
 
-		// invalidate the bundle if it isn't invalided
+		// invalidate the bundle if it isn't invalidated
 		if !wrapB.invalidated {
 			wrapB.invalidated = true
 			db.cache.Set(dbIDBundle+mrn, wrapB, 3)
@@ -284,7 +284,7 @@ func (db *Db) invalidateFrameworkAndBundleAncestors(ctx context.Context, wrap *w
 	mrn := wrap.Framework.Mrn
 	log.Debug().Str("framework", mrn).Msg("invalidate framework cache")
 
-	// invalidate the framework if it isn't invalided
+	// invalidate the framework if it isn't invalidated
 	if !wrap.invalidated {
 		wrap.invalidated = true
 		db.cache.Set(dbIDFramework+mrn, *wrap, 2)
@@ -294,7 +294,7 @@ func (db *Db) invalidateFrameworkAndBundleAncestors(ctx context.Context, wrap *w
 	if ok {
 		wrapB := x.(wrapBundle)
 
-		// invalidate the bundle if it isn't invalided
+		// invalidate the bundle if it isn't invalidated
 		if !wrapB.invalidated {
 			wrapB.invalidated = true
 			db.cache.Set(dbIDBundle+mrn, wrapB, 3)

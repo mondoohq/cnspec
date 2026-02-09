@@ -94,7 +94,7 @@ func WalkPolicyBundleFiles(filenames ...string) ([]string, error) {
 	return resolvedFilenames, nil
 }
 
-// aggregateFilesToBundle iterates over all provided files and loads its content.
+// aggregateFilesToBundle iterates over all provided files and loads their content.
 // It assumes that all provided files are checked upfront and are not a directory
 func aggregateFilesToBundle(paths []string) (*Bundle, error) {
 	// iterate over all files, load them and merge them
