@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 3.0.0
+    version: 3.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -17,6 +17,17 @@ policies:
     docs:
       desc: |
         The Mondoo Google Cloud (GCP) Security policy is designed to identify critical misconfigurations that could leave your Google Cloud infrastructure vulnerable to attackers. This policy helps organizations detect and remediate security risks before they can be exploited, reducing the likelihood of unauthorized access, data breaches, privilege escalation, and operational disruptions.
+
+        This policy provides security checks across key GCP services, uncovering misconfigurations that could put critical resources at risk, particularly those exposed to the public internet:
+
+        - Cloud DNS
+        - Cloud Key Management Service (KMS)
+        - Cloud Redis
+        - Cloud SQL
+        - Cloud Storage
+        - Compute Engine
+        - Compute Firewall
+        - Google Kubernetes Engine (GKE)
 
         ## Join the community!
 
@@ -59,6 +70,23 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose
           - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls
           - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed
+          - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled
+      - title: Google Kubernetes Engine (GKE)
+        checks:
+          - uid: mondoo-gcp-security-gke-legacy-abac-disabled
+          - uid: mondoo-gcp-security-gke-workload-identity-enabled
+          - uid: mondoo-gcp-security-gke-private-cluster-enabled
+          - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled
+          - uid: mondoo-gcp-security-gke-network-policy-enabled
+          - uid: mondoo-gcp-security-gke-shielded-nodes-enabled
+          - uid: mondoo-gcp-security-gke-release-channel-configured
+      - title: Compute Firewall
+        checks:
+          - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet
+          - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet
+      - title: Cloud Redis
+        checks:
+          - uid: mondoo-gcp-security-cloud-redis-auth-enabled
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -3598,4 +3626,1121 @@ queries:
         values['dnssec_config'].where(_['state'] == "on").all(
           _['default_key_specs'].where(_['key_type'] == "keySigning").all(_['algorithm'] != "rsasha1")
         )
+      )
+  - uid: mondoo-gcp-security-gke-legacy-abac-disabled
+    title: Ensure legacy ABAC is disabled on GKE clusters
+    impact: 90
+    variants:
+      - uid: mondoo-gcp-security-gke-legacy-abac-disabled-gcp
+      - uid: mondoo-gcp-security-gke-legacy-abac-disabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-legacy-abac-disabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-legacy-abac-disabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that legacy Attribute-Based Access Control (ABAC) is disabled on Google Kubernetes Engine (GKE) clusters. Legacy ABAC is a deprecated authorization mechanism that grants broad permissions without the granularity and security of Kubernetes Role-Based Access Control (RBAC).
+
+        **Why this matters**
+
+        Legacy ABAC provides coarse-grained access control that does not follow the principle of least privilege:
+          •  ABAC policies are difficult to manage and audit compared to RBAC.
+          •  Enabling legacy ABAC alongside RBAC can lead to unintended privilege escalation, as ABAC may grant access that RBAC would otherwise deny.
+          •  Legacy ABAC has been deprecated by Google and is not recommended for production workloads.
+
+        If legacy ABAC remains enabled, it can lead to:
+          •  Overly permissive access to Kubernetes resources.
+          •  Difficulty enforcing least privilege and auditing access.
+          •  Non-compliance with CIS GKE Benchmark and other security frameworks.
+
+        Risk mitigation:
+          •  Disable legacy ABAC on all GKE clusters and rely exclusively on RBAC for authorization.
+          •  Review and configure RBAC policies to grant only the minimum required permissions.
+          •  Monitor cluster audit logs for unauthorized access attempts.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              # Disable legacy ABAC
+              enable_legacy_abac = false
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Security**.
+            4. Ensure that **Legacy authorization** is disabled.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --no-enable-legacy-authorization \
+              --zone ZONE
+            ```
+    refs:
+      - title: CIS GKE Benchmark 5.8.4
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/hardening-your-cluster
+  - uid: mondoo-gcp-security-gke-legacy-abac-disabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.legacyAbac['enabled'] != true
+  - uid: mondoo-gcp-security-gke-legacy-abac-disabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        arguments.enable_legacy_abac != true
+      )
+  - uid: mondoo-gcp-security-gke-legacy-abac-disabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.enable_legacy_abac != true
+      )
+  - uid: mondoo-gcp-security-gke-legacy-abac-disabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.enable_legacy_abac != true
+      )
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled
+    title: Ensure Workload Identity is enabled on GKE clusters
+    impact: 85
+    variants:
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-gcp
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Workload Identity is enabled on Google Kubernetes Engine (GKE) clusters. Workload Identity is the recommended way for workloads running on GKE to access Google Cloud services securely, replacing the need for node-level service account keys or metadata server access.
+
+        **Why this matters**
+
+        Without Workload Identity, pods on a GKE cluster may access Google Cloud APIs using the node's service account via the metadata server. This creates several security risks:
+          •  All pods on a node share the same Google Cloud identity, violating the principle of least privilege.
+          •  Compromised pods can access the metadata server to obtain credentials with broad permissions.
+          •  Managing and rotating service account keys becomes complex and error-prone.
+
+        Workload Identity maps Kubernetes service accounts to Google Cloud IAM service accounts, enabling:
+          •  Fine-grained, per-pod identity and access control to Google Cloud services.
+          •  Elimination of service account key management.
+          •  Protection of the node metadata server from unauthorized pod access.
+
+        Risk mitigation:
+          •  Enable Workload Identity at the cluster level and configure Kubernetes service accounts to use Google Cloud IAM service accounts.
+          •  Remove any exported service account keys that are no longer needed.
+          •  Regularly audit the IAM bindings between Kubernetes and Google Cloud service accounts.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              workload_identity_config {
+                workload_pool = "${var.project_id}.svc.id.goog"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Security**.
+            4. In the **Workload Identity** section, select **Edit**.
+            5. Enable **Workload Identity** and specify the workload pool.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --workload-pool=PROJECT_ID.svc.id.goog \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Workload Identity documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.workloadIdentityConfig['workloadPool'] != null
+      gcp.project.gkeService.cluster.workloadIdentityConfig['workloadPool'] != ""
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'workload_identity_config') != empty
+      )
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.workload_identity_config != null &&
+        change.after.workload_identity_config != empty
+      )
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.workload_identity_config != null &&
+        values.workload_identity_config != empty
+      )
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled
+    title: Ensure private cluster is enabled on GKE clusters
+    impact: 85
+    variants:
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-gcp
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that GKE clusters are configured as private clusters, where nodes only have internal IP addresses and are isolated from the public internet. Private clusters reduce the attack surface by preventing direct internet access to cluster nodes.
+
+        **Why this matters**
+
+        By default, GKE cluster nodes are assigned both internal and external IP addresses, making them accessible from the internet:
+          •  Public nodes are exposed to network-based attacks including port scanning, exploitation of node-level vulnerabilities, and unauthorized access.
+          •  Attackers who compromise a publicly accessible node can potentially pivot to other resources in the cluster or VPC.
+          •  Data exfiltration is easier when nodes have direct internet access.
+
+        Private clusters provide:
+          •  Nodes with only internal IP addresses, reducing the external attack surface.
+          •  Controlled egress through Cloud NAT or other managed gateways.
+          •  Better compliance with network segmentation requirements.
+
+        Risk mitigation:
+          •  Enable private nodes when creating or updating GKE clusters.
+          •  Use Cloud NAT for outbound internet access when needed.
+          •  Configure master authorized networks to restrict access to the control plane.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              private_cluster_config {
+                enable_private_nodes    = true
+                enable_private_endpoint = false
+                master_ipv4_cidr_block  = "172.16.0.0/28"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: Private cluster configuration cannot be changed on an existing cluster. You must create a new cluster:
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select **Create**.
+            3. In the **Networking** section, select **Private cluster**.
+            4. Enable **Access control plane using its external IP address** if needed.
+            5. Configure the **Control plane IP range**.
+            6. Complete the cluster creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters create CLUSTER_NAME \
+              --enable-private-nodes \
+              --master-ipv4-cidr=172.16.0.0/28 \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Private cluster documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.privateClusterConfig['enablePrivateNodes'] == true
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'private_cluster_config').any(arguments.enable_private_nodes == true)
+      )
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.private_cluster_config != null &&
+        change.after.private_cluster_config.any(_['enable_private_nodes'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.private_cluster_config != null &&
+        values.private_cluster_config.any(_['enable_private_nodes'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled
+    title: Ensure master authorized networks are enabled on GKE clusters
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-gcp
+      - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that master authorized networks are configured on GKE clusters. Master authorized networks restrict access to the Kubernetes API server to specific IP address ranges, reducing the attack surface of the control plane.
+
+        **Why this matters**
+
+        By default, the GKE control plane (API server) may be accessible from any IP address. This exposes the API server to potential brute-force attacks, credential stuffing, and exploitation of API vulnerabilities:
+          •  Unrestricted API server access increases the risk of unauthorized cluster management.
+          •  Attackers can probe the API server for vulnerabilities or attempt to authenticate with stolen credentials.
+          •  Compliance frameworks require restricting management plane access to known trusted networks.
+
+        Master authorized networks provide:
+          •  IP-based allowlisting for API server access.
+          •  Reduced exposure of the control plane to the public internet.
+          •  Better alignment with network security best practices and compliance requirements.
+
+        Risk mitigation:
+          •  Enable master authorized networks and configure CIDR blocks for trusted networks.
+          •  Combine with private clusters for maximum control plane security.
+          •  Regularly review and update authorized network ranges.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              master_authorized_networks_config {
+                cidr_blocks {
+                  cidr_block   = "10.0.0.0/8"
+                  display_name = "internal"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Networking**.
+            4. Under **Control plane authorized networks**, select **Edit**.
+            5. Select **Enable control plane authorized networks**.
+            6. Add the authorized CIDR blocks.
+            7. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --enable-master-authorized-networks \
+              --master-authorized-networks=CIDR1,CIDR2 \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Master authorized networks documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/authorized-networks
+  - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.masterAuthorizedNetworksConfig['enabled'] == true
+  - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'master_authorized_networks_config') != empty
+      )
+  - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.master_authorized_networks_config != null &&
+        change.after.master_authorized_networks_config != empty
+      )
+  - uid: mondoo-gcp-security-gke-master-authorized-networks-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.master_authorized_networks_config != null &&
+        values.master_authorized_networks_config != empty
+      )
+  - uid: mondoo-gcp-security-gke-network-policy-enabled
+    title: Ensure network policy is enabled on GKE clusters
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-gke-network-policy-enabled-gcp
+      - uid: mondoo-gcp-security-gke-network-policy-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-network-policy-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-network-policy-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Kubernetes network policy is enabled on GKE clusters. Network policies control traffic flow between pods and services, providing micro-segmentation within the cluster.
+
+        **Why this matters**
+
+        Without network policies, all pods in a GKE cluster can communicate freely with each other. This creates significant security risks:
+          •  A compromised pod can communicate with any other pod in the cluster, enabling lateral movement.
+          •  Sensitive workloads are not isolated from less trusted workloads.
+          •  There is no mechanism to enforce the principle of least privilege at the network level.
+
+        Enabling network policy allows:
+          •  Fine-grained control over pod-to-pod and pod-to-service communication.
+          •  Isolation of sensitive workloads from the rest of the cluster.
+          •  Defense-in-depth against lateral movement after container compromise.
+
+        Risk mitigation:
+          •  Enable network policy on GKE clusters using Calico or GKE Dataplane V2.
+          •  Define and apply Kubernetes NetworkPolicy resources to restrict traffic between namespaces and pods.
+          •  Regularly review network policies to ensure they align with application requirements.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              network_policy {
+                enabled  = true
+                provider = "CALICO"
+              }
+
+              addons_config {
+                network_policy_config {
+                  disabled = false
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: Network policy cannot be enabled on an existing cluster without Dataplane V2. Consider creating a new cluster with network policy enabled:
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select **Create**.
+            3. In the **Networking** section, enable **Enable Dataplane V2** (which includes network policy support).
+            4. Complete the cluster creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --update-addons=NetworkPolicy=ENABLED \
+              --enable-network-policy \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Network policy documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/network-policy
+  - uid: mondoo-gcp-security-gke-network-policy-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.networkPolicyConfig['enabled'] == true
+  - uid: mondoo-gcp-security-gke-network-policy-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'network_policy').any(arguments.enabled == true)
+      )
+  - uid: mondoo-gcp-security-gke-network-policy-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.network_policy != null &&
+        change.after.network_policy.any(_['enabled'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-network-policy-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.network_policy != null &&
+        values.network_policy.any(_['enabled'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled
+    title: Ensure shielded GKE nodes are enabled
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-gcp
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Shielded GKE Nodes are enabled on GKE clusters. Shielded Nodes provide verifiable node identity and integrity, protecting against boot-level and kernel-level attacks on cluster nodes.
+
+        **Why this matters**
+
+        Without Shielded Nodes, GKE cluster nodes are vulnerable to:
+          •  Boot-level rootkits and bootkits that can persist across reboots and compromise the node before the operating system loads.
+          •  Kernel-level malware that can manipulate the node's operating system.
+          •  Node identity spoofing, where an attacker impersonates a legitimate node to join the cluster.
+
+        Shielded Nodes provide:
+          •  Secure Boot, which ensures only trusted software runs during the boot process.
+          •  Virtual Trusted Platform Module (vTPM) for measured boot and node integrity verification.
+          •  Integrity monitoring to detect unauthorized changes to the node's boot sequence.
+
+        Risk mitigation:
+          •  Enable Shielded Nodes on all GKE clusters.
+          •  Monitor integrity validation failures through Cloud Logging.
+          •  Use Shielded Nodes in combination with Binary Authorization for defense-in-depth.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              node_config {
+                shielded_instance_config {
+                  enable_secure_boot          = true
+                  enable_integrity_monitoring = true
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Security**.
+            4. Ensure that **Shielded GKE Nodes** is enabled.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --enable-shielded-nodes \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Shielded Nodes documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/shielded-gke-nodes
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.shieldedNodesConfig['enabled'] == true
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'node_config').any(
+          blocks.where(type == 'shielded_instance_config').any(
+            arguments.enable_secure_boot == true && arguments.enable_integrity_monitoring == true
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.node_config != null &&
+        change.after.node_config.any(
+          _['shielded_instance_config'] != null &&
+          _['shielded_instance_config'].any(_['enable_secure_boot'] == true && _['enable_integrity_monitoring'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.node_config != null &&
+        values.node_config.any(
+          _['shielded_instance_config'] != null &&
+          _['shielded_instance_config'].any(_['enable_secure_boot'] == true && _['enable_integrity_monitoring'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-gke-release-channel-configured
+    title: Ensure GKE clusters use a release channel for version management
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-gke-release-channel-configured-gcp
+      - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-hcl
+      - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-plan
+      - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-state
+    docs:
+      desc: |
+        This check ensures that GKE clusters are subscribed to a release channel (Regular, Rapid, or Stable) for automated version management. Release channels ensure clusters receive automatic upgrades with security patches and bug fixes.
+
+        **Why this matters**
+
+        Clusters not enrolled in a release channel require manual version management, which increases the risk of running outdated or vulnerable versions:
+          •  Security patches may not be applied promptly, leaving clusters vulnerable to known exploits.
+          •  Manual upgrades are error-prone and may be deferred indefinitely.
+          •  Without a release channel, clusters do not benefit from Google's tested and validated upgrade paths.
+
+        Release channels provide:
+          •  Automatic upgrades with versions that have been validated and tested by Google.
+          •  Timely application of security patches and bug fixes.
+          •  Predictable upgrade cadence based on the chosen channel (Rapid, Regular, or Stable).
+
+        Risk mitigation:
+          •  Enroll all GKE clusters in an appropriate release channel based on workload requirements.
+          •  Use the Regular channel for production workloads that need a balance between new features and stability.
+          •  Use maintenance windows to control when upgrades are applied.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              release_channel {
+                channel = "REGULAR"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Cluster basics**.
+            4. Under **Release channel**, select **Edit**.
+            5. Choose a release channel (Rapid, Regular, or Stable).
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --release-channel=regular \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Release channels documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/concepts/release-channels
+  - uid: mondoo-gcp-security-gke-release-channel-configured-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.releaseChannel != ""
+      gcp.project.gkeService.cluster.releaseChannel != "unspecified"
+  - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'release_channel') != empty &&
+        blocks.where(type == 'release_channel').all(arguments.channel != "UNSPECIFIED")
+      )
+  - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.release_channel != null &&
+        change.after.release_channel != empty &&
+        change.after.release_channel.all(_['channel'] != "UNSPECIFIED")
+      )
+  - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.release_channel != null &&
+        values.release_channel != empty &&
+        values.release_channel.all(_['channel'] != "UNSPECIFIED")
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet
+    title: Ensure no firewall rules allow ingress from 0.0.0.0/0 to SSH (port 22)
+    impact: 90
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-gcp
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-state
+    docs:
+      desc: |
+        This check ensures that Google Cloud firewall rules do not allow unrestricted ingress traffic from the internet (0.0.0.0/0) to SSH on port 22. Allowing SSH access from any IP address on the internet significantly increases the risk of brute-force attacks and unauthorized access to virtual machines.
+
+        **Why this matters**
+
+        SSH is a common target for attackers because it provides direct remote access to virtual machines:
+          •  Unrestricted SSH access exposes VMs to brute-force password attacks and credential stuffing.
+          •  Automated scanning tools continuously probe port 22 across the internet, making exposed instances immediate targets.
+          •  Compromised SSH access can lead to full system compromise, data exfiltration, and lateral movement within the VPC.
+
+        If SSH is open to the internet, it can lead to:
+          •  Unauthorized access to production systems.
+          •  Installation of malware, cryptocurrency miners, or backdoors.
+          •  Non-compliance with CIS GCP Foundations Benchmark, PCI DSS, and NIST 800-53.
+
+        Risk mitigation:
+          •  Restrict SSH firewall rules to specific trusted IP ranges or use IAP (Identity-Aware Proxy) for SSH access.
+          •  Enable OS Login for centralized SSH key management through IAM.
+          •  Use VPN or Cloud Interconnect for accessing internal resources.
+          •  Monitor firewall rule changes through Cloud Audit Logs.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure firewall rules restrict SSH to specific source ranges:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_ssh" {
+              name    = "allow-ssh-restricted"
+              network = "default"
+
+              allow {
+                protocol = "tcp"
+                ports    = ["22"]
+              }
+
+              # Restrict to specific IP ranges instead of 0.0.0.0/0
+              source_ranges = ["10.0.0.0/8", "172.16.0.0/12"]
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **VPC network > Firewall** page in the Google Cloud Console.
+            2. Review all firewall rules that allow TCP port 22.
+            3. For any rule with source range `0.0.0.0/0`, select **Edit**.
+            4. Update the **Source IP ranges** to specific trusted CIDR blocks.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            # Update an existing firewall rule to restrict SSH access
+            gcloud compute firewall-rules update RULE_NAME \
+              --source-ranges=TRUSTED_CIDR_1,TRUSTED_CIDR_2
+            ```
+    refs:
+      - title: CIS GCP Foundations Benchmark 3.6
+        url: https://cloud.google.com/security/best-practices/firewall-rules
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.sourceRanges.contains("0.0.0.0/0")
+    mql: |
+      gcp.compute.firewall.allowed.none(_['IPProtocol'] == "all")
+      gcp.compute.firewall.allowed.where(_['IPProtocol'] == "tcp").none(
+        _['ports'] == empty || _['ports'].contains("22")
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == "INGRESS" || arguments.direction == empty
+      ).where(
+        arguments.source_ranges.contains("0.0.0.0/0")
+      ).all(
+        blocks.where(type == 'allow').none(arguments.protocol == "all") &&
+        blocks.where(type == 'allow').where(arguments.protocol == "tcp").none(
+          arguments.ports == empty || arguments.ports.contains("22")
+        )
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == "INGRESS" || change.after.direction == null
+      ).where(
+        change.after.source_ranges.contains("0.0.0.0/0")
+      ).all(
+        change.after.allow.none(_['protocol'] == "all") &&
+        change.after.allow.where(_['protocol'] == "tcp").none(
+          _['ports'] == empty || _['ports'].contains("22")
+        )
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == "INGRESS" || values.direction == null
+      ).where(
+        values.source_ranges.contains("0.0.0.0/0")
+      ).all(
+        values.allow.none(_['protocol'] == "all") &&
+        values.allow.where(_['protocol'] == "tcp").none(
+          _['ports'] == empty || _['ports'].contains("22")
+        )
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet
+    title: Ensure no firewall rules allow ingress from 0.0.0.0/0 to RDP (port 3389)
+    impact: 90
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-gcp
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-state
+    docs:
+      desc: |
+        This check ensures that Google Cloud firewall rules do not allow unrestricted ingress traffic from the internet (0.0.0.0/0) to RDP on port 3389. Allowing RDP access from any IP address on the internet significantly increases the risk of brute-force attacks and unauthorized access to Windows virtual machines.
+
+        **Why this matters**
+
+        RDP is a primary target for attackers because it provides full graphical remote access to Windows systems:
+          •  Unrestricted RDP access exposes VMs to brute-force password attacks, credential stuffing, and exploitation of RDP vulnerabilities (e.g., BlueKeep).
+          •  Automated scanning tools continuously probe port 3389 across the internet.
+          •  Compromised RDP access provides full desktop control, enabling data exfiltration, malware deployment, and ransomware attacks.
+
+        If RDP is open to the internet, it can lead to:
+          •  Unauthorized access to Windows-based production systems.
+          •  Ransomware deployment through compromised RDP sessions.
+          •  Non-compliance with CIS GCP Foundations Benchmark, PCI DSS, and NIST 800-53.
+
+        Risk mitigation:
+          •  Restrict RDP firewall rules to specific trusted IP ranges or use IAP (Identity-Aware Proxy) for RDP access.
+          •  Use VPN or Cloud Interconnect for accessing internal Windows resources.
+          •  Enable Network Level Authentication (NLA) on Windows instances.
+          •  Monitor firewall rule changes through Cloud Audit Logs.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure firewall rules restrict RDP to specific source ranges:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_rdp" {
+              name    = "allow-rdp-restricted"
+              network = "default"
+
+              allow {
+                protocol = "tcp"
+                ports    = ["3389"]
+              }
+
+              # Restrict to specific IP ranges instead of 0.0.0.0/0
+              source_ranges = ["10.0.0.0/8", "172.16.0.0/12"]
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **VPC network > Firewall** page in the Google Cloud Console.
+            2. Review all firewall rules that allow TCP port 3389.
+            3. For any rule with source range `0.0.0.0/0`, select **Edit**.
+            4. Update the **Source IP ranges** to specific trusted CIDR blocks.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            # Update an existing firewall rule to restrict RDP access
+            gcloud compute firewall-rules update RULE_NAME \
+              --source-ranges=TRUSTED_CIDR_1,TRUSTED_CIDR_2
+            ```
+    refs:
+      - title: CIS GCP Foundations Benchmark 3.7
+        url: https://cloud.google.com/security/best-practices/firewall-rules
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.sourceRanges.contains("0.0.0.0/0")
+    mql: |
+      gcp.compute.firewall.allowed.none(_['IPProtocol'] == "all")
+      gcp.compute.firewall.allowed.where(_['IPProtocol'] == "tcp").none(
+        _['ports'] == empty || _['ports'].contains("3389")
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == "INGRESS" || arguments.direction == empty
+      ).where(
+        arguments.source_ranges.contains("0.0.0.0/0")
+      ).all(
+        blocks.where(type == 'allow').none(arguments.protocol == "all") &&
+        blocks.where(type == 'allow').where(arguments.protocol == "tcp").none(
+          arguments.ports == empty || arguments.ports.contains("3389")
+        )
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == "INGRESS" || change.after.direction == null
+      ).where(
+        change.after.source_ranges.contains("0.0.0.0/0")
+      ).all(
+        change.after.allow.none(_['protocol'] == "all") &&
+        change.after.allow.where(_['protocol'] == "tcp").none(
+          _['ports'] == empty || _['ports'].contains("3389")
+        )
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == "INGRESS" || values.direction == null
+      ).where(
+        values.source_ranges.contains("0.0.0.0/0")
+      ).all(
+        values.allow.none(_['protocol'] == "all") &&
+        values.allow.where(_['protocol'] == "tcp").none(
+          _['ports'] == empty || _['ports'].contains("3389")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled
+    title: Ensure automated backups are enabled for Cloud SQL instances
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-gcp
+      - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-terraform-plan
+      - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that automated backups are enabled for all Cloud SQL instances. Automated backups provide point-in-time recovery capabilities and protect against data loss from accidental deletion, corruption, or security incidents.
+
+        **Why this matters**
+
+        Without automated backups, Cloud SQL instances are vulnerable to permanent data loss:
+          •  Accidental data deletion or corruption cannot be recovered without backups.
+          •  Ransomware or other attacks that encrypt or destroy data may result in total data loss.
+          •  Compliance frameworks require regular backups and tested recovery procedures.
+
+        Automated backups provide:
+          •  Daily backups that are automatically managed and retained according to policy.
+          •  Point-in-time recovery using transaction logs, enabling restoration to any point within the retention period.
+          •  Protection against hardware failures, accidental deletions, and security incidents.
+
+        Risk mitigation:
+          •  Enable automated backups on all Cloud SQL instances.
+          •  Configure appropriate backup retention periods based on data protection requirements.
+          •  Enable point-in-time recovery for critical databases.
+          •  Regularly test backup restoration procedures.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_sql_database_instance" "example" {
+              name             = "example-instance"
+              database_version = "MYSQL_8_0"
+              region           = "us-central1"
+
+              settings {
+                tier = "db-f1-micro"
+
+                backup_configuration {
+                  enabled            = true
+                  start_time         = "03:00"
+                  binary_log_enabled = true  # Required for MySQL point-in-time recovery
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **SQL** page in the Google Cloud Console.
+            2. Select the instance you want to update.
+            3. Select **Backups** from the left menu.
+            4. Select **Edit**.
+            5. Enable **Automated backups**.
+            6. Configure the backup window and retention settings.
+            7. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud sql instances patch INSTANCE_NAME \
+              --backup-start-time=03:00
+            ```
+    refs:
+      - title: Cloud SQL backup documentation
+        url: https://cloud.google.com/sql/docs/mysql/backup-recovery/backups
+  - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-gcp
+    filters: asset.platform == /^gcp-sql-/
+    mql: |
+      gcp.sql.instance.settings.backupConfiguration.enabled == true
+  - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance')
+    mql: |
+      terraform.resources('google_sql_database_instance').all(
+        blocks.where(type == 'settings').any(
+          blocks.where(type == 'backup_configuration').any(arguments.enabled == true)
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_sql_database_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_sql_database_instance').all(
+        change.after.settings != null &&
+        change.after.settings.any(
+          _['backup_configuration'] != null &&
+          _['backup_configuration'].any(_['enabled'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_sql_database_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_sql_database_instance').all(
+        values.settings != null &&
+        values.settings.any(
+          _['backup_configuration'] != null &&
+          _['backup_configuration'].any(_['enabled'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled
+    title: Ensure authentication is enabled for Cloud Redis instances
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-gcp
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-plan
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Redis AUTH is enabled on Cloud Memorystore for Redis instances. Redis AUTH requires clients to authenticate with a password before executing commands, providing an additional layer of security beyond network-level access controls.
+
+        **Why this matters**
+
+        Without AUTH enabled, any client that can reach the Redis instance over the network can execute any Redis command without authentication:
+          •  Unauthorized clients can read, modify, or delete cached data.
+          •  Attackers with network access can use Redis commands for data exfiltration or to disrupt service availability.
+          •  Redis instances without authentication are a common target in cloud environments.
+
+        Enabling AUTH provides:
+          •  Client-level authentication as an additional security control beyond VPC and firewall rules.
+          •  Protection against unauthorized data access from compromised workloads within the same network.
+          •  Better alignment with defense-in-depth security principles.
+
+        Risk mitigation:
+          •  Enable AUTH on all Cloud Redis instances.
+          •  Store the AUTH string securely using Secret Manager.
+          •  Rotate AUTH strings regularly.
+          •  Combine AUTH with VPC network isolation for defense-in-depth.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_redis_instance" "cache" {
+              name           = "my-redis-instance"
+              tier           = "STANDARD_HA"
+              memory_size_gb = 1
+              region         = "us-central1"
+
+              auth_enabled = true
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Memorystore > Redis** page in the Google Cloud Console.
+            2. Select the instance you want to update.
+            3. Select **Edit**.
+            4. Enable **AUTH**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud redis instances update INSTANCE_NAME \
+              --enable-auth \
+              --region=REGION
+            ```
+    refs:
+      - title: Cloud Memorystore Redis AUTH documentation
+        url: https://cloud.google.com/memorystore/docs/redis/auth-overview
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.redisService.instances.all(authEnabled == true)
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_redis_instance')
+    mql: |
+      terraform.resources('google_redis_instance').all(
+        arguments.auth_enabled == true
+      )
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_redis_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_redis_instance').all(
+        change.after.auth_enabled == true
+      )
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_redis_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_redis_instance').all(
+        values.auth_enabled == true
       )
