@@ -293,6 +293,8 @@ policies:
 - **checks**: Scoring queries (pass/fail)
 - **queries**: Data collection queries (no scoring)
 
+**Formatting requirement**: All `desc` (description) and `remediation` fields in policy files must be valid Markdown. These fields are rendered as Markdown in the UI, so use proper Markdown syntax for headings, lists, code blocks, links, etc.
+
 Test policy files:
 
 ```bash
