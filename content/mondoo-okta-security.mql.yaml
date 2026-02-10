@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-okta-security
     name: Mondoo Okta Organization Security
-    version: 2.1.0
+    version: 2.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -94,21 +94,27 @@ policies:
       - title: Access Control & Administration
         checks:
           - uid: mondoo-okta-security-limit-super-admins
+          - uid: mondoo-okta-security-limit-org-admins
       - title: Threat Detection & Security Monitoring
         checks:
           - uid: mondoo-okta-security-threatinsight-block-suspicious-ip-addresses
+          - uid: mondoo-okta-security-threatinsight-action-block
           - uid: mondoo-okta-security-enable-suspicious-activity-reporting
       - title: Multi-Factor Authentication (MFA)
         checks:
           - uid: mondoo-okta-security-okta-mfa-access
           - uid: mondoo-okta-security-disable-weaker-mfa-factors-in-factor-enrollment-policies
           - uid: mondoo-okta-security-enable-okta-verify-with-push-for-mfa
+          - uid: mondoo-okta-security-signon-requires-mfa
       - title: Session Management
         checks:
           - uid: mondoo-okta-security-okta-enforce-session-lifetime
       - title: Application Authentication
         checks:
           - uid: mondoo-okta-security-okta-auth-openid-saml
+      - title: Trusted Origins
+        checks:
+          - uid: mondoo-okta-security-trusted-origins-https
       - title: User Notifications
         checks:
           - uid: mondoo-okta-security-sign-on-notifications-for-end-users
@@ -1845,3 +1851,209 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
     mql: |
       terraform.state.resources.where( type == /okta_policy_password/ ).all( values['question_recovery'] == "ACTIVE" )
+  - uid: mondoo-okta-security-threatinsight-action-block
+    title: Ensure ThreatInsight is configured to block suspicious login attempts
+    impact: 100
+    variants:
+      - uid: mondoo-okta-security-threatinsight-action-block-api
+    docs:
+      desc: |
+        This check ensures that Okta ThreatInsight is configured to actively block suspicious login attempts rather than only auditing or ignoring them.
+
+        ThreatInsight evaluates sign-in requests against a database of known malicious IP addresses maintained by Okta. The action setting determines what happens when a suspicious IP is detected:
+
+        - **none**: ThreatInsight is effectively disabled and takes no action.
+        - **audit**: Suspicious attempts are logged in the System Log but not blocked, allowing attackers to continue trying credentials.
+        - **block_login** (recommended): Suspicious IP addresses are blocked from authenticating before credentials are evaluated, preventing brute-force and credential-stuffing attacks.
+
+        ### Okta recommends
+
+        Set ThreatInsight action to "block_login" to proactively block authentication attempts from known malicious IP addresses. This blocks requests before password evaluation, which means:
+          - Locked-out users won't have their lockout count incremented by malicious attempts
+          - Credential-stuffing attacks are stopped before they can validate stolen passwords
+          - Brute-force attempts are blocked at the perimeter
+
+        ### Security impact
+
+        High
+
+        ### User impact
+
+        Low
+
+        Legitimate users are not affected. Only IP addresses identified as malicious by Okta's threat intelligence are blocked. If a legitimate user is affected, admins can add their IP to the ThreatInsight exclude list.
+    refs:
+      - url: https://help.okta.com/en-us/Content/Topics/Security/threat-insight/configure-threatinsight.htm
+        title: Configure Okta ThreatInsight
+      - url: https://help.okta.com/en-us/Content/Topics/Security/healthinsight/healthinsight-security-task-recomendations.htm
+        title: HealthInsight tasks and recommendations
+  - uid: mondoo-okta-security-threatinsight-action-block-api
+    filters: asset.platform == "okta-org"
+    mql: okta.organization.threatInsightSettings.action == "block_login"
+    docs:
+      remediation:
+        - id: console
+          desc: |
+            ### Configure ThreatInsight to block suspicious login attempts
+
+            1. In the Admin Console, go to **Security > General**.
+            2. In the **Okta ThreatInsight Settings** section, select **Edit**.
+            3. Under **Action**, select **Log and block**.
+            4. Optionally, add trusted network zones to the exclude list to prevent false positives.
+            5. Select **Save**.
+  - uid: mondoo-okta-security-trusted-origins-https
+    title: Ensure all active trusted origins use HTTPS
+    impact: 90
+    variants:
+      - uid: mondoo-okta-security-trusted-origins-https-api
+    docs:
+      desc: |
+        This check ensures that all active trusted origins in Okta are configured to use HTTPS rather than HTTP.
+
+        Trusted origins define which URLs are allowed for CORS (Cross-Origin Resource Sharing) requests and redirect URIs in authentication flows. These origins handle sensitive authentication tokens, session cookies, and authorization codes.
+
+        **Why this matters**
+
+        - **Token interception**: HTTP origins transmit authentication tokens in plaintext, allowing network attackers to intercept OAuth tokens, session identifiers, and authorization codes via man-in-the-middle attacks
+        - **Session hijacking**: Cookies sent to HTTP origins can be captured and replayed, giving attackers access to authenticated sessions
+        - **Credential exposure**: CORS requests to HTTP origins can leak sensitive data including access tokens and user profile information to anyone observing network traffic
+        - **OAuth redirect attacks**: HTTP redirect URIs in OAuth flows allow attackers to intercept authorization codes before they reach the legitimate application
+
+        ### Security impact
+
+        High
+
+        ### User impact
+
+        None
+
+        Updating trusted origin URLs from HTTP to HTTPS is a backend configuration change. End users experience no disruption as long as the application supports HTTPS.
+    refs:
+      - url: https://help.okta.com/en-us/Content/Topics/Security/API_Trusted-Origins.htm
+        title: Trusted Origins
+  - uid: mondoo-okta-security-trusted-origins-https-api
+    filters: asset.platform == "okta-org"
+    mql: okta.trustedOrigins.where(status == "ACTIVE").all(origin == /^https:\/\//)
+    docs:
+      remediation:
+        - id: console
+          desc: |
+            ### Update trusted origins to use HTTPS
+
+            1. In the Admin Console, go to **Security > API**.
+            2. Select the **Trusted Origins** tab.
+            3. Review each active trusted origin. For any origin using `http://`:
+               a. Select **Edit** next to the origin.
+               b. Update the **Origin URL** to use `https://` instead of `http://`.
+               c. Select **Save**.
+            4. If the underlying application does not yet support HTTPS, configure TLS on the application first, then update the trusted origin.
+  - uid: mondoo-okta-security-signon-requires-mfa
+    title: Ensure sign-on policy rules require MFA
+    impact: 90
+    variants:
+      - uid: mondoo-okta-security-signon-requires-mfa-api
+    docs:
+      desc: |
+        This check ensures that active sign-on policy rules require multi-factor authentication (MFA) for user sign-in.
+
+        Having MFA enrollment policies configured does not guarantee that MFA is actually enforced at sign-in. Sign-on policies control the authentication requirements when users access Okta, and each policy rule can independently enable or disable the MFA requirement. If sign-on rules do not require a factor, users can authenticate with only a password, regardless of MFA enrollment policies.
+
+        **Why this matters**
+
+        - **Password-only access**: Without MFA enforcement in sign-on rules, compromised passwords grant full access to Okta and all connected applications
+        - **Enrollment without enforcement**: MFA enrollment policies ensure users register factors, but sign-on policies determine whether those factors are actually required at login. These are independent configurations.
+        - **Phishing vulnerability**: Password-only authentication is highly vulnerable to phishing, credential stuffing, and brute-force attacks
+        - **Compliance requirements**: Most security frameworks (SOC 2, ISO 27001, NIST 800-63B) require MFA for identity provider access
+
+        ### Okta recommends
+
+        Require MFA in all active sign-on policy rules to ensure that factor enrollment translates into actual authentication enforcement.
+
+        ### Security impact
+
+        High
+
+        ### User impact
+
+        Moderate
+
+        Users are prompted for an additional factor when signing in. If they have already enrolled in a factor through MFA enrollment policies, no additional setup is needed.
+    refs:
+      - url: https://help.okta.com/en-us/Content/Topics/Security/policies/configure-signon-policy.htm
+        title: Configure Sign-On Policies
+  - uid: mondoo-okta-security-signon-requires-mfa-api
+    filters: asset.platform == "okta-org"
+    mql: |
+      okta.policies.signOn.where(status == "ACTIVE").all(
+        _.rules.where(status == "ACTIVE" && name != "Catch-all Rule").all(actions["signon"]["requireFactor"] == true)
+      )
+    docs:
+      remediation:
+        - id: console
+          desc: |
+            ### Require MFA in sign-on policy rules
+
+            1. In the Admin Console, go to **Security > Authentication**.
+            2. Select the **Sign On** tab.
+            3. For each active sign-on policy, review its rules.
+            4. Select **Edit** for each rule.
+            5. Under **Actions**, set **Prompt for factor** to require MFA.
+            6. Select **Save**.
+
+            Repeat for all active sign-on policy rules to ensure comprehensive MFA enforcement.
+  - uid: mondoo-okta-security-limit-org-admins
+    title: Limit the number of organization admins
+    impact: 80
+    props:
+      - uid: mondooOktaSecurityMaxOktaOrgAdmins
+        title: Maximum number of Okta Organization Admins
+        mql: return 15
+    variants:
+      - uid: mondoo-okta-security-limit-org-admins-api
+    docs:
+      desc: |
+        This check ensures that the number of users with the Organization Administrator (ORG_ADMIN) role does not exceed a safe threshold.
+
+        The Organization Administrator role grants nearly the same level of access as the Super Administrator. Org admins can manage users, groups, applications, and most organizational settings. While they cannot manage other administrators or certain security settings, the breadth of their access makes them high-value targets for attackers.
+
+        **Why this matters**
+
+        - **Broad access**: Org admins can modify user accounts, reset credentials, assign applications, and change group memberships across the entire organization
+        - **Lateral movement**: Compromised org admin accounts enable attackers to escalate privileges, create backdoor accounts, and access sensitive applications
+        - **Reduced accountability**: A large number of org admins makes it difficult to audit who made security-relevant changes and increases the blast radius of a single compromised account
+        - **Principle of least privilege**: Most administrative tasks can be performed with more restricted roles such as Help Desk Admin, Application Admin, or Group Admin
+
+        ### Okta recommends
+
+        Limit organization admin assignments to users who genuinely require broad organizational access. Use more specific admin roles (Help Desk Admin, Application Admin, Read-Only Admin) for users who only need a subset of administrative capabilities.
+
+        ### Security impact
+
+        High
+
+        ### User impact
+
+        None
+
+        Reassigning users to more specific admin roles does not affect end-user sign-in or application access.
+    refs:
+      - url: https://help.okta.com/en-us/Content/Topics/Security/Administrators.htm
+        title: Administrators
+      - url: https://help.okta.com/en-us/Content/Topics/Security/administrators-admin-comparison.htm
+        title: Administrator Role Comparison
+  - uid: mondoo-okta-security-limit-org-admins-api
+    filters: asset.platform == "okta-org"
+    mql: okta.groups.where(roles.one(type == "ORG_ADMIN")).all(members.length < props.mondooOktaSecurityMaxOktaOrgAdmins)
+    docs:
+      remediation:
+        - id: console
+          desc: |
+            ### Reduce the number of organization admins
+
+            1. In the Admin Console, go to **Security > Administrators**.
+            2. Under **Admin Roles**, filter by Organization Administrator to display only org admins.
+            3. For each user who does not require full org admin access:
+               a. Select **Edit** next to their entry.
+               b. Assign a more specific role such as Help Desk Admin, Application Admin, or Read-Only Admin based on their actual responsibilities.
+               c. Select **Update Administrator**.
+            4. Periodically review org admin assignments to ensure ongoing compliance with the principle of least privilege.
