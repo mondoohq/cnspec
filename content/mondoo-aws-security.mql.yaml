@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 5.1.0
+    version: 5.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -21,6 +21,7 @@ policies:
         This policy provides security checks across key AWS services, uncovering misconfigurations that could put critical resources at risk, particularly those exposed to the public internet:
 
         - API Gateway
+        - CloudFront
         - CloudTrail
         - CloudWatch
         - DynamoDB
@@ -29,6 +30,7 @@ policies:
         - Elastic Kubernetes Service (EKS)
         - Elastic Load Balancers (ELBs)
         - Elasticsearch (OpenSearch Service)
+        - OpenSearch
         - Identity and Access Management (IAM)
         - Key Management Service (KMS)
         - Lambda
@@ -127,20 +129,34 @@ policies:
       - title: AWS Elasticsearch Domain
         checks:
           - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
+      - title: Amazon OpenSearch
+        checks:
+          - uid: mondoo-aws-security-opensearch-enforce-https
+          - uid: mondoo-aws-security-opensearch-node-to-node-encryption
+          - uid: mondoo-aws-security-opensearch-tls-policy
+          - uid: mondoo-aws-security-opensearch-fine-grained-access-control
+          - uid: mondoo-aws-security-opensearch-audit-logging
+          - uid: mondoo-aws-security-opensearch-in-vpc
+          - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled
       - title: AWS KMS Key
         checks:
           - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
       - title: Amazon SageMaker Notebook Instance
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
+      - title: Amazon CloudFront
+        checks:
+          - uid: mondoo-aws-security-cloudfront-viewer-policy-https
       - title: AWS CloudTrail Trail
         checks:
           - uid: mondoo-aws-security-cloud-trail-encryption-enabled
           - uid: mondoo-aws-security-cloud-trail-log-file-validation-enabled
+          - uid: mondoo-aws-security-cloud-trail-multi-region-enabled
       - title: Amazon EKS Cluster
         checks:
           - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
           - uid: mondoo-aws-security-eks-cluster-private-controlplane
+          - uid: mondoo-aws-security-eks-cluster-logging-enabled
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -8644,4 +8660,1312 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_s3_bucket_acl").all(
         values.acl.downcase != /public-read/
+      )
+  - uid: mondoo-aws-security-cloud-trail-multi-region-enabled
+    title: Ensure CloudTrail is enabled in all regions with a multi-region trail
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-single
+        tags:
+          mondoo.com/filter-title: "AWS CloudTrail Trail"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-hcl
+      - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-plan
+      - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that AWS CloudTrail is configured with at least one multi-region trail that captures management events across all AWS regions. A single-region trail only records API activity in the region where it was created, leaving events in other regions unmonitored and potentially allowing attackers to operate undetected in regions where CloudTrail is not active.
+
+        **Why this matters**
+
+        Without a multi-region trail enabled:
+
+        - API activity in regions where CloudTrail is not active goes unrecorded, creating blind spots in the audit trail.
+        - Attackers can exploit regions without active trails to perform malicious actions without detection.
+        - Compliance frameworks such as CIS AWS Foundations Benchmark (control 3.1), PCI DSS, HIPAA, and SOC 2 require comprehensive logging across all regions.
+
+        A multi-region trail ensures complete visibility into account activity regardless of which region the API call originates from, including global service events such as IAM, STS, and CloudFront.
+
+        **Risk mitigation:**
+
+        - **Complete audit coverage:** All API activity across every region is captured in a single trail.
+        - **Threat detection:** Enables detection of unauthorized activity in regions that are not commonly used.
+        - **Compliance:** Meets CIS AWS Foundations Benchmark 3.1 and other regulatory requirements for comprehensive logging.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the AWS CloudTrail Console.
+            2. Select Trails in the left panel.
+            3. Select the trail you want to update, or create a new trail.
+            4. Under General details, ensure the Multi-region trail option is set to Yes.
+            5. Ensure Include global service events is also enabled.
+            6. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if any trail is configured as a multi-region trail:
+
+            ```bash
+            aws cloudtrail describe-trails \
+              --query "trailList[*].{Name:Name,IsMultiRegion:IsMultiRegionTrail,IsLogging:HomeRegion}"
+            ```
+
+            If no multi-region trail exists, update an existing trail or create a new one:
+
+            ```bash
+            aws cloudtrail update-trail \
+              --name my-trail \
+              --is-multi-region-trail \
+              --include-global-service-events
+            ```
+
+            Verify that the trail is logging:
+
+            ```bash
+            aws cloudtrail get-trail-status --name my-trail \
+              --query "{IsLogging:IsLogging}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_cloudtrail" "multi_region_trail" {
+              name                          = "multi-region-cloudtrail"
+              s3_bucket_name                = aws_s3_bucket.cloudtrail_logs.id
+              is_multi_region_trail         = true   # Enable multi-region trail
+              include_global_service_events = true   # Include global service events
+              enable_logging                = true
+              enable_log_file_validation    = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              MultiRegionCloudTrail:
+                Type: "AWS::CloudTrail::Trail"
+                Properties:
+                  TrailName: "multi-region-cloudtrail"
+                  S3BucketName: !Ref CloudTrailLogsBucket
+                  IsMultiRegionTrail: true
+                  IncludeGlobalServiceEvents: true
+                  EnableLogFileValidation: true
+                  IsLogging: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-create-and-update-a-trail.html
+        title: AWS Documentation - Creating and updating a trail
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/cloudtrail-controls.html
+        title: AWS Documentation - CloudTrail controls
+  - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-single
+    filters: asset.platform == "aws-cloudtrail-trail"
+    mql: |
+      aws.cloudtrail.trail.isMultiRegionTrail == true
+      aws.cloudtrail.trail.status["IsLogging"] == true
+  - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail")
+    mql: terraform.resources.where(nameLabel == "aws_cloudtrail").any(arguments.is_multi_region_trail == true)
+  - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudtrail")
+    mql: terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(change.after.is_multi_region_trail == true)
+  - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudtrail")
+    mql: terraform.state.resources.where(type == "aws_cloudtrail").any(values.is_multi_region_trail == true)
+  - uid: mondoo-aws-security-cloudfront-viewer-policy-https
+    title: Ensure CloudFront distributions require HTTPS for viewer connections
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-cloudfront-viewer-policy-https-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-hcl
+      - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-plan
+      - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon CloudFront distributions are configured to require HTTPS for viewer connections, preventing content from being served over unencrypted HTTP. By default, CloudFront distributions can be configured with an "allow-all" viewer protocol policy, which permits both HTTP and HTTPS connections and exposes users to man-in-the-middle (MITM) attacks.
+
+        **Why this matters**
+
+        When CloudFront distributions allow HTTP connections:
+
+        - Data transmitted between viewers and CloudFront is unencrypted and can be intercepted by attackers.
+        - Sensitive information such as authentication tokens, session cookies, and user data can be exposed.
+        - Users are vulnerable to man-in-the-middle attacks that can modify content in transit.
+        - Compliance frameworks such as PCI DSS, HIPAA, and SOC 2 require encryption in transit for sensitive data.
+
+        Configuring the viewer protocol policy to "https-only" or "redirect-to-https" ensures that all communication between viewers and CloudFront is encrypted.
+
+        **Risk mitigation:**
+
+        - **Data protection:** Prevents eavesdropping on traffic between viewers and CloudFront edge locations.
+        - **MITM prevention:** Eliminates the risk of content being modified in transit by attackers.
+        - **Compliance:** Meets regulatory requirements for encryption in transit.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon CloudFront Console.
+            2. Select the distribution you want to update.
+            3. Select the Behaviors tab.
+            4. Select the default cache behavior and choose Edit.
+            5. Under Viewer Protocol Policy, select Redirect HTTP to HTTPS or HTTPS Only.
+            6. Select Save changes.
+            7. Repeat for any additional cache behaviors.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check the viewer protocol policy for a distribution:
+
+            ```bash
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query "DistributionConfig.DefaultCacheBehavior.ViewerProtocolPolicy"
+            ```
+
+            If the output shows "allow-all", update the distribution:
+
+            ```bash
+            aws cloudfront get-distribution-config --id <distribution-id> > dist-config.json
+            # Edit dist-config.json to set ViewerProtocolPolicy to "redirect-to-https"
+            aws cloudfront update-distribution --id <distribution-id> \
+              --if-match <etag> \
+              --distribution-config file://dist-config.json
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_cloudfront_distribution" "secure_distribution" {
+              enabled = true
+
+              default_cache_behavior {
+                viewer_protocol_policy = "redirect-to-https"  # Require HTTPS
+                allowed_methods        = ["GET", "HEAD"]
+                cached_methods         = ["GET", "HEAD"]
+                target_origin_id       = "myS3Origin"
+
+                forwarded_values {
+                  query_string = false
+                  cookies {
+                    forward = "none"
+                  }
+                }
+              }
+
+              origin {
+                domain_name = aws_s3_bucket.example.bucket_regional_domain_name
+                origin_id   = "myS3Origin"
+              }
+
+              restrictions {
+                geo_restriction {
+                  restriction_type = "none"
+                }
+              }
+
+              viewer_certificate {
+                cloudfront_default_certificate = true
+                minimum_protocol_version       = "TLSv1.2_2021"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              SecureCloudFrontDistribution:
+                Type: "AWS::CloudFront::Distribution"
+                Properties:
+                  DistributionConfig:
+                    Enabled: true
+                    DefaultCacheBehavior:
+                      ViewerProtocolPolicy: "redirect-to-https"
+                      TargetOriginId: "myS3Origin"
+                      ForwardedValues:
+                        QueryString: false
+                    Origins:
+                      - Id: "myS3Origin"
+                        DomainName: !GetAtt S3Bucket.DomainName
+                        S3OriginConfig:
+                          OriginAccessIdentity: ""
+                    ViewerCertificate:
+                      MinimumProtocolVersion: "TLSv1.2_2021"
+                      CloudFrontDefaultCertificate: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-https-viewers-to-cloudfront.html
+        title: AWS Documentation - Requiring HTTPS for communication between viewers and CloudFront
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/cloudfront-controls.html
+        title: AWS Documentation - CloudFront controls
+  - uid: mondoo-aws-security-cloudfront-viewer-policy-https-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.cloudfront.distributions.all(
+        viewerProtocolPolicy != "allow-all"
+      )
+  - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudfront_distribution")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_cloudfront_distribution").all(
+        blocks.where(type == "default_cache_behavior").all(
+          arguments.viewer_protocol_policy == "redirect-to-https" || arguments.viewer_protocol_policy == "https-only"
+        )
+      )
+  - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudfront_distribution")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_cloudfront_distribution").all(
+        change.after.default_cache_behavior.all(_['viewer_protocol_policy'] != "allow-all")
+      )
+  - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudfront_distribution")
+    mql: |
+      terraform.state.resources.where(type == "aws_cloudfront_distribution").all(
+        values.default_cache_behavior.all(_['viewer_protocol_policy'] != "allow-all")
+      )
+  - uid: mondoo-aws-security-eks-cluster-logging-enabled
+    title: Ensure Amazon EKS control plane logging is enabled
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-eks-cluster-logging-enabled-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-hcl
+      - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-plan
+      - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon EKS clusters have control plane logging enabled. EKS control plane logging provides audit and diagnostic logs directly from the Amazon EKS control plane to CloudWatch Logs. These logs include API server, audit, authenticator, controller manager, and scheduler components that are essential for security monitoring and troubleshooting.
+
+        **Why this matters**
+
+        Without EKS control plane logging enabled:
+
+        - Unauthorized API calls and authentication attempts go undetected, making it difficult to identify security incidents.
+        - There is no audit trail for Kubernetes API activity, hindering forensic investigations.
+        - Compliance frameworks such as CIS EKS Benchmark, PCI DSS, and SOC 2 require logging of security-relevant events.
+        - Operational issues with the control plane cannot be diagnosed effectively.
+
+        At minimum, the audit log type should be enabled as it records all individual API requests for accountability. Enabling all log types (api, audit, authenticator, controllerManager, scheduler) provides comprehensive visibility.
+
+        **Risk mitigation:**
+
+        - **Threat detection:** Enables detection of unauthorized API calls, privilege escalation attempts, and suspicious authentication activity.
+        - **Forensic capability:** Provides detailed audit trail for incident investigation and response.
+        - **Compliance:** Meets CIS EKS Benchmark and regulatory requirements for logging security events.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EKS Console.
+            2. Select the EKS cluster you want to configure.
+            3. In the Observability tab, select Manage logging.
+            4. Enable all log types: API server, Audit, Authenticator, Controller manager, and Scheduler.
+            5. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check the current logging configuration for an EKS cluster:
+
+            ```bash
+            aws eks describe-cluster --name <cluster_name> \
+              --query "cluster.logging.clusterLogging"
+            ```
+
+            Enable all control plane log types:
+
+            ```bash
+            aws eks update-cluster-config --name <cluster_name> \
+              --logging '{"clusterLogging":[{"types":["api","audit","authenticator","controllerManager","scheduler"],"enabled":true}]}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_eks_cluster" "example" {
+              name     = "example-cluster"
+              role_arn = aws_iam_role.eks_role.arn
+
+              vpc_config {
+                subnet_ids = [aws_subnet.eks_subnet.id]
+              }
+
+              enabled_cluster_log_types = [
+                "api",
+                "audit",
+                "authenticator",
+                "controllerManager",
+                "scheduler"
+              ]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              MyEKSCluster:
+                Type: AWS::EKS::Cluster
+                Properties:
+                  Name: example-cluster
+                  RoleArn: !GetAtt eksRole.Arn
+                  ResourcesVpcConfig:
+                    SubnetIds:
+                      - !Ref eksSubnet
+                  Logging:
+                    ClusterLogging:
+                      EnabledTypes:
+                        - Type: api
+                        - Type: audit
+                        - Type: authenticator
+                        - Type: controllerManager
+                        - Type: scheduler
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/eks/latest/userguide/control-plane-logs.html
+        title: AWS Documentation - Amazon EKS control plane logging
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/eks-controls.html
+        title: AWS Documentation - EKS controls
+  - uid: mondoo-aws-security-eks-cluster-logging-enabled-api
+    filters: asset.platform == "aws-eks-cluster"
+    mql: |
+      aws.eks.cluster.logging['clusterLogging'] != null
+      aws.eks.cluster.logging['clusterLogging'].any(_['enabled'] == true)
+  - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_eks_cluster").all(
+        arguments.enabled_cluster_log_types != empty
+      )
+  - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_eks_cluster").all(
+        change.after.enabled_cluster_log_types != empty
+      )
+  - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_eks_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_eks_cluster").all(
+        values.enabled_cluster_log_types != empty
+      )
+  - uid: mondoo-aws-security-opensearch-enforce-https
+    title: Ensure Amazon OpenSearch Service domains enforce HTTPS
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-opensearch-enforce-https-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-enforce-https-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-enforce-https-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-enforce-https-terraform-plan
+      - uid: mondoo-aws-security-opensearch-enforce-https-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains are configured to enforce HTTPS for all connections. Without HTTPS enforcement, data transmitted between clients and the OpenSearch domain is unencrypted, exposing sensitive search queries, indexed data, and authentication credentials to potential interception.
+
+        **Why this matters**
+
+        - Unencrypted traffic can be intercepted by network-level attackers, exposing sensitive data and credentials.
+        - OpenSearch domains often contain business-critical or personally identifiable information (PII) that must be protected in transit.
+        - AWS Security Hub control OpenSearch.8 requires HTTPS enforcement on OpenSearch domains.
+        - Compliance frameworks such as PCI DSS, HIPAA, and SOC 2 require encryption of data in transit.
+
+        **Risk mitigation:**
+
+        - **Data protection:** Encrypts all communication between clients and the OpenSearch cluster.
+        - **Credential security:** Prevents exposure of authentication tokens and API keys in transit.
+        - **Compliance:** Aligns with AWS Security Hub, CIS, and regulatory requirements for encryption in transit.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select the domain you want to update.
+            3. Select Edit security configuration.
+            4. Under Domain endpoint options, enable Require HTTPS for all traffic to the domain.
+            5. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if HTTPS is enforced on a domain:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.DomainEndpointOptions.EnforceHTTPS"
+            ```
+
+            Enable HTTPS enforcement:
+
+            ```bash
+            aws opensearch update-domain-config --domain-name <domain-name> \
+              --domain-endpoint-options '{"EnforceHTTPS": true, "TLSSecurityPolicy": "Policy-Min-TLS-1-2-2019-07"}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              domain_endpoint_options {
+                enforce_https       = true
+                tls_security_policy = "Policy-Min-TLS-1-2-2019-07"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  DomainEndpointOptions:
+                    EnforceHTTPS: true
+                    TLSSecurityPolicy: "Policy-Min-TLS-1-2-2019-07"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/encryption-at-rest.html
+        title: AWS Documentation - Encryption in Amazon OpenSearch Service
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-enforce-https-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.enforceHTTPS == true
+  - uid: mondoo-aws-security-opensearch-enforce-https-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(enforceHTTPS == true)
+  - uid: mondoo-aws-security-opensearch-enforce-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "domain_endpoint_options") != empty &&
+        blocks.where(type == "domain_endpoint_options").all(arguments.enforce_https == true)
+      )
+  - uid: mondoo-aws-security-opensearch-enforce-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.domain_endpoint_options != empty &&
+        change.after.domain_endpoint_options.all(enforce_https == true)
+      )
+  - uid: mondoo-aws-security-opensearch-enforce-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.domain_endpoint_options != empty &&
+        values.domain_endpoint_options.all(enforce_https == true)
+      )
+  - uid: mondoo-aws-security-opensearch-node-to-node-encryption
+    title: Ensure Amazon OpenSearch Service domains use node-to-node encryption
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-opensearch-node-to-node-encryption-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-node-to-node-encryption-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-node-to-node-encryption-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-node-to-node-encryption-terraform-plan
+      - uid: mondoo-aws-security-opensearch-node-to-node-encryption-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains have node-to-node encryption enabled. Node-to-node encryption provides an additional layer of security by encrypting data as it is transferred between nodes within the OpenSearch cluster, protecting against potential internal network eavesdropping.
+
+        **Why this matters**
+
+        - Without node-to-node encryption, data moving between cluster nodes is transmitted in plaintext within the VPC.
+        - Attackers with network access within the VPC could potentially intercept inter-node traffic containing indexed data, search results, and cluster metadata.
+        - AWS Security Hub control OpenSearch.6 requires node-to-node encryption.
+        - This is especially critical for domains processing sensitive or regulated data.
+
+        **Risk mitigation:**
+
+        - **Internal traffic protection:** Encrypts all communication between nodes within the OpenSearch cluster.
+        - **Defense in depth:** Adds an encryption layer beyond VPC-level network isolation.
+        - **Compliance:** Meets AWS Security Hub and regulatory requirements for comprehensive encryption.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select the domain you want to update.
+            3. Select Edit security configuration.
+            4. Enable Node-to-node encryption.
+            5. Select Save changes.
+
+            Note: Enabling node-to-node encryption on an existing domain requires a blue/green deployment. Plan for potential downtime.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if node-to-node encryption is enabled:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.NodeToNodeEncryptionOptions.Enabled"
+            ```
+
+            Enable node-to-node encryption:
+
+            ```bash
+            aws opensearch update-domain-config --domain-name <domain-name> \
+              --node-to-node-encryption-options Enabled=true
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              node_to_node_encryption {
+                enabled = true
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  NodeToNodeEncryptionOptions:
+                    Enabled: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/ntn.html
+        title: AWS Documentation - Node-to-node encryption for Amazon OpenSearch Service
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-node-to-node-encryption-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.nodeToNodeEncryptionEnabled == true
+  - uid: mondoo-aws-security-opensearch-node-to-node-encryption-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(nodeToNodeEncryptionEnabled == true)
+  - uid: mondoo-aws-security-opensearch-node-to-node-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "node_to_node_encryption") != empty &&
+        blocks.where(type == "node_to_node_encryption").all(arguments.enabled == true)
+      )
+  - uid: mondoo-aws-security-opensearch-node-to-node-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.node_to_node_encryption != empty &&
+        change.after.node_to_node_encryption.all(enabled == true)
+      )
+  - uid: mondoo-aws-security-opensearch-node-to-node-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.node_to_node_encryption != empty &&
+        values.node_to_node_encryption.all(enabled == true)
+      )
+  - uid: mondoo-aws-security-opensearch-tls-policy
+    title: Ensure Amazon OpenSearch Service domains use TLS 1.2 or higher
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-opensearch-tls-policy-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-tls-policy-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-tls-policy-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-tls-policy-terraform-plan
+      - uid: mondoo-aws-security-opensearch-tls-policy-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains are configured with a TLS security policy that enforces TLS 1.2 or higher. Older TLS versions (1.0 and 1.1) have known vulnerabilities that can be exploited by attackers to intercept or decrypt encrypted traffic.
+
+        **Why this matters**
+
+        - TLS 1.0 and 1.1 have known security weaknesses including susceptibility to BEAST, POODLE, and other attacks.
+        - Major browsers and compliance frameworks have deprecated TLS 1.0 and 1.1.
+        - PCI DSS requires TLS 1.2 or higher for all systems that handle cardholder data.
+        - AWS Security Hub recommends enforcing a minimum TLS version of 1.2.
+
+        **Risk mitigation:**
+
+        - **Protocol security:** Eliminates use of deprecated TLS versions with known vulnerabilities.
+        - **Cipher strength:** TLS 1.2+ policies enforce the use of strong cipher suites.
+        - **Compliance:** Meets PCI DSS, HIPAA, and other regulatory requirements for encryption protocols.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select the domain you want to update.
+            3. Select Edit security configuration.
+            4. Under Domain endpoint options, set the TLS security policy to Policy-Min-TLS-1-2-2019-07 or a newer policy.
+            5. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check the TLS security policy for a domain:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.DomainEndpointOptions.TLSSecurityPolicy"
+            ```
+
+            Update the TLS security policy:
+
+            ```bash
+            aws opensearch update-domain-config --domain-name <domain-name> \
+              --domain-endpoint-options '{"TLSSecurityPolicy": "Policy-Min-TLS-1-2-2019-07"}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              domain_endpoint_options {
+                enforce_https       = true
+                tls_security_policy = "Policy-Min-TLS-1-2-2019-07"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  DomainEndpointOptions:
+                    EnforceHTTPS: true
+                    TLSSecurityPolicy: "Policy-Min-TLS-1-2-2019-07"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/encryption-at-rest.html
+        title: AWS Documentation - Encryption in Amazon OpenSearch Service
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-tls-policy-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.tlsSecurityPolicy == /Policy-Min-TLS-1-2/
+  - uid: mondoo-aws-security-opensearch-tls-policy-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(tlsSecurityPolicy == /Policy-Min-TLS-1-2/)
+  - uid: mondoo-aws-security-opensearch-tls-policy-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "domain_endpoint_options") != empty &&
+        blocks.where(type == "domain_endpoint_options").all(
+          arguments.tls_security_policy == /Policy-Min-TLS-1-2/
+        )
+      )
+  - uid: mondoo-aws-security-opensearch-tls-policy-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.domain_endpoint_options != empty &&
+        change.after.domain_endpoint_options.all(tls_security_policy == /Policy-Min-TLS-1-2/)
+      )
+  - uid: mondoo-aws-security-opensearch-tls-policy-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.domain_endpoint_options != empty &&
+        values.domain_endpoint_options.all(tls_security_policy == /Policy-Min-TLS-1-2/)
+      )
+  - uid: mondoo-aws-security-opensearch-fine-grained-access-control
+    title: Ensure Amazon OpenSearch Service domains have fine-grained access control enabled
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-opensearch-fine-grained-access-control-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-fine-grained-access-control-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-fine-grained-access-control-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-fine-grained-access-control-terraform-plan
+      - uid: mondoo-aws-security-opensearch-fine-grained-access-control-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains have fine-grained access control (advanced security options) enabled. Fine-grained access control provides granular permissions for indices, documents, and fields, enabling role-based access control (RBAC) within the OpenSearch domain.
+
+        **Why this matters**
+
+        - Without fine-grained access control, access is managed solely through IAM and resource-based policies, which cannot restrict access at the index, document, or field level.
+        - Sensitive data within specific indices or fields cannot be protected from authorized but over-privileged users.
+        - AWS Security Hub control OpenSearch.7 requires fine-grained access control.
+        - Fine-grained access control enables audit logging of user actions within the domain.
+
+        **Risk mitigation:**
+
+        - **Least privilege:** Enables restricting users to specific indices, documents, and fields.
+        - **Data isolation:** Prevents unauthorized access to sensitive data within shared domains.
+        - **Audit capability:** Provides detailed logging of who accessed what data and when.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select the domain you want to update.
+            3. Select Edit security configuration.
+            4. Enable Fine-grained access control.
+            5. Choose either IAM ARN as master user or create a master user with a username and password.
+            6. Select Save changes.
+
+            Note: Enabling fine-grained access control requires encryption at rest, node-to-node encryption, and HTTPS enforcement to also be enabled.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if fine-grained access control is enabled:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.AdvancedSecurityOptions.Enabled"
+            ```
+
+            Enable fine-grained access control:
+
+            ```bash
+            aws opensearch update-domain-config --domain-name <domain-name> \
+              --advanced-security-options '{"Enabled": true, "InternalUserDatabaseEnabled": true, "MasterUserOptions": {"MasterUserName": "admin", "MasterUserPassword": "SecurePassword123!"}}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              advanced_security_options {
+                enabled                        = true
+                internal_user_database_enabled = true
+                master_user_options {
+                  master_user_name     = "admin"
+                  master_user_password = var.master_user_password
+                }
+              }
+
+              # Required prerequisites for fine-grained access control
+              encrypt_at_rest { enabled = true }
+              node_to_node_encryption { enabled = true }
+              domain_endpoint_options {
+                enforce_https       = true
+                tls_security_policy = "Policy-Min-TLS-1-2-2019-07"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  AdvancedSecurityOptions:
+                    Enabled: true
+                    InternalUserDatabaseEnabled: true
+                    MasterUserOptions:
+                      MasterUserName: "admin"
+                      MasterUserPassword: !Ref MasterPassword
+                  EncryptionAtRestOptions:
+                    Enabled: true
+                  NodeToNodeEncryptionOptions:
+                    Enabled: true
+                  DomainEndpointOptions:
+                    EnforceHTTPS: true
+                    TLSSecurityPolicy: "Policy-Min-TLS-1-2-2019-07"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/fgac.html
+        title: AWS Documentation - Fine-grained access control in Amazon OpenSearch Service
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-fine-grained-access-control-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.advancedSecurityEnabled == true
+  - uid: mondoo-aws-security-opensearch-fine-grained-access-control-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(advancedSecurityEnabled == true)
+  - uid: mondoo-aws-security-opensearch-fine-grained-access-control-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "advanced_security_options") != empty &&
+        blocks.where(type == "advanced_security_options").all(arguments.enabled == true)
+      )
+  - uid: mondoo-aws-security-opensearch-fine-grained-access-control-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.advanced_security_options != empty &&
+        change.after.advanced_security_options.all(enabled == true)
+      )
+  - uid: mondoo-aws-security-opensearch-fine-grained-access-control-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.advanced_security_options != empty &&
+        values.advanced_security_options.all(enabled == true)
+      )
+  - uid: mondoo-aws-security-opensearch-audit-logging
+    title: Ensure Amazon OpenSearch Service domains have audit logging enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-opensearch-audit-logging-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-audit-logging-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-audit-logging-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-audit-logging-terraform-plan
+      - uid: mondoo-aws-security-opensearch-audit-logging-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains have audit logging enabled. Audit logs capture authentication attempts, access to indices, queries executed, and changes to the domain configuration, providing a detailed record of activity for security monitoring and compliance.
+
+        **Why this matters**
+
+        - Without audit logging, unauthorized access attempts and data exfiltration go undetected.
+        - Security investigations and forensic analysis require detailed access logs to reconstruct events.
+        - Compliance frameworks such as PCI DSS, HIPAA, and SOC 2 require logging of access to systems containing sensitive data.
+        - AWS Security Hub control OpenSearch.4 recommends enabling audit logging.
+
+        **Risk mitigation:**
+
+        - **Threat detection:** Enables detection of unauthorized access attempts and anomalous query patterns.
+        - **Forensic readiness:** Provides detailed audit trail for incident investigation and response.
+        - **Compliance:** Meets regulatory requirements for access logging and monitoring.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select the domain you want to update.
+            3. Select the Logs tab and then Edit.
+            4. Enable Audit logs and select a CloudWatch log group as the destination.
+            5. Select Save changes.
+
+            Note: Audit logging requires fine-grained access control to be enabled.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if audit logging is enabled:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.LogPublishingOptions.AUDIT_LOGS"
+            ```
+
+            Enable audit logging:
+
+            ```bash
+            aws opensearch update-domain-config --domain-name <domain-name> \
+              --log-publishing-options '{"AUDIT_LOGS": {"CloudWatchLogsLogGroupArn": "arn:aws:logs:us-east-1:123456789012:log-group:/aws/opensearch/domains/example/audit-logs", "Enabled": true}}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              log_publishing_options {
+                cloudwatch_log_group_arn = aws_cloudwatch_log_group.audit.arn
+                log_type                = "AUDIT_LOGS"
+                enabled                 = true
+              }
+            }
+
+            resource "aws_cloudwatch_log_group" "audit" {
+              name              = "/aws/opensearch/domains/example/audit-logs"
+              retention_in_days = 365
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  LogPublishingOptions:
+                    AUDIT_LOGS:
+                      CloudWatchLogsLogGroupArn: !GetAtt AuditLogGroup.Arn
+                      Enabled: true
+
+              AuditLogGroup:
+                Type: "AWS::Logs::LogGroup"
+                Properties:
+                  LogGroupName: "/aws/opensearch/domains/example/audit-logs"
+                  RetentionInDays: 365
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/audit-logs.html
+        title: AWS Documentation - Monitoring audit logs in Amazon OpenSearch Service
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-audit-logging-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.auditLogEnabled == true
+  - uid: mondoo-aws-security-opensearch-audit-logging-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(auditLogEnabled == true)
+  - uid: mondoo-aws-security-opensearch-audit-logging-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "log_publishing_options").where(arguments.log_type == "AUDIT_LOGS") != empty &&
+        blocks.where(type == "log_publishing_options").where(arguments.log_type == "AUDIT_LOGS").all(arguments.enabled != false)
+      )
+  - uid: mondoo-aws-security-opensearch-audit-logging-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.log_publishing_options != empty &&
+        change.after.log_publishing_options.any(log_type == "AUDIT_LOGS")
+      )
+  - uid: mondoo-aws-security-opensearch-audit-logging-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.log_publishing_options != empty &&
+        values.log_publishing_options.any(log_type == "AUDIT_LOGS")
+      )
+  - uid: mondoo-aws-security-opensearch-in-vpc
+    title: Ensure Amazon OpenSearch Service domains are deployed within a VPC
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-opensearch-in-vpc-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-in-vpc-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-in-vpc-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-in-vpc-terraform-plan
+      - uid: mondoo-aws-security-opensearch-in-vpc-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains are deployed within a VPC rather than using a public endpoint. Domains deployed outside a VPC are accessible from the internet, significantly increasing the attack surface and risk of unauthorized access.
+
+        **Why this matters**
+
+        - Public OpenSearch domains are accessible from any IP address on the internet, making them targets for brute-force attacks and exploitation of vulnerabilities.
+        - Data indexed in public domains can potentially be accessed by unauthorized parties if access policies are misconfigured.
+        - AWS Security Hub control OpenSearch.2 requires OpenSearch domains to be in a VPC.
+        - VPC deployment enables use of security groups and network ACLs for additional access control layers.
+
+        **Risk mitigation:**
+
+        - **Network isolation:** Restricts access to the domain to resources within the VPC or connected networks.
+        - **Defense in depth:** Enables use of security groups and NACLs as additional access control mechanisms.
+        - **Reduced attack surface:** Eliminates direct internet exposure of the OpenSearch endpoint.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            Note: You cannot migrate an existing public domain into a VPC. You must create a new domain within a VPC and migrate your data.
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select Create domain.
+            3. Under Network, select VPC access.
+            4. Select the VPC, subnets, and security groups for the domain.
+            5. Complete the remaining configuration and select Create.
+            6. Migrate data from the old public domain to the new VPC domain using a snapshot or reindex operation.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if a domain is in a VPC:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.VPCOptions"
+            ```
+
+            If the output is null or empty, the domain is using a public endpoint. Create a new domain within a VPC:
+
+            ```bash
+            aws opensearch create-domain --domain-name <new-domain-name> \
+              --engine-version "OpenSearch_2.11" \
+              --vpc-options '{"SubnetIds": ["subnet-12345"], "SecurityGroupIds": ["sg-12345"]}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              vpc_options {
+                subnet_ids         = [aws_subnet.private.id]
+                security_group_ids = [aws_security_group.opensearch.id]
+              }
+            }
+
+            resource "aws_security_group" "opensearch" {
+              name   = "opensearch-sg"
+              vpc_id = aws_vpc.main.id
+
+              ingress {
+                from_port   = 443
+                to_port     = 443
+                protocol    = "tcp"
+                cidr_blocks = [aws_vpc.main.cidr_block]
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  VPCOptions:
+                    SubnetIds:
+                      - !Ref PrivateSubnet
+                    SecurityGroupIds:
+                      - !Ref OpenSearchSecurityGroup
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/vpc.html
+        title: AWS Documentation - Launching your Amazon OpenSearch Service domains within a VPC
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-in-vpc-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.vpcId != ""
+  - uid: mondoo-aws-security-opensearch-in-vpc-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(vpcId != "")
+  - uid: mondoo-aws-security-opensearch-in-vpc-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "vpc_options") != empty
+      )
+  - uid: mondoo-aws-security-opensearch-in-vpc-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.vpc_options != empty
+      )
+  - uid: mondoo-aws-security-opensearch-in-vpc-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.vpc_options != empty
+      )
+  - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled
+    title: Ensure Amazon OpenSearch Service domains do not allow anonymous authentication
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-single
+        tags:
+          mondoo.com/filter-title: "AWS OpenSearch Domain"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-terraform-hcl
+      - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-terraform-plan
+      - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon OpenSearch Service domains do not have anonymous authentication enabled. When anonymous authentication is enabled, unauthenticated users can access the domain and its data without providing credentials, posing a severe security risk.
+
+        **Why this matters**
+
+        - Anonymous authentication allows anyone with network access to query, modify, or delete data in the OpenSearch domain without credentials.
+        - Sensitive data indexed in the domain is exposed to unauthorized access.
+        - Anonymous access bypasses fine-grained access control policies, rendering role-based permissions ineffective for unauthenticated requests.
+        - This setting is sometimes enabled during development and mistakenly left active in production.
+
+        **Risk mitigation:**
+
+        - **Authentication enforcement:** Ensures all requests to the domain must be authenticated.
+        - **Data protection:** Prevents unauthorized users from accessing indexed data.
+        - **Access control integrity:** Ensures fine-grained access control policies are applied to all requests.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon OpenSearch Service Console.
+            2. Select the domain you want to update.
+            3. Select Edit security configuration.
+            4. Under Fine-grained access control, ensure Anonymous auth is disabled (unchecked).
+            5. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if anonymous authentication is enabled:
+
+            ```bash
+            aws opensearch describe-domain --domain-name <domain-name> \
+              --query "DomainStatus.AdvancedSecurityOptions.AnonymousAuthEnabled"
+            ```
+
+            Disable anonymous authentication:
+
+            ```bash
+            aws opensearch update-domain-config --domain-name <domain-name> \
+              --advanced-security-options '{"AnonymousAuthEnabled": false}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_opensearch_domain" "example" {
+              domain_name    = "example-domain"
+              engine_version = "OpenSearch_2.11"
+
+              advanced_security_options {
+                enabled                        = true
+                anonymous_auth_enabled         = false  # Disable anonymous auth
+                internal_user_database_enabled = true
+                master_user_options {
+                  master_user_name     = "admin"
+                  master_user_password = var.master_user_password
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              OpenSearchDomain:
+                Type: "AWS::OpenSearchService::Domain"
+                Properties:
+                  DomainName: "example-domain"
+                  EngineVersion: "OpenSearch_2.11"
+                  AdvancedSecurityOptions:
+                    Enabled: true
+                    AnonymousAuthEnabled: false
+                    InternalUserDatabaseEnabled: true
+                    MasterUserOptions:
+                      MasterUserName: "admin"
+                      MasterUserPassword: !Ref MasterPassword
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/fgac.html
+        title: AWS Documentation - Fine-grained access control in Amazon OpenSearch Service
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/opensearch-controls.html
+        title: AWS Documentation - OpenSearch controls
+  - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-single
+    filters: asset.platform == "aws-opensearch-domain"
+    mql: aws.opensearch.domain.anonymousAuthEnabled != true
+  - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-api
+    filters: asset.platform == "aws"
+    mql: aws.opensearch.domains.all(anonymousAuthEnabled != true)
+  - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_opensearch_domain").all(
+        blocks.where(type == "advanced_security_options").all(arguments.anonymous_auth_enabled != true)
+      )
+  - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_opensearch_domain").all(
+        change.after.advanced_security_options.all(anonymous_auth_enabled != true)
+      )
+  - uid: mondoo-aws-security-opensearch-anonymous-auth-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_opensearch_domain")
+    mql: |
+      terraform.state.resources.where(type == "aws_opensearch_domain").all(
+        values.advanced_security_options.all(anonymous_auth_enabled != true)
       )
