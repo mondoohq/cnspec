@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-security
     name: Mondoo Kubernetes Cluster and Workload Security
-    version: 1.2.1
+    version: 1.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -80,6 +80,7 @@ policies:
         filters: asset.platform == "k8s-cronjob"
         checks:
           - uid: mondoo-kubernetes-security-cronjob-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-cronjob-capability-drop-all
           - uid: mondoo-kubernetes-security-cronjob-capability-net-raw
           - uid: mondoo-kubernetes-security-cronjob-capability-sys-admin
           - uid: mondoo-kubernetes-security-cronjob-containerd-socket
@@ -101,6 +102,7 @@ policies:
         filters: asset.platform == "k8s-statefulset"
         checks:
           - uid: mondoo-kubernetes-security-statefulset-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-statefulset-capability-drop-all
           - uid: mondoo-kubernetes-security-statefulset-capability-net-raw
           - uid: mondoo-kubernetes-security-statefulset-capability-sys-admin
           - uid: mondoo-kubernetes-security-statefulset-containerd-socket
@@ -122,6 +124,7 @@ policies:
         filters: asset.platform == "k8s-deployment"
         checks:
           - uid: mondoo-kubernetes-security-deployment-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-deployment-capability-drop-all
           - uid: mondoo-kubernetes-security-deployment-capability-net-raw
           - uid: mondoo-kubernetes-security-deployment-capability-sys-admin
           - uid: mondoo-kubernetes-security-deployment-containerd-socket
@@ -145,6 +148,7 @@ policies:
         filters: asset.platform == "k8s-job"
         checks:
           - uid: mondoo-kubernetes-security-job-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-job-capability-drop-all
           - uid: mondoo-kubernetes-security-job-capability-net-raw
           - uid: mondoo-kubernetes-security-job-capability-sys-admin
           - uid: mondoo-kubernetes-security-job-containerd-socket
@@ -166,6 +170,7 @@ policies:
         filters: asset.platform == "k8s-replicaset"
         checks:
           - uid: mondoo-kubernetes-security-replicaset-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-replicaset-capability-drop-all
           - uid: mondoo-kubernetes-security-replicaset-capability-net-raw
           - uid: mondoo-kubernetes-security-replicaset-capability-sys-admin
           - uid: mondoo-kubernetes-security-replicaset-containerd-socket
@@ -187,6 +192,7 @@ policies:
         filters: asset.platform == "k8s-daemonset"
         checks:
           - uid: mondoo-kubernetes-security-daemonset-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-daemonset-capability-drop-all
           - uid: mondoo-kubernetes-security-daemonset-capability-net-raw
           - uid: mondoo-kubernetes-security-daemonset-capability-sys-admin
           - uid: mondoo-kubernetes-security-daemonset-containerd-socket
@@ -208,6 +214,7 @@ policies:
         filters: asset.platform == "k8s-pod"
         checks:
           - uid: mondoo-kubernetes-security-pod-allowprivilegeescalation
+          - uid: mondoo-kubernetes-security-pod-capability-drop-all
           - uid: mondoo-kubernetes-security-pod-capability-net-raw
           - uid: mondoo-kubernetes-security-pod-capability-sys-admin
           - uid: mondoo-kubernetes-security-pod-containerd-socket
@@ -8197,3 +8204,327 @@ queries:
         ```
       remediation: |
         Delete any pods that are running Kubernetes dashboard.
+  - uid: mondoo-kubernetes-security-pod-capability-drop-all
+    title: Pods should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.pod.podSpec['ephemeralContainers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+      k8s.pod.podSpec['initContainers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+      k8s.pod.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in pods explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that pods drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all Pods drop ALL capabilities:
+
+        ```bash
+        kubectl get pods -A -o json | jq -r '.items[] | select( .spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update Pods (or the Deployments/DaemonSets/CronJobs/etc that produced the Pods) to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          containers:
+            - securityContext:
+                capabilities:
+                  drop: ["ALL"]
+                  add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
+  - uid: mondoo-kubernetes-security-daemonset-capability-drop-all
+    title: DaemonSets should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.daemonset.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in DaemonSets explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that DaemonSets drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all DaemonSets drop ALL capabilities:
+
+        ```bash
+        kubectl get daemonsets -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update DaemonSets to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          template:
+            spec:
+              containers:
+                - securityContext:
+                    capabilities:
+                      drop: ["ALL"]
+                      add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
+  - uid: mondoo-kubernetes-security-replicaset-capability-drop-all
+    title: ReplicaSets should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.replicaset.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in ReplicaSets explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that ReplicaSets drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all ReplicaSets drop ALL capabilities:
+
+        ```bash
+        kubectl get replicasets -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update ReplicaSets to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          template:
+            spec:
+              containers:
+                - securityContext:
+                    capabilities:
+                      drop: ["ALL"]
+                      add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
+  - uid: mondoo-kubernetes-security-job-capability-drop-all
+    title: Jobs should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.job.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in Jobs explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that Jobs drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all Jobs drop ALL capabilities:
+
+        ```bash
+        kubectl get jobs -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update Jobs to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          template:
+            spec:
+              containers:
+                - securityContext:
+                    capabilities:
+                      drop: ["ALL"]
+                      add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
+  - uid: mondoo-kubernetes-security-deployment-capability-drop-all
+    title: Deployments should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.deployment.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in Deployments explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that Deployments drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all Deployments drop ALL capabilities:
+
+        ```bash
+        kubectl get deployments -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update Deployments to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          template:
+            spec:
+              containers:
+                - securityContext:
+                    capabilities:
+                      drop: ["ALL"]
+                      add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
+  - uid: mondoo-kubernetes-security-statefulset-capability-drop-all
+    title: StatefulSets should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.statefulset.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in StatefulSets explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that StatefulSets drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all StatefulSets drop ALL capabilities:
+
+        ```bash
+        kubectl get statefulsets -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update StatefulSets to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          template:
+            spec:
+              containers:
+                - securityContext:
+                    capabilities:
+                      drop: ["ALL"]
+                      add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
+  - uid: mondoo-kubernetes-security-cronjob-capability-drop-all
+    title: CronJobs should drop ALL capabilities
+    impact: 80
+    mql: |
+      k8s.cronjob.podSpec['containers'].all( _['securityContext']['capabilities'] { _['drop'].any( _.upcase == "ALL" ) } )
+    docs:
+      desc: |
+        This check ensures that all containers in CronJobs explicitly drop ALL Linux capabilities. The Kubernetes Pod Security Standards Restricted profile requires containers to drop all capabilities and only add back specific ones that are needed.
+
+        **Why this matters**
+
+        Linux capabilities grant specific privileged operations to processes. By default, container runtimes assign a set of capabilities to containers that most workloads do not need. Failing to drop all capabilities means containers run with unnecessary privileges:
+
+        - Containers retain default capabilities like NET_RAW, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID, SETPCAP, NET_BIND_SERVICE, SYS_CHROOT, MKNOD, and AUDIT_WRITE.
+        - Attackers who compromise a container can leverage these capabilities to escalate privileges, manipulate files, or perform network attacks.
+        - The principle of least privilege is violated, increasing the blast radius of any container compromise.
+        - Compliance with the Kubernetes Pod Security Standards Restricted profile requires dropping ALL capabilities.
+
+        By ensuring that CronJobs drop ALL capabilities, organizations enforce the principle of least privilege, reduce the attack surface, and align with Kubernetes security best practices.
+      audit: |
+        Check to ensure all CronJobs drop ALL capabilities:
+
+        ```bash
+        kubectl get cronjobs -A -o json | jq -r '.items[] | select( .spec.jobTemplate.spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase == "ALL") | not ) ) | .metadata.namespace + "/" + .metadata.name' | uniq
+        ```
+      remediation: |
+        Update CronJobs to drop ALL capabilities, then add back only the specific capabilities required:
+
+        ```yaml
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
+        spec:
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  containers:
+                    - securityContext:
+                        capabilities:
+                          drop: ["ALL"]
+                          add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
+        ```
+    refs:
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        title: "Kubernetes Pod Security Standards: Restricted"
