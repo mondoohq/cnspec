@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 3.0.0
+    version: 3.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -26,14 +26,26 @@ policies:
         checks:
           - uid: mondoo-gcp-security-cloud-storage-bucket-not-anonymously-publicly-accessible
           - uid: mondoo-gcp-security-cloud-storage-buckets-have-uniform-bucket-level-access-enabled
+          - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention
+          - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption
+          - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked
+      - title: BigQuery
+        checks:
+          - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible
+          - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption
+          - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption
       - title: Cloud KMS
         checks:
           - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible
           - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days
+          - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration
+          - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location
+          - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured
       - title: Cloud DNS
         checks:
           - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled
           - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used
+          - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used
       - title: Compute Engine Instances
         checks:
           - uid: mondoo-gcp-security-compute-instances-block-project-wide-ssh-keys
@@ -46,6 +58,27 @@ policies:
           - uid: mondoo-gcp-security-compute-instances-vtpm-enabled
           - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
           - uid: mondoo-gcp-security-instances-not-configured-with-default-service-account-full-access-cloud-api
+      - title: Compute Firewall
+        checks:
+          - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet
+          - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet
+          - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols
+          - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet
+          - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress
+      - title: Compute Network
+        checks:
+          - uid: mondoo-gcp-security-compute-network-not-legacy
+      - title: Compute Subnetwork
+        checks:
+          - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled
+          - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled
+      - title: GKE
+        checks:
+          - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled
+          - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled
+          - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled
+          - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled
+          - uid: mondoo-gcp-security-gke-cluster-alpha-disabled
       - title: Cloud SQL
         checks:
           - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
@@ -641,6 +674,619 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_storage_bucket').all(
         values.uniform_bucket_level_access == true
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention
+    title: Ensure that Cloud Storage buckets enforce public access prevention
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-gcp
+      - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-terraform-plan
+      - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-terraform-state
+    docs:
+      desc: |
+        Public access prevention protects Cloud Storage buckets from being accidentally exposed to the public. When you enforce public access prevention on a bucket, it prevents all public access to the bucket and its objects, regardless of existing IAM policies or ACLs.
+
+        **Why this matters**
+
+        Even with careful IAM configuration, a single misconfigured policy binding could expose sensitive data to the public internet. Public access prevention acts as an additional safeguard:
+          - It overrides any IAM or ACL configuration that would grant public access, providing defense-in-depth.
+          - It prevents accidental exposure from future IAM changes by team members unfamiliar with the bucket's sensitivity.
+          - It ensures compliance with data protection regulations that require restricting public access to sensitive data stores.
+
+        Without public access prevention enforced:
+          - A single IAM binding with `allUsers` or `allAuthenticatedUsers` could expose all objects in the bucket.
+          - Object-level ACLs could independently grant public access even if bucket-level IAM is correctly configured.
+          - Organizational security boundaries may be bypassed by individual project-level permissions.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Set the `public_access_prevention` property to `enforced` in your bucket configuration:
+
+            ```hcl
+            resource "google_storage_bucket" "example" {
+              name                        = "example-bucket"
+              location                    = "US"
+              public_access_prevention    = "enforced"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Cloud Storage Buckets** page.
+            2. Select the name of the bucket you want to configure.
+            3. Select the **Permissions** tab.
+            4. In the **Public access** section, select **Prevent public access**.
+            5. Select **Confirm**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud storage buckets update gs://BUCKET_NAME --public-access-prevention
+            ```
+  - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-gcp
+    filters: asset.platform == 'gcp-storage-bucket'
+    mql: gcp.storage.bucket.iamConfiguration['publicAccessPrevention'] == "enforced"
+  - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_storage_bucket')
+    mql: |
+      terraform.resources('google_storage_bucket').all(
+        arguments.public_access_prevention == "enforced"
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_storage_bucket')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_storage_bucket').all(
+        change.after.public_access_prevention == "enforced"
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_storage_bucket')
+    mql: |
+      terraform.state.resources.where(type == 'google_storage_bucket').all(
+        values.public_access_prevention == "enforced"
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption
+    title: Ensure that Cloud Storage buckets are encrypted with customer-managed encryption keys (CMEK)
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-gcp
+      - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-terraform-plan
+      - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-terraform-state
+    docs:
+      desc: |
+        By default, Google Cloud Storage encrypts all data at rest using Google-managed encryption keys. While this provides a baseline level of encryption, using customer-managed encryption keys (CMEK) through Cloud KMS gives organizations greater control over their encryption keys and meets compliance requirements that mandate customer-controlled key management.
+
+        **Why this matters**
+
+        Customer-managed encryption keys provide several advantages over Google-managed keys:
+          - Organizations maintain full control over the encryption key lifecycle, including creation, rotation, and destruction.
+          - CMEK enables the ability to revoke access to encrypted data by disabling or destroying the encryption key.
+          - It satisfies compliance requirements from frameworks such as PCI DSS, HIPAA, and FedRAMP that require customer-controlled encryption.
+          - Key usage can be audited through Cloud Audit Logs for Cloud KMS, providing visibility into when and how keys are used.
+
+        Without CMEK encryption:
+          - Organizations cannot independently revoke access to encrypted data without deleting the data itself.
+          - Compliance requirements for customer-managed key control may not be met.
+          - There is no separation of duties between the cloud provider managing encryption and the customer controlling keys.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a Cloud KMS key and set it as the default encryption key for the bucket:
+
+            ```hcl
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us"
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_storage_bucket" "example" {
+              name     = "example-bucket"
+              location = "US"
+
+              encryption {
+                default_kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Cloud Storage Buckets** page.
+            2. Select the name of the bucket you want to configure.
+            3. Select the **Configuration** tab.
+            4. Under **Encryption type**, click **Edit**.
+            5. Select **Customer-managed encryption key**.
+            6. Search for or enter the name of the Cloud KMS key you want to use.
+            7. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud storage buckets update gs://BUCKET_NAME --default-encryption-key=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY
+            ```
+  - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-storage-bucket'
+    mql: gcp.storage.bucket.encryption['defaultKmsKeyName'] != "" && gcp.storage.bucket.encryption['defaultKmsKeyName'] != empty
+  - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_storage_bucket')
+    mql: |
+      terraform.resources('google_storage_bucket').all(
+        blocks.where(type == 'encryption') != empty &&
+        blocks.where(type == 'encryption').all(arguments.default_kms_key_name != empty)
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_storage_bucket')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_storage_bucket').all(
+        change.after['encryption'] != empty &&
+        change.after['encryption'].any(_['default_kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_storage_bucket')
+    mql: |
+      terraform.state.resources.where(type == 'google_storage_bucket').all(
+        values['encryption'] != empty &&
+        values['encryption'].any(_['default_kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked
+    title: Ensure that Cloud Storage buckets have a locked retention policy configured
+    impact: 50
+    variants:
+      - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-gcp
+      - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-plan
+      - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-state
+    docs:
+      desc: |
+        A retention policy on a Cloud Storage bucket ensures that objects stored in the bucket cannot be deleted or overwritten for a specified duration. Locking the retention policy makes it irreversible, preventing anyone (including bucket owners) from reducing the retention period or removing the policy.
+
+        **Why this matters**
+
+        Locked retention policies provide immutability guarantees critical for data protection and compliance:
+          - They prevent accidental or malicious deletion of important data such as logs, backups, or regulated records.
+          - Locked policies satisfy regulatory requirements from SEC Rule 17a-4(f), CFTC Rule 1.31(c)-(d), FINRA, and similar frameworks that require write-once-read-many (WORM) storage.
+          - Once locked, the retention policy cannot be removed or reduced, ensuring that data integrity is maintained even if an administrator account is compromised.
+
+        Without a locked retention policy:
+          - Critical data can be accidentally or intentionally deleted before its required retention period expires.
+          - Compliance with data retention regulations may not be met, exposing the organization to legal and financial risk.
+          - An attacker with sufficient permissions could delete evidence of a security breach or other activities.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a retention policy on the bucket. Note that locking a retention policy is an irreversible action:
+
+            ```hcl
+            resource "google_storage_bucket" "example" {
+              name     = "example-bucket"
+              location = "US"
+
+              retention_policy {
+                is_locked        = true
+                retention_period = 86400  # Retention period in seconds (e.g., 1 day = 86400)
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Cloud Storage Buckets** page.
+            2. Select the name of the bucket you want to configure.
+            3. Select the **Protection** tab.
+            4. Under **Retention policy**, click **Add a retention policy** if none exists.
+            5. Enter the desired retention period.
+            6. Click **Save**.
+            7. To lock the policy, click **Lock** and confirm. Note that this action is irreversible.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. Set a retention policy on the bucket:
+
+            ```bash
+            gcloud storage buckets update gs://BUCKET_NAME --retention-period=DURATION
+            ```
+
+            2. Lock the retention policy (this is irreversible):
+
+            ```bash
+            gcloud storage buckets update gs://BUCKET_NAME --lock-retention-period
+            ```
+  - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-gcp
+    filters: asset.platform == 'gcp-storage-bucket'
+    mql: |
+      gcp.storage.bucket.retentionPolicy['retentionPeriod'] > 0
+      gcp.storage.bucket.retentionPolicy['isLocked'] == true
+  - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_storage_bucket')
+    mql: |
+      terraform.resources('google_storage_bucket').all(
+        blocks.where(type == 'retention_policy') != empty &&
+        blocks.where(type == 'retention_policy').all(arguments.is_locked == true && arguments.retention_period > 0)
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_storage_bucket')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_storage_bucket').all(
+        change.after['retention_policy'] != empty &&
+        change.after['retention_policy'].any(_['is_locked'] == true && _['retention_period'] > 0)
+      )
+  - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_storage_bucket')
+    mql: |
+      terraform.state.resources.where(type == 'google_storage_bucket').all(
+        values['retention_policy'] != empty &&
+        values['retention_policy'].any(_['is_locked'] == true && _['retention_period'] > 0)
+      )
+  - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible
+    title: Ensure that BigQuery datasets are not anonymously or publicly accessible
+    impact: 90
+    variants:
+      - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-gcp
+      - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-hcl
+      - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-plan
+      - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-state
+    docs:
+      desc: |
+        BigQuery datasets can be configured with access controls that grant permissions to specific users, groups, domains, or special groups. Granting access to `allUsers` or `allAuthenticatedUsers` makes the dataset publicly accessible, exposing potentially sensitive data to anyone on the internet or any authenticated Google user.
+
+        **Why this matters**
+
+        BigQuery datasets often contain sensitive business data, customer information, analytics, or financial records. Public access to these datasets can have severe consequences:
+          - Any user on the internet (with `allUsers`) or any Google account holder (with `allAuthenticatedUsers`) can query the data, leading to data breaches.
+          - Publicly accessible datasets can incur unexpected query costs if external parties run expensive queries against your data.
+          - Compliance frameworks such as PCI DSS, HIPAA, SOC 2, and GDPR require strict access controls on data stores containing sensitive information.
+
+        Without restricting public access:
+          - Sensitive data such as PII, financial records, or proprietary business intelligence may be exposed.
+          - Query costs can escalate as unauthorized users run queries against the dataset.
+          - The organization may fail compliance audits and face regulatory penalties.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure the `access` block in your BigQuery dataset does not include `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_bigquery_dataset" "example" {
+              dataset_id = "example_dataset"
+              location   = "US"
+
+              access {
+                role          = "OWNER"
+                user_by_email = google_service_account.bqowner.email
+              }
+
+              access {
+                role   = "READER"
+                domain = "example.com"
+              }
+            }
+            ```
+
+            Also ensure that IAM bindings do not include public members:
+
+            ```hcl
+            resource "google_bigquery_dataset_iam_binding" "reader" {
+              dataset_id = google_bigquery_dataset.example.dataset_id
+              role       = "roles/bigquery.dataViewer"
+              members = [
+                "user:analyst@example.com",
+              ]
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **BigQuery** page.
+            2. Select the dataset you want to configure.
+            3. Click **Sharing** and then **Permissions**.
+            4. Review the list of principals and remove any entries for `allUsers` or `allAuthenticatedUsers`.
+            5. Click **Done**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. Retrieve the current dataset access configuration:
+
+            ```bash
+            bq show --format=prettyjson PROJECT_ID:DATASET_ID
+            ```
+
+            2. Review the `access` array in the output and identify entries with `"specialGroup": "allAuthenticatedUsers"` or `"iamMember": "allUsers"`.
+
+            3. Remove the public access entries and update the dataset:
+
+            ```bash
+            bq update --source=dataset.json PROJECT_ID:DATASET_ID
+            ```
+  - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-gcp
+    filters: asset.platform == "gcp-bigquery-dataset"
+    mql: |
+      gcp.bigquery.dataset.access.none(entity == "allAuthenticatedUsers")
+      gcp.bigquery.dataset.access.none(entity == "allUsers")
+  - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_bigquery_dataset')
+    mql: |
+      terraform.resources('google_bigquery_dataset').all(
+        blocks.where(type == 'access').none(arguments.special_group == 'allAuthenticatedUsers') &&
+        blocks.where(type == 'access').none(arguments.special_group == 'allUsers')
+      )
+      if (terraform.resources.where(nameLabel == 'google_bigquery_dataset_iam_binding') != empty) {
+        terraform.resources('google_bigquery_dataset_iam_binding').all(
+          arguments.members.none(member: member == 'allUsers' || member == 'allAuthenticatedUsers')
+        )
+      }
+      if (terraform.resources.where(nameLabel == 'google_bigquery_dataset_iam_member') != empty) {
+        terraform.resources('google_bigquery_dataset_iam_member').all(
+          arguments.member != 'allUsers' && arguments.member != 'allAuthenticatedUsers'
+        )
+      }
+  - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_bigquery_dataset')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigquery_dataset').all(
+        change.after['access'] == empty ||
+        change.after['access'].none(_['special_group'] == 'allAuthenticatedUsers' || _['special_group'] == 'allUsers')
+      )
+  - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_bigquery_dataset')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigquery_dataset').all(
+        values['access'] == empty ||
+        values['access'].none(_['special_group'] == 'allAuthenticatedUsers' || _['special_group'] == 'allUsers')
+      )
+  - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption
+    title: Ensure that a default customer-managed encryption key (CMEK) is specified for all BigQuery datasets
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-gcp
+      - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-terraform-hcl
+      - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-terraform-plan
+      - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-terraform-state
+    docs:
+      desc: |
+        BigQuery encrypts all data at rest by default using Google-managed encryption keys. However, for organizations that require greater control over their encryption keys, BigQuery supports customer-managed encryption keys (CMEK) through Cloud KMS. Configuring a default CMEK on a dataset ensures that all new tables created within the dataset are automatically encrypted with the specified key.
+
+        **Why this matters**
+
+        Using customer-managed encryption keys provides several benefits over Google-managed keys:
+          - Organizations maintain full control over the encryption key lifecycle, including creation, rotation, disabling, and destruction.
+          - CMEK enables the ability to revoke access to all encrypted data in the dataset by disabling or destroying the encryption key.
+          - Compliance frameworks such as PCI DSS, HIPAA, and FedRAMP often require customer-controlled encryption key management.
+          - Key usage can be monitored through Cloud Audit Logs for Cloud KMS, providing visibility into data access patterns.
+
+        Without CMEK encryption:
+          - Organizations cannot independently control or revoke access to encrypted data.
+          - Compliance requirements for customer-managed key control may not be met.
+          - There is reduced separation of duties between the cloud provider and the customer for encryption management.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a Cloud KMS key as the default encryption key for the BigQuery dataset:
+
+            ```hcl
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us"
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_bigquery_dataset" "example" {
+              dataset_id = "example_dataset"
+              location   = "US"
+
+              default_encryption_configuration {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **BigQuery** page.
+            2. Select the dataset you want to configure.
+            3. Click **Edit Details**.
+            4. Under **Advanced options**, expand **Encryption**.
+            5. Select **Customer-managed encryption key (CMEK)**.
+            6. Select or enter the Cloud KMS key to use.
+            7. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            bq update --default_kms_key=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY PROJECT_ID:DATASET_ID
+            ```
+  - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-gcp
+    filters: asset.platform == "gcp-bigquery-dataset"
+    mql: gcp.bigquery.dataset.kmsName != "" && gcp.bigquery.dataset.kmsName != empty
+  - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_bigquery_dataset')
+    mql: |
+      terraform.resources('google_bigquery_dataset').all(
+        blocks.where(type == 'default_encryption_configuration') != empty &&
+        blocks.where(type == 'default_encryption_configuration').all(arguments.kms_key_name != empty)
+      )
+  - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_bigquery_dataset')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigquery_dataset').all(
+        change.after['default_encryption_configuration'] != empty &&
+        change.after['default_encryption_configuration'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_bigquery_dataset')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigquery_dataset').all(
+        values['default_encryption_configuration'] != empty &&
+        values['default_encryption_configuration'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption
+    title: Ensure that all BigQuery tables are encrypted with customer-managed encryption keys (CMEK)
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-gcp
+      - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-hcl
+      - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-plan
+      - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-state
+    docs:
+      desc: |
+        BigQuery tables can be individually encrypted with customer-managed encryption keys (CMEK) through Cloud KMS. While setting a default CMEK on the dataset ensures new tables inherit encryption, individual tables may have been created before the default was set or may have been explicitly configured with a different key. Verifying that all tables within a dataset use CMEK ensures comprehensive encryption coverage.
+
+        **Why this matters**
+
+        Table-level CMEK encryption is important because:
+          - Tables created before a dataset default CMEK was configured may still use Google-managed encryption.
+          - Tables can be created with explicit encryption settings that override the dataset default, potentially using weaker encryption.
+          - Compliance audits often require verification that all data stores, not just their containers, are encrypted with customer-managed keys.
+          - Without table-level verification, there may be gaps in encryption coverage that go undetected.
+
+        Without table-level CMEK encryption:
+          - Individual tables may be encrypted with Google-managed keys even if the dataset has a CMEK default.
+          - Encryption key revocation at the dataset level may not affect tables with their own encryption settings.
+          - Full compliance with encryption requirements cannot be guaranteed.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure CMEK encryption on individual BigQuery tables:
+
+            ```hcl
+            resource "google_bigquery_table" "example" {
+              dataset_id = google_bigquery_dataset.example.dataset_id
+              table_id   = "example_table"
+
+              encryption_configuration {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+
+              schema = <<EOF
+              [
+                {
+                  "name": "column1",
+                  "type": "STRING"
+                }
+              ]
+              EOF
+            }
+            ```
+
+            Alternatively, ensure the dataset has a default CMEK configured so all new tables inherit it:
+
+            ```hcl
+            resource "google_bigquery_dataset" "example" {
+              dataset_id = "example_dataset"
+              location   = "US"
+
+              default_encryption_configuration {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **BigQuery** page.
+            2. Navigate to the dataset and select the table.
+            3. Click **Details** and review the **Encryption** section.
+            4. If the table uses Google-managed encryption, recreate it with CMEK or set a dataset-level default CMEK and copy the data.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. Check the encryption configuration of a table:
+
+            ```bash
+            bq show --format=prettyjson PROJECT_ID:DATASET_ID.TABLE_ID
+            ```
+
+            2. To copy a table with CMEK encryption:
+
+            ```bash
+            bq cp --destination_kms_key=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY PROJECT_ID:DATASET_ID.SOURCE_TABLE PROJECT_ID:DATASET_ID.DEST_TABLE
+            ```
+  - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-gcp
+    filters: asset.platform == "gcp-bigquery-dataset"
+    mql: gcp.bigquery.dataset.tables.all(kmsName != "" && kmsName != empty)
+  - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_bigquery_table')
+    mql: |
+      terraform.resources('google_bigquery_table').all(
+        blocks.where(type == 'encryption_configuration') != empty &&
+        blocks.where(type == 'encryption_configuration').all(arguments.kms_key_name != empty)
+      )
+  - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_bigquery_table')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigquery_table').all(
+        change.after['encryption_configuration'] != empty &&
+        change.after['encryption_configuration'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_bigquery_table')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigquery_table').all(
+        values['encryption_configuration'] != empty &&
+        values['encryption_configuration'].any(_['kms_key_name'] != empty)
       )
   - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed
     title: Ensure Cloud SQL MySQL instances are not publicly exposed
@@ -3370,6 +4016,335 @@ queries:
       terraform.state.resources.where(type == 'google_kms_crypto_key').all(
         values['rotation_period'] != null && values['rotation_period'] != empty
       )
+  - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration
+    title: Ensure KMS crypto keys have a destroy scheduled duration of at least 24 hours
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-gcp
+      - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-plan
+      - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-state
+    docs:
+      desc: |
+        This check ensures that Google Cloud KMS crypto keys have a destroy scheduled duration of at least 24 hours. When a crypto key version is scheduled for destruction, the destroy scheduled duration determines how long it remains in the DESTROY_SCHEDULED state before being permanently destroyed. A minimum of 24 hours provides a safety window to recover keys that were accidentally scheduled for destruction.
+
+        **Why this matters**
+
+        Crypto key destruction is an irreversible operation. Once a key version is permanently destroyed, any data encrypted with that key version becomes unrecoverable. The destroy scheduled duration provides a critical safety net:
+          - Accidental key destruction can be reversed during the scheduled destruction window.
+          - Security teams have time to review and approve key destruction requests.
+          - Automated processes that inadvertently trigger key destruction can be caught before permanent data loss occurs.
+
+        If the destroy scheduled duration is too short, it can lead to:
+          - Permanent, unrecoverable data loss if a key is accidentally destroyed before the error is detected.
+          - Inability to decrypt data that was encrypted with the destroyed key version.
+          - Compliance violations, as many regulatory frameworks require data retention capabilities that depend on encryption key availability.
+          - Operational disruptions if applications lose access to required encryption keys.
+
+        Risk mitigation:
+          - Set the destroy scheduled duration to at least 24 hours (86400 seconds) for all crypto keys.
+          - Consider longer durations (e.g., 30 days) for keys protecting critical or regulated data.
+          - Implement alerting on key destruction events to ensure timely review.
+          - Use IAM policies to restrict who can schedule key destruction.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure the destroy scheduled duration when creating crypto keys:
+
+            ```hcl
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+
+              # At least 24 hours (86400 seconds)
+              destroy_scheduled_duration = "86400s"
+
+              rotation_period = "7776000s"
+
+              lifecycle {
+                prevent_destroy = true
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            The destroy scheduled duration is set at key creation time and cannot be modified after creation. To ensure compliance:
+
+            1. Navigate to **Security** > **Key Management** in the GCP Console.
+            2. When creating a new crypto key, expand **Advanced settings**.
+            3. Set the **Scheduled for destruction duration** to at least 24 hours.
+            4. For existing keys with insufficient duration, create a new key with the correct duration and re-encrypt data with the new key.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Set the destroy scheduled duration when creating a new crypto key:
+
+            ```bash
+            gcloud kms keys create KEY_NAME \
+              --keyring=KEY_RING \
+              --location=LOCATION \
+              --purpose=encryption \
+              --destroy-scheduled-duration=24h
+            ```
+
+            For existing keys, the destroy scheduled duration cannot be changed. Create a new key with the correct duration and migrate encrypted data.
+  - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-gcp
+    filters: asset.platform == "gcp-kms-keyring"
+    mql: |
+      gcp.project.kms.keyring.cryptokeys.where(primary.state == "ENABLED").all(destroyScheduledDuration.seconds >= 86400)
+  - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources('google_kms_crypto_key') != empty
+    mql: |
+      terraform.resources('google_kms_crypto_key').all(
+        arguments['destroy_scheduled_duration'] == empty || arguments['destroy_scheduled_duration'] >= "86400s"
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key').all(
+        change.after['destroy_scheduled_duration'] == empty || change.after['destroy_scheduled_duration'] >= "86400s"
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.state.resources.where(type == 'google_kms_crypto_key').all(
+        values['destroy_scheduled_duration'] == empty || values['destroy_scheduled_duration'] >= "86400s"
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location
+    title: Ensure KMS keyrings are not in the global location
+    impact: 40
+    variants:
+      - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-gcp
+      - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-terraform-plan
+      - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-terraform-state
+    docs:
+      desc: |
+        This check ensures that Google Cloud KMS keyrings are created in a specific regional location rather than the 'global' location. Using regional locations for keyrings helps meet data residency requirements and provides better control over where cryptographic operations are performed.
+
+        **Why this matters**
+
+        When a KMS keyring is created in the 'global' location, cryptographic operations can be performed in any Google Cloud region. While this provides flexibility, it creates challenges for organizations with data residency requirements:
+          - Cryptographic operations may be performed in regions that violate data sovereignty regulations.
+          - Audit and compliance teams cannot guarantee that key material is processed within approved geographic boundaries.
+          - Regional keyrings provide a clear boundary for where cryptographic operations occur.
+
+        If keyrings are created in the global location, it can lead to:
+          - Non-compliance with data residency regulations such as GDPR, which requires data processing within specific geographic boundaries.
+          - Inability to meet contractual obligations regarding data locality.
+          - Reduced visibility into where cryptographic operations are performed.
+          - Challenges during compliance audits when demonstrating geographic controls.
+
+        Risk mitigation:
+          - Create KMS keyrings in specific regional locations that align with your data residency requirements.
+          - Use organization policies to restrict the allowed locations for KMS resources.
+          - Document and enforce a key management policy that specifies approved locations.
+          - Migrate existing global keyrings to regional keyrings where possible (note: keyrings cannot be moved; create new regional keyrings and re-encrypt data).
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Create keyrings in a specific regional location:
+
+            ```hcl
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us-central1"  # Use a specific region, not "global"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            KMS keyring location cannot be changed after creation. To create a properly located keyring:
+
+            1. Navigate to **Security** > **Key Management** in the GCP Console.
+            2. Click **Create Key Ring**.
+            3. Under **Key ring location**, select a specific region (e.g., us-central1) instead of 'global'.
+            4. Complete the key ring creation.
+            5. For existing global keyrings, create a new regional keyring, create new keys, and re-encrypt data with the new keys.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Create a keyring in a specific regional location:
+
+            ```bash
+            gcloud kms keyrings create KEY_RING_NAME \
+              --location=us-central1
+            ```
+
+            Avoid using `--location=global`. For existing global keyrings, create a new regional keyring and migrate:
+
+            ```bash
+            # Create new regional keyring
+            gcloud kms keyrings create NEW_KEY_RING \
+              --location=us-central1
+
+            # Create new key in regional keyring
+            gcloud kms keys create NEW_KEY \
+              --keyring=NEW_KEY_RING \
+              --location=us-central1 \
+              --purpose=encryption \
+              --rotation-period=7776000s
+            ```
+  - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-gcp
+    filters: asset.platform == "gcp-kms-keyring"
+    mql: gcp.project.kms.keyring.location != "global"
+  - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources('google_kms_key_ring') != empty
+    mql: |
+      terraform.resources('google_kms_key_ring').all(
+        arguments.location != 'global'
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_kms_key_ring')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_kms_key_ring').all(
+        change.after.location != 'global'
+      )
+  - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_kms_key_ring')
+    mql: |
+      terraform.state.resources.where(type == 'google_kms_key_ring').all(
+        values.location != 'global'
+      )
+  - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured
+    title: Ensure KMS ENCRYPT_DECRYPT crypto keys have automatic rotation configured
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-gcp
+      - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-terraform-plan
+      - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-terraform-state
+    docs:
+      desc: |
+        This check ensures that Google Cloud KMS crypto keys with the ENCRYPT_DECRYPT purpose have automatic rotation configured. Automatic key rotation creates new key versions on a regular schedule, ensuring that data encryption uses current key material without requiring manual intervention.
+
+        **Why this matters**
+
+        Symmetric encryption keys (ENCRYPT_DECRYPT purpose) support automatic rotation in Cloud KMS. When automatic rotation is configured, KMS creates a new primary key version on the specified schedule, and new encryption requests automatically use the new version. Without automatic rotation:
+          - Key material may remain static indefinitely, increasing the window of exposure if a key is compromised.
+          - Organizations must rely on manual processes to rotate keys, which are error-prone and often neglected.
+          - The volume of data encrypted under a single key version grows continuously, increasing the impact of a potential key compromise.
+
+        If automatic rotation is not configured for ENCRYPT_DECRYPT keys, it can lead to:
+          - Extended use of the same key material, violating the principle of cryptographic key hygiene.
+          - Increased risk if a key version is compromised, as all data encrypted since the last rotation is affected.
+          - Non-compliance with security frameworks such as CIS Google Cloud Platform Foundations Benchmark, NIST 800-57, and PCI DSS which require regular key rotation.
+          - Operational overhead from manual key rotation processes.
+
+        Risk mitigation:
+          - Enable automatic rotation for all ENCRYPT_DECRYPT crypto keys with a rotation period of 90 days or less.
+          - Monitor key rotation events to ensure rotations occur as scheduled.
+          - Review keys that are marked as import-only, as these cannot be automatically rotated and require manual processes.
+          - Implement alerting for keys approaching their next rotation time.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure automatic rotation for ENCRYPT_DECRYPT crypto keys:
+
+            ```hcl
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+              purpose  = "ENCRYPT_DECRYPT"
+
+              # Rotate every 90 days
+              rotation_period = "7776000s"
+
+              lifecycle {
+                prevent_destroy = true
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Navigate to **Security** > **Key Management** in the GCP Console.
+            2. Select the key ring containing the target crypto key.
+            3. Click the three-dot menu for the crypto key and select **Edit rotation period**.
+            4. Set a rotation period (e.g., 90 days) and a starting date.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Configure automatic rotation for an existing crypto key:
+
+            ```bash
+            gcloud kms keys update KEY_NAME \
+              --keyring=KEY_RING \
+              --location=LOCATION \
+              --rotation-period=90d \
+              --next-rotation-time=$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ)
+            ```
+
+            For new keys, set rotation at creation time:
+
+            ```bash
+            gcloud kms keys create KEY_NAME \
+              --keyring=KEY_RING \
+              --location=LOCATION \
+              --purpose=encryption \
+              --rotation-period=90d \
+              --next-rotation-time=$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ)
+            ```
+  - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-gcp
+    filters: asset.platform == "gcp-kms-keyring"
+    mql: |
+      gcp.project.kms.keyring.cryptokeys.where(primary.state == "ENABLED" && purpose == "ENCRYPT_DECRYPT").all(rotationPeriod != empty)
+  - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources('google_kms_crypto_key') != empty
+    mql: |
+      terraform.resources('google_kms_crypto_key').where(
+        arguments.purpose == empty || arguments.purpose == 'ENCRYPT_DECRYPT'
+      ).all(
+        arguments['rotation_period'] != empty
+      )
+  - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key').where(
+        change.after.purpose == empty || change.after.purpose == 'ENCRYPT_DECRYPT'
+      ).all(
+        change.after['rotation_period'] != empty
+      )
+  - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.state.resources.where(type == 'google_kms_crypto_key').where(
+        values.purpose == empty || values.purpose == 'ENCRYPT_DECRYPT'
+      ).all(
+        values['rotation_period'] != empty
+      )
   - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled
     title: Ensure That DNSSEC Is Enabled for Cloud DNS
     impact: 70
@@ -3598,4 +4573,1460 @@ queries:
         values['dnssec_config'].where(_['state'] == "on").all(
           _['default_key_specs'].where(_['key_type'] == "keySigning").all(_['algorithm'] != "rsasha1")
         )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used
+    title: Ensure That RSASHA1 Is Not Used for the Zone-Signing Key in Cloud DNS DNSSEC
+    impact: 30
+    variants:
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-gcp
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-plan
+      - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-state
+    docs:
+      desc: |
+        DNSSEC algorithm numbers in this registry may be used in CERT RRs. Zone-signing is used for authenticating DNS zone data. Using a weak algorithm like RSASHA1 for zone signing undermines the security guarantees of DNSSEC. SHA-1 is considered cryptographically weak and is deprecated by Google, requiring a support contract and allowlisting for use. Stronger alternatives such as RSASHA256, RSASHA512, ECDSAP256SHA256, or ECDSAP384SHA384 should be used for zone-signing keys.
+
+        To modify DNSSEC settings on an already enabled zone, you must first disable DNSSEC and then re-enable it with the updated configuration.
+      audit: |
+        **Using Google Cloud CLI**
+
+        Ensure the property algorithm for keyType zoneSigning is not using `RSASHA1`:
+
+        ```bash
+        gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"
+        ```
+      remediation:
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            1. To change DNSSEC settings on an already enabled managed zone, first disable it:
+
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state off
+            ```
+
+            2. Then, re-enable it with the desired key-signing and zone-signing settings:
+
+            ```bash
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state on --ksk-algorithm KSK_ALGORITHM --ksk-key-length KSK_KEY_LENGTH --zsk-algorithm ZSK_ALGORITHM --zsk-key-length ZSK_KEY_LENGTH --denial-of-existence DENIAL_OF_EXISTENCE
+            ```
+
+            **Supported algorithm options and key lengths:**
+
+            | Algorithm | KSK Length | ZSK Length |
+            |-----------|------------|------------|
+            | RSASHA1 | 1024,2048 | 1024,2048 |
+            | RSASHA256 | 1024,2048 | 1024,2048 |
+            | RSASHA512 | 1024,2048 | 1024,2048 |
+            | ECDSAP256SHA256 | 256 | 256 |
+            | ECDSAP384SHA384 | 384 | 384 |
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Avoid using RSASHA1 for zone-signing keys in your DNSSEC configuration. Use stronger algorithms like RSASHA256, RSASHA512, or ECDSA variants:
+
+            ```hcl
+            resource "google_dns_managed_zone" "example" {
+              name         = "example-zone"
+              dns_name     = "example.com."
+              description  = "Example managed zone"
+              visibility   = "public"
+
+              dnssec_config {
+                state = "on"
+                default_key_specs {
+                  algorithm  = "rsasha256"
+                  key_length = 2048
+                  key_type   = "keySigning"
+                }
+                # Use RSASHA256 instead of RSASHA1 for zone-signing
+                default_key_specs {
+                  algorithm  = "rsasha256"  # Not rsasha1
+                  key_length = 2048
+                  key_type   = "zoneSigning"
+                }
+              }
+            }
+            ```
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-gcp
+    filters: |
+      asset.platform == "gcp-dns-managedzone"
+      gcp.project.dnsService.managedzone.visibility != "private"
+    mql: |
+      gcp.dns.managedzone.dnssecConfig['state'] == 'on'
+      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'zoneSigning').all(algorithm != 'RSASHA1')
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources('google_dns_managed_zone') != empty
+    mql: |
+      terraform.resources('google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == empty).all(
+        blocks.where(type == 'dnssec_config').where(arguments.state == "on").all(
+          blocks.where(type == 'default_key_specs' && arguments.key_type == "zoneSigning").all(
+            arguments.algorithm != 'rsasha1'
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == empty).all(
+        change.after['dnssec_config'] != empty &&
+        change.after['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].where(_['key_type'] == "zoneSigning").all(_['algorithm'] != "rsasha1")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
+        values['dnssec_config'] != empty &&
+        values['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].where(_['key_type'] == "zoneSigning").all(_['algorithm'] != "rsasha1")
+        )
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet
+    title: Ensure SSH access is restricted from the internet
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-gcp
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-state
+    docs:
+      desc: |
+        This check ensures that GCP firewall rules do not allow unrestricted SSH access (TCP port 22) from the entire internet (0.0.0.0/0 or ::/0). Firewall rules should restrict SSH access to specific trusted IP ranges to minimize the attack surface.
+
+        **Why this matters**
+
+        SSH provides direct command-line access to virtual machine instances. If a firewall rule allows SSH traffic from any IP address on the internet, it creates a significant exposure:
+          - Attackers can attempt brute-force or credential-stuffing attacks against SSH services from any location.
+          - Compromised credentials or key material can be exploited remotely without any network-level restriction.
+          - Automated scanning tools continuously probe for open SSH ports across public IP ranges, increasing the likelihood of targeted attacks.
+
+        If SSH access is not restricted to trusted IP ranges, it can lead to:
+          - Unauthorized remote access to compute instances, enabling data theft, privilege escalation, or lateral movement.
+          - Increased blast radius in the event of a credential compromise.
+          - Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark (Control 3.6), NIST 800-53, and PCI DSS.
+
+        Risk mitigation:
+          - Restrict source ranges in firewall rules to only known and trusted CIDR blocks (e.g., corporate VPN ranges, bastion host IPs).
+          - Use Identity-Aware Proxy (IAP) for SSH access instead of exposing port 22 directly.
+          - Implement OS Login with two-factor authentication for an additional layer of access control.
+          - Regularly audit firewall rules for overly permissive source ranges.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            To restrict SSH access to a specific IP range:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_ssh" {
+              name    = "allow-ssh-restricted"
+              network = google_compute_network.default.name
+
+              allow {
+                protocol = "tcp"
+                ports    = ["22"]
+              }
+
+              # Restrict to trusted IP ranges instead of 0.0.0.0/0
+              source_ranges = ["10.0.0.0/8"]
+            }
+            ```
+
+            Alternatively, use IAP for SSH access:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_ssh_iap" {
+              name    = "allow-ssh-iap"
+              network = google_compute_network.default.name
+
+              allow {
+                protocol = "tcp"
+                ports    = ["22"]
+              }
+
+              # IAP's IP range
+              source_ranges = ["35.235.240.0/20"]
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Log in to the GCP Console at https://console.cloud.google.com.
+            2. Navigate to **VPC Network** > **Firewall**.
+            3. Identify any firewall rules that allow TCP port 22 with a source range of 0.0.0.0/0 or ::/0.
+            4. Select the rule and click **Edit**.
+            5. Under **Source IPv4 ranges**, replace 0.0.0.0/0 with your trusted CIDR ranges.
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            To update a firewall rule to restrict SSH access:
+
+            ```bash
+            gcloud compute firewall-rules update RULE_NAME \
+              --source-ranges=TRUSTED_CIDR_RANGE
+            ```
+
+            For example, to restrict to a corporate VPN range:
+
+            ```bash
+            gcloud compute firewall-rules update allow-ssh \
+              --source-ranges=10.0.0.0/8
+            ```
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.allowed.any(ipProtocol == "tcp" && ports == empty || ipProtocol == "tcp" && ports.contains("22"))
+    mql: |
+      gcp.compute.firewall.sourceRanges.none(_ == "0.0.0.0/0")
+      gcp.compute.firewall.sourceRanges.none(_ == "::/0")
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == empty || arguments.direction == 'INGRESS'
+      ).where(
+        blocks.where(type == 'allow').any(arguments.protocol == 'tcp' && arguments.ports == empty || arguments.protocol == 'tcp' && arguments.ports.contains("22"))
+      ).all(
+        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
+        arguments.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == empty || change.after.direction == 'INGRESS'
+      ).where(
+        change.after.allow.any(_['protocol'] == 'tcp' && _['ports'] == empty || _['protocol'] == 'tcp' && _['ports'].contains("22"))
+      ).all(
+        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
+        change.after.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == empty || values.direction == 'INGRESS'
+      ).where(
+        values.allow.any(_['protocol'] == 'tcp' && _['ports'] == empty || _['protocol'] == 'tcp' && _['ports'].contains("22"))
+      ).all(
+        values.source_ranges.none(_ == '0.0.0.0/0') &&
+        values.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet
+    title: Ensure RDP access is restricted from the internet
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-gcp
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-state
+    docs:
+      desc: |
+        This check ensures that GCP firewall rules do not allow unrestricted RDP access (TCP port 3389) from the entire internet (0.0.0.0/0 or ::/0). Firewall rules should restrict RDP access to specific trusted IP ranges to minimize exposure of Windows instances.
+
+        **Why this matters**
+
+        RDP provides full graphical remote desktop access to Windows instances. If a firewall rule allows RDP traffic from any IP address on the internet, it creates a critical exposure:
+          - RDP is one of the most commonly targeted protocols in brute-force and credential-stuffing attacks.
+          - Vulnerabilities in RDP implementations (such as BlueKeep) have been actively exploited for remote code execution.
+          - Automated scanning tools continuously probe for open RDP ports, making exposed instances easy targets.
+
+        If RDP access is not restricted to trusted IP ranges, it can lead to:
+          - Unauthorized remote access to Windows instances, enabling ransomware deployment, data exfiltration, or lateral movement.
+          - Exploitation of known RDP vulnerabilities, particularly on unpatched systems.
+          - Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark (Control 3.7), NIST 800-53, and PCI DSS.
+
+        Risk mitigation:
+          - Restrict source ranges in firewall rules to only known and trusted CIDR blocks (e.g., corporate VPN ranges, bastion host IPs).
+          - Use Identity-Aware Proxy (IAP) for remote access instead of exposing port 3389 directly.
+          - Deploy a VPN or bastion host architecture to provide a controlled entry point for RDP connections.
+          - Regularly audit firewall rules for overly permissive source ranges.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            To restrict RDP access to a specific IP range:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_rdp" {
+              name    = "allow-rdp-restricted"
+              network = google_compute_network.default.name
+
+              allow {
+                protocol = "tcp"
+                ports    = ["3389"]
+              }
+
+              # Restrict to trusted IP ranges instead of 0.0.0.0/0
+              source_ranges = ["10.0.0.0/8"]
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Log in to the GCP Console at https://console.cloud.google.com.
+            2. Navigate to **VPC Network** > **Firewall**.
+            3. Identify any firewall rules that allow TCP port 3389 with a source range of 0.0.0.0/0 or ::/0.
+            4. Select the rule and click **Edit**.
+            5. Under **Source IPv4 ranges**, replace 0.0.0.0/0 with your trusted CIDR ranges.
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            To update a firewall rule to restrict RDP access:
+
+            ```bash
+            gcloud compute firewall-rules update RULE_NAME \
+              --source-ranges=TRUSTED_CIDR_RANGE
+            ```
+
+            For example, to restrict to a corporate VPN range:
+
+            ```bash
+            gcloud compute firewall-rules update allow-rdp \
+              --source-ranges=10.0.0.0/8
+            ```
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.allowed.any(ipProtocol == "tcp" && ports == empty || ipProtocol == "tcp" && ports.contains("3389"))
+    mql: |
+      gcp.compute.firewall.sourceRanges.none(_ == "0.0.0.0/0")
+      gcp.compute.firewall.sourceRanges.none(_ == "::/0")
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == empty || arguments.direction == 'INGRESS'
+      ).where(
+        blocks.where(type == 'allow').any(arguments.protocol == 'tcp' && arguments.ports == empty || arguments.protocol == 'tcp' && arguments.ports.contains("3389"))
+      ).all(
+        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
+        arguments.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == empty || change.after.direction == 'INGRESS'
+      ).where(
+        change.after.allow.any(_['protocol'] == 'tcp' && _['ports'] == empty || _['protocol'] == 'tcp' && _['ports'].contains("3389"))
+      ).all(
+        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
+        change.after.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == empty || values.direction == 'INGRESS'
+      ).where(
+        values.allow.any(_['protocol'] == 'tcp' && _['ports'] == empty || _['protocol'] == 'tcp' && _['ports'].contains("3389"))
+      ).all(
+        values.source_ranges.none(_ == '0.0.0.0/0') &&
+        values.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols
+    title: Ensure firewall rules do not allow unrestricted ingress on all protocols
+    impact: 90
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-gcp
+      - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-state
+    docs:
+      desc: |
+        This check ensures that GCP firewall rules do not allow unrestricted ingress traffic on all protocols and ports from the entire internet (0.0.0.0/0 or ::/0). Firewall rules that allow all traffic from any source create the broadest possible network exposure and should never be used in production environments.
+
+        **Why this matters**
+
+        A firewall rule that allows all protocols from 0.0.0.0/0 effectively disables network-level access control for all matching instances:
+          - Every service running on the instance becomes reachable from the internet, regardless of whether it was intended to be exposed.
+          - Internal services, debugging endpoints, management interfaces, and unpatched software all become potential attack vectors.
+          - This configuration provides no defense-in-depth, meaning a single application vulnerability can lead to full compromise.
+
+        If unrestricted ingress on all protocols is allowed, it can lead to:
+          - Complete exposure of all network services, dramatically increasing the attack surface.
+          - Exploitation of unintentionally exposed services such as databases, caches, or internal APIs.
+          - Non-compliance with virtually all security frameworks including CIS Google Cloud Platform Foundations Benchmark, NIST 800-53, PCI DSS, and SOC 2.
+          - Rapid compromise in the event of any service-level vulnerability.
+
+        Risk mitigation:
+          - Follow the principle of least privilege: only allow the specific protocols and ports required for each workload.
+          - Restrict source ranges to known and trusted CIDR blocks.
+          - Use separate firewall rules for each service with specific port allowances.
+          - Regularly audit firewall rules and remove overly permissive configurations.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Instead of allowing all protocols, create targeted rules for specific services:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_https" {
+              name    = "allow-https"
+              network = google_compute_network.default.name
+
+              allow {
+                protocol = "tcp"
+                ports    = ["443"]
+              }
+
+              source_ranges = ["0.0.0.0/0"]
+            }
+            ```
+
+            Remove or modify any rules that use `protocol = "all"` with `source_ranges = ["0.0.0.0/0"]`.
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Log in to the GCP Console at https://console.cloud.google.com.
+            2. Navigate to **VPC Network** > **Firewall**.
+            3. Identify any firewall rules that allow all protocols with a source range of 0.0.0.0/0 or ::/0.
+            4. Select the rule and click **Edit**.
+            5. Change the **Protocols and ports** setting to specify only the required protocols and ports.
+            6. Restrict the **Source IPv4 ranges** to trusted CIDR ranges where possible.
+            7. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            To delete an overly permissive firewall rule:
+
+            ```bash
+            gcloud compute firewall-rules delete RULE_NAME
+            ```
+
+            To create a replacement rule with specific protocols and ports:
+
+            ```bash
+            gcloud compute firewall-rules create RULE_NAME \
+              --direction=INGRESS \
+              --priority=1000 \
+              --network=NETWORK_NAME \
+              --action=ALLOW \
+              --rules=tcp:443 \
+              --source-ranges=TRUSTED_CIDR_RANGE
+            ```
+  - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.allowed.any(ipProtocol == "all")
+    mql: |
+      gcp.compute.firewall.sourceRanges.none(_ == "0.0.0.0/0")
+      gcp.compute.firewall.sourceRanges.none(_ == "::/0")
+  - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == empty || arguments.direction == 'INGRESS'
+      ).where(
+        blocks.where(type == 'allow').any(arguments.protocol == 'all')
+      ).all(
+        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
+        arguments.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == empty || change.after.direction == 'INGRESS'
+      ).where(
+        change.after.allow.any(_['protocol'] == 'all')
+      ).all(
+        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
+        change.after.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == empty || values.direction == 'INGRESS'
+      ).where(
+        values.allow.any(_['protocol'] == 'all')
+      ).all(
+        values.source_ranges.none(_ == '0.0.0.0/0') &&
+        values.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet
+    title: Ensure firewall rules do not allow ingress to database ports from the internet
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-gcp
+      - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-state
+    docs:
+      desc: |
+        This check ensures that GCP firewall rules do not allow unrestricted ingress to common database ports from the entire internet (0.0.0.0/0 or ::/0). Database services should never be directly exposed to the internet, as they contain sensitive data and are frequent targets for automated attacks.
+
+        The following database ports are checked:
+          - **3306** (MySQL)
+          - **5432** (PostgreSQL)
+          - **1433** (Microsoft SQL Server)
+          - **27017** (MongoDB)
+
+        **Why this matters**
+
+        Database services are designed to be accessed by application servers and administrators, not the general internet. Exposing database ports publicly creates severe risks:
+          - Databases are high-value targets because they store sensitive data including credentials, personal information, and business-critical records.
+          - Many database services have known default credentials or authentication bypass vulnerabilities that are trivially exploited when exposed.
+          - Automated attack tools specifically scan for open database ports and attempt exploitation within minutes of discovery.
+
+        If database ports are exposed to the internet, it can lead to:
+          - Data breaches through direct database access, SQL injection, or credential attacks.
+          - Ransomware attacks where attackers encrypt database contents and demand payment.
+          - Non-compliance with data protection regulations including GDPR, HIPAA, PCI DSS, and SOC 2.
+          - Complete loss of data confidentiality, integrity, and availability.
+
+        Risk mitigation:
+          - Restrict database firewall rules to only allow access from application server IP ranges or VPC-internal CIDR blocks.
+          - Use Cloud SQL Auth Proxy or Private Service Connect for secure database connectivity.
+          - Place databases in private subnets without public IP addresses.
+          - Implement VPN or IAP tunnels for administrative database access.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Restrict database access to internal networks only:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_mysql" {
+              name    = "allow-mysql-internal"
+              network = google_compute_network.default.name
+
+              allow {
+                protocol = "tcp"
+                ports    = ["3306"]
+              }
+
+              # Only allow from internal application servers
+              source_ranges = ["10.0.0.0/8"]
+            }
+            ```
+
+            For Cloud SQL instances, prefer using Cloud SQL Auth Proxy or private IP connectivity instead of firewall rules.
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Log in to the GCP Console at https://console.cloud.google.com.
+            2. Navigate to **VPC Network** > **Firewall**.
+            3. Identify any firewall rules that allow TCP ports 3306, 5432, 1433, or 27017 with a source range of 0.0.0.0/0 or ::/0.
+            4. Select the rule and click **Edit**.
+            5. Under **Source IPv4 ranges**, replace 0.0.0.0/0 with your internal network CIDR ranges (e.g., 10.0.0.0/8).
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            To update a firewall rule to restrict database port access:
+
+            ```bash
+            gcloud compute firewall-rules update RULE_NAME \
+              --source-ranges=INTERNAL_CIDR_RANGE
+            ```
+
+            For example, to restrict MySQL access to an internal network:
+
+            ```bash
+            gcloud compute firewall-rules update allow-mysql \
+              --source-ranges=10.0.0.0/8
+            ```
+  - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.allowed.any(ipProtocol == "tcp" && ports == empty || ipProtocol == "tcp" && ports.contains("3306") || ipProtocol == "tcp" && ports.contains("5432") || ipProtocol == "tcp" && ports.contains("1433") || ipProtocol == "tcp" && ports.contains("27017"))
+    mql: |
+      gcp.compute.firewall.sourceRanges.none(_ == "0.0.0.0/0")
+      gcp.compute.firewall.sourceRanges.none(_ == "::/0")
+  - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == empty || arguments.direction == 'INGRESS'
+      ).where(
+        blocks.where(type == 'allow').any(arguments.protocol == 'tcp' && arguments.ports == empty || arguments.protocol == 'tcp' && arguments.ports.contains("3306") || arguments.protocol == 'tcp' && arguments.ports.contains("5432") || arguments.protocol == 'tcp' && arguments.ports.contains("1433") || arguments.protocol == 'tcp' && arguments.ports.contains("27017"))
+      ).all(
+        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
+        arguments.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == empty || change.after.direction == 'INGRESS'
+      ).where(
+        change.after.allow.any(_['protocol'] == 'tcp' && _['ports'] == empty || _['protocol'] == 'tcp' && _['ports'].contains("3306") || _['protocol'] == 'tcp' && _['ports'].contains("5432") || _['protocol'] == 'tcp' && _['ports'].contains("1433") || _['protocol'] == 'tcp' && _['ports'].contains("27017"))
+      ).all(
+        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
+        change.after.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == empty || values.direction == 'INGRESS'
+      ).where(
+        values.allow.any(_['protocol'] == 'tcp' && _['ports'] == empty || _['protocol'] == 'tcp' && _['ports'].contains("3306") || _['protocol'] == 'tcp' && _['ports'].contains("5432") || _['protocol'] == 'tcp' && _['ports'].contains("1433") || _['protocol'] == 'tcp' && _['ports'].contains("27017"))
+      ).all(
+        values.source_ranges.none(_ == '0.0.0.0/0') &&
+        values.source_ranges.none(_ == '::/0')
+      )
+  - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress
+    title: Ensure firewall rules do not allow ingress from the internet without port restrictions
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-gcp
+      - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-hcl
+      - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-plan
+      - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-state
+    docs:
+      desc: |
+        This check ensures that GCP firewall rules which allow ingress from the entire internet (0.0.0.0/0 or ::/0) specify explicit port restrictions. Firewall rules that allow traffic from the internet should always be scoped to the minimum required set of ports rather than leaving ports unrestricted.
+
+        **Why this matters**
+
+        A firewall rule that allows internet traffic on a specific protocol (e.g., TCP) without specifying ports effectively opens all 65,535 ports on that protocol to the internet:
+          - Any service listening on any port becomes reachable, including internal tools, management interfaces, and development services that were never intended to be public.
+          - This dramatically increases the attack surface and the likelihood of discovering exploitable services.
+          - Changes to running services (e.g., starting a new process that listens on a port) immediately expose that service to the internet without any additional firewall change.
+
+        If firewall rules allow internet ingress without port restrictions, it can lead to:
+          - Unintentional exposure of sensitive services that happen to bind to a port.
+          - Increased risk from service misconfigurations or vulnerabilities on any port.
+          - Difficulty in maintaining a clear understanding of what is actually exposed.
+          - Non-compliance with security best practices and frameworks that require least-privilege network access.
+
+        Risk mitigation:
+          - Always specify explicit port numbers in firewall allow rules.
+          - Create separate firewall rules for each service with the minimum required ports.
+          - Use network tags or service accounts to target rules to specific instances.
+          - Regularly audit firewall rules to identify and remediate overly permissive configurations.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Always specify explicit ports in firewall allow rules:
+
+            ```hcl
+            resource "google_compute_firewall" "allow_web" {
+              name    = "allow-web"
+              network = google_compute_network.default.name
+
+              allow {
+                protocol = "tcp"
+                ports    = ["80", "443"]  # Always specify explicit ports
+              }
+
+              source_ranges = ["0.0.0.0/0"]
+            }
+            ```
+
+            Avoid configurations like this:
+
+            ```hcl
+            # BAD: No ports specified means all ports are open
+            allow {
+              protocol = "tcp"
+              # Missing ports = all TCP ports allowed
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Log in to the GCP Console at https://console.cloud.google.com.
+            2. Navigate to **VPC Network** > **Firewall**.
+            3. Identify any firewall rules that allow traffic from 0.0.0.0/0 or ::/0 without specific port restrictions.
+            4. Select the rule and click **Edit**.
+            5. Under **Protocols and ports**, change from **Allow all** to **Specified protocols and ports**.
+            6. Enter only the specific ports required (e.g., tcp:80,443).
+            7. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            To update a firewall rule to specify explicit ports:
+
+            ```bash
+            gcloud compute firewall-rules update RULE_NAME \
+              --rules=tcp:80,tcp:443
+            ```
+  - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-gcp
+    filters: |
+      asset.platform == 'gcp-compute-firewall'
+      gcp.compute.firewall.direction == "INGRESS"
+      gcp.compute.firewall.sourceRanges.any(_ == "0.0.0.0/0" || _ == "::/0")
+    mql: |
+      gcp.compute.firewall.allowed.none(ipProtocol == "all")
+      gcp.compute.firewall.allowed.all(ports != empty && ports.length > 0)
+  - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
+    mql: |
+      terraform.resources('google_compute_firewall').where(
+        arguments.direction == empty || arguments.direction == 'INGRESS'
+      ).where(
+        arguments.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
+      ).all(
+        blocks.where(type == 'allow').none(arguments.protocol == 'all') &&
+        blocks.where(type == 'allow').all(arguments.ports != empty)
+      )
+  - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
+        change.after.direction == empty || change.after.direction == 'INGRESS'
+      ).where(
+        change.after.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
+      ).all(
+        change.after.allow.none(_['protocol'] == 'all') &&
+        change.after.allow.all(_['ports'] != empty && _['ports'].length > 0)
+      )
+  - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_firewall').where(
+        values.direction == empty || values.direction == 'INGRESS'
+      ).where(
+        values.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
+      ).all(
+        values.allow.none(_['protocol'] == 'all') &&
+        values.allow.all(_['ports'] != empty && _['ports'].length > 0)
+      )
+  - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled
+    title: Ensure legacy authorization (ABAC) is disabled on GKE clusters
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-gcp
+      - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-terraform-state
+    docs:
+      desc: |
+        Attribute-Based Access Control (ABAC) is a legacy authorization mechanism in Kubernetes that has been superseded by Role-Based Access Control (RBAC). Legacy ABAC grants broad access permissions based on simple attribute matching, making it difficult to implement fine-grained access control.
+
+        **Why this matters**
+
+        Legacy ABAC authorization is less secure than RBAC and should be disabled:
+          - ABAC policies are coarse-grained and cannot express the fine-grained permissions that RBAC provides.
+          - With ABAC enabled, any authenticated user may have broader access to cluster resources than intended.
+          - RBAC provides better audit trails and is the recommended authorization mode for all GKE clusters.
+          - Compliance frameworks such as CIS GKE Benchmark require ABAC to be disabled.
+
+        With legacy ABAC enabled:
+          - Users may gain unintended access to cluster resources through overly permissive attribute-based policies.
+          - It becomes difficult to audit and control who has access to what within the cluster.
+          - The cluster does not meet security benchmarks and best practices.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Disable legacy ABAC in your GKE cluster configuration:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              # Disable legacy ABAC
+              enable_legacy_abac = false
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Kubernetes Engine > Clusters** page.
+            2. Select the cluster you want to configure.
+            3. Click **Edit**.
+            4. In the **Security** section, ensure **Legacy authorization** is disabled.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME --zone ZONE --no-enable-legacy-authorization
+            ```
+  - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-gcp
+    filters: asset.platform == "gcp-gke-cluster"
+    mql: gcp.project.gkeService.cluster.legacyAbac['enabled'] != true
+  - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        arguments.enable_legacy_abac != true
+      )
+  - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['enable_legacy_abac'] != true
+      )
+  - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['enable_legacy_abac'] != true
+      )
+  - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled
+    title: Ensure master authorized networks are enabled on GKE clusters
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-gcp
+      - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-terraform-state
+    docs:
+      desc: |
+        Master authorized networks restrict access to the GKE cluster's Kubernetes API server to specific trusted CIDR ranges. Without this configuration, the API server is accessible from any IP address, increasing the attack surface.
+
+        **Why this matters**
+
+        The Kubernetes API server is the central control plane for the cluster. Unrestricted access creates significant security risks:
+          - Attackers who obtain valid credentials can access the API server from any location on the internet.
+          - Brute-force and credential-stuffing attacks against the API server are possible from any IP address.
+          - Restricting API access to known networks (corporate VPNs, bastion hosts) reduces the attack surface significantly.
+          - CIS GKE Benchmark and other security frameworks require master authorized networks to be configured.
+
+        Without master authorized networks:
+          - The Kubernetes API server is exposed to the entire internet.
+          - Any compromised credential can be used from any location to manage the cluster.
+          - Security audits will flag the cluster as non-compliant.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable master authorized networks in your GKE cluster configuration:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              master_authorized_networks_config {
+                cidr_blocks {
+                  cidr_block   = "10.0.0.0/8"
+                  display_name = "Corporate network"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Kubernetes Engine > Clusters** page.
+            2. Select the cluster you want to configure.
+            3. Click **Edit**.
+            4. In the **Networking** section, enable **Control plane authorized networks**.
+            5. Add the CIDR blocks for authorized networks.
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME --zone ZONE --enable-master-authorized-networks --master-authorized-networks CIDR1,CIDR2
+            ```
+  - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-gcp
+    filters: asset.platform == "gcp-gke-cluster"
+    mql: gcp.project.gkeService.cluster.masterAuthorizedNetworksConfig['enabled'] == true
+  - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'master_authorized_networks_config') != empty
+      )
+  - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['master_authorized_networks_config'] != empty
+      )
+  - uid: mondoo-gcp-security-gke-cluster-master-authorized-networks-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['master_authorized_networks_config'] != empty
+      )
+  - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled
+    title: Ensure Stackdriver Kubernetes Engine Monitoring is enabled on GKE clusters
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-gcp
+      - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-terraform-state
+    docs:
+      desc: |
+        GKE clusters should use Cloud Logging (formerly Stackdriver Logging) for centralized log management. When properly configured, the logging service captures system and workload logs from the cluster, providing visibility into cluster operations and security events.
+
+        **Why this matters**
+
+        Cloud Logging integration is essential for GKE cluster security and operations:
+          - Cluster logs provide critical visibility into API server activity, authentication events, and resource modifications.
+          - Security incident investigation requires comprehensive logging to identify the scope and impact of a breach.
+          - Compliance frameworks require centralized logging for audit trails and forensic analysis.
+          - Without proper logging, suspicious activity in the cluster may go undetected.
+
+        Without Cloud Logging enabled:
+          - Security events and anomalies in the cluster cannot be detected or investigated.
+          - Compliance requirements for centralized logging and audit trails cannot be met.
+          - Operational issues are harder to diagnose without comprehensive log data.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable Cloud Logging in your GKE cluster configuration:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              logging_service = "logging.googleapis.com/kubernetes"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Kubernetes Engine > Clusters** page.
+            2. Select the cluster you want to configure.
+            3. Click **Edit**.
+            4. In the **Features** section, ensure **Cloud Logging** is enabled with **System and workload logging**.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME --zone ZONE --logging=SYSTEM,WORKLOAD
+            ```
+  - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-gcp
+    filters: asset.platform == "gcp-gke-cluster"
+    mql: gcp.project.gkeService.cluster.loggingService == "logging.googleapis.com/kubernetes"
+  - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        arguments.logging_service == empty || arguments.logging_service == "logging.googleapis.com/kubernetes"
+      )
+  - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['logging_service'] == empty || change.after['logging_service'] == "logging.googleapis.com/kubernetes"
+      )
+  - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['logging_service'] == empty || values['logging_service'] == "logging.googleapis.com/kubernetes"
+      )
+  - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled
+    title: Ensure network policy is enabled on GKE clusters
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-gcp
+      - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-state
+    docs:
+      desc: |
+        Kubernetes network policies control traffic flow between pods and between pods and external endpoints. Without network policies, all pods in a cluster can communicate freely with each other, which violates the principle of least privilege and increases the blast radius of a compromised pod.
+
+        **Why this matters**
+
+        Enabling network policy enforcement on GKE clusters is critical for microsegmentation:
+          - By default, all pods in a Kubernetes cluster can communicate with all other pods without restriction.
+          - A compromised pod can be used to move laterally to other pods and services in the cluster.
+          - Network policies enable microsegmentation, allowing only the traffic flows that are explicitly needed.
+          - CIS GKE Benchmark and security best practices require network policy enforcement to be enabled.
+
+        Without network policy enforcement:
+          - All pod-to-pod communication is unrestricted, increasing lateral movement risk.
+          - Sensitive workloads cannot be isolated from less trusted workloads within the same cluster.
+          - The cluster cannot enforce zero-trust networking principles.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable network policy in your GKE cluster configuration:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              network_policy {
+                enabled  = true
+                provider = "CALICO"
+              }
+
+              addons_config {
+                network_policy_config {
+                  disabled = false
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **Kubernetes Engine > Clusters** page.
+            2. Select the cluster you want to configure.
+            3. Click **Edit**.
+            4. In the **Networking** section, enable **Network policy enforcement**.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME --zone ZONE --update-addons=NetworkPolicy=ENABLED
+            gcloud container clusters update CLUSTER_NAME --zone ZONE --enable-network-policy
+            ```
+  - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-gcp
+    filters: asset.platform == "gcp-gke-cluster"
+    mql: gcp.project.gkeService.cluster.addonsConfig.networkPolicyConfig['disabled'] != true
+  - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'network_policy').any(arguments.enabled == true)
+      )
+  - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['network_policy'] != empty &&
+        change.after['network_policy'].any(_['enabled'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['network_policy'] != empty &&
+        values['network_policy'].any(_['enabled'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-cluster-alpha-disabled
+    title: Ensure Kubernetes alpha features are disabled on GKE clusters
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-gcp
+      - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-terraform-state
+    docs:
+      desc: |
+        Kubernetes alpha features are experimental and may change or be removed in future releases. Alpha clusters are not covered by GKE SLA, cannot be upgraded, and will be automatically deleted after 30 days. Enabling alpha features on production clusters introduces instability and security risks.
+
+        **Why this matters**
+
+        Alpha features should not be enabled on production GKE clusters:
+          - Alpha features are not thoroughly tested and may contain bugs or security vulnerabilities.
+          - Alpha clusters cannot be upgraded to newer Kubernetes versions, preventing the application of security patches.
+          - Alpha clusters are automatically deleted after 30 days, making them unsuitable for persistent workloads.
+          - Alpha APIs may not have the same security controls and audit logging as stable APIs.
+
+        With alpha features enabled:
+          - The cluster may be exposed to unpatched vulnerabilities in experimental code.
+          - The cluster cannot receive security updates through version upgrades.
+          - Workloads are at risk of being deleted when the alpha cluster expires.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure alpha features are not enabled in your GKE cluster configuration:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              # Do not set enable_kubernetes_alpha = true
+            }
+            ```
+
+            Note: Alpha features cannot be disabled on an existing cluster. You must create a new cluster without alpha features and migrate your workloads.
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Alpha features cannot be disabled on an existing cluster. To remediate:
+
+            1. Create a new GKE cluster without alpha features enabled.
+            2. Migrate your workloads to the new cluster.
+            3. Delete the alpha cluster.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Alpha features cannot be disabled on an existing cluster. Create a new cluster without the `--enable-kubernetes-alpha` flag:
+
+            ```bash
+            gcloud container clusters create CLUSTER_NAME --zone ZONE
+            ```
+  - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-gcp
+    filters: asset.platform == "gcp-gke-cluster"
+    mql: gcp.project.gkeService.cluster.enableKubernetesAlpha == false
+  - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        arguments.enable_kubernetes_alpha != true
+      )
+  - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['enable_kubernetes_alpha'] != true
+      )
+  - uid: mondoo-gcp-security-gke-cluster-alpha-disabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['enable_kubernetes_alpha'] != true
+      )
+  - uid: mondoo-gcp-security-compute-network-not-legacy
+    title: Ensure legacy networks do not exist in the project
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-compute-network-not-legacy-gcp
+      - uid: mondoo-gcp-security-compute-network-not-legacy-terraform-hcl
+      - uid: mondoo-gcp-security-compute-network-not-legacy-terraform-plan
+      - uid: mondoo-gcp-security-compute-network-not-legacy-terraform-state
+    docs:
+      desc: |
+        Legacy networks are a single, flat network that spans the entire project and do not support subnets. Legacy networks lack modern networking features including VPC Flow Logs, Private Google Access, and fine-grained firewall rules that operate at the subnet level.
+
+        **Why this matters**
+
+        Legacy networks should not be used for the following reasons:
+          - Legacy networks apply firewall rules at the network level rather than the subnet level, making it impossible to implement fine-grained network segmentation.
+          - VPC Flow Logs, which are critical for security monitoring and forensic analysis, are not available on legacy networks.
+          - Private Google Access, which allows VMs without external IPs to reach Google APIs, is not supported on legacy networks.
+          - Legacy networks cannot be converted to VPC networks and must be recreated.
+
+        Using legacy networks:
+          - Prevents implementation of subnet-level security controls and network segmentation.
+          - Eliminates the ability to monitor network traffic through VPC Flow Logs.
+          - Forces all instances into a flat network, increasing the blast radius of any security incident.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Always create VPC networks in custom subnet mode:
+
+            ```hcl
+            resource "google_compute_network" "example" {
+              name                    = "example-network"
+              auto_create_subnetworks = false  # custom subnet mode
+            }
+            ```
+
+            Note: To migrate from a legacy network, create a new VPC network, migrate resources, and then delete the legacy network.
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Legacy networks cannot be converted to VPC networks. To remediate:
+
+            1. Create a new VPC network in custom mode.
+            2. Create subnets in the regions you need.
+            3. Migrate VMs and other resources to the new network.
+            4. Update firewall rules for the new network.
+            5. Delete the legacy network.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Create a new VPC network in custom mode and migrate resources:
+
+            ```bash
+            # Create a new VPC network
+            gcloud compute networks create NEW_NETWORK_NAME --subnet-mode=custom
+
+            # Create subnets
+            gcloud compute networks subnets create SUBNET_NAME --network=NEW_NETWORK_NAME --region=REGION --range=CIDR_RANGE
+            ```
+  - uid: mondoo-gcp-security-compute-network-not-legacy-gcp
+    filters: asset.platform == "gcp-compute-network"
+    mql: gcp.compute.network.mode != "legacy"
+  - uid: mondoo-gcp-security-compute-network-not-legacy-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_compute_network')
+    mql: |
+      terraform.resources('google_compute_network').all(
+        arguments.auto_create_subnetworks != empty
+      )
+  - uid: mondoo-gcp-security-compute-network-not-legacy-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_compute_network')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_network').all(
+        change.after['auto_create_subnetworks'] != empty
+      )
+  - uid: mondoo-gcp-security-compute-network-not-legacy-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_compute_network')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_network').all(
+        values['auto_create_subnetworks'] != empty
+      )
+  - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled
+    title: Ensure VPC Flow Logs are enabled on subnetworks
+    impact: 70
+    variants:
+      - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-gcp
+      - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-plan
+      - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-state
+    docs:
+      desc: |
+        VPC Flow Logs record a sample of network flows sent from and received by VM instances, including traffic between VMs in the same VPC. Flow logs can be used for network monitoring, forensic analysis, real-time security analysis, and expense optimization.
+
+        **Why this matters**
+
+        VPC Flow Logs are essential for network security monitoring and incident response:
+          - Flow logs provide visibility into network traffic patterns, enabling detection of anomalous communication between resources.
+          - Security teams can use flow logs for forensic analysis during incident investigation to understand the scope and timeline of a breach.
+          - Network-level threats such as data exfiltration, lateral movement, and command-and-control traffic can be identified through flow log analysis.
+          - Compliance frameworks such as CIS GCP Benchmark, PCI DSS, and NIST 800-53 require network traffic logging.
+
+        Without VPC Flow Logs:
+          - Network-level security incidents may go undetected.
+          - Forensic investigation of security breaches lacks critical network traffic data.
+          - The organization cannot meet compliance requirements for network traffic monitoring.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable VPC Flow Logs on subnetworks:
+
+            ```hcl
+            resource "google_compute_subnetwork" "example" {
+              name          = "example-subnet"
+              ip_cidr_range = "10.0.0.0/24"
+              region        = "us-central1"
+              network       = google_compute_network.example.id
+
+              log_config {
+                aggregation_interval = "INTERVAL_5_SEC"
+                flow_sampling        = 0.5
+                metadata             = "INCLUDE_ALL_METADATA"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **VPC network > VPC networks** page.
+            2. Select the network containing the subnet.
+            3. Select the subnet you want to configure.
+            4. Click **Edit**.
+            5. Under **Flow logs**, select **On**.
+            6. Configure the aggregation interval, sampling rate, and metadata settings.
+            7. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute networks subnets update SUBNET_NAME --region=REGION --enable-flow-logs --logging-aggregation-interval=interval-5-sec --logging-flow-sampling=0.5 --logging-metadata=include-all
+            ```
+  - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-gcp
+    filters: asset.platform == "gcp-compute-subnetwork"
+    mql: gcp.compute.subnetwork.enableFlowLogs == true
+  - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_compute_subnetwork')
+    mql: |
+      terraform.resources('google_compute_subnetwork').all(
+        blocks.where(type == 'log_config') != empty
+      )
+  - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_compute_subnetwork')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_subnetwork').all(
+        change.after['log_config'] != empty
+      )
+  - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_compute_subnetwork')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_subnetwork').all(
+        values['log_config'] != empty
+      )
+  - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled
+    title: Ensure Private Google Access is enabled on subnetworks
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-gcp
+      - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-plan
+      - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-state
+    docs:
+      desc: |
+        Private Google Access enables VM instances on a subnet to reach Google APIs and services using an internal IP address rather than an external IP address. This allows VMs without external IPs to access services like Cloud Storage, BigQuery, and other Google Cloud APIs.
+
+        **Why this matters**
+
+        Private Google Access reduces the need for external IP addresses and improves security:
+          - VMs can access Google APIs without requiring external IP addresses, reducing the attack surface by eliminating direct internet connectivity.
+          - Data transfer between VMs and Google services stays within Google's network, reducing exposure to network-level threats.
+          - It enables a more secure network architecture where only essential resources have external IPs.
+          - Compliance frameworks recommend minimizing the number of resources with external IP addresses.
+
+        Without Private Google Access:
+          - VMs that need to access Google APIs require external IP addresses, increasing the attack surface.
+          - Network traffic to Google services must traverse the public internet rather than staying within Google's network.
+          - It becomes harder to implement a zero-trust network architecture.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable Private Google Access on subnetworks:
+
+            ```hcl
+            resource "google_compute_subnetwork" "example" {
+              name                     = "example-subnet"
+              ip_cidr_range            = "10.0.0.0/24"
+              region                   = "us-central1"
+              network                  = google_compute_network.example.id
+              private_ip_google_access = true
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. In the Google Cloud console, go to the **VPC network > VPC networks** page.
+            2. Select the network containing the subnet.
+            3. Select the subnet you want to configure.
+            4. Click **Edit**.
+            5. Under **Private Google Access**, select **On**.
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute networks subnets update SUBNET_NAME --region=REGION --enable-private-ip-google-access
+            ```
+  - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-gcp
+    filters: asset.platform == "gcp-compute-subnetwork"
+    mql: gcp.compute.subnetwork.privateIpGoogleAccess == true
+  - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources.contains(nameLabel == 'google_compute_subnetwork')
+    mql: |
+      terraform.resources('google_compute_subnetwork').all(
+        arguments.private_ip_google_access == true
+      )
+  - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_compute_subnetwork')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_subnetwork').all(
+        change.after['private_ip_google_access'] == true
+      )
+  - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_compute_subnetwork')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_subnetwork').all(
+        values['private_ip_google_access'] == true
       )
