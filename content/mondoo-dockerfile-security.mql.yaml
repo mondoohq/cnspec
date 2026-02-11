@@ -52,12 +52,14 @@ policies:
         checks:
           - uid: mondoo-docker-security-no-sudo-commands
           - uid: mondoo-docker-security-non-root-user
+          - uid: mondoo-docker-security-non-root-uid
       - title: Build Best Practices
         filters: |
           asset.platform == "dockerfile"
         checks:
           - uid: mondoo-docker-security-use-copy-instead-of-add
           - uid: mondoo-docker-best-practice-no-latest-tag
+          - uid: mondoo-docker-best-practice-from-tag-specified
 queries:
   - uid: mondoo-docker-security-no-management-ports
     title: Don't expose management ports
@@ -375,3 +377,67 @@ queries:
         title: Dockerfile Best Practices - RUN
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
+  - uid: mondoo-docker-security-non-root-uid
+    title: Don't set container user to root UID (0)
+    impact: 100
+    mql: |
+      firstStageIdentifier = docker.file.stages[0].from.image
+      docker.file.stages.where(from.image != firstStageIdentifier).all(user.user != "0")
+    docs:
+      desc: |
+        This check ensures that the USER instruction in non-build Dockerfile stages does not specify UID 0, which is the root user's numeric identifier. This complements the existing non-root user check by catching cases where `USER 0` is used instead of `USER root`.
+
+        **Why this matters**
+
+        Setting the container user to UID 0 runs the container as root, regardless of the username:
+
+        - **Bypasses name-based checks**: Security scanners and policies checking for the string "root" will miss `USER 0`, even though it grants identical privileges.
+        - **Privilege escalation**: UID 0 has unrestricted access to all files and system calls within the container, and potentially the host if container isolation is compromised.
+        - **Container escape risk**: Running as UID 0 increases the impact of container escape vulnerabilities, potentially granting root access on the host.
+        - **Kubernetes restrictions**: Many Kubernetes clusters enforce `runAsNonRoot` security contexts, which check the numeric UID, not the username.
+      remediation: |
+        Update your Dockerfile to use a non-root user with a non-zero UID:
+
+        ```dockerfile
+        RUN groupadd -r appgroup && useradd -r -g appgroup -u 1001 appuser
+        USER 1001
+        ```
+
+        Avoid using `USER 0` or any form that resolves to UID 0. Ensure that the specified user has the minimum permissions needed for the application to function.
+  - uid: mondoo-docker-best-practice-from-tag-specified
+    title: Ensure FROM base images specify a version tag
+    impact: 80
+    mql: |
+      docker.file.stages.all(from.tag != "")
+    docs:
+      desc: |
+        This check ensures that all FROM instructions in the Dockerfile specify an explicit image tag. When no tag is provided (e.g., `FROM python` instead of `FROM python:3.12`), Docker implicitly uses the `:latest` tag, which defeats the purpose of version pinning.
+
+        **Why this matters**
+
+        Omitting the image tag is functionally identical to using `:latest`, but is harder to detect during code review:
+
+        - **Silent version drift**: Builds silently pull whatever version is currently tagged as `latest`, leading to unpredictable behavior across environments.
+        - **Supply chain risk**: An attacker who compromises an image registry can push a malicious image as the default tag, affecting all untagged FROM references.
+        - **Harder to audit**: Without an explicit tag, it is difficult to determine which version of the base image was used to build a container, complicating incident response and vulnerability tracking.
+        - **Reproducibility**: Builds are not reproducible over time since the underlying image changes without any change to the Dockerfile.
+
+        This check differs from the `:latest` tag check: that check catches explicit use of `FROM image:latest`, while this check catches the implicit case where no tag is specified at all.
+      remediation: |
+        Update all FROM instructions to specify an explicit version tag:
+
+        ```dockerfile
+        # Instead of:
+        FROM python
+        FROM node
+
+        # Use:
+        FROM python:3.12-slim
+        FROM node:20-alpine
+        ```
+
+        For maximum reproducibility, consider pinning by digest:
+
+        ```dockerfile
+        FROM python:3.12-slim@sha256:abc123...
+        ```
