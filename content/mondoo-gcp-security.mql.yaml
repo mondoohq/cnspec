@@ -23,6 +23,7 @@ policies:
         - BigQuery
         - Cloud DNS
         - Cloud Key Management Service (KMS)
+        - Cloud Redis (Memorystore)
         - Cloud SQL
         - Cloud Storage
         - Compute Engine instances, firewalls, networks, and subnetworks
@@ -89,6 +90,10 @@ policies:
           - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled
           - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled
           - uid: mondoo-gcp-security-gke-cluster-alpha-disabled
+          - uid: mondoo-gcp-security-gke-workload-identity-enabled
+          - uid: mondoo-gcp-security-gke-private-cluster-enabled
+          - uid: mondoo-gcp-security-gke-shielded-nodes-enabled
+          - uid: mondoo-gcp-security-gke-release-channel-configured
       - title: Cloud SQL
         checks:
           - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
@@ -105,6 +110,7 @@ policies:
       - title: Cloud Redis
         checks:
           - uid: mondoo-gcp-security-cloud-redis-auth-enabled
+          - uid: mondoo-gcp-security-cloud-redis-cmek-configured
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -5948,6 +5954,395 @@ queries:
       terraform.state.resources.where(type == 'google_container_cluster').all(
         values['enable_kubernetes_alpha'] != true
       )
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled
+    title: Ensure Workload Identity is enabled on GKE clusters
+    impact: 85
+    variants:
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-gcp
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Workload Identity is enabled on Google Kubernetes Engine (GKE) clusters. Workload Identity is the recommended way for workloads running on GKE to access Google Cloud services securely, replacing the need for node-level service account keys or metadata server access.
+
+        **Why this matters**
+
+        Without Workload Identity, pods on a GKE cluster may access Google Cloud APIs using the node's service account via the metadata server. This creates several security risks:
+          -  All pods on a node share the same Google Cloud identity, violating the principle of least privilege.
+          -  Compromised pods can access the metadata server to obtain credentials with broad permissions.
+          -  Managing and rotating service account keys becomes complex and error-prone.
+
+        Workload Identity maps Kubernetes service accounts to Google Cloud IAM service accounts, enabling:
+          -  Fine-grained, per-pod identity and access control to Google Cloud services.
+          -  Elimination of service account key management.
+          -  Protection of the node metadata server from unauthorized pod access.
+
+        Risk mitigation:
+          -  Enable Workload Identity at the cluster level and configure Kubernetes service accounts to use Google Cloud IAM service accounts.
+          -  Remove any exported service account keys that are no longer needed.
+          -  Regularly audit the IAM bindings between Kubernetes and Google Cloud service accounts.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              workload_identity_config {
+                workload_pool = "${var.project_id}.svc.id.goog"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Security**.
+            4. In the **Workload Identity** section, select **Edit**.
+            5. Enable **Workload Identity** and specify the workload pool.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --workload-pool=PROJECT_ID.svc.id.goog \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Workload Identity documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.workloadIdentityConfig['workloadPool'] != null
+      gcp.project.gkeService.cluster.workloadIdentityConfig['workloadPool'] != ""
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'workload_identity_config') != empty
+      )
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.workload_identity_config != null &&
+        change.after.workload_identity_config != empty
+      )
+  - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.workload_identity_config != null &&
+        values.workload_identity_config != empty
+      )
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled
+    title: Ensure private cluster is enabled on GKE clusters
+    impact: 85
+    variants:
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-gcp
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that GKE clusters are configured as private clusters, where nodes only have internal IP addresses and are isolated from the public internet. Private clusters reduce the attack surface by preventing direct internet access to cluster nodes.
+
+        **Why this matters**
+
+        By default, GKE cluster nodes are assigned both internal and external IP addresses, making them accessible from the internet:
+          -  Public nodes are exposed to network-based attacks including port scanning, exploitation of node-level vulnerabilities, and unauthorized access.
+          -  Attackers who compromise a publicly accessible node can potentially pivot to other resources in the cluster or VPC.
+          -  Data exfiltration is easier when nodes have direct internet access.
+
+        Private clusters provide:
+          -  Nodes with only internal IP addresses, reducing the external attack surface.
+          -  Controlled egress through Cloud NAT or other managed gateways.
+          -  Better compliance with network segmentation requirements.
+
+        Risk mitigation:
+          -  Enable private nodes when creating or updating GKE clusters.
+          -  Use Cloud NAT for outbound internet access when needed.
+          -  Configure master authorized networks to restrict access to the control plane.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              private_cluster_config {
+                enable_private_nodes    = true
+                enable_private_endpoint = false
+                master_ipv4_cidr_block  = "172.16.0.0/28"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: Private cluster configuration cannot be changed on an existing cluster. You must create a new cluster:
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select **Create**.
+            3. In the **Networking** section, select **Private cluster**.
+            4. Enable **Access control plane using its external IP address** if needed.
+            5. Configure the **Control plane IP range**.
+            6. Complete the cluster creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters create CLUSTER_NAME \
+              --enable-private-nodes \
+              --master-ipv4-cidr=172.16.0.0/28 \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Private cluster documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.privateClusterConfig['enablePrivateNodes'] == true
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'private_cluster_config').any(arguments.enable_private_nodes == true)
+      )
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.private_cluster_config != null &&
+        change.after.private_cluster_config.any(_['enable_private_nodes'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-private-cluster-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.private_cluster_config != null &&
+        values.private_cluster_config.any(_['enable_private_nodes'] == true)
+      )
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled
+    title: Ensure shielded GKE nodes are enabled
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-gcp
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-plan
+      - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Shielded GKE Nodes are enabled on GKE clusters. Shielded Nodes provide verifiable node identity and integrity, protecting against boot-level and kernel-level attacks on cluster nodes.
+
+        **Why this matters**
+
+        Without Shielded Nodes, GKE cluster nodes are vulnerable to:
+          -  Boot-level rootkits and bootkits that can persist across reboots and compromise the node before the operating system loads.
+          -  Kernel-level malware that can manipulate the node's operating system.
+          -  Node identity spoofing, where an attacker impersonates a legitimate node to join the cluster.
+
+        Shielded Nodes provide:
+          -  Secure Boot, which ensures only trusted software runs during the boot process.
+          -  Virtual Trusted Platform Module (vTPM) for measured boot and node integrity verification.
+          -  Integrity monitoring to detect unauthorized changes to the node's boot sequence.
+
+        Risk mitigation:
+          -  Enable Shielded Nodes on all GKE clusters.
+          -  Monitor integrity validation failures through Cloud Logging.
+          -  Use Shielded Nodes in combination with Binary Authorization for defense-in-depth.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              node_config {
+                shielded_instance_config {
+                  enable_secure_boot          = true
+                  enable_integrity_monitoring = true
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Security**.
+            4. Ensure that **Shielded GKE Nodes** is enabled.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --enable-shielded-nodes \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Shielded Nodes documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/how-to/shielded-gke-nodes
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.shieldedNodesConfig['enabled'] == true
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'node_config').any(
+          blocks.where(type == 'shielded_instance_config').any(
+            arguments.enable_secure_boot == true && arguments.enable_integrity_monitoring == true
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.node_config != null &&
+        change.after.node_config.any(
+          _['shielded_instance_config'] != null &&
+          _['shielded_instance_config'].any(_['enable_secure_boot'] == true && _['enable_integrity_monitoring'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-gke-shielded-nodes-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.node_config != null &&
+        values.node_config.any(
+          _['shielded_instance_config'] != null &&
+          _['shielded_instance_config'].any(_['enable_secure_boot'] == true && _['enable_integrity_monitoring'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-gke-release-channel-configured
+    title: Ensure GKE clusters use a release channel for version management
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-gke-release-channel-configured-gcp
+      - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-hcl
+      - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-plan
+      - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-state
+    docs:
+      desc: |
+        This check ensures that GKE clusters are subscribed to a release channel (Regular, Rapid, or Stable) for automated version management. Release channels ensure clusters receive automatic upgrades with security patches and bug fixes.
+
+        **Why this matters**
+
+        Clusters not enrolled in a release channel require manual version management, which increases the risk of running outdated or vulnerable versions:
+          -  Security patches may not be applied promptly, leaving clusters vulnerable to known exploits.
+          -  Manual upgrades are error-prone and may be deferred indefinitely.
+          -  Without a release channel, clusters do not benefit from Google's tested and validated upgrade paths.
+
+        Release channels provide:
+          -  Automatic upgrades with versions that have been validated and tested by Google.
+          -  Timely application of security patches and bug fixes.
+          -  Predictable upgrade cadence based on the chosen channel (Rapid, Regular, or Stable).
+
+        Risk mitigation:
+          -  Enroll all GKE clusters in an appropriate release channel based on workload requirements.
+          -  Use the Regular channel for production workloads that need a balance between new features and stability.
+          -  Use maintenance windows to control when upgrades are applied.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              release_channel {
+                channel = "REGULAR"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Cluster basics**.
+            4. Under **Release channel**, select **Edit**.
+            5. Choose a release channel (Rapid, Regular, or Stable).
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --release-channel=regular \
+              --zone ZONE
+            ```
+    refs:
+      - title: GKE Release channels documentation
+        url: https://cloud.google.com/kubernetes-engine/docs/concepts/release-channels
+  - uid: mondoo-gcp-security-gke-release-channel-configured-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.releaseChannel != ""
+      gcp.project.gkeService.cluster.releaseChannel != "unspecified"
+  - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'release_channel') != empty &&
+        blocks.where(type == 'release_channel').all(arguments.channel != "UNSPECIFIED")
+      )
+  - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after.release_channel != null &&
+        change.after.release_channel != empty &&
+        change.after.release_channel.all(_['channel'] != "UNSPECIFIED")
+      )
+  - uid: mondoo-gcp-security-gke-release-channel-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values.release_channel != null &&
+        values.release_channel != empty &&
+        values.release_channel.all(_['channel'] != "UNSPECIFIED")
+      )
   - uid: mondoo-gcp-security-compute-network-not-legacy
     title: Ensure legacy networks do not exist in the project
     impact: 70
@@ -6310,4 +6705,110 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_redis_instance').all(
         values.auth_enabled == true
+      )
+  - uid: mondoo-gcp-security-cloud-redis-cmek-configured
+    title: Ensure customer-managed encryption keys (CMEK) are configured for Cloud Redis instances
+    impact: 60
+    variants:
+      - uid: mondoo-gcp-security-cloud-redis-cmek-configured-gcp
+      - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-plan
+      - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-state
+    docs:
+      desc: |
+        This check ensures that Cloud Memorystore for Redis instances are encrypted using customer-managed encryption keys (CMEK) rather than default Google-managed keys. CMEK gives organizations full control over the encryption key lifecycle, including rotation, access policies, and the ability to revoke access by disabling or destroying keys.
+
+        **Why this matters**
+
+        By default, Google Cloud encrypts data at rest using Google-managed encryption keys. While this provides baseline protection, it does not give organizations control over key management:
+          -  Google-managed keys cannot be independently rotated on a custom schedule.
+          -  Organizations cannot revoke access to encrypted data by destroying or disabling the key.
+          -  Audit logs for key usage are not available with Google-managed keys.
+          -  Compliance frameworks such as PCI-DSS, HIPAA, and SOC 2 may require customer-managed encryption for sensitive data stores.
+
+        CMEK provides:
+          -  Full control over encryption key lifecycle, including creation, rotation, and destruction.
+          -  Ability to revoke access to Redis data by disabling or destroying the encryption key.
+          -  Cloud Audit Logs for all key usage, enabling monitoring and compliance reporting.
+          -  Separation of duties between data administrators and key administrators.
+
+        Risk mitigation:
+          -  Configure CMEK for all Cloud Redis instances that store sensitive data.
+          -  Use Cloud KMS to manage encryption keys with appropriate IAM policies.
+          -  Enable automatic key rotation on a schedule that meets compliance requirements.
+          -  Monitor key usage through Cloud Audit Logs.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_redis_instance" "cache" {
+              name           = "my-redis-instance"
+              tier           = "STANDARD_HA"
+              memory_size_gb = 1
+              region         = "us-central1"
+
+              customer_managed_key = google_kms_crypto_key.redis_key.id
+            }
+
+            resource "google_kms_crypto_key" "redis_key" {
+              name     = "redis-encryption-key"
+              key_ring = google_kms_key_ring.redis_ring.id
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at instance creation time and cannot be added to an existing instance.
+
+            1. Go to the **Memorystore > Redis** page in the Google Cloud Console.
+            2. Select **Create Instance**.
+            3. In the **Encryption** section, select **Customer-managed key**.
+            4. Select or create a Cloud KMS key.
+            5. Complete the instance creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at instance creation time.
+
+            ```bash
+            gcloud redis instances create INSTANCE_NAME \
+              --region=REGION \
+              --tier=STANDARD_HA \
+              --size=1 \
+              --customer-managed-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - title: Cloud Memorystore Redis CMEK documentation
+        url: https://cloud.google.com/memorystore/docs/redis/about-cmek
+  - uid: mondoo-gcp-security-cloud-redis-cmek-configured-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.redisService.instances.all(customerManagedKey != "")
+  - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_redis_instance')
+    mql: |
+      terraform.resources('google_redis_instance').all(
+        arguments.customer_managed_key != null &&
+        arguments.customer_managed_key != ""
+      )
+  - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_redis_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_redis_instance').all(
+        change.after.customer_managed_key != null &&
+        change.after.customer_managed_key != ""
+      )
+  - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_redis_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_redis_instance').all(
+        values.customer_managed_key != null &&
+        values.customer_managed_key != ""
       )
