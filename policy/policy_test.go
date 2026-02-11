@@ -11,12 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 var conf mqlc.CompilerConfig
@@ -24,7 +23,7 @@ var conf mqlc.CompilerConfig
 func init() {
 	runtime := testutils.Local()
 	schema := runtime.Schema()
-	conf = mqlc.NewConfig(schema, cnquery.DefaultFeatures)
+	conf = mqlc.NewConfig(schema, mql.DefaultFeatures)
 }
 
 func getChecksums(p *policy.Policy) map[string]string {
@@ -146,7 +145,7 @@ func TestPolicyChecksums(t *testing.T) {
 
 			contentTests := map[string]func(p *policy.Policy){
 				"author changed": func(p *policy.Policy) {
-					p.Authors = []*explorer.Author{{Name: "Bob"}}
+					p.Authors = []*policy.Author{{Name: "Bob"}}
 				},
 				"tags changed": func(p *policy.Policy) {
 					p.Tags = map[string]string{"key": "val"}
@@ -200,10 +199,10 @@ func TestPolicyChecksums(t *testing.T) {
 
 			executionTests := map[string]func(){
 				"query spec set": func() {
-					p.Groups[0].Checks[1] = &explorer.Mquery{
+					p.Groups[0].Checks[1] = &policy.Mquery{
 						Mrn: "//local.cnspec.io/run/local-execution/queries/sshd-01",
-						Impact: &explorer.Impact{
-							Scoring: explorer.ScoringSystem_WORST,
+						Impact: &policy.Impact{
+							Scoring: policy.ScoringSystem_WORST,
 						},
 					}
 				},
@@ -214,7 +213,7 @@ func TestPolicyChecksums(t *testing.T) {
 					b.Queries[0].CodeId = "12345"
 				},
 				"query prop changed": func() {
-					b.Queries[0].Props = []*explorer.Property{
+					b.Queries[0].Props = []*policy.Property{
 						{
 							Mql:      "1 == 1",
 							Checksum: "1234",
@@ -271,7 +270,7 @@ queries:
 	pInitial.InvalidateLocalChecksums()
 	initialBundleMap, err := bundleInitial.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	_, err = pInitial.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
+	_, err = pInitial.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	bundleUpdated, err := policy.BundleFromYAML([]byte(`
@@ -302,7 +301,7 @@ queries:
 	pUpdated.InvalidateLocalChecksums()
 	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	_, err = pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+	_, err = pUpdated.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
@@ -341,7 +340,7 @@ queries:
 	pInitial.InvalidateLocalChecksums()
 	initialBundleMap, err := bundleInitial.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	_, err = pInitial.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
+	_, err = pInitial.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(initialBundleMap.Queries).GetQuery, initialBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	bundleUpdated, err := policy.BundleFromYAML([]byte(`
@@ -372,7 +371,7 @@ queries:
 	pUpdated.InvalidateLocalChecksums()
 	updatedBundleMap, err := bundleUpdated.Compile(context.Background(), conf.Schema, nil)
 	require.NoError(t, err)
-	_, err = pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+	_, err = pUpdated.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 	assert.NoError(t, err, "computing checksums")
 
 	require.NotEqual(t, pInitial.GraphExecutionChecksum, pUpdated.LocalContentChecksum)
@@ -483,19 +482,19 @@ queries:
 	pUpdated := bundle.Policies[0]
 
 	pUpdated.Groups[0].Valid = &policy.Validity{
-		From:  &explorer.HumanTime{Seconds: now.Unix()},
-		Until: &explorer.HumanTime{Seconds: now.Add(1 * time.Hour).Unix()},
+		From:  &policy.HumanTime{Seconds: now.Unix()},
+		Until: &policy.HumanTime{Seconds: now.Add(1 * time.Hour).Unix()},
 	}
 	pUpdated.Groups[1].Valid = &policy.Validity{
-		From:  &explorer.HumanTime{Seconds: now.Add(4 * time.Hour).Unix()},
-		Until: &explorer.HumanTime{Seconds: now.Add(5 * time.Hour).Unix()},
+		From:  &policy.HumanTime{Seconds: now.Add(4 * time.Hour).Unix()},
+		Until: &policy.HumanTime{Seconds: now.Add(5 * time.Hour).Unix()},
 	}
 	pUpdated.Groups[2].Valid = &policy.Validity{
-		From:  &explorer.HumanTime{Seconds: now.Add(2 * time.Hour).Unix()},
-		Until: &explorer.HumanTime{Seconds: now.Add(3 * time.Hour).Unix()},
+		From:  &policy.HumanTime{Seconds: now.Add(2 * time.Hour).Unix()},
+		Until: &policy.HumanTime{Seconds: now.Add(3 * time.Hour).Unix()},
 	}
 	pUpdated.Groups[3].Valid = &policy.Validity{
-		From: &explorer.HumanTime{Seconds: now.Add(6 * time.Hour).Unix()},
+		From: &policy.HumanTime{Seconds: now.Add(6 * time.Hour).Unix()},
 	}
 
 	pUpdated.InvalidateLocalChecksums()
@@ -504,31 +503,31 @@ queries:
 
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(1*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(1*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(1*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(2*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(2*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(2*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(3*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(3*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(3*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(4*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(6*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(6*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Nil(t, recalculateAt, "recalculateAt should be nil")
 	}
@@ -583,31 +582,31 @@ queries:
 
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now, nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(1*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(1*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(1*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(2*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(2*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(2*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(3*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(3*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(3*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Equal(t, now.Add(4*time.Hour).UTC().Unix(), recalculateAt.UTC().Unix(), "recalculateAt should be the end date of the first group")
 	}
 	{
 		pUpdated.InvalidateLocalChecksums()
-		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(6*time.Hour), nil, explorer.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
+		recalculateAt, err := pUpdated.UpdateChecksums(context.Background(), now.Add(6*time.Hour), nil, policy.QueryMap(updatedBundleMap.Queries).GetQuery, updatedBundleMap, conf)
 		require.NoError(t, err, "computing checksums")
 		require.Nil(t, recalculateAt, "recalculateAt should be nil")
 	}

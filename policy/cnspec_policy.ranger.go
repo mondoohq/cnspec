@@ -10,8 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/explorer/resources"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/metadata"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -429,7 +428,7 @@ func (p *PolicyHubServer) ListFrameworks(ctx context.Context, reqBytes *[]byte) 
 type PolicyResolver interface {
 	Assign(context.Context, *PolicyAssignment) (*Empty, error)
 	Unassign(context.Context, *PolicyAssignment) (*Empty, error)
-	SetProps(context.Context, *explorer.PropsReq) (*explorer.Empty, error)
+	SetProps(context.Context, *PropsReq) (*Empty, error)
 	Resolve(context.Context, *ResolveReq) (*ResolvedPolicy, error)
 	UpdateAssetJobs(context.Context, *UpdateAssetJobsReq) (*Empty, error)
 	ResolveAndUpdateJobs(context.Context, *UpdateAssetJobsReq) (*ResolvedPolicy, error)
@@ -440,7 +439,7 @@ type PolicyResolver interface {
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
-	GetResourcesData(context.Context, *resources.EntityResourcesReq) (*resources.EntityResourcesRes, error)
+	GetResourcesData(context.Context, *recording.EntityResourcesReq) (*recording.EntityResourcesRes, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
 	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
 }
@@ -481,8 +480,8 @@ func (c *PolicyResolverClient) Unassign(ctx context.Context, in *PolicyAssignmen
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Unassign"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) SetProps(ctx context.Context, in *explorer.PropsReq) (*explorer.Empty, error) {
-	out := new(explorer.Empty)
+func (c *PolicyResolverClient) SetProps(ctx context.Context, in *PropsReq) (*Empty, error) {
+	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetProps"}, ""), in, out)
 	return out, err
 }
@@ -536,8 +535,8 @@ func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
 	return out, err
 }
-func (c *PolicyResolverClient) GetResourcesData(ctx context.Context, in *resources.EntityResourcesReq) (*resources.EntityResourcesRes, error) {
-	out := new(resources.EntityResourcesRes)
+func (c *PolicyResolverClient) GetResourcesData(ctx context.Context, in *recording.EntityResourcesReq) (*recording.EntityResourcesRes, error) {
+	out := new(recording.EntityResourcesRes)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetResourcesData"}, ""), in, out)
 	return out, err
 }
@@ -649,7 +648,7 @@ func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (
 	return p.handler.Unassign(ctx, &req)
 }
 func (p *PolicyResolverServer) SetProps(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req explorer.PropsReq
+	var req PropsReq
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -913,7 +912,7 @@ func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (
 	return p.handler.GetScore(ctx, &req)
 }
 func (p *PolicyResolverServer) GetResourcesData(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
-	var req resources.EntityResourcesReq
+	var req recording.EntityResourcesReq
 	var err error
 
 	md, ok := metadata.FromIncomingContext(ctx)

@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
+	"go.mondoo.com/cnspec/v13/policy"
 	k8sYaml "sigs.k8s.io/yaml"
 )
 
@@ -126,8 +126,8 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 	// check if the file is compilable
 	if policyBundleForCompilation != nil {
 		ctx := context.Background()
-		features := cnquery.DefaultFeatures
-		features = append(features, byte(cnquery.FailIfNoEntryPoints))
+		features := mql.DefaultFeatures
+		features = append(features, byte(mql.FailIfNoEntryPoints))
 		cfg := policy.BundleCompileConf{
 			CompilerConfig: mqlc.NewConfig(schema, features),
 		}

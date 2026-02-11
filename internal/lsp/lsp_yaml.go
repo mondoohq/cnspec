@@ -9,11 +9,11 @@ import (
 
 	"github.com/rs/zerolog/log"
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v12/types"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/v13/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,7 +51,7 @@ type YAMLBundle struct {
 type YAMLPropsHandler struct {
 	Props    map[string]*MQLNode       // Map of prop name to MQL node
 	Schema   resources.ResourcesSchema // Schema for compiling props
-	Features cnquery.Features          // Feature flags
+	Features mql.Features          // Feature flags
 }
 
 // Get retrieves a property by name

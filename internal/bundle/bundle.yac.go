@@ -8,8 +8,7 @@ package bundle
 import (
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,7 +23,7 @@ type Comments struct {
 	FootComment string
 }
 
-type Action explorer.Action
+type Action policy.Action
 
 func (s *Action) UnmarshalYAML(node *yaml.Node) error {
 
@@ -39,7 +38,7 @@ func (s *Action) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 
-	var v explorer.Action
+	var v policy.Action
 	err = json.Unmarshal(jsonData, &v)
 	if err == nil {
 		*s = Action(v)
@@ -163,7 +162,7 @@ type Control struct {
 	Tags        map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
 	Docs        *ControlDocs      `protobuf:"bytes,21,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	Checksum    string            `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
-	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Manual      bool              `protobuf:"varint,50,opt,name=manual,proto3" json:"manual,omitempty" yaml:"manual,omitempty"`
 	Evidence    []*Evidence       `protobuf:"bytes,51,rep,name=evidence,proto3" json:"evidence,omitempty" yaml:"evidence,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
@@ -318,7 +317,7 @@ func (d ControlMap) MarshalYAML() (any, error) {
 }
 
 type ControlRef struct {
-	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
@@ -623,7 +622,7 @@ func (d FrameworkMap) MarshalYAML() (any, error) {
 }
 
 type FrameworkRef struct {
-	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action      Action      `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Uid         string      `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn         string      `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	FileContext FileContext `json:"-" yaml:"-"`
@@ -713,12 +712,12 @@ func (x *HumanTime) addFileContext(node *yaml.Node) {
 }
 
 type Impact struct {
-	Value       *ImpactValue           `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty" yaml:"value,omitempty"`
-	Scoring     explorer.ScoringSystem `protobuf:"varint,2,opt,name=scoring,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring,omitempty" yaml:"scoring,omitempty"`
-	Weight      int32                  `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty" yaml:"weight,omitempty"`
-	Action      Action                 `protobuf:"varint,4,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
-	FileContext FileContext            `json:"-" yaml:"-"`
-	Comments    Comments               `json:"-" yaml:"-"`
+	Value       *ImpactValue         `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty" yaml:"value,omitempty"`
+	Scoring     policy.ScoringSystem `protobuf:"varint,2,opt,name=scoring,proto3,enum=cnspec.policy.v1.ScoringSystem" json:"scoring,omitempty" yaml:"scoring,omitempty"`
+	Weight      int32                `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty" yaml:"weight,omitempty"`
+	Action      Action               `protobuf:"varint,4,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	FileContext FileContext          `json:"-" yaml:"-"`
+	Comments    Comments             `json:"-" yaml:"-"`
 }
 
 func (x *Impact) addFileContext(node *yaml.Node) {
@@ -1192,7 +1191,7 @@ type Mquery struct {
 	Type        string            `protobuf:"bytes,6,opt,name=type,proto3" json:"type,omitempty" yaml:"type,omitempty"`
 	Context     string            `protobuf:"bytes,7,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
 	Desc        string            `protobuf:"bytes,35,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
-	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
 	Comments    Comments          `json:"-" yaml:"-"`
 }
@@ -1394,31 +1393,31 @@ func (d ObjectRef) MarshalYAML() (any, error) {
 }
 
 type Policy struct {
-	Summary                string                 `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
-	Created                int64                  `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
-	Modified               int64                  `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
-	RiskFactors            []*RiskFactor          `protobuf:"bytes,47,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
-	LocalContentChecksum   string                 `protobuf:"bytes,37,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
-	GraphContentChecksum   string                 `protobuf:"bytes,38,opt,name=graph_content_checksum,json=graphContentChecksum,proto3" json:"graph_content_checksum,omitempty" yaml:"graph_content_checksum,omitempty"`
-	LocalExecutionChecksum string                 `protobuf:"bytes,39,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
-	GraphExecutionChecksum string                 `protobuf:"bytes,40,opt,name=graph_execution_checksum,json=graphExecutionChecksum,proto3" json:"graph_execution_checksum,omitempty" yaml:"graph_execution_checksum,omitempty"`
-	ComputedFilters        *Filters               `protobuf:"bytes,43,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
-	QueryCounts            *QueryCounts           `protobuf:"bytes,42,opt,name=query_counts,json=queryCounts,proto3" json:"query_counts,omitempty" yaml:"query_counts,omitempty"`
-	Uid                    string                 `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	OwnerMrn               string                 `protobuf:"bytes,8,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
-	Mrn                    string                 `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Name                   string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
-	Version                string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
-	License                string                 `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
-	Tags                   map[string]string      `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
-	Props                  []*Property            `protobuf:"bytes,45,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
-	Require                []*Requirement         `protobuf:"bytes,48,rep,name=require,proto3" json:"require,omitempty" yaml:"require,omitempty"`
-	Authors                []*Author              `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
-	Docs                   *PolicyDocs            `protobuf:"bytes,41,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
-	Groups                 []*PolicyGroup         `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
-	ScoringSystem          explorer.ScoringSystem `protobuf:"varint,10,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
-	FileContext            FileContext            `json:"-" yaml:"-"`
-	Comments               Comments               `json:"-" yaml:"-"`
+	Summary                string               `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
+	Created                int64                `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
+	Modified               int64                `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	RiskFactors            []*RiskFactor        `protobuf:"bytes,47,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
+	LocalContentChecksum   string               `protobuf:"bytes,37,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
+	GraphContentChecksum   string               `protobuf:"bytes,38,opt,name=graph_content_checksum,json=graphContentChecksum,proto3" json:"graph_content_checksum,omitempty" yaml:"graph_content_checksum,omitempty"`
+	LocalExecutionChecksum string               `protobuf:"bytes,39,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
+	GraphExecutionChecksum string               `protobuf:"bytes,40,opt,name=graph_execution_checksum,json=graphExecutionChecksum,proto3" json:"graph_execution_checksum,omitempty" yaml:"graph_execution_checksum,omitempty"`
+	ComputedFilters        *Filters             `protobuf:"bytes,43,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
+	QueryCounts            *QueryCounts         `protobuf:"bytes,42,opt,name=query_counts,json=queryCounts,proto3" json:"query_counts,omitempty" yaml:"query_counts,omitempty"`
+	Uid                    string               `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	OwnerMrn               string               `protobuf:"bytes,8,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
+	Mrn                    string               `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Name                   string               `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Version                string               `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
+	License                string               `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
+	Tags                   map[string]string    `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
+	Props                  []*Property          `protobuf:"bytes,45,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
+	Require                []*Requirement       `protobuf:"bytes,48,rep,name=require,proto3" json:"require,omitempty" yaml:"require,omitempty"`
+	Authors                []*Author            `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
+	Docs                   *PolicyDocs          `protobuf:"bytes,41,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
+	Groups                 []*PolicyGroup       `protobuf:"bytes,11,rep,name=groups,proto3" json:"groups,omitempty" yaml:"groups,omitempty"`
+	ScoringSystem          policy.ScoringSystem `protobuf:"varint,10,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnspec.policy.v1.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
+	FileContext            FileContext          `json:"-" yaml:"-"`
+	Comments               Comments             `json:"-" yaml:"-"`
 }
 
 func (x *Policy) UnmarshalYAML(node *yaml.Node) error {
@@ -1629,15 +1628,15 @@ func (d PolicyGroupDocs) MarshalYAML() (any, error) {
 }
 
 type PolicyRef struct {
-	Action        Action                 `protobuf:"varint,41,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
-	LastApplied   int64                  `protobuf:"varint,43,opt,name=last_applied,json=lastApplied,proto3" json:"last_applied,omitempty" yaml:"last_applied,omitempty"`
-	Checksum      string                 `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
-	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
-	Mrn           string                 `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
-	Impact        *Impact                `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
-	ScoringSystem explorer.ScoringSystem `protobuf:"varint,42,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnquery.explorer.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
-	FileContext   FileContext            `json:"-" yaml:"-"`
-	Comments      Comments               `json:"-" yaml:"-"`
+	Action        Action               `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	LastApplied   int64                `protobuf:"varint,43,opt,name=last_applied,json=lastApplied,proto3" json:"last_applied,omitempty" yaml:"last_applied,omitempty"`
+	Checksum      string               `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty" yaml:"checksum,omitempty"`
+	Uid           string               `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
+	Mrn           string               `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
+	Impact        *Impact              `protobuf:"bytes,23,opt,name=impact,proto3" json:"impact,omitempty" yaml:"impact,omitempty"`
+	ScoringSystem policy.ScoringSystem `protobuf:"varint,42,opt,name=scoring_system,json=scoringSystem,proto3,enum=cnspec.policy.v1.ScoringSystem" json:"scoring_system,omitempty" yaml:"scoring_system,omitempty"`
+	FileContext   FileContext          `json:"-" yaml:"-"`
+	Comments      Comments             `json:"-" yaml:"-"`
 }
 
 func (x *PolicyRef) UnmarshalYAML(node *yaml.Node) error {
@@ -2110,7 +2109,7 @@ type RiskFactor struct {
 	Software                []*SoftwareSelector `protobuf:"bytes,73,rep,name=software,proto3" json:"software,omitempty" yaml:"software,omitempty"`
 	Resources               []*ResourceSelector `protobuf:"bytes,74,rep,name=resources,proto3" json:"resources,omitempty" yaml:"resources,omitempty"`
 	Indicator               string              `protobuf:"bytes,75,opt,name=indicator,proto3" json:"indicator,omitempty" yaml:"indicator,omitempty"`
-	Action                  Action              `protobuf:"varint,77,opt,name=action,proto3,enum=cnquery.explorer.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Action                  Action              `protobuf:"varint,77,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
 	Uid                     string              `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	Mrn                     string              `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Title                   string              `protobuf:"bytes,24,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`

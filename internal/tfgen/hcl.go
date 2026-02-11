@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
-	"go.mondoo.com/cnquery/v12/utils/sortx"
+	"go.mondoo.com/mql/v13/utils/sortx"
 )
 
 type Attributes map[string]any

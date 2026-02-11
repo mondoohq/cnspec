@@ -9,11 +9,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v12/utils/iox"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/v13/utils/iox"
 )
 
 func sampleReportCollection() *policy.ReportCollection {
@@ -45,7 +44,7 @@ func sampleReportCollection() *policy.ReportCollection {
 		},
 		Bundle: &policy.Bundle{
 			Policies: nil, // not needed for this test since junit does not sort by policy
-			Queries: []*explorer.Mquery{
+			Queries: []*policy.Mquery{
 				{
 					Mrn:    "//policy.api.mondoo.app/queries/mondoo-linux-security-snmp-server-is-not-enabled",
 					CodeId: "+u6doYoYG5E=",

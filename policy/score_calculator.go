@@ -8,12 +8,11 @@ import (
 	"strconv"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v12/explorer"
 )
 
 // ScoreCalculator interface for calculating scores
 type ScoreCalculator interface {
-	Add(score *Score, impact *explorer.Impact)
+	Add(score *Score, impact *Impact)
 	Calculate() *Score
 	Init()
 	String() string
@@ -48,7 +47,7 @@ func (c *averageScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *explorer.Impact) {
+func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *Impact) {
 	if !found {
 		calculator.Add(&Score{
 			ScoreCompletion: 0,
@@ -73,7 +72,7 @@ func AddSpecdScore(calculator ScoreCalculator, s *Score, found bool, impact *exp
 
 	// everything else is modify or activate
 
-	if impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
+	if impact.Scoring == ScoringSystem_IGNORE_SCORE {
 		calculator.Add(&Score{
 			// We override the type because:
 			// 1. If it is set to Result, its value will be added to the total
@@ -115,7 +114,7 @@ func AddDataScore(calculator ScoreCalculator, totalDeps int, finishedDeps int) {
 	}, nil)
 }
 
-func (c *averageScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+func (c *averageScoreCalculator) Add(score *Score, impact *Impact) {
 	switch score.Type {
 	case ScoreType_Skip, ScoreType_Disabled, ScoreType_OutOfScope:
 		return
@@ -124,7 +123,7 @@ func (c *averageScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == Action_IGNORE || impact.Action == Action_DEACTIVATE) {
 			return
 		}
 
@@ -236,7 +235,7 @@ func (c *weightedScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func (c *weightedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+func (c *weightedScoreCalculator) Add(score *Score, impact *Impact) {
 	switch score.Type {
 	case ScoreType_Skip, ScoreType_Disabled, ScoreType_OutOfScope:
 		return
@@ -245,7 +244,7 @@ func (c *weightedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == Action_IGNORE || impact.Action == Action_DEACTIVATE) {
 			return
 		}
 
@@ -350,7 +349,7 @@ func (c *worstScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func (c *worstScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+func (c *worstScoreCalculator) Add(score *Score, impact *Impact) {
 	switch score.Type {
 	case ScoreType_Skip, ScoreType_Disabled, ScoreType_OutOfScope:
 		return
@@ -359,7 +358,7 @@ func (c *worstScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == Action_IGNORE || impact.Action == Action_DEACTIVATE) {
 			return
 		}
 
@@ -478,7 +477,7 @@ func (c *bandedScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+func (c *bandedScoreCalculator) Add(score *Score, impact *Impact) {
 	switch score.Type {
 	case ScoreType_Skip, ScoreType_OutOfScope, ScoreType_Disabled:
 		return
@@ -487,7 +486,7 @@ func (c *bandedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == Action_IGNORE || impact.Action == Action_DEACTIVATE) {
 			return
 		}
 
@@ -657,7 +656,7 @@ func (c *decayedScoreCalculator) Init() {
 	c.hasErrors = false
 }
 
-func (c *decayedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
+func (c *decayedScoreCalculator) Add(score *Score, impact *Impact) {
 	switch score.Type {
 	case ScoreType_Skip, ScoreType_OutOfScope, ScoreType_Disabled:
 		return
@@ -666,7 +665,7 @@ func (c *decayedScoreCalculator) Add(score *Score, impact *explorer.Impact) {
 		c.dataTotal += score.DataTotal
 
 	case ScoreType_Result:
-		if impact != nil && (impact.Action == explorer.Action_IGNORE || impact.Action == explorer.Action_DEACTIVATE) {
+		if impact != nil && (impact.Action == Action_IGNORE || impact.Action == Action_DEACTIVATE) {
 			return
 		}
 
@@ -774,7 +773,7 @@ func WithScoreCalculatorFeatureFlagFailErrors() ScoreCalculatorOption {
 }
 
 // NewScoreCalculator returns a score calculator based on a scoring system
-func NewScoreCalculator(scoringSystem explorer.ScoringSystem, opts ...ScoreCalculatorOption) (ScoreCalculator, error) {
+func NewScoreCalculator(scoringSystem ScoringSystem, opts ...ScoreCalculatorOption) (ScoreCalculator, error) {
 	var res ScoreCalculator
 
 	options := scoreCalculatorOptions{}
@@ -783,23 +782,23 @@ func NewScoreCalculator(scoringSystem explorer.ScoringSystem, opts ...ScoreCalcu
 	}
 
 	switch scoringSystem {
-	case explorer.ScoringSystem_AVERAGE, explorer.ScoringSystem_SCORING_UNSPECIFIED, explorer.ScoringSystem_DATA_ONLY:
+	case ScoringSystem_AVERAGE, ScoringSystem_SCORING_UNSPECIFIED, ScoringSystem_DATA_ONLY:
 		res = &averageScoreCalculator{
 			featureFlagFailErrors: options.featureFlagFailErrors,
 		}
-	case explorer.ScoringSystem_WEIGHTED:
+	case ScoringSystem_WEIGHTED:
 		res = &weightedScoreCalculator{
 			featureFlagFailErrors: options.featureFlagFailErrors,
 		}
-	case explorer.ScoringSystem_WORST:
+	case ScoringSystem_WORST:
 		res = &worstScoreCalculator{
 			featureFlagFailErrors: options.featureFlagFailErrors,
 		}
-	case explorer.ScoringSystem_BANDED:
+	case ScoringSystem_BANDED:
 		res = &bandedScoreCalculator{
 			featureFlagFailErrors: options.featureFlagFailErrors,
 		}
-	case explorer.ScoringSystem_DECAYED:
+	case ScoringSystem_DECAYED:
 		res = &decayedScoreCalculator{
 			featureFlagFailErrors: options.featureFlagFailErrors,
 		}

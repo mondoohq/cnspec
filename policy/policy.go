@@ -12,12 +12,11 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/checksums"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/types"
-	"go.mondoo.com/cnquery/v12/utils/sortx"
+	"go.mondoo.com/mql/v13/checksums"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/v13/utils/sortx"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -86,18 +85,18 @@ func WaitUntilDone(resolver PolicyResolver, entity string, scoringMrn string, ti
 	return false, nil
 }
 
-func cannotLookupFilters(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+func cannotLookupFilters(ctx context.Context, mrn string) (*Mquery, error) {
 	return nil, errors.New("cannot look up filters for mrn=" + mrn)
 }
 
 // Gather only the local asset filters, which means we don't descend into
 // dependent queries. Due to variants and referenced remote queries we may
 // still need to look up queries to get to their filters.
-func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByMrn func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (*explorer.Filters, error) {
+func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByMrn func(ctx context.Context, mrn string) (*Mquery, error)) (*Filters, error) {
 	groups := policy.Groups
 
-	filters := &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
+	filters := &Filters{
+		Items: map[string]*Mquery{},
 	}
 
 	for _, group := range groups {
@@ -153,10 +152,10 @@ func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByM
 // recursive tells us if we want to call this function for all policy dependencies (costly; set to false by default)
 func (p *Policy) ComputeAssetFilters(ctx context.Context,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
-	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
+	getQuery func(ctx context.Context, mrn string) (*Mquery, error),
 	recursive bool,
-) ([]*explorer.Mquery, error) {
-	filters := map[string]*explorer.Mquery{}
+) ([]*Mquery, error) {
+	filters := map[string]*Mquery{}
 
 	localFilters, err := gatherLocalAssetFilters(ctx, p, getQuery)
 	if err != nil {
@@ -185,7 +184,7 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context,
 		}
 	}
 
-	res := make([]*explorer.Mquery, len(filters))
+	res := make([]*Mquery, len(filters))
 	var i int
 	for _, v := range filters {
 		res[i] = v
@@ -197,8 +196,8 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context,
 
 func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
-	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
-	recursive bool, tracker map[string]*explorer.Mquery,
+	getQuery func(ctx context.Context, mrn string) (*Mquery, error),
+	recursive bool, tracker map[string]*Mquery,
 ) error {
 	child, err := getPolicy(ctx, policyMrn)
 	if err != nil {
@@ -227,7 +226,7 @@ func (p *Policy) computeAssetFilters(ctx context.Context, policyMrn string,
 // MatchingAssetFilters will take the list of filters and only return the ones
 // that are supported by the policy. if no matching field is found it will
 // return an empty list
-func MatchingAssetFilters(policyMrn string, assetFilters []*explorer.Mquery, p *Policy) ([]*explorer.Mquery, error) {
+func MatchingAssetFilters(policyMrn string, assetFilters []*Mquery, p *Policy) ([]*Mquery, error) {
 	if p.ComputedFilters == nil || len(p.ComputedFilters.Items) == 0 {
 		return nil, nil
 	}
@@ -237,12 +236,12 @@ func MatchingAssetFilters(policyMrn string, assetFilters []*explorer.Mquery, p *
 		policyFilters[p.ComputedFilters.Items[i].CodeId] = struct{}{}
 	}
 
-	res := []*explorer.Mquery{}
+	res := []*Mquery{}
 	for i := range assetFilters {
 		cur := assetFilters[i]
 
 		if _, ok := policyFilters[cur.CodeId]; ok {
-			curCopy := proto.Clone(cur).(*explorer.Mquery)
+			curCopy := proto.Clone(cur).(*Mquery)
 			curCopy.Mrn = policyMrn + "/assetfilter/" + cur.CodeId
 			curCopy.Title = curCopy.Query
 			res = append(res, curCopy)
@@ -255,21 +254,21 @@ func getPolicyNoop(ctx context.Context, mrn string) (*Policy, error) {
 	return nil, errors.New("policy not found: " + mrn)
 }
 
-func getQueryNoop(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+func getQueryNoop(ctx context.Context, mrn string) (*Mquery, error) {
 	return nil, errors.New("query not found: " + mrn)
 }
 
 func (p *Policy) UpdateChecksums(ctx context.Context,
 	now time.Time,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
-	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
+	getQuery func(ctx context.Context, mrn string) (*Mquery, error),
 	bundle *PolicyBundleMap,
 	conf mqlc.CompilerConfig,
 ) (*time.Time, error) {
 	// simplify the access if we don't have a bundle
 	if bundle == nil {
 		bundle = &PolicyBundleMap{
-			Queries: map[string]*explorer.Mquery{},
+			Queries: map[string]*Mquery{},
 		}
 	}
 
@@ -372,7 +371,7 @@ func (p *Policy) recalculateAt(now time.Time) *time.Time {
 func (p *Policy) updateAllChecksums(ctx context.Context,
 	now time.Time,
 	getPolicy func(ctx context.Context, mrn string) (*Policy, error),
-	getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error),
+	getQuery func(ctx context.Context, mrn string) (*Mquery, error),
 	bundle *PolicyBundleMap,
 	conf mqlc.CompilerConfig,
 ) (*time.Time, error) {
@@ -435,8 +434,8 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	}
 
 	// execution fields in policy
-	if p.ScoringSystem == explorer.ScoringSystem_SCORING_UNSPECIFIED {
-		p.ScoringSystem = explorer.ScoringSystem_AVERAGE
+	if p.ScoringSystem == ScoringSystem_SCORING_UNSPECIFIED {
+		p.ScoringSystem = ScoringSystem_AVERAGE
 	}
 	executionChecksum = executionChecksum.AddUint(uint64(p.ScoringSystem))
 
@@ -496,7 +495,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		// CHECKS (must be sorted)
 		// copy checks to keep the original order and only sort it for the purpose of checksum generation
-		checks := make([]*explorer.Mquery, len(group.Checks))
+		checks := make([]*Mquery, len(group.Checks))
 		copy(checks, group.Checks)
 		sort.Slice(checks, func(i, j int) bool {
 			return checks[i].Mrn < checks[j].Mrn
@@ -541,7 +540,7 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 
 		// DATA (must be sorted)
 		// copy checks to keep the original order and only sort it for the purpose of checksum generation
-		queries := make([]*explorer.Mquery, len(group.Queries))
+		queries := make([]*Mquery, len(group.Queries))
 		copy(queries, group.Queries)
 		sort.Slice(queries, func(i, j int) bool {
 			return queries[i].Mrn < queries[j].Mrn
@@ -770,7 +769,7 @@ func (s *GroupType) UnmarshalJSON(data []byte) error {
 
 func (a *Migration_Action) UnmarshalJSON(data []byte) error {
 	if len(data) == 0 {
-		*a = Migration_UNSPECIFIED
+		*a = Migration_MIGRATION_UNSPECIFIED
 		return nil
 	}
 
@@ -781,7 +780,7 @@ func (a *Migration_Action) UnmarshalJSON(data []byte) error {
 	case "REMOVE":
 		*a = Migration_REMOVE
 	case "MODIFY":
-		*a = Migration_MODIFY
+		*a = Migration_MIGRATION_MODIFY
 	default:
 		type tmp Migration_Action
 		err := json.Unmarshal(data, (*tmp)(a))
@@ -793,7 +792,7 @@ func (a *Migration_Action) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func variantsExecutionChecksum(q *explorer.Mquery, c checksums.Fast, includeImpact bool, getQuery func(ctx context.Context, mrn string) (*explorer.Mquery, error)) (checksums.Fast, error) {
+func variantsExecutionChecksum(q *Mquery, c checksums.Fast, includeImpact bool, getQuery func(ctx context.Context, mrn string) (*Mquery, error)) (checksums.Fast, error) {
 	// This code assumes there are no cycles in the variant graph.
 	c = c.
 		Add(q.CodeId)

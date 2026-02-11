@@ -5,9 +5,8 @@ package policy
 
 import (
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/types"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/types"
 )
 
 // WithDataQueries cycles through all data queries of the resolved policy and calls the given function
@@ -23,7 +22,7 @@ func (x *ResolvedPolicy) WithDataQueries(f func(id string, query *ExecutionQuery
 }
 
 // TODO: attach to ResolvedPolicy
-func (r *ResolvedPolicy) GetCodeBundle(query *explorer.Mquery) *llx.CodeBundle {
+func (r *ResolvedPolicy) GetCodeBundle(query *Mquery) *llx.CodeBundle {
 	executionQuery := r.ExecutionJob.Queries[query.CodeId]
 	return executionQuery.GetCode()
 }

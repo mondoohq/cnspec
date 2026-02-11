@@ -12,10 +12,10 @@ ifndef VERSION
 # echo "read VERSION from git"
 VERSION=${LATEST_VERSION_TAG}+$(shell git rev-list --count HEAD)
 endif
-MAJOR_VERSION=v12
+MAJOR_VERSION=v13
 
 # use LDFLAGSEXTRA to pass additional ldflags to the build
-LDFLAGS="-s -w -X go.mondoo.com/cnquery/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
+LDFLAGS="-s -w -X go.mondoo.com/mql/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
 LDFLAGSDIST=-tags production -ldflags ${LDFLAGS}
 
 .PHONY: info/ldflags

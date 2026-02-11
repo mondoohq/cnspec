@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/explorer"
 )
 
 func TestEvidenceFillUidIfEmpty(t *testing.T) {
@@ -45,11 +44,11 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -88,11 +87,11 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Mrn: "check1"},
 						{Mrn: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Mrn: "query1"},
 						{Mrn: "query2"},
 					},
@@ -131,11 +130,11 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -148,11 +147,11 @@ func TestGenerateEvidenceControlMap(t *testing.T) {
 					Uid:   "evidence-uid-2",
 					Title: "evidence-title-2",
 					Desc:  "evidence-desc-2",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check3"},
 						{Uid: "check4"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query3"},
 						{Uid: "query4"},
 					},
@@ -219,11 +218,11 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -249,7 +248,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 
 		fm := f.generateEvidenceFrameworkMap(&Policy{Uid: "policy-uid"})
 		expected := &FrameworkMap{
-			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			FrameworkOwner: &ObjectRef{Uid: "framework-uid"},
 			Uid:            "framework-uid-evidence-mapping",
 			Controls: []*ControlMap{
 				{
@@ -268,7 +267,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					},
 				},
 			},
-			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
+			PolicyDependencies: []*ObjectRef{{Uid: "policy-uid"}},
 		}
 		require.Equal(t, expected, fm)
 	})
@@ -281,10 +280,10 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Mrn: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Mrn: "query2"},
 					},
 					Controls: []*ControlRef{
@@ -308,7 +307,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 
 		fm := f.generateEvidenceFrameworkMap(nil)
 		expected := &FrameworkMap{
-			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			FrameworkOwner: &ObjectRef{Uid: "framework-uid"},
 			Uid:            "framework-uid-evidence-mapping",
 			Controls: []*ControlMap{
 				{
@@ -336,11 +335,11 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Mrn: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Mrn: "query2"},
 					},
@@ -366,7 +365,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 
 		fm := f.generateEvidenceFrameworkMap(&Policy{Uid: "policy-uid"})
 		expected := &FrameworkMap{
-			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			FrameworkOwner: &ObjectRef{Uid: "framework-uid"},
 			Uid:            "framework-uid-evidence-mapping",
 			Controls: []*ControlMap{
 				{
@@ -385,7 +384,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					},
 				},
 			},
-			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
+			PolicyDependencies: []*ObjectRef{{Uid: "policy-uid"}},
 		}
 		require.Equal(t, expected, fm)
 	})
@@ -398,11 +397,11 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -415,11 +414,11 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Uid:   "evidence-uid-2",
 					Title: "evidence-title-2",
 					Desc:  "evidence-desc-2",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check3"},
 						{Uid: "check4"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query3"},
 						{Uid: "query4"},
 					},
@@ -437,11 +436,11 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					Uid:   "evidence-uid-3",
 					Title: "evidence-title-3",
 					Desc:  "evidence-desc-3",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check5"},
 						{Uid: "check6"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query5"},
 						{Uid: "query6"},
 					},
@@ -465,7 +464,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 
 		fm := f.generateEvidenceFrameworkMap(&Policy{Uid: "policy-uid"})
 		expected := &FrameworkMap{
-			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			FrameworkOwner: &ObjectRef{Uid: "framework-uid"},
 			Uid:            "framework-uid-evidence-mapping",
 			Controls: []*ControlMap{
 				{
@@ -505,7 +504,7 @@ func TestGenerateEvidenceFrameworkMap(t *testing.T) {
 					},
 				},
 			},
-			PolicyDependencies: []*explorer.ObjectRef{{Uid: "policy-uid"}},
+			PolicyDependencies: []*ObjectRef{{Uid: "policy-uid"}},
 		}
 		require.Equal(t, expected, fm)
 	})
@@ -540,11 +539,11 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -575,8 +574,8 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Title:   "evidence-title",
 					Type:    GroupType_CHAPTER,
 					Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
-					Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
-					Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+					Queries: []*Mquery{{Uid: "query1"}, {Uid: "query2"}},
+					Checks:  []*Mquery{{Uid: "check1"}, {Uid: "check2"}},
 				},
 			},
 		}
@@ -591,10 +590,10 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Mrn: "check1"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Mrn: "query1"},
 					},
 				},
@@ -627,11 +626,11 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -640,11 +639,11 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Uid:   "evidence-uid-2",
 					Title: "evidence-title-2",
 					Desc:  "evidence-desc-2",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check3"},
 						{Uid: "check4"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query3"},
 						{Uid: "query4"},
 					},
@@ -658,11 +657,11 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Uid:   "evidence-uid-3",
 					Title: "evidence-title-3",
 					Desc:  "evidence-desc-3",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check5"},
 						{Uid: "check6"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query5"},
 						{Uid: "query6"},
 					},
@@ -691,24 +690,24 @@ func TestGenerateEvidencePolicy(t *testing.T) {
 					Title:   "evidence-title",
 					Type:    GroupType_CHAPTER,
 					Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
-					Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
-					Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+					Queries: []*Mquery{{Uid: "query1"}, {Uid: "query2"}},
+					Checks:  []*Mquery{{Uid: "check1"}, {Uid: "check2"}},
 				},
 				{
 					Uid:     "evidence-uid-2",
 					Title:   "evidence-title-2",
 					Type:    GroupType_CHAPTER,
 					Docs:    &PolicyGroupDocs{Desc: "evidence-desc-2"},
-					Queries: []*explorer.Mquery{{Uid: "query3"}, {Uid: "query4"}},
-					Checks:  []*explorer.Mquery{{Uid: "check3"}, {Uid: "check4"}},
+					Queries: []*Mquery{{Uid: "query3"}, {Uid: "query4"}},
+					Checks:  []*Mquery{{Uid: "check3"}, {Uid: "check4"}},
 				},
 				{
 					Uid:     "evidence-uid-3",
 					Title:   "evidence-title-3",
 					Type:    GroupType_CHAPTER,
 					Docs:    &PolicyGroupDocs{Desc: "evidence-desc-3"},
-					Queries: []*explorer.Mquery{{Uid: "query5"}, {Uid: "query6"}},
-					Checks:  []*explorer.Mquery{{Uid: "check5"}, {Uid: "check6"}},
+					Queries: []*Mquery{{Uid: "query5"}, {Uid: "query6"}},
+					Checks:  []*Mquery{{Uid: "check5"}, {Uid: "check6"}},
 				},
 			},
 		}
@@ -722,12 +721,12 @@ func TestEvidenceConvertToPolicyGroup(t *testing.T) {
 			Uid:   "evidence-uid",
 			Title: "evidence-title",
 			Desc:  "evidence-desc",
-			Checks: []*explorer.Mquery{
+			Checks: []*Mquery{
 				{Uid: "check1"},
 				{Uid: "check2"},
 				{Mrn: "check3"},
 			},
-			Queries: []*explorer.Mquery{
+			Queries: []*Mquery{
 				{Uid: "query1"},
 				{Uid: "query2"},
 				{Mrn: "query3"},
@@ -739,8 +738,8 @@ func TestEvidenceConvertToPolicyGroup(t *testing.T) {
 			Title:   "evidence-title",
 			Type:    GroupType_CHAPTER,
 			Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
-			Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
-			Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+			Queries: []*Mquery{{Uid: "query1"}, {Uid: "query2"}},
+			Checks:  []*Mquery{{Uid: "check1"}, {Uid: "check2"}},
 		}
 		require.Equal(t, expected, polGroup)
 	})
@@ -749,10 +748,10 @@ func TestEvidenceConvertToPolicyGroup(t *testing.T) {
 			Uid:   "evidence-uid",
 			Title: "evidence-title",
 			Desc:  "evidence-desc",
-			Checks: []*explorer.Mquery{
+			Checks: []*Mquery{
 				{Mrn: "check3"},
 			},
-			Queries: []*explorer.Mquery{
+			Queries: []*Mquery{
 				{Mrn: "query3"},
 			},
 		}
@@ -795,11 +794,11 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Uid: "check1"},
 						{Uid: "check2"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Uid: "query1"},
 						{Uid: "query2"},
 					},
@@ -830,13 +829,13 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 					Title:   "evidence-title",
 					Type:    GroupType_CHAPTER,
 					Docs:    &PolicyGroupDocs{Desc: "evidence-desc"},
-					Queries: []*explorer.Mquery{{Uid: "query1"}, {Uid: "query2"}},
-					Checks:  []*explorer.Mquery{{Uid: "check1"}, {Uid: "check2"}},
+					Queries: []*Mquery{{Uid: "query1"}, {Uid: "query2"}},
+					Checks:  []*Mquery{{Uid: "check1"}, {Uid: "check2"}},
 				},
 			},
 		}
 		expectedFm := &FrameworkMap{
-			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			FrameworkOwner: &ObjectRef{Uid: "framework-uid"},
 			Uid:            "framework-uid-evidence-mapping",
 			Controls: []*ControlMap{
 				{
@@ -852,7 +851,7 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 					Controls: []*ControlRef{},
 				},
 			},
-			PolicyDependencies: []*explorer.ObjectRef{{Uid: "framework-uid-evidence-policy"}},
+			PolicyDependencies: []*ObjectRef{{Uid: "framework-uid-evidence-policy"}},
 		}
 		require.Equal(t, expectedPol, pol)
 		require.Equal(t, expectedFm, fm)
@@ -868,10 +867,10 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 					Uid:   "evidence-uid",
 					Title: "evidence-title",
 					Desc:  "evidence-desc",
-					Checks: []*explorer.Mquery{
+					Checks: []*Mquery{
 						{Mrn: "check1"},
 					},
-					Queries: []*explorer.Mquery{
+					Queries: []*Mquery{
 						{Mrn: "query1"},
 					},
 				},
@@ -894,7 +893,7 @@ func TestGenerateEvidenceObjects(t *testing.T) {
 		pol, fm := f.GenerateEvidenceObjects()
 
 		expectedFm := &FrameworkMap{
-			FrameworkOwner: &explorer.ObjectRef{Uid: "framework-uid"},
+			FrameworkOwner: &ObjectRef{Uid: "framework-uid"},
 			Uid:            "framework-uid-evidence-mapping",
 			Controls: []*ControlMap{
 				{

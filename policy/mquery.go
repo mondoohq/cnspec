@@ -7,10 +7,9 @@ import (
 	"sort"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v12/checksums"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/mrn"
+	"go.mondoo.com/mql/v13/checksums"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/mrn"
 )
 
 func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string) (string, error) {
@@ -38,7 +37,7 @@ func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string
 	return mrn.String(), nil
 }
 
-func ChecksumAssetFilters(queries []*explorer.Mquery, conf mqlc.CompilerConfig) (string, error) {
+func ChecksumAssetFilters(queries []*Mquery, conf mqlc.CompilerConfig) (string, error) {
 	for i := range queries {
 		if _, err := queries[i].RefreshAsFilter("", conf); err != nil {
 			return "", errors.New("failed to compile query: " + err.Error())
@@ -61,7 +60,7 @@ func ChecksumAssetFilters(queries []*explorer.Mquery, conf mqlc.CompilerConfig) 
 // Note: This method is used for testing purposes only. If you need it in other
 // places please make sure to implement the query lookup.
 func (m *Mqueries) RefreshChecksums(conf mqlc.CompilerConfig, props mqlc.PropsHandler) error {
-	queries := map[string]*explorer.Mquery{}
+	queries := map[string]*Mquery{}
 	for i := range m.Items {
 		if _, err := m.Items[i].RefreshChecksumAndType(queries, props, conf); err != nil {
 			return err

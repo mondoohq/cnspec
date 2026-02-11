@@ -4,10 +4,10 @@
 package main
 
 import (
-	"go.mondoo.com/cnquery/v12/metrics"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/health"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/apps/cnspec/cmd"
+	"go.mondoo.com/mql/v13/metrics"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd"
 
 	_ "github.com/glebarez/go-sqlite"
 )

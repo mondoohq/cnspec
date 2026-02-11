@@ -10,12 +10,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/explorer"
 )
 
 type scoreTest struct {
 	in      []*Score
-	impacts []*explorer.Impact
+	impacts []*Impact
 	out     *Score
 }
 
@@ -74,8 +73,8 @@ func TestAverageScores(t *testing.T) {
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
-				nil, nil, nil, nil, nil, {Action: explorer.Action_IGNORE},
+			impacts: []*Impact{
+				nil, nil, nil, nil, nil, {Action: Action_IGNORE},
 			},
 			out: &Score{Value: 60, ScoreCompletion: 40, DataCompletion: 59, DataTotal: 10, Weight: 6, Type: ScoreType_Result},
 		},
@@ -121,8 +120,8 @@ func TestWeightedScores(t *testing.T) {
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
-				nil, nil, nil, nil, nil, {Action: explorer.Action_IGNORE},
+			impacts: []*Impact{
+				nil, nil, nil, nil, nil, {Action: Action_IGNORE},
 			},
 			out: &Score{Value: 68, ScoreCompletion: 40, DataCompletion: 59, Weight: 6, Type: ScoreType_Result},
 		},
@@ -168,8 +167,8 @@ func TestWorstScores(t *testing.T) {
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
-				nil, nil, nil, nil, nil, {Action: explorer.Action_IGNORE},
+			impacts: []*Impact{
+				nil, nil, nil, nil, nil, {Action: Action_IGNORE},
 			},
 			out: &Score{Value: 20, ScoreCompletion: 40, DataCompletion: 59, Weight: 6, Type: ScoreType_Result},
 		},
@@ -213,15 +212,15 @@ func TestBandedScores(t *testing.T) {
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
+			impacts: []*Impact{
 				// 2 critical checks
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
 				// 8 low checks
-				{Value: &explorer.ImpactValue{Value: 20}},
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Action: explorer.Action_IGNORE},
+				{Value: &ImpactValue{Value: 20}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Action: Action_IGNORE},
 			},
 			out: &Score{Value: 25, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
 		},
@@ -233,12 +232,12 @@ func TestBandedScores(t *testing.T) {
 				// 10 high checks (ok)
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
+			impacts: []*Impact{
 				// 10 critical checks
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
 				// 10 high checks
-				{Value: &explorer.ImpactValue{Value: 80}},
+				{Value: &ImpactValue{Value: 80}},
 			},
 			out: &Score{Value: 45, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
@@ -250,12 +249,12 @@ func TestBandedScores(t *testing.T) {
 				// 10 high checks (ok)
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
+			impacts: []*Impact{
 				// 10 critical checks
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
 				// 10 high checks
-				{Value: &explorer.ImpactValue{Value: 80}},
+				{Value: &ImpactValue{Value: 80}},
 			},
 			out: &Score{Value: 100, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
@@ -267,12 +266,12 @@ func TestBandedScores(t *testing.T) {
 				// 10 high checks (nok)
 				{Value: 0, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
+			impacts: []*Impact{
 				// 10 critical checks
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
 				// 10 high checks
-				{Value: &explorer.ImpactValue{Value: 80}},
+				{Value: &ImpactValue{Value: 80}},
 			},
 			out: &Score{Value: 9, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
@@ -284,12 +283,12 @@ func TestBandedScores(t *testing.T) {
 				// 10 high checks (ok)
 				{Value: 100, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 10, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
+			impacts: []*Impact{
 				// 10 critical checks
-				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
 				{Value: nil},
 				// 10 high checks
-				{Value: &explorer.ImpactValue{Value: 80}},
+				{Value: &ImpactValue{Value: 80}},
 			},
 			out: &Score{Value: 45, ScoreCompletion: 100, DataCompletion: 66, Weight: 20, Type: ScoreType_Result},
 		},
@@ -313,15 +312,15 @@ func TestDecayedScores(t *testing.T) {
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_OutOfScope},
 				{Value: 30, ScoreCompletion: 100, DataCompletion: 33, DataTotal: 3, Weight: 3, Type: ScoreType_Result},
 			},
-			impacts: []*explorer.Impact{
+			impacts: []*Impact{
 				// 2 critical checks
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
 				// 8 low checks
-				{Value: &explorer.ImpactValue{Value: 20}},
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Value: &explorer.ImpactValue{Value: 100}},
-				{Action: explorer.Action_IGNORE},
+				{Value: &ImpactValue{Value: 20}},
+				{Value: &ImpactValue{Value: 100}},
+				{Value: &ImpactValue{Value: 100}},
+				{Action: Action_IGNORE},
 			},
 			out: &Score{Value: 61, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
 		},
@@ -378,8 +377,8 @@ func TestImpact(t *testing.T) {
 			Value:           0,
 			ScoreCompletion: 100,
 			Weight:          1,
-		}, true, &explorer.Impact{
-			Value: &explorer.ImpactValue{},
+		}, true, &Impact{
+			Value: &ImpactValue{},
 		})
 
 		s := calc.Calculate()
@@ -395,8 +394,8 @@ func TestImpact(t *testing.T) {
 			Value:           100,
 			ScoreCompletion: 100,
 			Weight:          1,
-		}, true, &explorer.Impact{
-			Value:  &explorer.ImpactValue{Value: 20},
+		}, true, &Impact{
+			Value:  &ImpactValue{Value: 20},
 			Weight: 1,
 		})
 
@@ -413,8 +412,8 @@ func TestImpact(t *testing.T) {
 			Value:           60,
 			ScoreCompletion: 100,
 			Weight:          1,
-		}, true, &explorer.Impact{
-			Value:  &explorer.ImpactValue{Value: 20},
+		}, true, &Impact{
+			Value:  &ImpactValue{Value: 20},
 			Weight: 1,
 		})
 
@@ -432,8 +431,8 @@ func addMultipleScores(impact uint32, failed int, passed int, calculator ScoreCa
 			DataTotal:       1,
 			Weight:          1,
 			Type:            ScoreType_Result,
-		}, &explorer.Impact{
-			Value: &explorer.ImpactValue{
+		}, &Impact{
+			Value: &ImpactValue{
 				Value: int32(impact),
 			},
 		})
@@ -446,8 +445,8 @@ func addMultipleScores(impact uint32, failed int, passed int, calculator ScoreCa
 			DataTotal:       1,
 			Weight:          1,
 			Type:            ScoreType_Result,
-		}, &explorer.Impact{
-			Value: &explorer.ImpactValue{
+		}, &Impact{
+			Value: &ImpactValue{
 				Value: int32(impact),
 			},
 		})

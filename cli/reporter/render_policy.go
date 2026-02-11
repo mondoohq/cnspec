@@ -9,13 +9,12 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v12/cli/printer"
-	"go.mondoo.com/cnquery/v12/cli/theme/colors"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/utils/stringx"
-	"go.mondoo.com/cnspec/v12/cli/components"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/utils/stringx"
+	"go.mondoo.com/cnspec/v13/cli/components"
 )
 
 func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, scoringData []reportRow) string {
@@ -48,7 +47,7 @@ func renderPolicy(print *printer.Printer, policyObj *policy.Policy, report *poli
 }
 
 func renderDataQueries(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundleMap *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, res *bytes.Buffer) {
-	dataQueries := map[string]explorer.Action{}
+	dataQueries := map[string]policy.Action{}
 	for i := range policyObj.Groups {
 		group := policyObj.Groups[i]
 		for j := range group.Queries {
@@ -148,9 +147,9 @@ func renderPolicySummary(res *bytes.Buffer, data []reportRow) {
 		row := data[i]
 
 		ps.Total++
-		if row.Action == explorer.Action_DEACTIVATE {
+		if row.Action == policy.Action_DEACTIVATE {
 			ps.Skipped++
-		} else if row.Action == explorer.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
+		} else if row.Action == policy.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			ps.Skipped++
 		} else if row.Score != nil && row.Score.Type == policy.ScoreType_Error {
 			ps.Errors.Total++
@@ -193,9 +192,9 @@ func renderPolicyReportTable(print *printer.Printer, report *policy.Report, bund
 		row := data[i]
 
 		action := ""
-		if row.Action == explorer.Action_DEACTIVATE {
+		if row.Action == policy.Action_DEACTIVATE {
 			action = "// removed by user"
-		} else if row.Action == explorer.Action_MODIFY && (row.Impact == nil || row.Impact.Weight == 0) {
+		} else if row.Action == policy.Action_MODIFY && (row.Impact == nil || row.Impact.Weight == 0) {
 			action = "// ignored by user"
 		} else if row.Score != nil && row.Score.Type == policy.ScoreType_Skip {
 			action = "// skipped by query condition"

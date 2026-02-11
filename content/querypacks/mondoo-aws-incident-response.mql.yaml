@@ -1,0 +1,352 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+
+packs:
+  - uid: mondoo-incident-response-aws
+    name: AWS Incident Response Pack
+    version: 1.1.0
+    license: BUSL-1.1
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    tags:
+      mondoo.com/platform: aws,cloud
+      mondoo.com/category: security
+    docs:
+      desc: |
+        ### Overview
+
+        The AWS Incident Response Pack by Mondoo query pack retrieves data about AWS services and resources for investigation during a security incident.
+
+        ### Run query pack
+
+        To run this query pack against an AWS account:
+
+        ```bash
+        mql scan aws -f mondoo-aws-incident-response.mql.yaml
+        ```
+    groups:
+      - uid: mondoo-incident-response-aws-group
+        title: AWS Asset Inventory Pack Group
+        filters: |
+          asset.runtime == "aws"
+        queries:
+          - uid: mondoo-incident-response-aws-account-id
+          - uid: mondoo-incident-response-aws-enabled-regions
+          - uid: mondoo-incident-response-aws-user-info
+          - uid: mondoo-incident-response-aws-iam-users-multiple-keys
+          - uid: mondoo-incident-response-aws-iam-administrator-access
+          - uid: mondoo-incident-response-aws-iam-full-access
+          - uid: mondoo-incident-response-aws-ec2-instances-public-ip
+          - uid: mondoo-incident-response-aws-ec2-instances-without-tags
+          - uid: mondoo-incident-response-aws-s3-buckets-public
+
+queries:
+  - uid: mondoo-incident-response-aws-account-id
+    title: AWS account ID
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.account.id
+
+  - uid: mondoo-incident-response-aws-enabled-regions
+    title: All regions enabled in the AWS account
+    filters: |
+      asset.platform == "aws"
+    docs:
+      desc: |
+        This query retrieves all AWS regions enabled in the account
+    mql: |
+      aws { regions }
+
+  - uid: mondoo-incident-response-aws-user-info
+    title: IAM users with console access
+    filters: |
+      asset.platform == "aws"
+    docs:
+      desc: |
+        This query retrieves data for users with console access. The following fields are retrieved:
+
+        ```
+        properties['user']
+        passwordLastUsed
+        passwordLastChanged
+        mfaActive
+        ```
+    mql: |
+      aws.iam.credentialReport.
+        where( passwordEnabled == true ) {
+          properties['user']
+          passwordLastUsed
+          passwordLastChanged
+          mfaActive
+        }
+
+  - uid: mondoo-incident-response-aws-iam-users-multiple-keys
+    title: IAM users with API access
+    filters: |
+      asset.platform == "aws"
+    docs:
+      desc: |
+        This query retrieves all of the IAM users that have API access along with the following fields:
+
+        ```
+        properties['user']
+        accessKey1Active
+        accessKey1LastUsedDate
+        accessKey1LastUsedService
+        accessKey1LastRotated
+        accessKey2Active
+        accessKey2LastUsedDate
+        accessKey2LastUsedService
+        accessKey2LastRotated
+        ```
+    mql: |
+      aws.iam.credentialReport.
+        where( accessKey1Active || accessKey2Active ) {
+          properties['user']
+          accessKey1Active
+          accessKey1LastUsedDate
+          accessKey1LastUsedService
+          accessKey1LastRotated
+          accessKey2Active
+          accessKey2LastUsedDate
+          accessKey2LastUsedService
+          accessKey2LastRotated
+        }
+
+  - uid: mondoo-incident-response-aws-iam-administrator-access
+    title: IAM users, groups, and roles to which the AdministratorAccess policy is attached
+    docs:
+      desc: |
+        This query retrieves all IAM users, groups, and roles with the `AdministratorAccess` role attached.
+    variants:
+      - uid: mondoo-incident-response-aws-iam-administrator-access-all
+      - uid: mondoo-incident-response-aws-iam-administrator-access-user
+      - uid: mondoo-incident-response-aws-iam-administrator-access-group
+  - uid: mondoo-incident-response-aws-iam-administrator-access-all
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.iam.attachedPolicies.
+        where( arn == "arn:aws:iam::aws:policy/AdministratorAccess" ) {
+          attachedUsers
+          attachedGroups
+          attachedRoles
+        }
+  - uid: mondoo-incident-response-aws-iam-administrator-access-user
+    filters: |
+      asset.platform == "aws-iam-user"
+      aws.iam.attachedPolicies
+        .where(arn == "arn:aws:iam::aws:policy/AdministratorAccess")
+        .any(attachedUsers
+          .contains(
+            arn.in(asset.ids)
+          )
+        )
+    mql: |
+      aws.iam.user {
+        arn
+        name
+        policies
+        id
+        tags
+        attachedPolicies
+        createdAt
+        accessKeys
+        loginProfile
+        groups
+      }
+  - uid: mondoo-incident-response-aws-iam-administrator-access-group
+    filters: |
+      asset.platform == "aws-iam-group"
+      aws.iam.attachedPolicies
+        .where(arn == "arn:aws:iam::aws:policy/AdministratorAccess")
+        .any(attachedGroups
+          .contains(
+            arn.in(asset.ids)
+          )
+        )
+    mql: |
+      aws.iam.group {
+        arn
+        name
+        createdAt
+        id
+        usernames
+      }
+
+  - uid: mondoo-incident-response-aws-iam-full-access
+    title: IAM users, groups, and roles to which any 'FullAccess' policy is attached
+    filters: |
+      asset.platform == "aws"
+    docs:
+      desc: |
+        This query retrieves all IAM users, groups, and roles with an AWS FullAccess role attached.
+    mql: |
+      aws.iam.policies.
+        where( name == /FullAccess/i && attachmentCount != 0) {
+          name
+          createdAt
+          updatedAt
+          attachedUsers
+          attachedGroups
+          attachedRoles
+        }
+
+  - uid: mondoo-incident-response-aws-ec2-instances-public-ip
+    title: EC2 instances that have a public IP address
+    docs:
+      desc: |
+        This query retrieves all EC2 instances that have a public IP address attached along with the following fields:
+
+        ```
+        arn
+        instanceId
+        region
+        state
+        vpc.id
+        keypair {
+          name
+        }
+        securityGroups {
+          name
+          description
+          ipPermissions
+        }
+        tags
+        ```
+    variants:
+      - uid: mondoo-incident-response-aws-ec2-instances-public-ip-all
+      - uid: mondoo-incident-response-aws-ec2-instances-public-ip-single
+  - uid: mondoo-incident-response-aws-ec2-instances-public-ip-all
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.
+        where( publicIp != empty ) {
+          arn
+          instanceId
+          region
+          state
+          vpc.id
+          keypair {
+            name
+          }
+          securityGroups {
+            name
+            description
+            ipPermissions
+          }
+          tags
+        }
+  - uid: mondoo-incident-response-aws-ec2-instances-public-ip-single
+    filters: |
+      asset.platform == "aws-ec2-instance"
+      aws.ec2.instance.publicIp != empty
+    mql: |
+      aws.ec2.instance {
+          arn
+          instanceId
+          region
+          state
+          vpc.id
+          keypair {
+            name
+          }
+          securityGroups {
+            name
+            description
+            ipPermissions
+          }
+          tags
+        }
+
+  - uid: mondoo-incident-response-aws-ec2-instances-without-tags
+    title: EC2 instances that do not have tags configured
+    docs:
+      desc: |
+        This query retrieves all EC2 instances that do not have tags configured, along with the following fields:
+        ```mql
+        instanceId
+        region
+        keypair { name }
+        image.name
+        image.id
+        state
+        ```
+    variants:
+      - uid: mondoo-incident-response-aws-ec2-instances-without-tags-all
+      - uid: mondoo-incident-response-aws-ec2-instances-without-tags-single
+  - uid: mondoo-incident-response-aws-ec2-instances-without-tags-all
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.
+        where( tags.length == 0 ) {
+          instanceId
+          region
+          keypair { name }
+          image.name
+          image.id
+          state
+        }
+  - uid: mondoo-incident-response-aws-ec2-instances-without-tags-single
+    filters: |
+      asset.platform == "aws-ec2-instance"
+      aws.ec2.instance.tags.length == 0
+    mql: |
+      aws.ec2.instance {
+          instanceId
+          region
+          keypair { name }
+          image.name
+          image.id
+          state
+        }
+
+  - uid: mondoo-incident-response-aws-s3-buckets-public
+    title: S3 buckets that are public
+    docs:
+      desc: |
+        This query retrieves all S3 buckets that are configured with public access and returns the following fields:
+        ```mql
+        arn
+        name
+        location
+        publicAccessBlock
+        encryption
+        tags
+        policy
+        ```
+    variants:
+      - uid: mondoo-incident-response-aws-s3-buckets-public-all
+      - uid: mondoo-incident-response-aws-s3-buckets-public-single
+  - uid: mondoo-incident-response-aws-s3-buckets-public-all
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.s3.buckets.
+        where( public == true ) {
+          arn
+          name
+          location
+          publicAccessBlock
+          encryption
+          tags
+          policy
+        }
+  - uid: mondoo-incident-response-aws-s3-buckets-public-single
+    filters: |
+      asset.platform == "aws-s3-bucket"
+      aws.s3.bucket.public == true
+    mql: |
+      aws.s3.bucket {
+          arn
+          name
+          location
+          publicAccessBlock
+          encryption
+          tags
+          policy
+        }

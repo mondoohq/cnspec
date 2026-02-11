@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
-	cr "go.mondoo.com/cnquery/v12/cli/reporter"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/utils/sortx"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/internal/sbom"
+	cr "go.mondoo.com/mql/v13/cli/reporter"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/utils/sortx"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/internal/sbom"
 )
 
 var LABEL_KERNEL_RUNNING = "mondoo.com/os/kernel-running"

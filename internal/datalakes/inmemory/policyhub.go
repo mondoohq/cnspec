@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/checksums"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/checksums"
+	"go.mondoo.com/cnspec/v13/policy"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -21,7 +20,7 @@ import (
 // with their proto counterparts
 
 type wrapQuery struct {
-	*explorer.Mquery
+	*policy.Mquery
 }
 
 type wrapPolicy struct {
@@ -59,7 +58,7 @@ func (db *Db) PolicyExists(ctx context.Context, mrn string) (bool, error) {
 }
 
 // GetQuery retrieves a given query
-func (db *Db) GetQuery(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+func (db *Db) GetQuery(ctx context.Context, mrn string) (*policy.Mquery, error) {
 	q, ok := db.cache.Get(dbIDQuery + mrn)
 	if !ok {
 		return nil, errors.New("query '" + mrn + "' not found")
@@ -69,7 +68,7 @@ func (db *Db) GetQuery(ctx context.Context, mrn string) (*explorer.Mquery, error
 
 // SetQuery stores a given query
 // Note: the query must be defined, it cannot be nil
-func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *explorer.Mquery) error {
+func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *policy.Mquery) error {
 	v := wrapQuery{mquery}
 	ok := db.cache.Set(dbIDQuery+mrn, v, 1)
 	if !ok {
@@ -79,17 +78,17 @@ func (db *Db) SetQuery(ctx context.Context, mrn string, mquery *explorer.Mquery)
 }
 
 // GetProperty retrieves a given property
-func (db *Db) GetProperty(ctx context.Context, mrn string) (*explorer.Property, error) {
+func (db *Db) GetProperty(ctx context.Context, mrn string) (*policy.Property, error) {
 	q, ok := db.cache.Get(dbIDProp + mrn)
 	if !ok {
 		return nil, errors.New("query '" + mrn + "' not found")
 	}
-	return proto.Clone(q.(*explorer.Property)).(*explorer.Property), nil
+	return proto.Clone(q.(*policy.Property)).(*policy.Property), nil
 }
 
 // SetProperty stores a given query
 // Note: the query must be defined, it cannot be nil
-func (db *Db) SetProperty(ctx context.Context, mrn string, prop *explorer.Property) error {
+func (db *Db) SetProperty(ctx context.Context, mrn string, prop *policy.Property) error {
 	ok := db.cache.Set(dbIDProp+mrn, prop, 1)
 	if !ok {
 		return errors.New("failed to save query '" + mrn + "' to cache")
@@ -107,7 +106,7 @@ func (db *Db) GetRawPolicy(ctx context.Context, mrn string) (*policy.Policy, err
 }
 
 // GetPolicyFilters retrieves the list of asset filters for a policy (fast)
-func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mquery, error) {
+func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*policy.Mquery, error) {
 	r, err := db.GetRawPolicy(ctx, mrn)
 	if err != nil {
 		return nil, err
@@ -117,10 +116,10 @@ func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mqu
 		return nil, nil
 	}
 
-	res := make([]*explorer.Mquery, len(r.ComputedFilters.Items))
+	res := make([]*policy.Mquery, len(r.ComputedFilters.Items))
 	var i int
 	for _, v := range r.ComputedFilters.Items {
-		res[i] = proto.Clone(v).(*explorer.Mquery)
+		res[i] = proto.Clone(v).(*policy.Mquery)
 		i++
 	}
 
@@ -128,12 +127,12 @@ func (db *Db) GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mqu
 }
 
 // SetPolicy stores a given policy in the data lake
-func (db *Db) SetPolicy(ctx context.Context, policyObj *policy.Policy, recalculateAt *time.Time, filters []*explorer.Mquery) error {
+func (db *Db) SetPolicy(ctx context.Context, policyObj *policy.Policy, recalculateAt *time.Time, filters []*policy.Mquery) error {
 	_, err := db.setPolicy(ctx, policyObj, filters)
 	return err
 }
 
-func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters []*explorer.Mquery) (wrapPolicy, error) {
+func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters []*policy.Mquery) (wrapPolicy, error) {
 	var err error
 
 	// we may use the cached parents if this policy already exists i.e. if it's
@@ -158,8 +157,8 @@ func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters [
 		// fall through, re-create the policy
 	}
 
-	policyObj.ComputedFilters = &explorer.Filters{
-		Items: make(map[string]*explorer.Mquery, len(filters)),
+	policyObj.ComputedFilters = &policy.Filters{
+		Items: make(map[string]*policy.Mquery, len(filters)),
 	}
 	for i := range filters {
 		filter := filters[i]
@@ -552,7 +551,7 @@ func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error 
 	wrap.Policy.UpdateChecksums(ctx,
 		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
 		db.services.NewCompilerConfig(),
 	)

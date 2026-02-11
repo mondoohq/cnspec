@@ -11,15 +11,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/recording"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 func TestFilterPreprocess(t *testing.T) {
@@ -100,7 +99,7 @@ func (s *LocalScannerSuite) SetupSuite() {
 		Enabled:         true,
 		RefreshInterval: 60 * 60,
 	}
-	s.conf = mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)
+	s.conf = mqlc.NewConfig(runtime.Schema(), mql.DefaultFeatures)
 }
 
 func (s *LocalScannerSuite) BeforeTest(suiteName, testName string) {
@@ -217,7 +216,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 			parent := queryRj.Notify[0]
 			parentJob := p.CollectorJob.ReportingJobs[parent]
 			s.Require().NotNil(parentJob)
-			s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+			s.Equal(policy.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
 		}
 		// Make sure the ignored query is reported as disabled
 		{
@@ -228,7 +227,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 				child = c
 				break
 			}
-			s.Equal(explorer.ScoringSystem_DISABLED, queryRj.ChildJobs[child].Scoring)
+			s.Equal(policy.ScoringSystem_DISABLED, queryRj.ChildJobs[child].Scoring)
 		}
 	}
 }
@@ -346,7 +345,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 		parent := queryRj.Notify[0]
 		parentJob := p.CollectorJob.ReportingJobs[parent]
 		s.Require().NotNil(parentJob)
-		s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+		s.Equal(policy.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
 	}
 }
 
@@ -396,7 +395,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 			parent := queryRj.Notify[0]
 			parentJob := p.CollectorJob.ReportingJobs[parent]
 			s.Require().NotNil(parentJob)
-			s.Equal(explorer.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
+			s.Equal(policy.ScoringSystem_IGNORE_SCORE, parentJob.ChildJobs[queryRj.Uuid].Scoring)
 		}
 		// Make sure the ignored query is reported as disabled
 		{
@@ -407,7 +406,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 				child = c
 				break
 			}
-			s.Equal(explorer.ScoringSystem_DISABLED, queryRj.ChildJobs[child].Scoring)
+			s.Equal(policy.ScoringSystem_DISABLED, queryRj.ChildJobs[child].Scoring)
 		}
 	}
 }
@@ -488,11 +487,11 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	s.Require().NoError(err)
 
 	bundle.Frameworks[0].Groups = append(bundle.Frameworks[0].Groups, &policy.FrameworkGroup{
-		Type:     policy.GroupType_OUT_OF_SCOPE,
+		Type:     policy.GroupType_OUT_OF_SCOPE_GROUP,
 		Controls: []*policy.Control{{Mrn: "//local.cnspec.io/run/local-execution/controls/mondoo-test-01"}},
 	})
 	bundle.Frameworks[0].Groups = append(bundle.Frameworks[0].Groups, &policy.FrameworkGroup{
-		Type:         policy.GroupType_OUT_OF_SCOPE,
+		Type:         policy.GroupType_OUT_OF_SCOPE_GROUP,
 		ReviewStatus: policy.ReviewStatus_REJECTED,
 		Controls:     []*policy.Control{{Mrn: "//local.cnspec.io/run/local-execution/controls/mondoo-test-02"}},
 	})
