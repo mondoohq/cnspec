@@ -88,7 +88,7 @@ func FormatFile(filename string, opts FormatOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := b.EnsureRequirements(true, opts.AutoUpdateProviders); err != nil {
+	if err := b.EnsureRequirements(opts.AutoUpdateProviders); err != nil {
 		return err
 	}
 

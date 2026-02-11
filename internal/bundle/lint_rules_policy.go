@@ -417,7 +417,7 @@ func runRulePolicyRequireExist(ctx *LintContext, item any) []*Entry {
 	if len(p.Require) == 0 {
 		entries = append(entries, &Entry{
 			RuleID:  PolicyMissingRequireRuleID,
-			Message: fmt.Sprintf("%s does not define any required providers", policyIdentifier(p)),
+			Message: fmt.Sprintf("%s does not define any required providers, please add a `require` statement (e.g. `require: [{provider: os}]`)", policyIdentifier(p)),
 			Level:   LevelWarning,
 			Location: []Location{{
 				File:   ctx.FilePath,

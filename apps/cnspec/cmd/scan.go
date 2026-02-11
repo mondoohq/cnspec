@@ -399,7 +399,7 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 			if viper.IsSet("auto-update") {
 				autoUpdate = viper.GetBool("auto-update")
 			}
-			if err := bundle.EnsureRequirements(false, autoUpdate); err != nil {
+			if err := bundle.EnsureRequirements(autoUpdate); err != nil {
 				return errors.Wrap(err, "failed to ensure policy requirements")
 			}
 		}
