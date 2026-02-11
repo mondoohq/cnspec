@@ -138,6 +138,9 @@ func init() {
 	rootCmd.PersistentFlags().String("log-level", "info", "Set log level: error, warn, info, debug, trace")
 	rootCmd.PersistentFlags().String("api-proxy", "", "Set proxy for communications with Mondoo API")
 	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic provider installation and update")
+	// Set NoOptDefVal to allow space-separated bool values (--auto-update false)
+	// Without this, "false" would be treated as a positional argument instead of the flag value
+	rootCmd.PersistentFlags().Lookup("auto-update").NoOptDefVal = "true"
 	_ = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 	_ = viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
