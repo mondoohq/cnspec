@@ -16,16 +16,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v12"
-	cnquery_app "go.mondoo.com/cnquery/v12/apps/cnquery/cmd"
-	"go.mondoo.com/cnquery/v12/cli/config"
-	cli_errors "go.mondoo.com/cnquery/v12/cli/errors"
-	"go.mondoo.com/cnquery/v12/cli/providers"
-	"go.mondoo.com/cnquery/v12/cli/theme"
-	"go.mondoo.com/cnquery/v12/cli/theme/colors"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/mql/v13"
+	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
+	"go.mondoo.com/mql/v13/cli/config"
+	cli_errors "go.mondoo.com/mql/v13/cli/errors"
+	"go.mondoo.com/mql/v13/cli/providers"
+	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
@@ -46,8 +46,6 @@ const (
 
 func init() {
 	theme.DefaultTheme.Landing = landing()
-	theme.DefaultTheme.Welcome = welcome()
-	theme.DefaultTheme.Prefix = "cnspec> "
 }
 
 func landing() string {
@@ -57,15 +55,6 @@ func landing() string {
 	}
 	// unix
 	return termenv.String(cnspecLogo).Foreground(colors.DefaultColorTheme.Primary).String()
-}
-
-func welcome() string {
-	// windows
-	if runtime.GOOS == "windows" {
-		return cnspecLogo + " interactive shell\n"
-	}
-	// unix
-	return cnspecLogo + " interactive shell\n"
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -239,14 +228,14 @@ func GenerateMarkdown(dir string) error {
 	return nil
 }
 
-func defaultRangerPlugins(sysInfo *sysinfo.SystemInfo, features cnquery.Features) []ranger.ClientPlugin {
+func defaultRangerPlugins(sysInfo *sysinfo.SystemInfo, features mql.Features) []ranger.ClientPlugin {
 	plugins := []ranger.ClientPlugin{}
 	plugins = append(plugins, scope.NewRequestIDRangerPlugin())
 	plugins = append(plugins, sysInfoHeader(sysInfo, features))
 	return plugins
 }
 
-func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features cnquery.Features) ranger.ClientPlugin {
+func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features mql.Features) ranger.ClientPlugin {
 	const (
 		HttpHeaderUserAgent      = "User-Agent"
 		HttpHeaderClientFeatures = "Mondoo-Features"

@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/utils/timex"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/utils/timex"
 	"gopkg.in/yaml.v3"
 )
 
@@ -81,7 +80,7 @@ func (x *Impact) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (v *Impact) MarshalYAML() (any, error) {
-	if explorer.Action(v.Action) == explorer.Action_UNSPECIFIED && v.Scoring == explorer.ScoringSystem_SCORING_UNSPECIFIED && v.Weight < 1 {
+	if policy.Action(v.Action) == policy.Action_UNSPECIFIED && v.Scoring == policy.ScoringSystem_SCORING_UNSPECIFIED && v.Weight < 1 {
 		if v.Value == nil {
 			return nil, nil
 		}
@@ -279,7 +278,7 @@ func (x GroupType) MarshalYAML() (any, error) {
 // MarshalYAML cannot be a pointer since action are assigned as non-pointer to Mquery
 // see func (a *Action) UnmarshalJSON(data []byte) error in cnquery explorer package
 func (x Action) MarshalYAML() (any, error) {
-	value := explorer.Action_name[int32(x)]
+	value := policy.Action_name[int32(x)]
 	value = strings.ToLower(value)
 
 	// preview into the default in v12 but proto still uses ignore internally

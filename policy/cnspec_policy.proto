@@ -4,14 +4,283 @@
 syntax = "proto3";
 
 package cnspec.policy.v1;
-option go_package = "go.mondoo.com/cnspec/v12/policy";
+option go_package = "go.mondoo.com/cnspec/v13/policy";
 
 import "google/protobuf/timestamp.proto";
 import "llx/llx.proto";
-import "explorer/cnquery_explorer.proto";
-import "explorer/resources/cnquery_resources_explorer.proto";
+import "providers-sdk/v1/recording/mql_resources_explorer.proto";
 import "providers-sdk/v1/inventory/inventory.proto";
 import "providers-sdk/v1/upstream/mvd/mvd.proto";
+
+// ********** Inlined from explorer **************
+
+// protolint:disable ENUM_FIELD_NAMES_PREFIX
+// protolint:disable ENUM_FIELD_NAMES_ZERO_VALUE_END_WITH
+enum Action {
+  UNSPECIFIED = 0;
+  MODIFY = 1;
+  DEACTIVATE = 2;
+  ACTIVATE = 3;
+  IGNORE = 4;
+  OUT_OF_SCOPE = 5;
+}
+
+// protolint:disable ENUM_FIELD_NAMES_PREFIX
+// protolint:disable ENUM_FIELD_NAMES_ZERO_VALUE_END_WITH
+enum ScoringSystem {
+  // Default value, should not be used
+  SCORING_UNSPECIFIED = 0;
+  // Weighted scoring mechanism which uses the weight defined at the query
+  // level to calculate the score.
+  WEIGHTED = 1;
+  // Worst scoring mechanism which uses the worst score of all findings
+  // to calculate the policy score.
+  WORST = 2;
+  // Average scoring mechanism which uses the average score of all findings
+  // to calculate the policy score.
+  AVERAGE = 3;
+  // Treats the query as data only, no scoring is applied.
+  DATA_ONLY = 4;
+  // Ignore scoring mechanism which ignores the score of each query.
+  IGNORE_SCORE = 5;
+  // Experimental: BANDED scoring mechanism which creates a score based on
+  // the 4 categories of criticality (critical, high, medium, low) and
+  // positions scores so that:
+  // 1. Any critical/high issues won't generate a high score (upper limit)
+  // 2. Lower scoring categories can have an impact on the score
+  //    (e.g. 1 crit + 200 medium failures will be lower than 1 crit only)
+  // 3. A large collection of medium findings won't generate a critical score
+  BANDED = 6;
+  // Experimental: DECAYED scoring uses a scaled decay function to estimate a
+  // score value. This means that a few critical findings will quickly reduce
+  // the resulting score, but it won't just drop it to the lowest value.
+  DECAYED = 7;
+  DISABLED = 8;
+}
+
+message ImpactValue {
+  int32 value = 1;
+}
+
+// Impact explains how important certain queries are. They are especially useful
+// in weighted testing where results need to be prioritized. They can also
+// serve as a priority list for data that is collected.
+message Impact {
+  // Value is between 0 to 100 (most impactful).
+  ImpactValue value = 1;
+  // The scoring system to apply for evaluating multiple results
+  ScoringSystem scoring = 2;
+  // The weight of this query. Has to be > 0, otherwise counts as unset.
+  int32 weight = 3;
+  // Action is copied into the impact to correctly reconstruct the v7
+  // ScoringSpec
+  Action action = 4;
+}
+
+message ObjectRef {
+  string mrn = 1;
+  string uid = 2;
+  map<string,string> tags = 3;
+}
+
+// Author is used to identify the author of a query
+message Author {
+  // Name of the author
+  string name = 1;
+  // Email of the author
+  string email = 2;
+}
+
+// MqueryRef is used to reference external sources
+message MqueryRef {
+  // Title of the reference
+  string title = 1;
+  // URL of the reference
+  string url = 2;
+}
+
+// HumanTime is used to represent a point in time. This
+// timestamp contains comprehensive marshal/unmarshal support
+// for human-readable representations, i.e. you can parse most
+// common time formats into a HumanTime, including:
+// - RFC3339 (e.g. "2006-01-02T15:04:05Z07:00")
+// - RFC1123 (e.g. "Mon, 02 Jan 2006 15:04:05 MST")
+// - RFC822 (e.g. "02 Jan 06 15:04 MST")
+// - RFC850 (e.g. "Monday, 02-Jan-06 15:04:05 MST")
+// - Kitchen (e.g. "3:04PM")
+// - DateTime (e.g. "2006-01-02 15:04:05")
+// - Date (e.g. "2006-01-02")
+// - Time (e.g. "15:04:05")
+// - ANSIC (e.g. "Mon Jan _2 15:04:05 2006")
+// - and int64 timestamps
+message HumanTime {
+  int64 seconds = 1;
+}
+
+// A typed documentation for a remediation
+message TypedDoc {
+  // Identifier
+  string id = 1;
+  // Description
+  string desc = 2;
+  // Optional. Language of the description (e.g. markdown, english)
+  string language = 3;
+  // Optional. Creation date of the description
+  int64 created = 20;
+  // Optional. Modification date of the description
+  int64 modified = 21;
+  // Optional. Tags for the description
+  map<string,string> tags = 22;
+}
+
+// Remediation is used to provide a fix for a check.
+message Remediation {
+  // items is a list of TypedDoc items that include the description of the
+  // remediation for different platforms.
+  repeated TypedDoc items = 1;
+}
+
+// Documentation for Mquery
+message MqueryDocs {
+  reserved 3;
+  // Description of the query
+  string desc = 1;
+  // Optional. Audit instructions to verify the query results
+  string audit = 2;
+  // Optional. References to external sources, typical URLs
+  repeated MqueryRef refs = 4;
+  //  Optional. Remediation instructions for the query
+  Remediation remediation = 5;
+}
+
+// User-defined and internal filters. Users may use:
+// 1. filters: asset.name == /sth/
+// 2. filters:
+//    - mql: asset.name == /sth/
+//
+// Internally we use:
+// 3. filters:
+//      items:
+//        <checksum>: { ..mquery.. }
+message Filters {
+  map<string,Mquery> items = 1;
+}
+
+// Properties allow users to configure queries and bundles in pre-defined ways.
+// They return one value only, have a type, and may specify which query they
+// target, while used in querypacks (or other groupings like policies).
+// They may contain additional metadata to provide more information.
+//
+// Note: At the time of writing properties do not pull from other properties.
+// They may do that later.
+message Property {
+  string mql = 1;
+  string code_id = 2;
+  string checksum = 3;
+  string mrn = 4;
+  // UID is only needed on Mquery upload, when the MRN is computed.
+  // It is not be persisted.
+  string uid = 5;
+  string type = 6;
+  string context = 7;
+  // protolint:disable REPEATED_FIELD_NAMES_PLURALIZED
+  repeated ObjectRef for = 8;
+  string title = 20;
+  string desc = 35;
+}
+
+// Mquery represents the MQL and metadata that form a query
+message Mquery {
+  // FIXME: DEPRECATED, remove in v12.0 vv
+  // This is replaced by the field "mql"
+  string query = 40;
+  // This is moved into docs.refs
+  repeated MqueryRef refs = 22;
+  // ^^
+
+  string mql = 1;
+  string code_id = 2;
+  string checksum = 3;
+  string mrn = 4;
+  // UID is only needed on Mquery upload, when the MRN is computed.
+  // It is not be persisted.
+  string uid = 5;
+  string type = 6;
+  string context = 7;
+  string title = 20;
+  MqueryDocs docs = 21;
+  // Desc is only used if docs.desc is not defined. It is not persisted.
+  string desc = 35;
+  Impact impact = 23;
+  map<string,string> tags = 34;
+  Filters filters = 37;
+  repeated Property props = 38;
+  repeated ObjectRef variants = 39;
+  // Action is used for all query overrides (eg: in packs, policies, APIs etc)
+  Action action = 41;
+}
+
+message QueryPackDocs {
+  string desc = 1;
+}
+
+message QueryGroup {
+  repeated Mquery queries = 3;
+
+  // filter for the assets this applies to
+  Filters filters = 20;
+
+  // metadata
+  string title = 24;
+
+  int64 created = 32;
+  int64 modified = 33;
+}
+
+message QueryPack {
+  reserved 7, 20, 43;
+
+  // user-defined UID, which is used to generate the MRN
+  string uid = 36;
+  // user-defined, only used during query ingest in case they have no context
+  string context = 8;
+
+  // MRN to universally identify this query.
+  // UIDs are local to QueryPacks, MRNs are global
+  string mrn = 1;
+
+  string name = 2;
+  string version = 3;
+  string owner_mrn = 4; // auto-generated
+
+  repeated Mquery queries = 6;
+  repeated QueryGroup groups = 11;
+
+  repeated Property props = 35;
+  Filters computed_filters = 47; // auto-generated
+  Filters filters = 48;
+
+  string license = 21;
+  QueryPackDocs docs = 22;
+  string summary = 46;
+
+  repeated Author authors = 30;
+  int64 created = 32;
+  int64 modified = 33;
+  map<string,string> tags = 34;
+
+  // internal fields
+  string local_content_checksum = 23;
+  string local_execution_checksum = 24;
+}
+
+// PropsReq is used to set, change, or remove properties.
+message PropsReq {
+  string entity_mrn = 1;
+  repeated Property props = 2;
+}
+
+// ********** End inlined from explorer **************
 
 enum GroupType {
   UNCATEGORIZED = 0;
@@ -21,7 +290,7 @@ enum GroupType {
   IGNORED = 4; // ignore scoring, snooze it
   DISABLE = 5; // disable execution, turn it off
   PROPERTIES = 6; // modify properties
-  OUT_OF_SCOPE = 7; // out of scope, meaning it is not applicable
+  OUT_OF_SCOPE_GROUP = 7; // out of scope, meaning it is not applicable
 }
 
 /*
@@ -33,13 +302,13 @@ enum GroupType {
 */
 message PolicyGroup {
   repeated PolicyRef policies = 1;
-  repeated cnquery.explorer.Mquery checks = 2;
-  repeated cnquery.explorer.Mquery queries = 3;
+  repeated Mquery checks = 2;
+  repeated Mquery queries = 3;
   GroupType type = 4;
   string uid = 5;
 
   // filter for the assets this applies to
-  cnquery.explorer.Filters filters = 20;
+  Filters filters = 20;
 
   // deprecated: the start date from which this policy group is active
   int64 start_date = 21;
@@ -56,8 +325,8 @@ message PolicyGroup {
   // metadata
   string title = 24;
   PolicyGroupDocs docs = 25;
-  repeated cnquery.explorer.Author authors = 26;
-  repeated cnquery.explorer.Author reviewers = 27;
+  repeated Author authors = 26;
+  repeated Author reviewers = 27;
   // only applies to GroupType IGNORED/DISABLED
   // Only if status is REJECTED, we ignore the group
   // Which means that unapproved groups get handled as if they were approved
@@ -68,8 +337,8 @@ message PolicyGroup {
 }
 
 message Validity {
-  cnquery.explorer.HumanTime from = 1;
-  cnquery.explorer.HumanTime until = 2;
+  HumanTime from = 1;
+  HumanTime until = 2;
 }
 
 message PolicyRef {
@@ -77,15 +346,15 @@ message PolicyRef {
   string uid = 2;
 
   // TODO: we are adding support for these overrides later on
-  //repeated cnquery.explorer.Property props = 35;
-  //cnquery.explorer.Filters filters = 43;
+  //repeated Property props = 35;
+  //Filters filters = 43;
 
   // Action is used for all policy overrides
-  cnquery.explorer.Action action = 41;
+  Action action = 41;
   // Impact allows to override the way the score of the policy is aggregated
-  cnquery.explorer.Impact impact = 23;
+  Impact impact = 23;
   // ScoringSystem allows overriding the scoring system of the policy
-  cnquery.explorer.ScoringSystem scoring_system = 42;
+  ScoringSystem scoring_system = 42;
   // timestamp when the policy was last applied
   int64 last_applied = 43;
 
@@ -111,13 +380,13 @@ message Policy {
   PolicyDocs docs = 41;
   string summary = 46;
 
-  cnquery.explorer.ScoringSystem scoring_system = 10;
+  ScoringSystem scoring_system = 10;
 
-  repeated cnquery.explorer.Author authors = 30;
+  repeated Author authors = 30;
   int64 created = 32;
   int64 modified = 33;
   map<string,string> tags = 34;
-  repeated cnquery.explorer.Property props = 45;
+  repeated Property props = 45;
   repeated RiskFactor risk_factors = 47;
   repeated Requirement require = 48;
 
@@ -132,7 +401,7 @@ message Policy {
   string graph_execution_checksum = 40;
 
   // aggregation of all filters applicable to this policy. auto-generated
-  cnquery.explorer.Filters computed_filters = 43;
+  Filters computed_filters = 43;
 
   QueryCounts query_counts = 42;
 }
@@ -147,13 +416,6 @@ message Requirement {
   string version = 3;
 }
 
-enum QueryAction {
-  UNSPECIFIED = 0;
-  MODIFY = 1;
-  DEACTIVATE = 2;
-  ACTIVATE = 3;
-}
-
 message QueryCounts {
   int64 scoring_count = 1;
   int64 data_count = 2;
@@ -163,9 +425,9 @@ message QueryCounts {
 message Bundle {
   string owner_mrn = 1;
   repeated Policy policies = 7;
-  repeated cnquery.explorer.QueryPack packs = 10;
-  repeated cnquery.explorer.Property props = 3;
-  repeated cnquery.explorer.Mquery queries = 6;
+  repeated QueryPack packs = 10;
+  repeated Property props = 3;
+  repeated Mquery queries = 6;
   repeated Framework frameworks = 8;
   repeated FrameworkMap framework_maps = 9;
   PolicyDocs docs = 5;
@@ -224,11 +486,13 @@ message MigrationStage {
 
 // Migration describes a single query migration operation.
 message Migration {
+  // protolint:disable ENUM_FIELD_NAMES_PREFIX
+  // protolint:disable ENUM_FIELD_NAMES_ZERO_VALUE_END_WITH
   enum Action {
-    UNSPECIFIED = 0;
+    MIGRATION_UNSPECIFIED = 0;
     CREATE = 1;
     REMOVE = 2;
-    MODIFY = 3;
+    MIGRATION_MODIFY = 3;
   }
   // Required: Source that is being migrated
   MigrationSource source = 1;
@@ -296,8 +560,8 @@ message RiskFactor {
   RiskFactorDocs docs = 25;
 
   // filter for the assets this applies to
-  cnquery.explorer.Filters filters = 20;
-  repeated cnquery.explorer.Mquery checks = 2;
+  Filters filters = 20;
+  repeated Mquery checks = 2;
 
   ScopeType scope = 70;
   float deprecated_v11_magnitude = 71;
@@ -373,7 +637,7 @@ message RiskFactor {
   //   risk categories.
   string indicator = 75;
 
-  cnquery.explorer.Action action = 77;
+  Action action = 77;
   map<string,string> tags = 78;
 }
 
@@ -404,7 +668,7 @@ message Framework {
   PolicyDocs docs = 41;
   string summary = 46;
 
-  repeated cnquery.explorer.Author authors = 30;
+  repeated Author authors = 30;
   int64 created = 32;
   int64 modified = 33;
   map<string,string> tags = 34;
@@ -455,8 +719,8 @@ message FrameworkGroup {
   // metadata
   string title = 24;
   PolicyGroupDocs docs = 25;
-  repeated cnquery.explorer.Author authors = 26;
-  repeated cnquery.explorer.Author reviewers = 27;
+  repeated Author authors = 26;
+  repeated Author reviewers = 27;
   // only applies to GroupType IGNORED/DISABLED
   // Only if status is REJECTED, we ignore the group
   // Which means that unapproved groups get handled as if they were approved
@@ -470,7 +734,7 @@ message FrameworkGroup {
 message FrameworkRef {
   string mrn = 1;
   string uid = 2;
-  cnquery.explorer.Action action = 41;
+  Action action = 41;
 }
 
 // Represents evidence for a given compliance framework control.
@@ -479,8 +743,8 @@ message Evidence {
   string desc = 2;
   string uid = 3;
   string mrn = 4;
-  repeated cnquery.explorer.Mquery checks = 21;
-  repeated cnquery.explorer.Mquery queries = 22;
+  repeated Mquery checks = 21;
+  repeated Mquery queries = 22;
   repeated ControlRef controls = 23;
 }
 
@@ -494,7 +758,7 @@ message Control {
   ControlDocs docs = 21;
   map<string,string> tags = 34;
   // actions applied to this control, only necessary for overrides
-  cnquery.explorer.Action action = 41;
+  Action action = 41;
   bool manual = 50; // indicates that this is a manual control
   repeated Evidence evidence = 51;
 }
@@ -502,12 +766,12 @@ message Control {
 message FrameworkMap {
   string mrn = 1;
   string uid = 2;
-  repeated cnquery.explorer.ObjectRef framework_dependencies = 3;
-  repeated cnquery.explorer.ObjectRef policy_dependencies = 4;
-  repeated cnquery.explorer.ObjectRef query_pack_dependencies = 6;
+  repeated ObjectRef framework_dependencies = 3;
+  repeated ObjectRef policy_dependencies = 4;
+  repeated ObjectRef query_pack_dependencies = 6;
 
   repeated ControlMap controls = 5;
-  cnquery.explorer.ObjectRef framework_owner = 20;
+  ObjectRef framework_owner = 20;
   string local_content_checksum = 21;
   string local_execution_checksum = 22;
 }
@@ -523,13 +787,13 @@ message ControlMap {
 
 message ControlDocs {
   string desc = 1;
-  repeated cnquery.explorer.MqueryRef refs = 4;
+  repeated MqueryRef refs = 4;
 }
 
 message ControlRef {
   string mrn = 1;
   string uid = 2;
-  cnquery.explorer.Action action = 41;
+  Action action = 41;
 }
 
 // **********  Resolution / Execution **************
@@ -562,7 +826,7 @@ enum ServerFeature {
 message ResolvedPolicy {
   ExecutionJob execution_job = 2;
   CollectorJob collector_job = 3;
-  repeated cnquery.explorer.Mquery filters = 1;
+  repeated Mquery filters = 1;
   string graph_execution_checksum = 7;
   string filters_checksum = 20;
   string reporting_job_uuid = 21;
@@ -592,7 +856,7 @@ message ExecutionQuery {
   map<string,string> properties = 3;
   // list of checksums that we collect as data points
   repeated string datapoints = 4;
-  cnquery.llx.CodeBundle code = 5;
+  mql.llx.CodeBundle code = 5;
 }
 
 /*
@@ -657,9 +921,9 @@ message ReportingJob {
   string qr_id = 2;
   string uuid = 3;
   repeated string notify = 5;
-  cnquery.explorer.ScoringSystem scoring_system = 6;
+  ScoringSystem scoring_system = 6;
   map<string,bool> datapoints = 7;
-  map<string,cnquery.explorer.Impact> child_jobs = 9;
+  map<string,Impact> child_jobs = 9;
   Type type = 10;
   // The MRNs of all the checks/queries this reporting job represents
   repeated string mrns = 11;
@@ -672,7 +936,7 @@ message Report {
   string entity_mrn = 2;
   Score score = 3;
   map<string, Score> scores = 4;
-  map<string, cnquery.llx.Result> data = 5;
+  map<string, mql.llx.Result> data = 5;
   Stats stats = 6;
   ScoredRiskFactors risks = 7;
 
@@ -896,7 +1160,7 @@ message Mrn {
 }
 
 message Mqueries {
-  repeated cnquery.explorer.Mquery items = 2;
+  repeated Mquery items = 2;
 }
 
 message ListReq {
@@ -922,7 +1186,7 @@ message URLs {
 service PolicyResolver {
   rpc Assign(PolicyAssignment) returns (Empty) {}
   rpc Unassign(PolicyAssignment) returns (Empty) {}
-  rpc SetProps(cnquery.explorer.PropsReq) returns (cnquery.explorer.Empty) {}
+  rpc SetProps(PropsReq) returns (Empty) {}
 
   rpc Resolve(ResolveReq) returns (ResolvedPolicy) {}
   // UpdateAssetJobs is used to update the resolved policy of an asset
@@ -933,7 +1197,7 @@ service PolicyResolver {
   rpc GetResolvedPolicy(Mrn) returns (ResolvedPolicy) {}
 
   rpc StoreResults(StoreResultsReq) returns (Empty) {}
-  
+
   // Signed URL upload flow
   rpc GetUploadURL(GetUploadURLReq) returns (GetUploadURLResp) {}
   rpc ReportUploadCompleted(ReportUploadCompletedReq) returns (Empty) {}
@@ -941,7 +1205,7 @@ service PolicyResolver {
   rpc GetReport(EntityScoreReq) returns (Report) {}
   rpc GetFrameworkReport(EntityScoreReq) returns (FrameworkReport) {}
   rpc GetScore(EntityScoreReq) returns (Report) {}
-  rpc GetResourcesData(cnquery.explorer.resources.EntityResourcesReq) returns (cnquery.explorer.resources.EntityResourcesRes) {}
+  rpc GetResourcesData(mql.providers.v1.recording.EntityResourcesReq) returns (mql.providers.v1.recording.EntityResourcesRes) {}
 
   rpc SynchronizeAssets(SynchronizeAssetsReq) returns (SynchronizeAssetsResp) {}
   rpc PurgeAssets(PurgeAssetsRequest) returns (PurgeAssetsConfirmation) {}
@@ -951,14 +1215,14 @@ message PolicyAssignment {
   string asset_mrn = 1;
   repeated string policy_mrns = 2;
   repeated string framework_mrns = 4;
-  cnquery.explorer.Action action = 3;
-  cnquery.explorer.ScoringSystem scoring_system = 5;
+  Action action = 3;
+  ScoringSystem scoring_system = 5;
 }
 
 message PolicyMutationDelta {
   string policy_mrn = 1;
   map<string,PolicyDelta> policy_deltas = 2;
-  cnquery.explorer.Action action = 3;
+  Action action = 3;
 }
 
 message PolicyDelta {
@@ -968,17 +1232,17 @@ message PolicyDelta {
     DELETE = 1;
   }
   PolicyAssignmentActionType action = 2;
-  cnquery.explorer.ScoringSystem scoring_system = 3;
+  ScoringSystem scoring_system = 3;
 }
 
 message ResolveReq {
   string policy_mrn = 1;
-  repeated cnquery.explorer.Mquery asset_filters = 2;
+  repeated Mquery asset_filters = 2;
 }
 
 message UpdateAssetJobsReq {
   string asset_mrn = 1;
-  repeated cnquery.explorer.Mquery asset_filters = 2;
+  repeated Mquery asset_filters = 2;
 }
 
 message StoreResultsReq {
@@ -986,8 +1250,8 @@ message StoreResultsReq {
   repeated Score scores = 2; // in this context, Scores only carry their checksum, not their ID
   // combination of query-checksum + result (which has entrypoint checksum):
   // TODO: remove the string-map, we don't need it anymore; the llx result contains everything we need (the CodeID)
-  map<string, cnquery.llx.Result> data = 3;
-  map<string, cnquery.llx.ResourceRecording> resources = 4;
+  map<string, mql.llx.Result> data = 3;
+  map<string, mql.llx.ResourceRecording> resources = 4;
   repeated ScoredRiskFactor risks = 5;
   repeated Cvss cvssScores = 20;
   bool is_preprocessed = 21;

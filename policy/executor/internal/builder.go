@@ -11,10 +11,10 @@ import (
 
 	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/cli/progress"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/cli/progress"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 type query struct {

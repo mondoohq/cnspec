@@ -46,7 +46,7 @@ func SummarizeStage(stage *MigrationStage, index int) (*StageSummary, []error) {
 
 		switch m.Action {
 
-		case Migration_MODIFY:
+		case Migration_MIGRATION_MODIFY:
 			// consume source
 			if _, ok := s.Consumes[src]; ok {
 				errs = append(errs, fmt.Errorf(
@@ -118,7 +118,7 @@ func (m *Migration) Validate() []error {
 		} else if m.Source.Uid == "" {
 			errs = append(errs, fmt.Errorf("REMOVE migrations must have source.uid defined"))
 		}
-	case Migration_MODIFY:
+	case Migration_MIGRATION_MODIFY:
 		if m.Source == nil || m.Target == nil {
 			errs = append(errs, fmt.Errorf("MODIFY migrations must have both source and destination defined"))
 		} else if m.Source.Uid == "" || m.Target.Uid == "" {

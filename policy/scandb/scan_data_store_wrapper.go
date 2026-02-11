@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 // ScanDataStoreWrapper wraps a ScanDataStore to implement the DataStore interface

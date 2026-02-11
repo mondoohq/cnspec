@@ -8,9 +8,9 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
@@ -58,7 +58,7 @@ func (c *CheckinHandler) CheckIn(ctx context.Context) error {
 	}
 	// gather service account
 	plugins := []ranger.ClientPlugin{}
-	plugins = append(plugins, sysInfoHeader(c.sysInfo, cnquery.DefaultFeatures))
+	plugins = append(plugins, sysInfoHeader(c.sysInfo, mql.DefaultFeatures))
 	if c.creds != nil && len(c.creds.Mrn) > 0 {
 		certAuth, err := upstream.NewServiceAccountRangerPlugin(c.creds)
 		if err != nil {
@@ -93,7 +93,7 @@ func (c *CheckinHandler) CheckIn(ctx context.Context) error {
 	return nil
 }
 
-func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features cnquery.Features) ranger.ClientPlugin {
+func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features mql.Features) ranger.ClientPlugin {
 	const (
 		HttpHeaderUserAgent      = "User-Agent"
 		HttpHeaderClientFeatures = "Mondoo-Features"
@@ -102,8 +102,8 @@ func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features cnquery.Features) range
 
 	h := http.Header{}
 	info := map[string]string{
-		"cnquery": cnquery.Version,
-		"build":   cnquery.Build,
+		"cnquery": mql.Version,
+		"build":   mql.Build,
 	}
 	if sysInfo != nil {
 		info["PN"] = sysInfo.Platform.Name

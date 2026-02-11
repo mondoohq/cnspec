@@ -14,20 +14,20 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/cli/config"
-	"go.mondoo.com/cnquery/v12/cli/execruntime"
-	"go.mondoo.com/cnquery/v12/cli/inventoryloader"
-	"go.mondoo.com/cnquery/v12/cli/theme"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v12/cli/reporter"
-	"go.mondoo.com/cnspec/v12/policy"
-	"go.mondoo.com/cnspec/v12/policy/scan"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql/v13/cli/execruntime"
+	"go.mondoo.com/mql/v13/cli/inventoryloader"
+	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnspec/v13/cli/reporter"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/scan"
 )
 
 const (
@@ -181,7 +181,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to create an output handler")
 	}
 
-	fCtx := cnquery.SetFeatures(ctx, conf.Features)
+	fCtx := mql.SetFeatures(ctx, conf.Features)
 	if err := outputHandler.WriteReport(fCtx, report); err != nil {
 		log.Fatal().Err(err).Msg("failed to write report to output target")
 	}
@@ -210,7 +210,7 @@ func getPoliciesForCompletion() []string {
 }
 
 type scanConfig struct {
-	Features     cnquery.Features
+	Features     mql.Features
 	Inventory    *inventory.Inventory
 	ReportType   scan.ReportType
 	OutputTarget string
@@ -308,7 +308,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
 	// use-cases where we have upstream recording enabled vv
 	// Instead of depending on the feature-flag, we look at the config
-	if conf.Features.IsActive(cnquery.StoreResourcesData) {
+	if conf.Features.IsActive(mql.StoreResourcesData) {
 		if err = runtime.EnableResourcesRecording(); err != nil {
 			log.Fatal().Err(err).Msg("failed to enable resources recording")
 		}
@@ -375,7 +375,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	// print headline when its not printed to yaml
 	if output == "" {
-		fmt.Fprintln(os.Stdout, theme.DefaultTheme.Welcome)
+		fmt.Fprintln(os.Stdout, theme.DefaultTheme.Landing)
 	}
 
 	return &conf, nil
@@ -406,7 +406,7 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 
 		// prepare the bundle for compilation
 		bundle.Prepare()
-		conf := mqlc.NewConfig(c.runtime.Schema(), cnquery.DefaultFeatures)
+		conf := mqlc.NewConfig(c.runtime.Schema(), mql.DefaultFeatures)
 
 		_, err = bundle.CompileExt(ctx, policy.BundleCompileConf{
 			CompilerConfig: conf,
@@ -435,7 +435,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
 
 	scanner := scan.NewLocalScanner(opts...)
-	ctx := cnquery.SetFeatures(context.Background(), config.Features)
+	ctx := mql.SetFeatures(context.Background(), config.Features)
 
 	var res *scan.ScanResult
 	var err error

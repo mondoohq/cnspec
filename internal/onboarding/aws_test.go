@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	subject "go.mondoo.com/cnspec/v12/internal/onboarding"
+	subject "go.mondoo.com/cnspec/v13/internal/onboarding"
 )
 
 func TestNewAwsIntegration(t *testing.T) {

@@ -1,8 +1,8 @@
-module go.mondoo.com/cnspec/v12
+module go.mondoo.com/cnspec/v13
 
 go 1.25.1
 
-// replace go.mondoo.com/cnquery/v12 => ../cnquery
+// replace go.mondoo.com/mql/v13 => ../cnquery
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
@@ -48,10 +48,11 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.17.0
-	go.mondoo.com/cnquery/v12 v12.20.1
 	go.mondoo.com/mondoo-go v0.0.0-20260121000438-392a57e88e7c
+	go.mondoo.com/mql/v13 v13.0.0
 	go.mondoo.com/ranger-rpc v0.7.1
 	gocloud.dev v0.44.0
+	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.40.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260122232226-8e98ce8d340d
 	google.golang.org/protobuf v1.36.11
@@ -345,7 +346,6 @@ require (
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.14.0 // indirect

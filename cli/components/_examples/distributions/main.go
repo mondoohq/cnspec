@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnspec/v12/cli/components"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/cnspec/v13/cli/components"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 func main() {

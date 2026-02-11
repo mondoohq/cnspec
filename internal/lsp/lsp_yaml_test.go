@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/mql/v13/mqlc"
 )
 
 func TestParseYAMLBundle_SimpleQuery(t *testing.T) {

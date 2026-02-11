@@ -11,21 +11,21 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/cli/config"
-	"go.mondoo.com/cnquery/v12/logger"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql/v13/logger"
 
-	cli_errors "go.mondoo.com/cnquery/v12/cli/errors"
-	"go.mondoo.com/cnquery/v12/cli/execruntime"
-	"go.mondoo.com/cnquery/v12/cli/inventoryloader"
-	"go.mondoo.com/cnquery/v12/cli/prof"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/apps/cnspec/cmd/backgroundjob"
-	cnspec_config "go.mondoo.com/cnspec/v12/apps/cnspec/cmd/config"
-	"go.mondoo.com/cnspec/v12/policy/scan"
+	cli_errors "go.mondoo.com/mql/v13/cli/errors"
+	"go.mondoo.com/mql/v13/cli/execruntime"
+	"go.mondoo.com/mql/v13/cli/inventoryloader"
+	"go.mondoo.com/mql/v13/cli/prof"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd/backgroundjob"
+	cnspec_config "go.mondoo.com/cnspec/v13/apps/cnspec/cmd/config"
+	"go.mondoo.com/cnspec/v13/policy/scan"
 )
 
 // we send a 78 exit code to prevent systemd from restart
@@ -89,7 +89,7 @@ var serveCmd = &cobra.Command{
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
 		}
 
-		ctx := cnquery.SetFeatures(context.Background(), cnquery.DefaultFeatures)
+		ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
 
 		var checkInHandler *backgroundjob.CheckinHandler
 		if scanConf != nil && scanConf.runtime.UpstreamConfig != nil {

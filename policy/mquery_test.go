@@ -7,21 +7,20 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
 func TestMquery_Whitespaces(t *testing.T) {
 	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
-	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
+	conf := mqlc.NewConfig(coreSchema, mql.DefaultFeatures)
 
-	mq := &explorer.Mquery{
+	mq := &Mquery{
 		Mql: "  mondoo { version \n}   \t\n  ",
 	}
 
-	mqexpect := &explorer.Mquery{
+	mqexpect := &Mquery{
 		Mql: "mondoo { version \n}",
 	}
 
@@ -38,13 +37,13 @@ func TestMquery_Whitespaces(t *testing.T) {
 
 func TestMquery_CodeIDs(t *testing.T) {
 	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
-	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
+	conf := mqlc.NewConfig(coreSchema, mql.DefaultFeatures)
 
-	mqAssetFilter := &explorer.Mquery{
+	mqAssetFilter := &Mquery{
 		Mql: "mondoo { version \n}",
 	}
 
-	mqReg := &explorer.Mquery{
+	mqReg := &Mquery{
 		Mql: "mondoo { version \n}",
 	}
 

@@ -14,14 +14,13 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/fasthash/fnv1a"
-	"go.mondoo.com/cnquery/v12/checksums"
-	"go.mondoo.com/cnquery/v12/explorer"
-	resources "go.mondoo.com/cnquery/v12/explorer/resources"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/utils/sortx"
+	"go.mondoo.com/mql/v13/checksums"
+	resources "go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/utils/sortx"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -38,8 +37,8 @@ type AssetMutation struct {
 	AssetMrn            string
 	PolicyMrns          []string
 	FrameworkMrns       []string
-	Action              explorer.Action
-	PolicyScoringSystem explorer.ScoringSystem
+	Action              Action
+	PolicyScoringSystem ScoringSystem
 }
 
 // Assign a policy to an asset
@@ -101,12 +100,12 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 		AssetMrn:      assignment.AssetMrn,
 		PolicyMrns:    assignment.PolicyMrns,
 		FrameworkMrns: assignment.FrameworkMrns,
-		Action:        explorer.Action_DEACTIVATE,
+		Action:        Action_DEACTIVATE,
 	}, true)
 	return globalEmpty, err
 }
 
-func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*explorer.Empty, error) {
+func (s *LocalServices) SetProps(ctx context.Context, req *PropsReq) (*Empty, error) {
 	// validate that the queries compile and fill in checksums
 	conf := s.NewCompilerConfig()
 	for i := range req.Props {
@@ -122,7 +121,7 @@ func (s *LocalServices) SetProps(ctx context.Context, req *explorer.PropsReq) (*
 		prop.CodeId = code.CodeV2.Id
 	}
 
-	return &explorer.Empty{}, s.DataLake.SetProps(ctx, req)
+	return &Empty{}, s.DataLake.SetProps(ctx, req)
 }
 
 // Resolve a given policy for a set of asset filters
@@ -325,10 +324,10 @@ func (s *LocalServices) CreatePolicyObject(policyMrn string, ownerMrn string) *P
 		Version: "",   // no version, semver otherwise
 		Groups: []*PolicyGroup{{
 			Policies: []*PolicyRef{},
-			Checks:   []*explorer.Mquery{},
-			Queries:  []*explorer.Mquery{},
+			Checks:   []*Mquery{},
+			Queries:  []*Mquery{},
 		}},
-		ComputedFilters: &explorer.Filters{},
+		ComputedFilters: &Filters{},
 		OwnerMrn:        ownerMrn,
 	}
 }
@@ -383,10 +382,10 @@ type resolverCache struct {
 	// assigned queries, listed by their UUID (i.e. policy context)
 	executionQueries map[string]*ExecutionQuery
 	dataQueries      map[string]struct{}
-	queriesByMsum    map[string]*explorer.Mquery // Msum == Mquery.Checksum
-	riskMrns         map[string]*explorer.Mquery
+	queriesByMsum    map[string]*Mquery // Msum == Mquery.Checksum
+	riskMrns         map[string]*Mquery
 	riskInfos        map[string]*RiskFactor
-	propsCache       explorer.PropsCache
+	propsCache       PropsCache
 
 	reportingJobsByUUID   map[string]*ReportingJob
 	reportingJobsByMsum   map[string][]*ReportingJob // Msum == Mquery.Checksum, i.e. only reporting jobs for mqueries
@@ -456,7 +455,7 @@ func (p *policyResolverCache) addChildren(other *policyResolverCache) {
 	}
 }
 
-func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
+func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
 	for i := 0; i < maxResolveRetry; i++ {
 		resolvedPolicy, err := s.tryResolve(ctx, policyMrn, assetFilters)
@@ -477,7 +476,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 	return nil, errors.New("concurrent policy resolve")
 }
 
-func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetFilters []*explorer.Mquery) (*ResolvedPolicy, error) {
+func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
 	now := s.NowProvider()
 	conf := s.NewCompilerConfig()
 
@@ -512,7 +511,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		return nil, err
 	}
 	if len(matchingFilters) == 0 {
-		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+		return nil, NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
 	}
 
 	resolvedPolicy, err := buildResolvedPolicy(ctx, bundleMrn, bundle, matchingFilters, now, conf)
@@ -675,7 +674,7 @@ func (s *LocalServices) cacheUpstreamJobs(ctx context.Context, assetMrn string, 
 	return nil
 }
 
-func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, assetFilters []*explorer.Mquery) error {
+func (s *LocalServices) updateAssetJobs(ctx context.Context, assetMrn string, assetFilters []*Mquery) error {
 	resolvedPolicy, err := s.resolve(ctx, assetMrn, assetFilters)
 	if err != nil {
 		return err

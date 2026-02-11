@@ -11,15 +11,15 @@ import (
 	"os"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/cli/printer"
-	"go.mondoo.com/cnquery/v12/cli/theme/colors"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v12/utils/iox"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/cnspec/v13/policy"
 	"sigs.k8s.io/yaml"
 )
 
@@ -65,7 +65,7 @@ func defaultChecksum(code mqlCode, schema resources.ResourcesSchema) (string, er
 	}
 
 	codeBundle, err := mqlc.Compile(string(code), nil,
-		mqlc.NewConfig(schema, cnquery.DefaultFeatures))
+		mqlc.NewConfig(schema, mql.DefaultFeatures))
 	if err != nil {
 		res.err = err
 	} else if len(codeBundle.CodeV2.Entrypoints()) != 1 {
@@ -112,14 +112,14 @@ func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 }
 
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
-	features := cnquery.GetFeatures(ctx)
+	features := mql.GetFeatures(ctx)
 	switch r.Conf.format {
 	case FormatCompact, FormatSummary, FormatFull:
 		rr := &defaultReporter{
 			Reporter:                r,
 			output:                  r.out,
 			data:                    data,
-			isStoreResourcesEnabled: features.IsActive(cnquery.StoreResourcesData),
+			isStoreResourcesEnabled: features.IsActive(mql.StoreResourcesData),
 		}
 		return rr.print()
 	case FormatReport:

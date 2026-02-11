@@ -12,13 +12,12 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
 )
 
 // buildResolvedPolicy builds a resolved policy from a bundle
-func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, assetFilters []*explorer.Mquery, now time.Time, compilerConf mqlc.CompilerConfig) (*ResolvedPolicy, error) {
+func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, assetFilters []*Mquery, now time.Time, compilerConf mqlc.CompilerConfig) (*ResolvedPolicy, error) {
 	bundleMap := bundle.ToMap()
 	assetFilterMap := make(map[string]struct{}, len(assetFilters))
 	for _, f := range assetFilters {
@@ -28,7 +27,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 	policyObj := bundleMap.Policies[bundleMrn]
 	frameworkObj := bundleMap.Frameworks[bundleMrn]
 
-	disabledQuery := &explorer.Mquery{
+	disabledQuery := &Mquery{
 		Mql: `// Disabled
 		if(false) { return false }`,
 		CodeId: "",
@@ -46,11 +45,11 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		nodes:                map[string]rpBuilderNode{},
 		reportsToEdges:       map[string][]string{},
 		reportsFromEdges:     map[string][]edgeImpact{},
-		policyScoringSystems: map[string]explorer.ScoringSystem{},
-		actionOverrides:      map[string]explorer.Action{},
-		impactOverrides:      map[string]*explorer.Impact{},
+		policyScoringSystems: map[string]ScoringSystem{},
+		actionOverrides:      map[string]Action{},
+		impactOverrides:      map[string]*Impact{},
 		riskMagnitudes:       map[string]*RiskMagnitude{},
-		propsCache:           explorer.NewPropsCache(),
+		propsCache:           NewPropsCache(),
 		queryTypes:           map[string]queryType{},
 		now:                  now,
 		disabledQuery:        disabledQuery,
@@ -175,7 +174,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 
 	rootReportingJob := reportingJobsByQrId[bundleMrn]
 	if rootReportingJob == nil {
-		return nil, explorer.NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
+		return nil, NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
 	}
 	rootReportingJob.QrId = "root"
 
@@ -218,12 +217,12 @@ type resolvedPolicyBuilder struct {
 	// run
 	assetFilters map[string]struct{}
 	// policyScoringSystems is a map of the scoring systems for each policy
-	policyScoringSystems map[string]explorer.ScoringSystem
+	policyScoringSystems map[string]ScoringSystem
 	// actionOverrides is a map of the actions that are overridden by the policies
-	actionOverrides map[string]explorer.Action
+	actionOverrides map[string]Action
 	// impactOverrides is a map of the impacts that are overridden by the policies. The worst impact
 	// is used
-	impactOverrides map[string]*explorer.Impact
+	impactOverrides map[string]*Impact
 	// riskMagnitudes is a map of the risk magnitudes that are set for risk factors
 	riskMagnitudes map[string]*RiskMagnitude
 	// queryTypes is a map of the query types for each query. A query can be a scoring query, a data query,
@@ -232,19 +231,19 @@ type resolvedPolicyBuilder struct {
 	// set to both.
 	queryTypes map[string]queryType
 	// propsCache is a cache of the properties that are used in the queries
-	propsCache explorer.PropsCache
+	propsCache PropsCache
 	// now is the time that the resolved policy is being built
 	now time.Time
 	// disabledQuery represents a query that is disabled. We need to inject this for disabled queries
 	// because we want to report a score of U for them. We cannot just insert a reporting job without
 	// a query because there is a bug in the clients that expects those reporting jobs to be connected
 	// to a query that runs
-	disabledQuery *explorer.Mquery
+	disabledQuery *Mquery
 }
 
 type edgeImpact struct {
 	edge   string
-	impact *explorer.Impact
+	impact *Impact
 }
 
 // rpBuilderNode is a node in the graph. It represents a policy, control, framework, check, data query, or execution query.
@@ -265,7 +264,7 @@ type rpBuilderNode interface {
 // rpBuilderData is the data that is used to build the resolved policy
 type rpBuilderData struct {
 	baseChecksum string
-	propsCache   explorer.PropsCache
+	propsCache   PropsCache
 	compilerConf mqlc.CompilerConfig
 }
 
@@ -277,7 +276,7 @@ func (d *rpBuilderData) relativeChecksum(s string) string {
 // for the policy
 type rpBuilderPolicyNode struct {
 	policy        *Policy
-	scoringSystem explorer.ScoringSystem
+	scoringSystem ScoringSystem
 	isRoot        bool
 }
 
@@ -372,7 +371,7 @@ func (n *rpBuilderGenericQueryNode) build(rp *ResolvedPolicy, data *rpBuilderDat
 // This node is represented by a code id in the reporting jobs. We do not apply impact at this point so
 // any scores will be either 0 or 100
 type rpBuilderExecutionQueryNode struct {
-	query *explorer.Mquery
+	query *Mquery
 }
 
 func (n *rpBuilderExecutionQueryNode) getId() string {
@@ -490,7 +489,7 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 	return nil
 }
 
-func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *explorer.Impact) {
+func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *Impact) {
 	if _, ok := b.reportsToEdges[from]; !ok {
 		b.reportsToEdges[from] = make([]string, 0, 1)
 	}
@@ -601,7 +600,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framewo
 
 		for _, c := range g.Controls {
 			action := normalizeAction(g.Type, c.Action, nil)
-			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+			if action != Action_UNSPECIFIED && action != Action_MODIFY {
 				actions[c.Mrn] = action
 			}
 		}
@@ -626,7 +625,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			b.gatherGlobalInfoFromPolicy(p)
 
 			action := normalizeAction(g.Type, pRef.Action, pRef.Impact)
-			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+			if action != Action_UNSPECIFIED && action != Action_MODIFY {
 				actions[pRef.Mrn] = action
 			}
 
@@ -635,7 +634,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			}
 			scoringSystem := pRef.ScoringSystem
 
-			if scoringSystem != explorer.ScoringSystem_SCORING_UNSPECIFIED {
+			if scoringSystem != ScoringSystem_SCORING_UNSPECIFIED {
 				scoringSystems[pRef.Mrn] = pRef.ScoringSystem
 			} else {
 				if p, ok := b.bundleMap.Policies[pRef.Mrn]; ok {
@@ -645,7 +644,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 		}
 
 		// We always want to select the worst impact that we find
-		getWorstImpact := func(impact1 *explorer.Impact, impact2 *explorer.Impact) *explorer.Impact {
+		getWorstImpact := func(impact1 *Impact, impact2 *Impact) *Impact {
 			if impact1 == nil {
 				return impact2
 			}
@@ -669,16 +668,16 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			impact = getWorstImpact(impact, impacts[c.Mrn])
 
 			action := normalizeAction(g.Type, c.Action, impact)
-			if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+			if action != Action_UNSPECIFIED && action != Action_MODIFY {
 				actions[c.Mrn] = action
 
 				// If the action is ignore, then the check is snoozed
-				if action == explorer.Action_IGNORE {
+				if action == Action_IGNORE {
 					if impact == nil {
-						impact = &explorer.Impact{}
+						impact = &Impact{}
 					}
-					impact.Scoring = explorer.ScoringSystem_IGNORE_SCORE
-					impact.Action = explorer.Action_IGNORE
+					impact.Scoring = ScoringSystem_IGNORE_SCORE
+					impact.Action = Action_IGNORE
 				}
 			}
 
@@ -688,9 +687,9 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 		}
 
 		for _, q := range g.Queries {
-			if q.Action != explorer.Action_UNSPECIFIED {
+			if q.Action != Action_UNSPECIFIED {
 				action := normalizeAction(g.Type, q.Action, q.Impact)
-				if action != explorer.Action_UNSPECIFIED && action != explorer.Action_MODIFY {
+				if action != Action_UNSPECIFIED && action != Action_MODIFY {
 					actions[q.Mrn] = action
 				}
 			}
@@ -702,14 +701,14 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			riskMagnitudes[r.Mrn] = r.Magnitude
 		}
 
-		if r.Action != explorer.Action_UNSPECIFIED && r.Action != explorer.Action_MODIFY {
+		if r.Action != Action_UNSPECIFIED && r.Action != Action_MODIFY {
 			actions[r.Mrn] = r.Action
 		}
 	}
 }
 
-func canRun(action explorer.Action) bool {
-	return !(action == explorer.Action_DEACTIVATE || action == explorer.Action_OUT_OF_SCOPE)
+func canRun(action Action) bool {
+	return !(action == Action_DEACTIVATE || action == Action_OUT_OF_SCOPE)
 }
 
 type group interface {
@@ -719,7 +718,7 @@ type group interface {
 
 type groupWithFilters interface {
 	group
-	GetFilters() *explorer.Filters
+	GetFilters() *Filters
 }
 
 type groupWithValidity interface {
@@ -795,11 +794,11 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		for _, pRef := range g.Policies {
 			p := b.bundleMap.Policies[pRef.Mrn]
 			if b.addPolicy(p) {
-				var impact *explorer.Impact
-				if pRefAction, ok := b.actionOverrides[pRef.Mrn]; ok && pRefAction == explorer.Action_IGNORE {
-					impact = &explorer.Impact{
-						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-						Action:  explorer.Action_IGNORE,
+				var impact *Impact
+				if pRefAction, ok := b.actionOverrides[pRef.Mrn]; ok && pRefAction == Action_IGNORE {
+					impact = &Impact{
+						Scoring: ScoringSystem_IGNORE_SCORE,
+						Action:  Action_IGNORE,
 					}
 				} else if i, ok := b.impactOverrides[pRef.Mrn]; ok {
 					impact = i
@@ -826,11 +825,11 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 
 			if _, ok := b.addQuery(c); ok {
 				action := b.actionOverrides[c.Mrn]
-				var impact *explorer.Impact
-				if action == explorer.Action_IGNORE {
-					impact = &explorer.Impact{
-						Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-						Action:  explorer.Action_IGNORE,
+				var impact *Impact
+				if action == Action_IGNORE {
+					impact = &Impact{
+						Scoring: ScoringSystem_IGNORE_SCORE,
+						Action:  Action_IGNORE,
 					}
 				}
 				b.addEdge(c.Mrn, policy.Mrn, impact)
@@ -854,9 +853,9 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			}
 
 			if _, ok := b.addQuery(q); ok {
-				b.addEdge(q.Mrn, policy.Mrn, &explorer.Impact{
-					Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-					Action:  explorer.Action_IGNORE,
+				b.addEdge(q.Mrn, policy.Mrn, &Impact{
+					Scoring: ScoringSystem_IGNORE_SCORE,
+					Action:  Action_IGNORE,
 				})
 			}
 		}
@@ -874,7 +873,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 			continue
 		}
 		if added {
-			b.addEdge(r.Mrn, policy.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+			b.addEdge(r.Mrn, policy.Mrn, &Impact{Scoring: ScoringSystem_IGNORE_SCORE, Action: Action_IGNORE})
 			hasMatchingRiskFactor = true
 		}
 	}
@@ -883,7 +882,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 }
 
 // addQuery adds a query to the graph. It will add the query, its variants, and connect the query to the variants
-func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) {
+func (b *resolvedPolicyBuilder) addQuery(query *Mquery) (string, bool) {
 	action := b.actionOverrides[query.Mrn]
 	impact := b.impactOverrides[query.Mrn]
 	queryType := b.queryTypes[query.Mrn]
@@ -897,7 +896,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) 
 		// Add node for query
 		b.addNode(&rpBuilderGenericQueryNode{queryMrn: query.Mrn, selectedCodeId: b.disabledQuery.CodeId, queryType: queryType})
 		// Add edge from execution query to query
-		b.addEdge(b.disabledQuery.CodeId, query.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_DISABLED})
+		b.addEdge(b.disabledQuery.CodeId, query.Mrn, &Impact{Scoring: ScoringSystem_DISABLED})
 		return b.disabledQuery.CodeId, true
 	}
 
@@ -905,7 +904,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *explorer.Mquery) (string, bool) 
 		// If we have variants, we need to find the first matching variant.
 		// We will also recursively find the code id of the query that will
 		// be run
-		var matchingVariant *explorer.Mquery
+		var matchingVariant *Mquery
 		var selectedCodeId string
 		for _, v := range query.Variants {
 			q, ok := b.bundleMap.Queries[v.Mrn]
@@ -979,7 +978,7 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 		// Add node for execution query
 		b.addNode(&rpBuilderExecutionQueryNode{query: c})
 		// TODO: we should just score the risk factor normally, I don't know why we ignore the score
-		b.addEdge(c.CodeId, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		b.addEdge(c.CodeId, riskFactor.Mrn, &Impact{Scoring: ScoringSystem_IGNORE_SCORE, Action: Action_IGNORE})
 
 		selectedCodeIds = append(selectedCodeIds, c.CodeId)
 
@@ -990,7 +989,7 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 		// we have a child job on the risk factor that is mrn of the query.
 		// if selectedCodeId, ok := b.addQuery(c); ok {
 		// 	selectedCodeIds = append(selectedCodeIds, selectedCodeId)
-		// 	b.addEdge(c.Mrn, riskFactor.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE})
+		// 	b.addEdge(c.Mrn, riskFactor.Mrn, &Impact{Scoring: ScoringSystem_IGNORE_SCORE})
 		// }
 	}
 
@@ -1003,7 +1002,7 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 	return true, nil
 }
 
-func (b *resolvedPolicyBuilder) anyFilterMatches(f *explorer.Filters) bool {
+func (b *resolvedPolicyBuilder) anyFilterMatches(f *Filters) bool {
 	return f.Supports(b.assetFilters)
 }
 
@@ -1021,11 +1020,11 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	// policy reporting job because they would have the same qr id.
 	// If the node already exists, it's represented by the asset or space policy
 	// and is not a valid framework mrn
-	var impact *explorer.Impact
+	var impact *Impact
 	if _, ok := b.nodes[framework.Mrn]; !ok {
 		b.addNode(&rpBuilderFrameworkNode{frameworkMrn: framework.Mrn})
 	} else {
-		impact = &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE}
+		impact = &Impact{Scoring: ScoringSystem_IGNORE_SCORE, Action: Action_IGNORE}
 	}
 
 	for _, fmap := range framework.FrameworkMaps {
@@ -1081,7 +1080,7 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 			}
 			qNode, ok := n.(*rpBuilderGenericQueryNode)
 			if ok {
-				b.addEdge(qNode.selectedCodeId, control.Mrn, &explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+				b.addEdge(qNode.selectedCodeId, control.Mrn, &Impact{Scoring: ScoringSystem_IGNORE_SCORE, Action: Action_IGNORE})
 				hasChild = true
 			}
 		}
@@ -1113,12 +1112,12 @@ func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
 	return true
 }
 
-func (b *resolvedPolicyBuilder) actionToImpact(mrn string) *explorer.Impact {
+func (b *resolvedPolicyBuilder) actionToImpact(mrn string) *Impact {
 	action := b.actionOverrides[mrn]
-	if action == explorer.Action_IGNORE {
-		return &explorer.Impact{
-			Scoring: explorer.ScoringSystem_IGNORE_SCORE,
-			Action:  explorer.Action_IGNORE,
+	if action == Action_IGNORE {
+		return &Impact{
+			Scoring: ScoringSystem_IGNORE_SCORE,
+			Action:  Action_IGNORE,
 		}
 	}
 	return nil
@@ -1129,7 +1128,7 @@ func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_
 		rp.CollectorJob.ReportingJobs[uuid] = &ReportingJob{
 			QrId:       qrId,
 			Uuid:       uuid,
-			ChildJobs:  map[string]*explorer.Impact{},
+			ChildJobs:  map[string]*Impact{},
 			Datapoints: map[string]bool{},
 			Type:       typ,
 		}
@@ -1140,7 +1139,7 @@ func addReportingJob(qrId string, qrIdIsMrn bool, uuid string, typ ReportingJob_
 	return rp.CollectorJob.ReportingJobs[uuid]
 }
 
-func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderData) (mqlc.PropsHandler, map[string]string, error) {
+func compileProps(query *Mquery, rp *ResolvedPolicy, data *rpBuilderData) (mqlc.PropsHandler, map[string]string, error) {
 	var propTypes mqlc.SimpleProps
 	var propToChecksums map[string]string
 	if len(query.Props) != 0 {
@@ -1178,7 +1177,7 @@ func compileProps(query *explorer.Mquery, rp *ResolvedPolicy, data *rpBuilderDat
 }
 
 // connectReportingJobNotifies adds the notifies and child jobs links in the reporting jobs
-func connectReportingJobNotifies(child *ReportingJob, parent *ReportingJob, impact *explorer.Impact) {
+func connectReportingJobNotifies(child *ReportingJob, parent *ReportingJob, impact *Impact) {
 	for _, n := range child.Notify {
 		if n == parent.Uuid {
 			fmt.Println("already connected")
@@ -1190,25 +1189,25 @@ func connectReportingJobNotifies(child *ReportingJob, parent *ReportingJob, impa
 
 // normalizeAction normalizes the action based on the group type and impact. We need to do this because
 // we've had different ways of representing actions in the past and we need to normalize them to the current
-func normalizeAction(groupType GroupType, action explorer.Action, impact *explorer.Impact) explorer.Action {
+func normalizeAction(groupType GroupType, action Action, impact *Impact) Action {
 	switch groupType {
 	case GroupType_DISABLE:
-		return explorer.Action_DEACTIVATE
-	case GroupType_OUT_OF_SCOPE:
-		return explorer.Action_OUT_OF_SCOPE
+		return Action_DEACTIVATE
+	case GroupType_OUT_OF_SCOPE_GROUP:
+		return Action_OUT_OF_SCOPE
 	case GroupType_IGNORED:
-		return explorer.Action_IGNORE
+		return Action_IGNORE
 	default:
-		if impact != nil && impact.Scoring == explorer.ScoringSystem_IGNORE_SCORE {
-			return explorer.Action_IGNORE
+		if impact != nil && impact.Scoring == ScoringSystem_IGNORE_SCORE {
+			return Action_IGNORE
 		}
 		return action
 	}
 }
 
-func isOverride(action explorer.Action, groupType GroupType) bool {
-	return action != explorer.Action_UNSPECIFIED ||
+func isOverride(action Action, groupType GroupType) bool {
+	return action != Action_UNSPECIFIED ||
 		groupType == GroupType_DISABLE ||
-		groupType == GroupType_OUT_OF_SCOPE ||
+		groupType == GroupType_OUT_OF_SCOPE_GROUP ||
 		groupType == GroupType_IGNORED
 }

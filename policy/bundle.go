@@ -13,15 +13,14 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/checksums"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v12/utils/multierr"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/checksums"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/v13/utils/multierr"
 	"sigs.k8s.io/yaml"
 )
 
@@ -179,7 +178,7 @@ func (p *Bundle) ConvertQuerypacks() {
 			Props:    pack.Props,
 			Groups:   convertQueryPackGroups(pack),
 			// we need this to indicate that the policy was converted from a querypack
-			ScoringSystem: explorer.ScoringSystem_DATA_ONLY,
+			ScoringSystem: ScoringSystem_DATA_ONLY,
 		}
 		p.Policies = append(p.Policies, &policy)
 	}
@@ -197,7 +196,7 @@ func (b *Bundle) ConvertEvidence() {
 	}
 }
 
-func convertQueryPackDocs(q *explorer.QueryPackDocs) *PolicyDocs {
+func convertQueryPackDocs(q *QueryPackDocs) *PolicyDocs {
 	if q == nil {
 		return nil
 	}
@@ -206,7 +205,7 @@ func convertQueryPackDocs(q *explorer.QueryPackDocs) *PolicyDocs {
 	}
 }
 
-func convertQueryPackGroups(p *explorer.QueryPack) []*PolicyGroup {
+func convertQueryPackGroups(p *QueryPack) []*PolicyGroup {
 	var res []*PolicyGroup
 
 	if len(p.Queries) > 0 {
@@ -334,8 +333,8 @@ func (p *Bundle) Clean() *Bundle {
 	for i := range p.Policies {
 		policy := p.Policies[i]
 		if policy.ComputedFilters == nil {
-			policy.ComputedFilters = &explorer.Filters{
-				Items: map[string]*explorer.Mquery{},
+			policy.ComputedFilters = &Filters{
+				Items: map[string]*Mquery{},
 			}
 		}
 	}
@@ -491,7 +490,7 @@ func (n docsWriter) Write(section string, data string) {
 	n.out.Write([]byte{'\n'})
 }
 
-func extractQueryDocs(query *explorer.Mquery, w docsPrinter, noIDs bool) {
+func extractQueryDocs(query *Mquery, w docsPrinter, noIDs bool) {
 	if !noIDs {
 		w.Write("query ID", query.Uid)
 		w.Write("query Mrn", query.Mrn)
@@ -516,7 +515,7 @@ func extractQueryDocs(query *explorer.Mquery, w docsPrinter, noIDs bool) {
 	}
 }
 
-func extractPropertyDocs(prop *explorer.Property, w docsPrinter, noIDs bool) {
+func extractPropertyDocs(prop *Property, w docsPrinter, noIDs bool) {
 	if !noIDs {
 		w.Write("property ID", prop.Uid)
 		w.Write("property Mrn", prop.Mrn)
@@ -582,9 +581,9 @@ func (p *Bundle) ExtractDocs(out io.Writer, noIDs bool, noCode bool) {
 	}
 }
 
-func (p *bundleCache) ensureNoCyclesInVariants(queries []*explorer.Mquery) error {
+func (p *bundleCache) ensureNoCyclesInVariants(queries []*Mquery) error {
 	// Gather all top-level queries with variants
-	queriesMap := map[string]*explorer.Mquery{}
+	queriesMap := map[string]*Mquery{}
 	for _, q := range queries {
 		if q == nil {
 			continue
@@ -611,7 +610,7 @@ func (c *bundleCache) removeFailing(res *Bundle) {
 	for k := range c.removeQueries {
 		log.Debug().Str("query", k).Msg("removing query from bundle")
 	}
-	res.Queries = explorer.FilterQueryMRNs(c.removeQueries, res.Queries)
+	res.Queries = FilterQueryMRNs(c.removeQueries, res.Queries)
 
 	for i := range res.Policies {
 		policy := res.Policies[i]
@@ -619,8 +618,8 @@ func (c *bundleCache) removeFailing(res *Bundle) {
 		groups := []*PolicyGroup{}
 		for j := range policy.Groups {
 			group := policy.Groups[j]
-			group.Queries = explorer.FilterQueryMRNs(c.removeQueries, group.Queries)
-			group.Checks = explorer.FilterQueryMRNs(c.removeQueries, group.Checks)
+			group.Queries = FilterQueryMRNs(c.removeQueries, group.Queries)
+			group.Checks = FilterQueryMRNs(c.removeQueries, group.Checks)
 			if len(group.Policies)+len(group.Queries)+len(group.Checks) > 0 {
 				groups = append(groups, group)
 			}
@@ -646,7 +645,7 @@ var ErrVariantCycleDetected = func(mrn string) error {
 	return fmt.Errorf("variant cycle detected in %s", mrn)
 }
 
-func detectVariantCycles(queries map[string]*explorer.Mquery) error {
+func detectVariantCycles(queries map[string]*Mquery) error {
 	statusMap := map[string]nodeVisitStatus{}
 	for _, query := range queries {
 		err := detectVariantCyclesDFS(query.Mrn, statusMap, queries)
@@ -657,7 +656,7 @@ func detectVariantCycles(queries map[string]*explorer.Mquery) error {
 	return nil
 }
 
-func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, queries map[string]*explorer.Mquery) error {
+func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, queries map[string]*Mquery) error {
 	q := queries[mrn]
 	if q == nil {
 		return nil
@@ -688,9 +687,9 @@ func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, qu
 	return nil
 }
 
-func topologicalSortQueries(queries []*explorer.Mquery) ([]*explorer.Mquery, error) {
+func topologicalSortQueries(queries []*Mquery) ([]*Mquery, error) {
 	// Gather all top-level queries with variants
-	queriesMap := map[string]*explorer.Mquery{}
+	queriesMap := map[string]*Mquery{}
 	for _, q := range queries {
 		if q == nil {
 			continue
@@ -704,7 +703,7 @@ func topologicalSortQueries(queries []*explorer.Mquery) ([]*explorer.Mquery, err
 	}
 
 	// Topologically sort the queries
-	sorted := &explorer.Mqueries{}
+	sorted := &Mqueries{}
 	visited := map[string]struct{}{}
 	for _, q := range queriesMap {
 		err := topologicalSortQueriesDFS(q.Mrn, queriesMap, visited, sorted)
@@ -716,7 +715,7 @@ func topologicalSortQueries(queries []*explorer.Mquery) ([]*explorer.Mquery, err
 	return sorted.Items, nil
 }
 
-func topologicalSortQueriesDFS(queryMrn string, queriesMap map[string]*explorer.Mquery, visited map[string]struct{}, sorted *explorer.Mqueries) error {
+func topologicalSortQueriesDFS(queryMrn string, queriesMap map[string]*Mquery, visited map[string]struct{}, sorted *Mqueries) error {
 	if _, ok := visited[queryMrn]; ok {
 		return nil
 	}
@@ -743,7 +742,7 @@ func topologicalSortQueriesDFS(queryMrn string, queriesMap map[string]*explorer.
 // Compile a bundle. See CompileExt for a full description.
 func (p *Bundle) Compile(ctx context.Context, schema resources.ResourcesSchema, library Library) (*PolicyBundleMap, error) {
 	return p.CompileExt(ctx, BundleCompileConf{
-		CompilerConfig: mqlc.NewConfig(schema, cnquery.DefaultFeatures),
+		CompilerConfig: mqlc.NewConfig(schema, mql.DefaultFeatures),
 		Library:        library,
 	})
 }
@@ -775,8 +774,8 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		conf:          conf,
 		uid2mrn:       map[string]string{},
 		removeQueries: map[string]struct{}{},
-		lookupProps:   map[string]explorer.PropertyRef{},
-		lookupQuery:   map[string]*explorer.Mquery{},
+		lookupProps:   map[string]PropertyRef{},
+		lookupQuery:   map[string]*Mquery{},
 		codeBundles:   map[string]*llx.CodeBundle{},
 		parents:       map[string][]parent{},
 	}
@@ -830,7 +829,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		// Filters: prep a data structure in case it doesn't exist yet and add
 		// any filters that child groups may carry with them
 		if policy.ComputedFilters == nil || policy.ComputedFilters.Items == nil {
-			policy.ComputedFilters = &explorer.Filters{Items: map[string]*explorer.Mquery{}}
+			policy.ComputedFilters = &Filters{Items: map[string]*Mquery{}}
 		}
 		if err := policy.ComputedFilters.Compile(ownerMrn, conf.CompilerConfig); err != nil {
 			return nil, multierr.Wrap(err, "failed to compile policy filters")
@@ -937,20 +936,20 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	return bundleMap, cache.error()
 }
 
-func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mquery) error {
+func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*Mquery) error {
 	if len(policy.Props) != 0 {
 		// If these properties are defined by uid, we need to lift the MRNs
 		// into the for field of the property.
 		propsByUid := map[string][]string{}
 		for _, g := range policy.Groups {
-			for _, arr := range [][]*explorer.Mquery{g.Queries, g.Checks} {
+			for _, arr := range [][]*Mquery{g.Queries, g.Checks} {
 				for _, q := range arr {
 					resolvedQuery := lookupQuery[q.Mrn]
 					if resolvedQuery == nil {
 						return fmt.Errorf("failed to resolve query %s in policy %s", q.Mrn, policy.Mrn)
 					}
 					for _, prop := range resolvedQuery.Props {
-						propUid, err := explorer.GetPropName(prop.Mrn)
+						propUid, err := GetPropName(prop.Mrn)
 						if err != nil {
 							return fmt.Errorf("failed to get property name for property %s in policy %s: %w", prop.Mrn, policy.Mrn, err)
 						}
@@ -963,7 +962,7 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mqu
 			if len(prop.For) == 0 {
 				continue
 			}
-			newFor := []*explorer.ObjectRef{}
+			newFor := []*ObjectRef{}
 			for _, pFor := range prop.For {
 				if pFor.Mrn != "" {
 					newFor = append(newFor, pFor)
@@ -972,7 +971,7 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mqu
 
 				mrns := propsByUid[pFor.Uid]
 				for _, mrn := range mrns {
-					newFor = append(newFor, &explorer.ObjectRef{
+					newFor = append(newFor, &ObjectRef{
 						Mrn: mrn,
 					})
 				}
@@ -981,9 +980,9 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mqu
 		}
 		return nil
 	}
-	newPolicyProps := map[string]*explorer.Property{}
+	newPolicyProps := map[string]*Property{}
 	for _, g := range policy.Groups {
-		for _, arr := range [][]*explorer.Mquery{g.Queries, g.Checks} {
+		for _, arr := range [][]*Mquery{g.Queries, g.Checks} {
 			for _, q := range arr {
 				resolvedQuery := lookupQuery[q.Mrn]
 				if resolvedQuery == nil {
@@ -993,20 +992,20 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mqu
 					continue
 				}
 				for _, prop := range resolvedQuery.Props {
-					propUid, err := explorer.GetPropName(prop.Mrn)
+					propUid, err := GetPropName(prop.Mrn)
 					if err != nil {
 						return fmt.Errorf("failed to get property name for query %s in policy %s: %w", resolvedQuery.Mrn, policy.Mrn, err)
 					}
 
 					policyProp := newPolicyProps[propUid]
 					if policyProp == nil {
-						policyProp = &explorer.Property{
+						policyProp = &Property{
 							Uid:  propUid,
 							Type: prop.Type,
 						}
 						newPolicyProps[propUid] = policyProp
 					}
-					policyProp.For = append(policyProp.For, &explorer.ObjectRef{
+					policyProp.For = append(policyProp.For, &ObjectRef{
 						Mrn: prop.Mrn,
 					})
 				}
@@ -1031,7 +1030,7 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*explorer.Mqu
 // this uses a subset of the calls of Mquery.AddBase(), because we don't want
 // to push all the fields into the variant, only a select few that are
 // needed for context and execution.
-func addBaseToVariant(base *explorer.Mquery, variant *explorer.Mquery) {
+func addBaseToVariant(base *Mquery, variant *Mquery) {
 	if variant == nil {
 		return
 	}
@@ -1073,13 +1072,13 @@ func addBaseToVariant(base *explorer.Mquery, variant *explorer.Mquery) {
 
 type parent struct {
 	policy *Policy
-	query  *explorer.Mquery
+	query  *Mquery
 }
 
 type bundleCache struct {
 	ownerMrn      string
-	lookupQuery   map[string]*explorer.Mquery
-	lookupProps   map[string]explorer.PropertyRef
+	lookupQuery   map[string]*Mquery
+	lookupProps   map[string]PropertyRef
 	uid2mrn       map[string]string
 	removeQueries map[string]struct{}
 	codeBundles   map[string]*llx.CodeBundle
@@ -1092,8 +1091,8 @@ type bundleCache struct {
 func (c *bundleCache) clone() *bundleCache {
 	res := &bundleCache{
 		ownerMrn:      c.ownerMrn,
-		lookupQuery:   make(map[string]*explorer.Mquery, len(c.lookupQuery)),
-		lookupProps:   make(map[string]explorer.PropertyRef, len(c.lookupProps)),
+		lookupQuery:   make(map[string]*Mquery, len(c.lookupQuery)),
+		lookupProps:   make(map[string]PropertyRef, len(c.lookupProps)),
 		uid2mrn:       make(map[string]string, len(c.uid2mrn)),
 		removeQueries: c.removeQueries,
 		bundle:        c.bundle,
@@ -1136,7 +1135,7 @@ func (c *bundleCache) error() error {
 // prepareMRNs is responsible for turning UIDs into MRNs. It also does the
 // lifting of properties to the policy level
 func (cache *bundleCache) prepareMRNs() error {
-	refreshPropMrns := func(props []*explorer.Property, ownerMrn string) error {
+	refreshPropMrns := func(props []*Property, ownerMrn string) error {
 		for _, prop := range props {
 			var name string
 
@@ -1165,7 +1164,7 @@ func (cache *bundleCache) prepareMRNs() error {
 				continue
 			}
 
-			cache.lookupProps[prop.Mrn] = explorer.PropertyRef{
+			cache.lookupProps[prop.Mrn] = PropertyRef{
 				Property: prop,
 				Name:     name,
 			}
@@ -1174,7 +1173,7 @@ func (cache *bundleCache) prepareMRNs() error {
 		return nil
 	}
 
-	refreshQueryMrns := func(queries []*explorer.Mquery, ownerMrn string) error {
+	refreshQueryMrns := func(queries []*Mquery, ownerMrn string) error {
 		for _, query := range queries {
 			uid := query.Uid
 			if err := query.RefreshMRN(cache.ownerMrn); err != nil {
@@ -1204,7 +1203,7 @@ func (cache *bundleCache) prepareMRNs() error {
 		return nil
 	}
 
-	fillOutLookupQuery := func(queries []*explorer.Mquery, policy *Policy) {
+	fillOutLookupQuery := func(queries []*Mquery, policy *Policy) {
 		for _, query := range queries {
 			if query.Mql == "" {
 				// Query is deprecated. Calling compile does this migration, but we're
@@ -1273,10 +1272,10 @@ func (cache *bundleCache) prepareMRNs() error {
 	}
 
 	// We'll replace the properties that do not have an implementation
-	replacePropIfNecessary := func(prop *explorer.Property) {
+	replacePropIfNecessary := func(prop *Property) {
 		for _, forProp := range prop.For {
 			if existing, ok := cache.lookupProps[forProp.Mrn]; ok && existing.Property.Mql == "" {
-				cache.lookupProps[forProp.Mrn] = explorer.PropertyRef{
+				cache.lookupProps[forProp.Mrn] = PropertyRef{
 					Property: prop,
 					Name:     existing.Name,
 				}
@@ -1308,7 +1307,7 @@ func (cache *bundleCache) prepareMRNs() error {
 func (c *bundleCache) buildParents() error {
 	for _, p := range c.bundle.Policies {
 		for _, g := range p.Groups {
-			for _, arr := range [][]*explorer.Mquery{g.Queries, g.Checks} {
+			for _, arr := range [][]*Mquery{g.Queries, g.Checks} {
 				for _, q := range arr {
 					if q == nil {
 						continue
@@ -1331,8 +1330,8 @@ func (c *bundleCache) buildParents() error {
 	return nil
 }
 
-func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy) error {
-	mergedQueries := make([]*explorer.Mquery, len(queries))
+func (c *bundleCache) compileQueries(queries []*Mquery, policy *Policy) error {
+	mergedQueries := make([]*Mquery, len(queries))
 	for i := range queries {
 		mergedQueries[i] = c.precompileQuery(queries[i], policy)
 	}
@@ -1381,7 +1380,7 @@ func (c *bundleCache) compileQueries(queries []*explorer.Mquery, policy *Policy)
 
 // precompileQuery indexes the query, turns UIDs into MRNs, compiles properties
 // and filters, and pre-processes variants. Also makes sure the query isn't nil.
-func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *explorer.Mquery {
+func (c *bundleCache) precompileQuery(query *Mquery, policy *Policy) *Mquery {
 	if query == nil {
 		c.errors = append(c.errors, errors.New("query or check is null"))
 		return nil
@@ -1423,17 +1422,17 @@ func (c *bundleCache) precompileQuery(query *explorer.Mquery, policy *Policy) *e
 }
 
 type QueryPropsResolver struct {
-	query      *explorer.Mquery
+	query      *Mquery
 	parents    map[string][]parent
-	nameToProp map[string]*explorer.Property
+	nameToProp map[string]*Property
 
 	errors []error
 }
 
-func newQueryPropsResolver(query *explorer.Mquery, parents map[string][]parent) (*QueryPropsResolver, error) {
-	propsMap := map[string]*explorer.Property{}
+func newQueryPropsResolver(query *Mquery, parents map[string][]parent) (*QueryPropsResolver, error) {
+	propsMap := map[string]*Property{}
 	for _, p := range query.Props {
-		name, err := explorer.GetPropName(p.Mrn)
+		name, err := GetPropName(p.Mrn)
 		if err != nil {
 			return nil, err
 		}
@@ -1455,7 +1454,7 @@ func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 			// Resolve a type if the prop was defined with just a name
 			r.walkParents(func(p hasProps) bool {
 				for _, parentProp := range p.GetProps() {
-					pn, err := explorer.GetPropName(parentProp.Mrn)
+					pn, err := GetPropName(parentProp.Mrn)
 					if err != nil {
 						continue
 					}
@@ -1476,11 +1475,11 @@ func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 
 	found := struct {
 		mrn  string
-		prop *explorer.Property
+		prop *Property
 	}{}
 	r.walkParents(func(p hasProps) bool {
 		for _, prop := range p.GetProps() {
-			propName, err := explorer.GetPropName(prop.Mrn)
+			propName, err := GetPropName(prop.Mrn)
 			if err != nil {
 				continue
 			}
@@ -1495,7 +1494,7 @@ func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 
 	if found.prop != nil {
 		// Create an explicit property in the query for this implicit property.
-		newProp := &explorer.Property{
+		newProp := &Property{
 			Uid:  name,
 			Type: found.prop.Type,
 		}
@@ -1505,7 +1504,7 @@ func (r *QueryPropsResolver) Get(name string) *llx.Primitive {
 		}
 		r.query.Props = append(r.query.Props, newProp)
 		// Reference the new property from the used property
-		found.prop.For = append(found.prop.For, &explorer.ObjectRef{Mrn: newProp.Mrn})
+		found.prop.For = append(found.prop.For, &ObjectRef{Mrn: newProp.Mrn})
 		return &llx.Primitive{Type: found.prop.Type}
 	}
 
@@ -1527,7 +1526,7 @@ func (r *QueryPropsResolver) All() map[string]*llx.Primitive {
 	}
 	r.walkParents(func(p hasProps) bool {
 		for _, prop := range p.GetProps() {
-			propName, err := explorer.GetPropName(prop.Mrn)
+			propName, err := GetPropName(prop.Mrn)
 			if err != nil {
 				continue
 			}
@@ -1542,7 +1541,7 @@ func (r *QueryPropsResolver) All() map[string]*llx.Primitive {
 
 type hasProps interface {
 	GetMrn() string
-	GetProps() []*explorer.Property
+	GetProps() []*Property
 }
 
 func (r *QueryPropsResolver) walkParents(f func(p hasProps) bool) {
@@ -1574,7 +1573,7 @@ func (r *QueryPropsResolver) walkParents(f func(p hasProps) bool) {
 // Note: you only want to run this, after you are sure that all connected
 // dependencies have been processed. Properties must be compiled. Connected
 // queries may not be ready yet, but we have to have precompiled them.
-func (c *bundleCache) compileQuery(query *explorer.Mquery) {
+func (c *bundleCache) compileQuery(query *Mquery) {
 	props, err := newQueryPropsResolver(query, c.parents)
 	if err != nil {
 		c.errors = append(c.errors, errors.New("failed to prepare property resolver for query "+query.Mrn))
@@ -1674,7 +1673,7 @@ func translateGroupUIDs(ownerMrn string, policyObj *Policy, uid2mrn map[string]s
 // Takes a query pack bundle and converts it to a policy bundle.
 // It copies over the owner, the packs, the props and the queries from the bundle
 // and converts all query packs into data-only policies.
-func FromQueryPackBundle(bundle *explorer.Bundle) *Bundle {
+func FromQueryPackBundle(bundle *Bundle) *Bundle {
 	if bundle == nil {
 		return nil
 	}

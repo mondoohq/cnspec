@@ -14,9 +14,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/checksums"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/utils/multierr"
+	"go.mondoo.com/mql/v13/checksums"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/utils/multierr"
 )
 
 type ScoredRiskInfo struct {

@@ -14,11 +14,11 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/tliron/glsp/server"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
 	"k8s.io/utils/ptr"
 )
 
@@ -41,7 +41,7 @@ type MQLHandler struct {
 	mutex sync.RWMutex
 
 	combinedSchema  resources.ResourcesSchema // Combined schema from all providers
-	cnqueryFeatures cnquery.Features
+	cnqueryFeatures mql.Features
 	documents       map[protocol.DocumentUri]string      // Cache for document contents
 	yamlBundles     map[protocol.DocumentUri]*YAMLBundle // Cache for parsed YAML bundles
 }
@@ -59,10 +59,10 @@ func NewMQLHandler() *MQLHandler {
 
 	log.Info().Msg("loaded combined resource schema for MQL language server")
 
-	features, err := cnquery.InitFeatures()
+	features, err := mql.InitFeatures()
 	if err != nil {
 		log.Warn().Err(err).Msg("failed to init cnquery features")
-		features = cnquery.DefaultFeatures
+		features = mql.DefaultFeatures
 	}
 	handler.cnqueryFeatures = features
 

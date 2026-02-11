@@ -7,12 +7,11 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/cli/progress"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/types"
-	"go.mondoo.com/cnquery/v12/utils/multierr"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/cli/progress"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/v13/utils/multierr"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 const (
@@ -409,14 +408,14 @@ type reportingJobDatapoint struct {
 }
 
 type reportingJobResult struct {
-	impact *explorer.Impact
+	impact *policy.Impact
 	score  *policy.Score
 }
 
 // ReportingJobNodeData is the data for nodes of type ReportingJobNodeType
 type ReportingJobNodeData struct {
 	queryID       string
-	scoringSystem explorer.ScoringSystem
+	scoringSystem policy.ScoringSystem
 	forwardScore  bool
 	rjType        policy.ReportingJob_Type
 
@@ -548,7 +547,7 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 				s = c.score.CloneVT()
 				s.QrId = nodeData.queryID
 
-				if c.impact.GetScoring() == explorer.ScoringSystem_DISABLED {
+				if c.impact.GetScoring() == policy.ScoringSystem_DISABLED {
 					s.Type = policy.ScoreType_Disabled
 				} else if s.Type == policy.ScoreType_Result {
 					// We can't just forward the score if impact is set and we have a result.

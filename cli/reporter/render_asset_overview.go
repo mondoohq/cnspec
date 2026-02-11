@@ -8,9 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"go.mondoo.com/cnquery/v12/cli/printer"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 var mqlQueryNames = map[string]string{
@@ -22,7 +21,7 @@ var mqlQueryNames = map[string]string{
 	"platform.name == \"arista-eos\"":     "Arista",
 }
 
-func hasAssetFilter(supported []*explorer.Mquery, filters *explorer.Filters) bool {
+func hasAssetFilter(supported []*policy.Mquery, filters *policy.Filters) bool {
 	if len(supported) == 0 || filters == nil || len(filters.Items) == 0 {
 		return false
 	}

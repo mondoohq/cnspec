@@ -9,11 +9,10 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/go-version"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/utils/sortx"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/utils/sortx"
 )
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
@@ -21,8 +20,8 @@ type PolicyBundleMap struct {
 	OwnerMrn    string                        `json:"owner_mrn,omitempty"`
 	Policies    map[string]*Policy            `json:"policies,omitempty"`
 	Frameworks  map[string]*Framework         `json:"frameworks,omitempty"`
-	Queries     map[string]*explorer.Mquery   `json:"queries,omitempty"`
-	Props       map[string]*explorer.Property `json:"props,omitempty"`
+	Queries     map[string]*Mquery   `json:"queries,omitempty"`
+	Props       map[string]*Property `json:"props,omitempty"`
 	Code        map[string]*llx.CodeBundle    `json:"code,omitempty"`
 	RiskFactors map[string]*RiskFactor        `json:"risk_factors,omitempty"`
 	Library     Library                       `json:"library,omitempty"`
@@ -35,8 +34,8 @@ func NewPolicyBundleMap(ownerMrn string) *PolicyBundleMap {
 		OwnerMrn:    ownerMrn,
 		Policies:    make(map[string]*Policy),
 		Frameworks:  make(map[string]*Framework),
-		Queries:     make(map[string]*explorer.Mquery),
-		Props:       make(map[string]*explorer.Property),
+		Queries:     make(map[string]*Mquery),
+		Props:       make(map[string]*Property),
 		Code:        make(map[string]*llx.CodeBundle),
 		RiskFactors: make(map[string]*RiskFactor),
 	}
@@ -99,14 +98,14 @@ func (p *PolicyBundleMap) ToList() *Bundle {
 
 	// queries
 	ids = sortx.Keys(p.Queries)
-	res.Queries = make([]*explorer.Mquery, len(ids))
+	res.Queries = make([]*Mquery, len(ids))
 	for i := range ids {
 		res.Queries[i] = p.Queries[ids[i]]
 	}
 
 	// props
 	ids = sortx.Keys(p.Props)
-	res.Props = make([]*explorer.Property, len(ids))
+	res.Props = make([]*Property, len(ids))
 	for i := range ids {
 		res.Props[i] = p.Props[ids[i]]
 	}
@@ -222,7 +221,7 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 			return err
 		}
 
-		if check.Action == explorer.Action_MODIFY && !exist {
+		if check.Action == Action_MODIFY && !exist {
 			return errors.New("check does not exist, but policy is trying to modify it: " + check.Mrn)
 		}
 	}
@@ -235,7 +234,7 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 			return err
 		}
 
-		if query.Action == explorer.Action_MODIFY && !exist {
+		if query.Action == Action_MODIFY && !exist {
 			return errors.New("query does not exist, but policy is trying to modify it: " + query.Mrn)
 		}
 	}
@@ -294,8 +293,8 @@ func (p *PolicyBundleMap) policyExists(ctx context.Context, mrn string) (bool, e
 }
 
 // QueryMap extracts all the queries from the policy bundle map
-func (bundle *PolicyBundleMap) QueryMap() map[string]*explorer.Mquery {
-	res := make(map[string]*explorer.Mquery, len(bundle.Queries))
+func (bundle *PolicyBundleMap) QueryMap() map[string]*Mquery {
+	res := make(map[string]*Mquery, len(bundle.Queries))
 	for _, v := range bundle.Queries {
 		if v.CodeId != "" {
 			res[v.CodeId] = v
@@ -321,7 +320,7 @@ func (bundle *PolicyBundleMap) ControlsMap() map[string]*Control {
 	return res
 }
 
-func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*explorer.Mquery) *PolicyBundleMap {
+func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*Mquery) *PolicyBundleMap {
 	var id string
 	if policy.Mrn != "" {
 		id = policy.Mrn

@@ -11,9 +11,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/mrn"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/mrn"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
@@ -61,7 +60,7 @@ func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, 
 //
 // Note1: The bundle must have been pre-compiled and validated!
 // Note2: The bundle may be nil, in which case we will try to find what is needed for the policy
-func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*explorer.Mquery, *time.Time, error) {
+func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bundle *PolicyBundleMap) (*Policy, []*Mquery, *time.Time, error) {
 	logCtx := logger.FromContext(ctx)
 	var err error
 
@@ -69,7 +68,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 		return nil, nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
 	}
 
-	var queriesLookup map[string]*explorer.Mquery
+	var queriesLookup map[string]*Mquery
 	if bundle != nil {
 		queriesLookup = bundle.Queries
 	}
@@ -106,7 +105,7 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	filters, err := policyObj.ComputeAssetFilters(
 		ctx,
 		s.DataLake.GetRawPolicy,
-		func(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+		func(ctx context.Context, mrn string) (*Mquery, error) {
 			if q, ok := queriesLookup[mrn]; ok {
 				return q, nil
 			}
@@ -242,7 +241,7 @@ func (s *LocalServices) SetBundleMap(ctx context.Context, bundleMap *PolicyBundl
 	return nil
 }
 
-func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *explorer.Mquery) error {
+func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *Mquery) error {
 	if query == nil {
 		return errors.New("cannot set query '" + mrn + "' as it is not defined")
 	}
@@ -397,8 +396,8 @@ func (s *LocalServices) ComputeBundle(ctx context.Context, mpolicyObj *Policy, m
 		OwnerMrn:   mpolicyObj.OwnerMrn,
 		Policies:   map[string]*Policy{},
 		Frameworks: map[string]*Framework{},
-		Queries:    map[string]*explorer.Mquery{},
-		Props:      map[string]*explorer.Property{},
+		Queries:    map[string]*Mquery{},
+		Props:      map[string]*Property{},
 	}
 
 	if err := s.computePolicyBundle(ctx, &bundleMap, mpolicyObj); err != nil {
@@ -537,8 +536,8 @@ func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *Poli
 					return err
 				}
 
-				nuPolicy.ComputedFilters = &explorer.Filters{
-					Items: make(map[string]*explorer.Mquery, len(filters)),
+				nuPolicy.ComputedFilters = &Filters{
+					Items: make(map[string]*Mquery, len(filters)),
 				}
 				for _, f := range filters {
 					nuPolicy.ComputedFilters.Items[f.CodeId] = f

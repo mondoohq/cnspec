@@ -4,8 +4,8 @@
 package fmt
 
 import (
-	"go.mondoo.com/cnspec/v12/policy"
-	"go.mondoo.com/cnspec/v12/policy/tooling"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/tooling"
 )
 
 // Deprecated: use tooling.Format

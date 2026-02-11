@@ -5,8 +5,8 @@ package components
 
 import (
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v12/cli/theme/colors"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd/cvss"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd/cvss"
 )
 
 func NewCvssIndicator() CvssIndicator {
