@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 5.2.0
+    version: 6.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -26,6 +26,8 @@ policies:
         - CloudWatch
         - DynamoDB
         - Elastic Compute Cloud (EC2) instances & storage
+        - Elastic Container Registry (ECR)
+        - Elastic Container Service (ECS)
         - Elastic File System (EFS)
         - Elastic Kubernetes Service (EKS)
         - Elastic Load Balancers (ELBs)
@@ -114,9 +116,19 @@ policies:
           - uid: mondoo-aws-security-ebs-snapshot-encrypted
           - uid: mondoo-aws-security-ec2-encrypted-volumes
           - uid: mondoo-aws-security-ec2-user-data-no-secrets
+      - title: Amazon ECR
+        checks:
+          - uid: mondoo-aws-security-ecr-image-scan-on-push
+          - uid: mondoo-aws-security-ecr-tag-immutability
+      - title: Amazon ECS
+        checks:
+          - uid: mondoo-aws-security-ecs-no-privileged-containers
+          - uid: mondoo-aws-security-ecs-readonly-root-filesystem
+          - uid: mondoo-aws-security-ecs-logging-enabled
       - title: Amazon EFS Filesystem
         checks:
           - uid: mondoo-aws-security-efs-encrypted-check
+          - uid: mondoo-aws-security-efs-backup-enabled
       - title: AWS CloudWatch
         checks:
           - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
@@ -126,6 +138,7 @@ policies:
           - uid: mondoo-aws-security-elb-logging-enabled
           - uid: mondoo-aws-security-elb-security-policy-enabled
           - uid: mondoo-aws-security-elb-ssl-listener
+          - uid: mondoo-aws-security-elb-drop-invalid-headers
       - title: AWS Elasticsearch Domain
         checks:
           - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
@@ -144,6 +157,7 @@ policies:
       - title: Amazon SageMaker Notebook Instance
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
+          - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet
       - title: Amazon CloudFront
         checks:
           - uid: mondoo-aws-security-cloudfront-viewer-policy-https
@@ -157,6 +171,8 @@ policies:
           - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
           - uid: mondoo-aws-security-eks-cluster-private-controlplane
           - uid: mondoo-aws-security-eks-cluster-logging-enabled
+          - uid: mondoo-aws-security-eks-cluster-restrict-public-access
+          - uid: mondoo-aws-security-eks-cluster-deletion-protection
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -9968,4 +9984,1138 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_opensearch_domain").all(
         values.advanced_security_options.all(anonymous_auth_enabled != true)
+      )
+  - uid: mondoo-aws-security-ecr-image-scan-on-push
+    title: Ensure ECR repositories have image scanning on push enabled
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-ecr-image-scan-on-push-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-ecr-image-scan-on-push-terraform-hcl
+      - uid: mondoo-aws-security-ecr-image-scan-on-push-terraform-plan
+      - uid: mondoo-aws-security-ecr-image-scan-on-push-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon Elastic Container Registry (ECR) repositories are configured with image scanning on push. When enabled, ECR automatically scans container images for known vulnerabilities as they are pushed to the repository, providing early detection of security issues in the CI/CD pipeline.
+
+        **Why this matters**
+
+        Container images often contain operating system packages and application dependencies that may have known vulnerabilities. Without automated scanning:
+
+        - Vulnerable images may be deployed to production environments undetected.
+        - Security teams lack visibility into the vulnerability posture of container images.
+        - Compliance frameworks such as CIS, PCI DSS, and SOC 2 require vulnerability management for container workloads.
+
+        **Risk mitigation:**
+
+        - **Early detection:** Identifies vulnerabilities before images are deployed to production.
+        - **Automated security:** Eliminates reliance on manual scanning processes.
+        - **Compliance:** Meets regulatory requirements for container image vulnerability management.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon ECR Console.
+            2. Select the repository you want to configure.
+            3. Select Edit.
+            4. Under Image scan settings, enable Scan on push.
+            5. Select Save.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if image scanning on push is enabled:
+
+            ```bash
+            aws ecr describe-repositories --query "repositories[*].{Name:repositoryName, ScanOnPush:imageScanningConfiguration.scanOnPush}"
+            ```
+
+            Enable scanning on push for a repository:
+
+            ```bash
+            aws ecr put-image-scanning-configuration \
+              --repository-name <repository-name> \
+              --image-scanning-configuration scanOnPush=true
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_ecr_repository" "example" {
+              name = "example-repo"
+
+              image_scanning_configuration {
+                scan_on_push = true
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              ECRRepository:
+                Type: "AWS::ECR::Repository"
+                Properties:
+                  RepositoryName: "example-repo"
+                  ImageScanningConfiguration:
+                    ScanOnPush: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html
+        title: AWS Documentation - Amazon ECR image scanning
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/ecr-controls.html
+        title: AWS Documentation - ECR controls
+  - uid: mondoo-aws-security-ecr-image-scan-on-push-api
+    filters: asset.platform == "aws"
+    mql: aws.ecr.privateRepositories.all(imageScanOnPush == true)
+  - uid: mondoo-aws-security-ecr-image-scan-on-push-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_ecr_repository").all(
+        blocks.where(type == "image_scanning_configuration") != empty &&
+        blocks.where(type == "image_scanning_configuration").all(arguments.scan_on_push == true)
+      )
+  - uid: mondoo-aws-security-ecr-image-scan-on-push-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ecr_repository")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_ecr_repository").all(
+        change.after.image_scanning_configuration != empty &&
+        change.after.image_scanning_configuration.all(scan_on_push == true)
+      )
+  - uid: mondoo-aws-security-ecr-image-scan-on-push-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ecr_repository")
+    mql: |
+      terraform.state.resources.where(type == "aws_ecr_repository").all(
+        values.image_scanning_configuration != empty &&
+        values.image_scanning_configuration.all(scan_on_push == true)
+      )
+  - uid: mondoo-aws-security-ecr-tag-immutability
+    title: Ensure ECR repositories have image tag immutability enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-ecr-tag-immutability-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-ecr-tag-immutability-terraform-hcl
+      - uid: mondoo-aws-security-ecr-tag-immutability-terraform-plan
+      - uid: mondoo-aws-security-ecr-tag-immutability-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon ECR repositories are configured with image tag immutability. When tag immutability is enabled, it prevents image tags from being overwritten, ensuring that once an image is tagged, the tag always refers to the same image digest.
+
+        **Why this matters**
+
+        Without tag immutability, an attacker or misconfigured pipeline could overwrite a trusted image tag with a malicious or vulnerable image:
+
+        - Deployments referencing a specific tag (e.g., `v1.2.3`) could silently pull a different image.
+        - Supply chain attacks become possible by replacing known-good images with compromised ones.
+        - Audit trails become unreliable when tags can point to different images over time.
+
+        **Risk mitigation:**
+
+        - **Supply chain security:** Prevents tag overwrites that could introduce malicious code.
+        - **Deployment integrity:** Ensures tags always reference the same image content.
+        - **Auditability:** Maintains a reliable history of what was deployed.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon ECR Console.
+            2. Select the repository you want to configure.
+            3. Select Edit.
+            4. Under Tag immutability, select Enabled.
+            5. Select Save.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check tag immutability settings:
+
+            ```bash
+            aws ecr describe-repositories --query "repositories[*].{Name:repositoryName, TagImmutability:imageTagMutability}"
+            ```
+
+            Enable tag immutability:
+
+            ```bash
+            aws ecr put-image-tag-mutability \
+              --repository-name <repository-name> \
+              --image-tag-mutability IMMUTABLE
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_ecr_repository" "example" {
+              name                 = "example-repo"
+              image_tag_mutability = "IMMUTABLE"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              ECRRepository:
+                Type: "AWS::ECR::Repository"
+                Properties:
+                  RepositoryName: "example-repo"
+                  ImageTagMutability: "IMMUTABLE"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html
+        title: AWS Documentation - Image tag mutability
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/ecr-controls.html
+        title: AWS Documentation - ECR controls
+  - uid: mondoo-aws-security-ecr-tag-immutability-api
+    filters: asset.platform == "aws"
+    mql: aws.ecr.privateRepositories.all(imageTagMutability == "IMMUTABLE")
+  - uid: mondoo-aws-security-ecr-tag-immutability-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_ecr_repository").all(
+        arguments.image_tag_mutability == "IMMUTABLE"
+      )
+  - uid: mondoo-aws-security-ecr-tag-immutability-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ecr_repository")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_ecr_repository").all(
+        change.after.image_tag_mutability == "IMMUTABLE"
+      )
+  - uid: mondoo-aws-security-ecr-tag-immutability-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ecr_repository")
+    mql: |
+      terraform.state.resources.where(type == "aws_ecr_repository").all(
+        values.image_tag_mutability == "IMMUTABLE"
+      )
+  - uid: mondoo-aws-security-ecs-no-privileged-containers
+    title: Ensure ECS task definitions do not allow privileged containers
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-ecs-no-privileged-containers-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon ECS task definitions do not configure containers to run in privileged mode. A privileged container has elevated access to the host system, effectively gaining root-level capabilities on the underlying EC2 instance or Fargate host.
+
+        **Why this matters**
+
+        Running privileged containers poses severe security risks:
+
+        - A privileged container can access the host's devices, file systems, and kernel, enabling container escape attacks.
+        - An attacker who compromises a privileged container can escalate to full control of the host and potentially other containers running on it.
+        - Privileged containers bypass most Linux security mechanisms including AppArmor, SELinux, and seccomp profiles.
+
+        **Risk mitigation:**
+
+        - **Container isolation:** Maintains the security boundary between the container and the host system.
+        - **Blast radius reduction:** Limits the impact of a container compromise to the container itself.
+        - **Compliance:** Meets CIS Docker Benchmark and container security best practices.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon ECS Console.
+            2. Select Task definitions in the left panel.
+            3. Select the task definition to review.
+            4. For each container definition, check the Privileged setting under Linux parameters.
+            5. Ensure Privileged is unchecked (disabled) for all containers.
+            6. If a container is running as privileged, create a new revision with the setting disabled.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check for privileged containers in task definitions:
+
+            ```bash
+            aws ecs list-task-definitions --status ACTIVE --query "taskDefinitionArns" | \
+              xargs -I {} aws ecs describe-task-definition --task-definition {} \
+              --query "taskDefinition.containerDefinitions[*].{Name:name, Privileged:privileged}"
+            ```
+
+            Register a new task definition revision without privileged mode:
+
+            ```bash
+            aws ecs register-task-definition --cli-input-json file://task-definition.json
+            ```
+
+            Ensure the container definition in your JSON file has `"privileged": false` or omits the field entirely.
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure container definitions do not set privileged to true:
+
+            ```hcl
+            resource "aws_ecs_task_definition" "example" {
+              family = "example"
+
+              container_definitions = jsonencode([
+                {
+                  name      = "app"
+                  image     = "example:latest"
+                  essential = true
+                  privileged = false  # Must be false or omitted
+                }
+              ])
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              TaskDefinition:
+                Type: "AWS::ECS::TaskDefinition"
+                Properties:
+                  Family: "example"
+                  ContainerDefinitions:
+                    - Name: "app"
+                      Image: "example:latest"
+                      Essential: true
+                      Privileged: false
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/security-runtime.html
+        title: AWS Documentation - Runtime security for Amazon ECS
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/ecs-controls.html
+        title: AWS Documentation - ECS controls
+  - uid: mondoo-aws-security-ecs-no-privileged-containers-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.taskDefinitions.all(
+        containerDefinitions.all(privileged != true)
+      )
+  - uid: mondoo-aws-security-ecs-readonly-root-filesystem
+    title: Ensure ECS task definitions configure read-only root filesystems for containers
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-ecs-readonly-root-filesystem-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon ECS task definitions configure containers with read-only root filesystems. A read-only root filesystem prevents processes inside the container from writing to the container's file system, forcing the use of explicit volume mounts for any writable data.
+
+        **Why this matters**
+
+        Without a read-only root filesystem:
+
+        - An attacker who gains code execution inside a container can write malicious binaries, scripts, or configuration changes to the file system.
+        - Malware can persist within the container by modifying system files.
+        - Web shells and backdoors can be written to the container's file system for ongoing access.
+
+        Enabling read-only root filesystems is a defense-in-depth measure that significantly reduces the impact of container compromises.
+
+        **Risk mitigation:**
+
+        - **Tamper prevention:** Prevents unauthorized modification of container binaries and configuration.
+        - **Malware persistence:** Makes it harder for attackers to establish persistence within a container.
+        - **Compliance:** Aligns with CIS Docker Benchmark recommendations and container hardening best practices.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon ECS Console.
+            2. Select Task definitions in the left panel.
+            3. Select the task definition to review.
+            4. For each container definition, check the Storage and logging section.
+            5. Enable Read only root file system.
+            6. Add volume mounts for any directories that require write access (e.g., `/tmp`, `/var/log`).
+            7. Create a new revision with the updated settings.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check read-only root filesystem settings:
+
+            ```bash
+            aws ecs list-task-definitions --status ACTIVE --query "taskDefinitionArns" | \
+              xargs -I {} aws ecs describe-task-definition --task-definition {} \
+              --query "taskDefinition.containerDefinitions[*].{Name:name, ReadonlyRootFilesystem:readonlyRootFilesystem}"
+            ```
+
+            Register a new task definition revision with read-only root filesystem:
+
+            ```bash
+            aws ecs register-task-definition --cli-input-json file://task-definition.json
+            ```
+
+            Ensure the container definition has `"readonlyRootFilesystem": true`.
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_ecs_task_definition" "example" {
+              family = "example"
+
+              container_definitions = jsonencode([
+                {
+                  name                   = "app"
+                  image                  = "example:latest"
+                  essential              = true
+                  readonlyRootFilesystem = true
+                  mountPoints = [
+                    {
+                      sourceVolume  = "tmp"
+                      containerPath = "/tmp"
+                    }
+                  ]
+                }
+              ])
+
+              volume {
+                name = "tmp"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              TaskDefinition:
+                Type: "AWS::ECS::TaskDefinition"
+                Properties:
+                  Family: "example"
+                  ContainerDefinitions:
+                    - Name: "app"
+                      Image: "example:latest"
+                      Essential: true
+                      ReadonlyRootFilesystem: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/security-runtime.html
+        title: AWS Documentation - Runtime security for Amazon ECS
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/ecs-controls.html
+        title: AWS Documentation - ECS controls
+  - uid: mondoo-aws-security-ecs-readonly-root-filesystem-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.taskDefinitions.all(
+        containerDefinitions.all(readonlyRootFilesystem == true)
+      )
+  - uid: mondoo-aws-security-ecs-logging-enabled
+    title: Ensure ECS task definitions have logging configured for all containers
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-ecs-logging-enabled-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that all container definitions within Amazon ECS task definitions have a log configuration specified. Without logging, container activity goes unrecorded, making it impossible to detect security incidents, troubleshoot failures, or meet audit requirements.
+
+        **Why this matters**
+
+        Containers without logging configured create blind spots in your security monitoring:
+
+        - Security incidents within containers cannot be detected or investigated.
+        - No audit trail exists for container activity, hindering forensic analysis.
+        - Application errors and failures go unrecorded, making troubleshooting difficult.
+        - Compliance frameworks such as PCI DSS, HIPAA, and SOC 2 require logging of application activity.
+
+        **Risk mitigation:**
+
+        - **Incident detection:** Enables real-time monitoring and alerting for security events in containers.
+        - **Forensics:** Provides detailed logs for investigating security incidents.
+        - **Compliance:** Meets regulatory requirements for logging and audit trails.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon ECS Console.
+            2. Select Task definitions in the left panel.
+            3. Select the task definition to review.
+            4. For each container definition, check the Storage and logging section.
+            5. Configure a log driver (e.g., `awslogs` for CloudWatch Logs).
+            6. Specify the log group, region, and stream prefix.
+            7. Create a new revision with the updated settings.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check logging configuration for task definitions:
+
+            ```bash
+            aws ecs list-task-definitions --status ACTIVE --query "taskDefinitionArns" | \
+              xargs -I {} aws ecs describe-task-definition --task-definition {} \
+              --query "taskDefinition.containerDefinitions[*].{Name:name, LogConfig:logConfiguration}"
+            ```
+
+            Register a new task definition with logging configured:
+
+            ```bash
+            aws ecs register-task-definition --cli-input-json file://task-definition.json
+            ```
+
+            Ensure the container definition includes a `logConfiguration` block:
+
+            ```json
+            {
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/example",
+                  "awslogs-region": "us-east-1",
+                  "awslogs-stream-prefix": "ecs"
+                }
+              }
+            }
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_ecs_task_definition" "example" {
+              family = "example"
+
+              container_definitions = jsonencode([
+                {
+                  name      = "app"
+                  image     = "example:latest"
+                  essential = true
+                  logConfiguration = {
+                    logDriver = "awslogs"
+                    options = {
+                      "awslogs-group"         = "/ecs/example"
+                      "awslogs-region"        = "us-east-1"
+                      "awslogs-stream-prefix" = "ecs"
+                    }
+                  }
+                }
+              ])
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              TaskDefinition:
+                Type: "AWS::ECS::TaskDefinition"
+                Properties:
+                  Family: "example"
+                  ContainerDefinitions:
+                    - Name: "app"
+                      Image: "example:latest"
+                      Essential: true
+                      LogConfiguration:
+                        LogDriver: "awslogs"
+                        Options:
+                          awslogs-group: "/ecs/example"
+                          awslogs-region: "us-east-1"
+                          awslogs-stream-prefix: "ecs"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/using_awslogs.html
+        title: AWS Documentation - Using the awslogs log driver
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/ecs-controls.html
+        title: AWS Documentation - ECS controls
+  - uid: mondoo-aws-security-ecs-logging-enabled-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.taskDefinitions.all(
+        containerDefinitions.all(logConfiguration != empty)
+      )
+  - uid: mondoo-aws-security-efs-backup-enabled
+    title: Ensure EFS file systems have automatic backups enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-efs-backup-enabled-single
+        tags:
+          mondoo.com/filter-title: "AWS EFS File System"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon Elastic File System (EFS) file systems have automatic backups enabled through AWS Backup. Without backups, data stored in EFS is at risk of permanent loss due to accidental deletion, corruption, or ransomware attacks.
+
+        **Why this matters**
+
+        EFS file systems often store critical application data, configuration files, and shared resources. Without automatic backups:
+
+        - Data loss from accidental deletion or corruption cannot be recovered.
+        - Ransomware attacks could encrypt data with no recovery option.
+        - Compliance frameworks such as HIPAA, PCI DSS, and SOC 2 require data backup and recovery capabilities.
+
+        **Risk mitigation:**
+
+        - **Data recovery:** Enables restoration of data from backups in the event of data loss.
+        - **Ransomware protection:** Provides a clean recovery point if data is encrypted by ransomware.
+        - **Compliance:** Meets regulatory requirements for data protection and business continuity.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EFS Console.
+            2. Select the file system you want to configure.
+            3. Under the General section, check the Automatic backups setting.
+            4. If disabled, select Edit, enable Automatic backups, and select Save.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if automatic backups are enabled:
+
+            ```bash
+            aws efs describe-backup-policy --file-system-id <file-system-id>
+            ```
+
+            Enable automatic backups:
+
+            ```bash
+            aws efs put-backup-policy --file-system-id <file-system-id> \
+              --backup-policy Status=ENABLED
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_efs_file_system" "example" {
+              encrypted = true
+            }
+
+            resource "aws_efs_backup_policy" "example" {
+              file_system_id = aws_efs_file_system.example.id
+
+              backup_policy {
+                status = "ENABLED"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              EFSFileSystem:
+                Type: "AWS::EFS::FileSystem"
+                Properties:
+                  Encrypted: true
+                  BackupPolicy:
+                    Status: "ENABLED"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/efs/latest/ug/awsbackup.html
+        title: AWS Documentation - Using AWS Backup to back up and restore Amazon EFS file systems
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/efs-controls.html
+        title: AWS Documentation - EFS controls
+  - uid: mondoo-aws-security-efs-backup-enabled-single
+    filters: asset.platform == "aws-efs-filesystem"
+    mql: aws.efs.filesystem.backupPolicy["Status"] == "ENABLED"
+  - uid: mondoo-aws-security-elb-drop-invalid-headers
+    title: Ensure Application Load Balancers are configured to drop invalid HTTP headers
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-elb-drop-invalid-headers-single
+        tags:
+          mondoo.com/filter-title: "AWS Application Load Balancer"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-hcl
+      - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-plan
+      - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-state
+    docs:
+      desc: |
+        This check ensures that AWS Application Load Balancers (ALBs) are configured to drop HTTP headers that are not valid. Invalid HTTP headers can be used in HTTP request smuggling attacks, which exploit discrepancies between how front-end and back-end servers parse HTTP requests to bypass security controls.
+
+        **Why this matters**
+
+        Without dropping invalid headers:
+
+        - ALBs may forward malformed HTTP headers to backend applications, enabling request smuggling attacks.
+        - Attackers can bypass WAF rules, authentication, and authorization controls.
+        - Cache poisoning attacks become possible when invalid headers are passed through to caching layers.
+
+        **Risk mitigation:**
+
+        - **Request smuggling prevention:** Eliminates a common attack vector by dropping invalid headers before they reach backend services.
+        - **Defense in depth:** Adds an additional security layer at the load balancer level.
+        - **Compliance:** Aligns with AWS Security Hub recommendations for ALB security.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the AWS EC2 Console.
+            2. Select Load Balancers under the Load Balancing section.
+            3. Select the Application Load Balancer.
+            4. Select the Attributes tab.
+            5. Select Edit.
+            6. Enable Drop invalid header fields.
+            7. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if dropping invalid headers is enabled:
+
+            ```bash
+            aws elbv2 describe-load-balancer-attributes \
+              --load-balancer-arn <load-balancer-arn> \
+              --query "Attributes[?Key=='routing.http.drop_invalid_header_fields.enabled']"
+            ```
+
+            Enable dropping invalid headers:
+
+            ```bash
+            aws elbv2 modify-load-balancer-attributes \
+              --load-balancer-arn <load-balancer-arn> \
+              --attributes Key=routing.http.drop_invalid_header_fields.enabled,Value=true
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_lb" "example" {
+              name               = "example-alb"
+              internal           = false
+              load_balancer_type = "application"
+              security_groups    = [aws_security_group.alb_sg.id]
+              subnets            = [aws_subnet.public1.id, aws_subnet.public2.id]
+
+              drop_invalid_header_fields = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              ApplicationLoadBalancer:
+                Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+                Properties:
+                  Name: "example-alb"
+                  Type: "application"
+                  Scheme: "internet-facing"
+                  Subnets:
+                    - !Ref PublicSubnet1
+                    - !Ref PublicSubnet2
+                  SecurityGroups:
+                    - !Ref ALBSecurityGroup
+                  LoadBalancerAttributes:
+                    - Key: "routing.http.drop_invalid_header_fields.enabled"
+                      Value: "true"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html
+        title: AWS Documentation - Application Load Balancers
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/elb-controls.html
+        title: AWS Documentation - ELB controls
+  - uid: mondoo-aws-security-elb-drop-invalid-headers-single
+    filters: asset.platform == "aws-elb-loadbalancer"
+    mql: |
+      aws.elb.loadbalancer.attributes.where(Key == "routing.http.drop_invalid_header_fields.enabled").all(Value == true)
+  - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_lb").all(
+        arguments.drop_invalid_header_fields == true
+      )
+  - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lb")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_lb").all(
+        change.after.drop_invalid_header_fields == true
+      )
+  - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lb")
+    mql: |
+      terraform.state.resources.where(type == "aws_lb").all(
+        values.drop_invalid_header_fields == true
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet
+    title: Ensure SageMaker notebook instances do not have direct internet access
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-single
+        tags:
+          mondoo.com/filter-title: "AWS SageMaker Notebook Instance"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-terraform-hcl
+      - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-terraform-plan
+      - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker notebook instances do not have direct internet access enabled. When direct internet access is enabled, the notebook instance can communicate directly with the internet, bypassing VPC network controls and potentially exposing sensitive data and models.
+
+        **Why this matters**
+
+        SageMaker notebook instances often contain sensitive machine learning data, proprietary models, and access to training datasets. Direct internet access:
+
+        - Allows data exfiltration from the notebook instance to external destinations.
+        - Exposes the instance to inbound attacks from the internet.
+        - Bypasses VPC security controls, network ACLs, and security groups.
+        - Violates the principle of least privilege for network access.
+
+        **Risk mitigation:**
+
+        - **Data exfiltration prevention:** Restricts outbound network access to VPC-controlled paths.
+        - **Attack surface reduction:** Eliminates direct internet exposure of the notebook instance.
+        - **Network control:** Ensures all traffic flows through VPC endpoints and NAT gateways where it can be monitored and controlled.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            Note: Direct internet access cannot be changed on an existing notebook instance. You must create a new instance.
+
+            1. Navigate to the Amazon SageMaker Console.
+            2. Select Notebook instances in the left panel.
+            3. Select Create notebook instance.
+            4. Under Network, select a VPC, subnet, and security group.
+            5. Under Direct internet access, select Disable.
+            6. Complete the remaining configuration and select Create notebook instance.
+            7. Migrate your work from the old instance and delete it.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if direct internet access is enabled:
+
+            ```bash
+            aws sagemaker describe-notebook-instance \
+              --notebook-instance-name <instance-name> \
+              --query "DirectInternetAccess"
+            ```
+
+            The output should be `"Disabled"`. If it is `"Enabled"`, create a new instance without direct internet access:
+
+            ```bash
+            aws sagemaker create-notebook-instance \
+              --notebook-instance-name "secure-notebook" \
+              --instance-type "ml.t3.medium" \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --subnet-id <subnet-id> \
+              --security-group-ids <sg-id> \
+              --direct-internet-access "Disabled"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_sagemaker_notebook_instance" "example" {
+              name                    = "secure-notebook"
+              instance_type           = "ml.t3.medium"
+              role_arn                = aws_iam_role.sagemaker_role.arn
+              subnet_id               = aws_subnet.private.id
+              security_groups         = [aws_security_group.sagemaker_sg.id]
+              direct_internet_access  = "Disabled"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              SageMakerNotebook:
+                Type: "AWS::SageMaker::NotebookInstance"
+                Properties:
+                  NotebookInstanceName: "secure-notebook"
+                  InstanceType: "ml.t3.medium"
+                  RoleArn: !GetAtt SageMakerRole.Arn
+                  SubnetId: !Ref PrivateSubnet
+                  SecurityGroupIds:
+                    - !Ref SageMakerSecurityGroup
+                  DirectInternetAccess: "Disabled"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/appendix-notebook-and-internet-access.html
+        title: AWS Documentation - Notebook Instance Internet Access
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/sagemaker-controls.html
+        title: AWS Documentation - SageMaker controls
+  - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-single
+    filters: asset.platform == "aws-sagemaker-notebookinstance"
+    mql: aws.sagemaker.notebookinstance.details.directInternetAccess == "Disabled"
+  - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_sagemaker_notebook_instance").all(
+        arguments.direct_internet_access == "Disabled"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_sagemaker_notebook_instance").all(
+        change.after.direct_internet_access == "Disabled"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_sagemaker_notebook_instance").all(
+        values.direct_internet_access == "Disabled"
+      )
+  - uid: mondoo-aws-security-eks-cluster-restrict-public-access
+    title: Ensure Amazon EKS public endpoint is not accessible to 0.0.0.0/0
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-eks-cluster-restrict-public-access-api
+        tags:
+          mondoo.com/filter-title: "AWS EKS Cluster"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-hcl
+      - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-plan
+      - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon EKS clusters with public endpoint access enabled restrict the CIDR blocks that can reach the API server. By default, when public endpoint access is enabled, the API server is accessible from any IP address (0.0.0.0/0), exposing it to the entire internet.
+
+        **Why this matters**
+
+        An EKS API server endpoint accessible from 0.0.0.0/0:
+
+        - Allows anyone on the internet to attempt authentication against the Kubernetes API server.
+        - Increases exposure to brute-force attacks, credential stuffing, and exploitation of API server vulnerabilities.
+        - Violates the principle of least privilege for network access.
+        - While RBAC provides authentication, network-level restrictions add critical defense in depth.
+
+        **Risk mitigation:**
+
+        - **Attack surface reduction:** Limits who can even attempt to reach the API server.
+        - **Defense in depth:** Adds network-level access control on top of Kubernetes RBAC.
+        - **Compliance:** Meets security best practices for restricting management plane access.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EKS Console.
+            2. Select the EKS cluster you want to configure.
+            3. In the Networking tab, select Manage networking.
+            4. Under Advanced Settings, configure the Public access CIDR restrictions.
+            5. Remove 0.0.0.0/0 and add only the specific CIDR blocks that need access (e.g., your corporate network).
+            6. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check the current public access CIDR configuration:
+
+            ```bash
+            aws eks describe-cluster --name <cluster_name> \
+              --query "cluster.resourcesVpcConfig.publicAccessCidrs"
+            ```
+
+            Restrict public access to specific CIDR blocks:
+
+            ```bash
+            aws eks update-cluster-config --name <cluster_name> \
+              --resources-vpc-config publicAccessCidrs="10.0.0.0/8","172.16.0.0/12"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_eks_cluster" "example" {
+              name     = "example-cluster"
+              role_arn = aws_iam_role.eks_role.arn
+
+              vpc_config {
+                subnet_ids              = [aws_subnet.eks_subnet.id]
+                endpoint_public_access  = true
+                public_access_cidrs     = ["10.0.0.0/8"]  # Restrict to specific CIDRs
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              MyEKSCluster:
+                Type: AWS::EKS::Cluster
+                Properties:
+                  Name: example-cluster
+                  RoleArn: !GetAtt eksRole.Arn
+                  ResourcesVpcConfig:
+                    SubnetIds:
+                      - !Ref eksSubnet
+                    EndpointPublicAccess: true
+                    PublicAccessCidrs:
+                      - "10.0.0.0/8"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+        title: AWS Documentation - Amazon EKS cluster endpoint access control
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/eks-controls.html
+        title: AWS Documentation - EKS controls
+  - uid: mondoo-aws-security-eks-cluster-restrict-public-access-api
+    filters: asset.platform == "aws-eks-cluster"
+    mql: aws.eks.cluster.publicAccessCidrs.none(_ == "0.0.0.0/0")
+  - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_eks_cluster").all(
+        blocks.where(type == "vpc_config") != empty &&
+        blocks.where(type == "vpc_config").all(
+          arguments.public_access_cidrs != empty &&
+          arguments.public_access_cidrs.none(_ == "0.0.0.0/0")
+        )
+      )
+  - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_eks_cluster").all(
+        change.after.vpc_config != empty &&
+        change.after.vpc_config.all(
+          _['public_access_cidrs'] != empty &&
+          _['public_access_cidrs'].none(_ == "0.0.0.0/0")
+        )
+      )
+  - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_eks_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_eks_cluster").all(
+        values.vpc_config != empty &&
+        values.vpc_config.all(
+          _['public_access_cidrs'] != empty &&
+          _['public_access_cidrs'].none(_ == "0.0.0.0/0")
+        )
+      )
+  - uid: mondoo-aws-security-eks-cluster-deletion-protection
+    title: Ensure Amazon EKS clusters have deletion protection enabled
+    impact: 50
+    variants:
+      - uid: mondoo-aws-security-eks-cluster-deletion-protection-api
+        tags:
+          mondoo.com/filter-title: "AWS EKS Cluster"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-eks-cluster-deletion-protection-terraform-hcl
+      - uid: mondoo-aws-security-eks-cluster-deletion-protection-terraform-plan
+      - uid: mondoo-aws-security-eks-cluster-deletion-protection-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon EKS clusters have deletion protection enabled. Deletion protection prevents accidental or unauthorized deletion of EKS clusters, which would result in the loss of all running workloads, configurations, and associated resources.
+
+        **Why this matters**
+
+        Without deletion protection:
+
+        - An EKS cluster can be deleted with a single API call or console action, destroying all running workloads.
+        - Accidental deletion during infrastructure changes or automation errors can cause significant downtime.
+        - Malicious actors with sufficient IAM permissions could delete clusters as part of an attack.
+        - Recovery requires rebuilding the cluster and redeploying all workloads, which can take hours or days.
+
+        **Risk mitigation:**
+
+        - **Accidental deletion prevention:** Requires explicit disabling of the protection before a cluster can be deleted.
+        - **Operational safety:** Provides a safeguard against automation errors and human mistakes.
+        - **Change control:** Adds an additional step that encourages proper change management processes.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EKS Console.
+            2. Select the EKS cluster you want to configure.
+            3. Select Manage deletion protection.
+            4. Enable deletion protection.
+            5. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if deletion protection is enabled:
+
+            ```bash
+            aws eks describe-cluster --name <cluster_name> \
+              --query "cluster.deletionProtection"
+            ```
+
+            The value should be `true`. To enable deletion protection:
+
+            ```bash
+            aws eks update-cluster-config --name <cluster_name> \
+              --deletion-protection
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_eks_cluster" "example" {
+              name     = "example-cluster"
+              role_arn = aws_iam_role.eks_role.arn
+
+              vpc_config {
+                subnet_ids = [aws_subnet.eks_subnet.id]
+              }
+
+              bootstrap_self_managed_addons = false
+
+              access_config {
+                authentication_mode = "API"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              MyEKSCluster:
+                Type: AWS::EKS::Cluster
+                Properties:
+                  Name: example-cluster
+                  RoleArn: !GetAtt eksRole.Arn
+                  ResourcesVpcConfig:
+                    SubnetIds:
+                      - !Ref eksSubnet
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html
+        title: AWS Documentation - Deleting an Amazon EKS cluster
+      - url: https://docs.aws.amazon.com/eks/latest/best-practices/security.html
+        title: Amazon EKS Security Best Practices
+  - uid: mondoo-aws-security-eks-cluster-deletion-protection-api
+    filters: asset.platform == "aws-eks-cluster"
+    mql: aws.eks.cluster.deletionProtection == true
+  - uid: mondoo-aws-security-eks-cluster-deletion-protection-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_eks_cluster").all(
+        arguments.deletion_protection == true
+      )
+  - uid: mondoo-aws-security-eks-cluster-deletion-protection-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_eks_cluster").all(
+        change.after.deletion_protection == true
+      )
+  - uid: mondoo-aws-security-eks-cluster-deletion-protection-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_eks_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_eks_cluster").all(
+        values.deletion_protection == true
       )
