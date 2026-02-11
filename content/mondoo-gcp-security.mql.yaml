@@ -102,6 +102,9 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose
           - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls
           - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed
+      - title: Cloud Redis
+        checks:
+          - uid: mondoo-gcp-security-cloud-redis-auth-enabled
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -6217,4 +6220,94 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_compute_subnetwork').all(
         values['private_ip_google_access'] == true
+      )
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled
+    title: Ensure authentication is enabled for Cloud Redis instances
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-gcp
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-hcl
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-plan
+      - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Redis AUTH is enabled on Cloud Memorystore for Redis instances. Redis AUTH requires clients to authenticate with a password before executing commands, providing an additional layer of security beyond network-level access controls.
+
+        **Why this matters**
+
+        Without AUTH enabled, any client that can reach the Redis instance over the network can execute any Redis command without authentication:
+          •  Unauthorized clients can read, modify, or delete cached data.
+          •  Attackers with network access can use Redis commands for data exfiltration or to disrupt service availability.
+          •  Redis instances without authentication are a common target in cloud environments.
+
+        Enabling AUTH provides:
+          •  Client-level authentication as an additional security control beyond VPC and firewall rules.
+          •  Protection against unauthorized data access from compromised workloads within the same network.
+          •  Better alignment with defense-in-depth security principles.
+
+        Risk mitigation:
+          •  Enable AUTH on all Cloud Redis instances.
+          •  Store the AUTH string securely using Secret Manager.
+          •  Rotate AUTH strings regularly.
+          •  Combine AUTH with VPC network isolation for defense-in-depth.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_redis_instance" "cache" {
+              name           = "my-redis-instance"
+              tier           = "STANDARD_HA"
+              memory_size_gb = 1
+              region         = "us-central1"
+
+              auth_enabled = true
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Memorystore > Redis** page in the Google Cloud Console.
+            2. Select the instance you want to update.
+            3. Select **Edit**.
+            4. Enable **AUTH**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud redis instances update INSTANCE_NAME \
+              --enable-auth \
+              --region=REGION
+            ```
+    refs:
+      - title: Cloud Memorystore Redis AUTH documentation
+        url: https://cloud.google.com/memorystore/docs/redis/auth-overview
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.redisService.instances.all(authEnabled == true)
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_redis_instance')
+    mql: |
+      terraform.resources('google_redis_instance').all(
+        arguments.auth_enabled == true
+      )
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_redis_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_redis_instance').all(
+        change.after.auth_enabled == true
+      )
+  - uid: mondoo-gcp-security-cloud-redis-auth-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_redis_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_redis_instance').all(
+        values.auth_enabled == true
       )
