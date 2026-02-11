@@ -15,10 +15,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnspec/v12/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 type s3Fake struct {
@@ -274,18 +273,18 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 	require.Equal(t, 1, len(bundle.Packs))
 	require.Equal(t, 1, len(bundle.Policies))
 	require.Equal(t, 2, len(bundle.Policies[0].Groups))
-	expectedAuthors := []*explorer.Author{
+	expectedAuthors := []*policy.Author{
 		{
 			Name:  "author1",
 			Email: "author@author.com",
 		},
 	}
 	require.Equal(t, expectedAuthors, bundle.Policies[0].Authors)
-	require.Equal(t, explorer.ScoringSystem_DATA_ONLY, bundle.Policies[0].ScoringSystem)
+	require.Equal(t, policy.ScoringSystem_DATA_ONLY, bundle.Policies[0].ScoringSystem)
 
 	// built in group
-	expectedBuiltInFilters := &explorer.Filters{
-		Items: map[string]*explorer.Mquery{
+	expectedBuiltInFilters := &policy.Filters{
+		Items: map[string]*policy.Mquery{
 			"": {
 				Mql: "2 == 2",
 			},
@@ -298,8 +297,8 @@ func TestBundleCompile_ConvertQueryPacks(t *testing.T) {
 	require.Equal(t, "1 == 1", bundle.Policies[0].Groups[0].Queries[0].Mql)
 	require.Equal(t, expectedBuiltInFilters, bundle.Policies[0].Groups[0].Filters)
 
-	expectedGrpFilters := &explorer.Filters{
-		Items: map[string]*explorer.Mquery{
+	expectedGrpFilters := &policy.Filters{
+		Items: map[string]*policy.Mquery{
 			"": {
 				Mql: "true",
 			},
@@ -358,7 +357,7 @@ func TestBundleCompile_FromQueryPackBundle(t *testing.T) {
     title: check-2
 `
 
-	qBundle, err := explorer.BundleFromYAML([]byte(qBundleStr))
+	qBundle, err := policy.BundleFromYAML([]byte(qBundleStr))
 	require.NoError(t, err)
 	require.Equal(t, 1, len(qBundle.Packs))
 	require.Equal(t, 1, len(qBundle.Queries))
@@ -383,7 +382,7 @@ func TestStableMqueryChecksum(t *testing.T) {
 
 	for _, m := range bundlemap.Queries {
 		initialChecksum := m.Checksum
-		err := m.RefreshChecksum(context.Background(), conf, explorer.QueryMap(bundlemap.Queries).GetQuery)
+		err := m.RefreshChecksum(context.Background(), conf, policy.QueryMap(bundlemap.Queries).GetQuery)
 		require.NoError(t, err)
 		assert.Equal(t, initialChecksum, m.Checksum, "checksum for %s changed", m.Mrn)
 	}
@@ -523,19 +522,19 @@ framework_maps:
 		{
 			name: "when a control action is changed",
 			modify: func(bundle *policy.Bundle) {
-				bundle.Frameworks[1].Groups[0].Controls[0].Action = explorer.Action_DEACTIVATE
+				bundle.Frameworks[1].Groups[0].Controls[0].Action = policy.Action_DEACTIVATE
 			},
 		},
 		{
 			name: "when a framework dependency action changes",
 			modify: func(bundle *policy.Bundle) {
-				bundle.Frameworks[1].Dependencies[0].Action = explorer.Action_IGNORE
+				bundle.Frameworks[1].Dependencies[0].Action = policy.Action_IGNORE
 			},
 		},
 		{
 			name: "when a frameworkmap control action changes",
 			modify: func(bundle *policy.Bundle) {
-				bundle.FrameworkMaps[0].Controls[0].Checks[0].Action = explorer.Action_DEACTIVATE
+				bundle.FrameworkMaps[0].Controls[0].Checks[0].Action = policy.Action_DEACTIVATE
 			},
 		},
 		{

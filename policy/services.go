@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"time"
 
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/explorer/transport"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
 	"go.mondoo.com/ranger-rpc"
+	"golang.org/x/sync/semaphore"
 )
 
 type ResolvedPolicyVersion string
@@ -67,7 +67,7 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 	}
 
 	// restrict parallel upstream connections to two connections
-	httpClient.Transport = transport.NewMaxParallelConnTransport(httpClient.Transport, 2)
+	httpClient.Transport = newMaxParallelConnTransport(httpClient.Transport, 2)
 
 	policyHub, err := NewPolicyHubClient(addr, httpClient, auth...)
 	if err != nil {
@@ -91,7 +91,29 @@ func (l *LocalServices) Schema() resources.ResourcesSchema {
 }
 
 func (l *LocalServices) NewCompilerConfig() mqlc.CompilerConfig {
-	return mqlc.NewConfig(l.Schema(), cnquery.DefaultFeatures)
+	return mqlc.NewConfig(l.Schema(), mql.DefaultFeatures)
+}
+
+// maxParallelConnHTTPTransport restricts the parallel connections upstream.
+type maxParallelConnHTTPTransport struct {
+	transport     http.RoundTripper
+	parallelConns *semaphore.Weighted
+}
+
+func (t *maxParallelConnHTTPTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	err := t.parallelConns.Acquire(r.Context(), 1)
+	if err != nil {
+		return nil, err
+	}
+	defer t.parallelConns.Release(1)
+	return t.transport.RoundTrip(r)
+}
+
+func newMaxParallelConnTransport(transport http.RoundTripper, parallel int64) *maxParallelConnHTTPTransport {
+	return &maxParallelConnHTTPTransport{
+		transport:     transport,
+		parallelConns: semaphore.NewWeighted(parallel),
+	}
 }
 
 type NoStoreResults struct {

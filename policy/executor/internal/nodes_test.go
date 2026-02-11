@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/types"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 func TestDatapointNode(t *testing.T) {

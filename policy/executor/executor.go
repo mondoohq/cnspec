@@ -11,14 +11,14 @@ import (
 
 	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/resources"
-	"go.mondoo.com/cnquery/v12/types"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/policy/executor/internal"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/policy/executor/internal"
 )
 
 // Executor helps you run multiple pieces of mondoo code and process results
@@ -201,7 +201,7 @@ func (e *Executor) AreAllResultsCollected() bool {
 
 // Compile a given code with the default schema
 func (e *Executor) Compile(code string, props mqlc.PropsHandler) (*llx.CodeBundle, error) {
-	return mqlc.Compile(code, props, mqlc.NewConfig(e.runtime.Schema(), cnquery.DefaultFeatures))
+	return mqlc.Compile(code, props, mqlc.NewConfig(e.runtime.Schema(), mql.DefaultFeatures))
 }
 
 func (e *Executor) AddCode(code string, props mqlc.PropsHandler) (*llx.CodeBundle, error) {

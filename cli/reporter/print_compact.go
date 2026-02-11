@@ -17,13 +17,12 @@ import (
 	"github.com/mergestat/timediff"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/cnquery/v12/utils/stringx"
-	cnspecComponents "go.mondoo.com/cnspec/v12/cli/components"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/v13/utils/stringx"
+	cnspecComponents "go.mondoo.com/cnspec/v13/cli/components"
 )
 
 type assetMrnName struct {
@@ -208,7 +207,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		return
 	}
 
-	var queries map[string]*explorer.Mquery
+	var queries map[string]*policy.Mquery
 	var controls map[string]*policy.Control
 	previewChecks := map[string]*policy.PolicyGroup{}
 	if r.bundle != nil {
@@ -217,7 +216,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		for _, p := range r.bundle.Policies {
 			for _, g := range p.Groups {
 				for _, c := range g.Checks {
-					if c.Action == explorer.Action_IGNORE || g.Type == policy.GroupType_IGNORED {
+					if c.Action == policy.Action_IGNORE || g.Type == policy.GroupType_IGNORED {
 						previewChecks[c.Mrn] = g
 					}
 				}
@@ -379,7 +378,7 @@ type previewGroup struct {
 	sortedFailures []string
 }
 
-func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*explorer.Mquery, checkToPreview map[string]*policy.PolicyGroup, assetMrn string, asset *inventory.Asset) {
+func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*policy.Mquery, checkToPreview map[string]*policy.PolicyGroup, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
 	if r.Conf.printData {
@@ -638,7 +637,7 @@ func checkStatus(symbol string, status string) string {
 }
 
 // only works with type == policy.ScoreType_Result
-func (r *defaultReporter) printScore(title string, score simpleScore, query *explorer.Mquery) string {
+func (r *defaultReporter) printScore(title string, score simpleScore, query *policy.Mquery) string {
 	color := cnspecComponents.DefaultRatingColors.Color(score.Rating)
 
 	var passfail string
@@ -659,7 +658,7 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *exp
 	return passfail + title + NewLineCharacter
 }
 
-func (r *defaultReporter) printCheck(score simpleScore, query *explorer.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
 	title := query.Title
 	if title == "" {
 		title = query.Mrn

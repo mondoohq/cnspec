@@ -11,15 +11,14 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/explorer/resources"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/types"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/types"
 )
 
 // return true if the framework was changed
-func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[string]explorer.Action, createIfMissing bool) (wrapFramework, bool, error) {
+func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[string]policy.Action, createIfMissing bool) (wrapFramework, bool, error) {
 	frameworkw, err := db.ensureFramework(ctx, mrn, createIfMissing)
 	if err != nil {
 		return frameworkw, false, err
@@ -35,7 +34,7 @@ func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[strin
 
 	for frameworkMrn, action := range actions {
 		switch action {
-		case explorer.Action_DEACTIVATE:
+		case policy.Action_DEACTIVATE:
 			x, ok := db.cache.Get(dbIDFramework + frameworkMrn)
 			if !ok {
 				return frameworkw, false, errors.New("cannot find child framework '" + frameworkMrn + "' when trying to unassign it")
@@ -103,7 +102,7 @@ func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[strin
 	return frameworkw, true, nil
 }
 
-func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]explorer.Action, createIfMissing bool) (wrapPolicy, bool, error) {
+func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]policy.Action, createIfMissing bool) (wrapPolicy, bool, error) {
 	policyw, err := db.ensurePolicy(ctx, mrn, createIfMissing)
 	if err != nil {
 		return policyw, false, err
@@ -126,7 +125,7 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]e
 
 	for policyMrn, action := range actions {
 		switch action {
-		case explorer.Action_DEACTIVATE:
+		case policy.Action_DEACTIVATE:
 			x, ok := db.cache.Get(dbIDPolicy + policyMrn)
 			if !ok {
 				return policyw, false, errors.New("cannot find child policy '" + policyMrn + "' when trying to unassign it")
@@ -189,7 +188,7 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]e
 	_, err = policyw.Policy.UpdateChecksums(ctx,
 		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
 		db.services.NewCompilerConfig(),
 	)
@@ -207,7 +206,7 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]e
 
 func (db *Db) MutateAssignments(ctx context.Context, mutation *policy.AssetMutation, createIfMissing bool) error {
 	targetMRN := mutation.AssetMrn
-	frameworkActions := map[string]explorer.Action{}
+	frameworkActions := map[string]policy.Action{}
 	for _, v := range mutation.FrameworkMrns {
 		frameworkActions[v] = mutation.Action
 	}
@@ -217,7 +216,7 @@ func (db *Db) MutateAssignments(ctx context.Context, mutation *policy.AssetMutat
 		return err
 	}
 
-	policyActions := map[string]explorer.Action{}
+	policyActions := map[string]policy.Action{}
 	for _, v := range mutation.PolicyMrns {
 		policyActions[v] = mutation.Action
 	}
@@ -249,12 +248,12 @@ func (db *Db) MutateAssignments(ctx context.Context, mutation *policy.AssetMutat
 func (db *Db) DeprecatedV8_MutatePolicy(ctx context.Context, mutation *policy.PolicyMutationDelta, createIfMissing bool) (*policy.Policy, error) {
 	targetMRN := mutation.PolicyMrn
 
-	actions := make(map[string]explorer.Action, len(mutation.PolicyDeltas))
+	actions := make(map[string]policy.Action, len(mutation.PolicyDeltas))
 	for k, v := range mutation.PolicyDeltas {
 		if v.Action == policy.PolicyDelta_DELETE {
-			actions[k] = explorer.Action_DEACTIVATE
+			actions[k] = policy.Action_DEACTIVATE
 		} else {
-			actions[k] = explorer.Action_ACTIVATE
+			actions[k] = policy.Action_ACTIVATE
 		}
 	}
 
@@ -311,15 +310,15 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 	policyObj := policyw.Policy
 	filters, err := policyObj.ComputeAssetFilters(ctx,
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetRawPolicy(ctx, mrn) },
-		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		false,
 	)
 	if err != nil {
 		return errors.New("failed to compute asset filters: " + err.Error())
 	}
 
-	policyObj.ComputedFilters = &explorer.Filters{
-		Items: map[string]*explorer.Mquery{},
+	policyObj.ComputedFilters = &policy.Filters{
+		Items: map[string]*policy.Mquery{},
 	}
 	for i := range filters {
 		filter := filters[i]
@@ -374,7 +373,7 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 			_, err = policyw.Policy.UpdateChecksums(ctx,
 				time.Now(),
 				func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-				func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
+				func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
 				nil,
 				conf,
 			)
@@ -599,7 +598,7 @@ func (db *Db) CachedResolvedPolicy(ctx context.Context, entityMrn string, assetF
 }
 
 // ResolveQuery looks up a given query and caches it for later access (optional)
-func (db *Db) ResolveQuery(ctx context.Context, mrn string) (*explorer.Mquery, error) {
+func (db *Db) ResolveQuery(ctx context.Context, mrn string) (*policy.Mquery, error) {
 	x, ok := db.cache.Get(dbIDQuery + mrn)
 	if !ok {
 		return nil, errors.New("failed to get query '" + mrn + "'")
@@ -913,7 +912,7 @@ func (db *Db) UpdateRisks(ctx context.Context, assetMrn string, data []*policy.S
 }
 
 // GetResources retrieves previously stored resources about an asset
-func (db *Db) GetResources(ctx context.Context, assetMrn string, req []*resources.ResourceDataReq) ([]*llx.ResourceRecording, error) {
+func (db *Db) GetResources(ctx context.Context, assetMrn string, req []*recording.ResourceDataReq) ([]*llx.ResourceRecording, error) {
 	res := make([]*llx.ResourceRecording, len(req))
 	for i := range req {
 		rr := req[i]
@@ -927,13 +926,13 @@ func (db *Db) GetResources(ctx context.Context, assetMrn string, req []*resource
 }
 
 // SetProps will override properties for a given entity (asset, space, org)
-func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
+func (db *Db) SetProps(ctx context.Context, req *policy.PropsReq) error {
 	policyw, err := db.ensurePolicy(ctx, req.EntityMrn, false)
 	if err != nil {
 		return err
 	}
 
-	allProps := make(map[string]*explorer.Property, len(policyw.Props))
+	allProps := make(map[string]*policy.Property, len(policyw.Props))
 	for i := range policyw.Props {
 		cur := policyw.Props[i]
 		if cur.Mrn != "" {
@@ -960,7 +959,7 @@ func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
 		allProps[id] = cur
 	}
 
-	policyw.Props = []*explorer.Property{}
+	policyw.Props = []*policy.Property{}
 	for k, v := range allProps {
 		// since props can be in the list with both UIDs and MRNs, in the case
 		// where a property sets both we want to ignore one entry to avoid duplicates
@@ -974,7 +973,7 @@ func (db *Db) SetProps(ctx context.Context, req *explorer.PropsReq) error {
 	_, err = policyw.Policy.UpdateChecksums(ctx,
 		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
-		func(ctx context.Context, mrn string) (*explorer.Mquery, error) { return db.GetQuery(ctx, mrn) },
+		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
 		db.services.NewCompilerConfig(),
 	)

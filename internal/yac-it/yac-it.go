@@ -29,8 +29,8 @@ import (
 	"gopkg.in/yaml.v3"
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 type FileContext struct {

@@ -13,10 +13,10 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v12/cli/config"
-	"go.mondoo.com/cnquery/v12/cli/theme"
-	"go.mondoo.com/cnspec/v12/policy"
-	cnspec_upstream "go.mondoo.com/cnspec/v12/upstream"
+	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/cnspec/v13/policy"
+	cnspec_upstream "go.mondoo.com/cnspec/v13/upstream"
 	mondoogql "go.mondoo.com/mondoo-go"
 )
 

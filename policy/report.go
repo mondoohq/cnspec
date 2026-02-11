@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/llx"
+	"go.mondoo.com/mql/v13/llx"
 )
 
 func (r *Report) RawResults() map[string]*llx.RawResult {

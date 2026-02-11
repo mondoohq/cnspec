@@ -6,7 +6,6 @@ package policy
 import (
 	"fmt"
 
-	"go.mondoo.com/cnquery/v12/explorer"
 )
 
 func (e *Evidence) fillUidIfEmpty(frameworkUid string, controlUid string, suffix string) {
@@ -18,8 +17,8 @@ func (e *Evidence) fillUidIfEmpty(frameworkUid string, controlUid string, suffix
 }
 
 func (e *Evidence) convertToPolicyGroup() *PolicyGroup {
-	queries := []*explorer.Mquery{}
-	checks := []*explorer.Mquery{}
+	queries := []*Mquery{}
+	checks := []*Mquery{}
 
 	for _, q := range e.Queries {
 		if q.Mrn == "" {
@@ -97,12 +96,12 @@ func (f *Framework) generateEvidenceFrameworkMap(evidencePolicy *Policy) *Framew
 		return nil
 	}
 	fm := &FrameworkMap{
-		FrameworkOwner: &explorer.ObjectRef{Uid: f.Uid},
+		FrameworkOwner: &ObjectRef{Uid: f.Uid},
 		Uid:            f.Uid + "-evidence-mapping",
 		Controls:       controlMaps,
 	}
 	if evidencePolicy != nil {
-		fm.PolicyDependencies = []*explorer.ObjectRef{{Uid: evidencePolicy.Uid}}
+		fm.PolicyDependencies = []*ObjectRef{{Uid: evidencePolicy.Uid}}
 	}
 	return fm
 }
@@ -121,7 +120,7 @@ func (f *Framework) GenerateEvidenceObjects() (*Policy, *FrameworkMap) {
 	}
 	if evidenceFm != nil {
 		for _, dep := range f.Dependencies {
-			evidenceFm.FrameworkDependencies = append(evidenceFm.FrameworkDependencies, &explorer.ObjectRef{Mrn: dep.Mrn})
+			evidenceFm.FrameworkDependencies = append(evidenceFm.FrameworkDependencies, &ObjectRef{Mrn: dep.Mrn})
 		}
 	}
 	return evidencePolicy, evidenceFm

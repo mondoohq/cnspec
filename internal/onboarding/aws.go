@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/cnquery/v12/cli/theme"
-	"go.mondoo.com/cnspec/v12/internal/tfgen"
+	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/cnspec/v13/internal/tfgen"
 )
 
 // AwsIntegration represents the configuration of an AWS integration to be created.

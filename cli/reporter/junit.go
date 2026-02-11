@@ -9,10 +9,9 @@ import (
 	"strconv"
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/utils/iox"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/utils/iox"
 )
 
 // ConvertToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite
@@ -85,7 +84,7 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper) error {
 }
 
 // assetPolicyTests converts asset scoring queries to Junit test cases
-func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset, queries map[string]*explorer.Mquery) junit.Testsuite {
+func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset, queries map[string]*policy.Mquery) junit.Testsuite {
 	ts := junit.Testsuite{
 		Time:      "",
 		Testcases: []junit.Testcase{},

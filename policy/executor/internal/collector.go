@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/health"
-	"go.mondoo.com/cnquery/v12/utils/iox"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 const (
@@ -333,7 +333,7 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 			llxResults[i] = toResult(c.assetMrn, rr)
 		}
 
-		err := iox.ChunkMessages(sendFn, cnquery.GetDisableMaxLimit(), onTooLargeFn, llxResults...)
+		err := iox.ChunkMessages(sendFn, mql.GetDisableMaxLimit(), onTooLargeFn, llxResults...)
 		if err != nil {
 			log.Error().Err(err).Msg("failed to send datapoints")
 		}

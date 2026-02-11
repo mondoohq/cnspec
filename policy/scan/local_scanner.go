@@ -14,32 +14,32 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/cli/config"
-	"go.mondoo.com/cnquery/v12/cli/execruntime"
-	"go.mondoo.com/cnquery/v12/cli/progress"
-	"go.mondoo.com/cnquery/v12/explorer"
-	ee "go.mondoo.com/cnquery/v12/explorer/executor"
-	"go.mondoo.com/cnquery/v12/explorer/scan"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/logger"
-	"go.mondoo.com/cnquery/v12/mrn"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/plugin"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/recording"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/gql"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/upstream/health"
-	"go.mondoo.com/cnquery/v12/utils/multierr"
-	"go.mondoo.com/cnquery/v12/utils/slicesx"
-	"go.mondoo.com/cnspec/v12"
-	"go.mondoo.com/cnspec/v12/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v12/internal/datalakes/sqlite"
-	"go.mondoo.com/cnspec/v12/policy"
-	"go.mondoo.com/cnspec/v12/policy/executor"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql/v13/cli/execruntime"
+	"go.mondoo.com/mql/v13/cli/progress"
+	"go.mondoo.com/mql/v13/discovery"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/mql/v13/utils/multierr"
+	"go.mondoo.com/mql/v13/utils/slicesx"
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/executor"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
@@ -155,7 +155,7 @@ func (s *LocalScanner) EnableQueue() error {
 	var err error
 	s.queue, err = newDqueClient(defaultDqueConfig, func(job *Job) {
 		// this is the handler for jobs, when they are picked up
-		ctx := cnquery.SetFeatures(s.ctx, cnquery.DefaultFeatures)
+		ctx := mql.SetFeatures(s.ctx, mql.DefaultFeatures)
 		_, err := s.Run(ctx, job)
 		if err != nil {
 			log.Error().Err(err).Msg("could not complete the scan")
@@ -328,7 +328,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	}
 
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
-	discoveredAssets, err := scan.DiscoverAssets(ctx, job.Inventory, upstream, s.recording)
+	discoveredAssets, err := discovery.DiscoverAssets(ctx, job.Inventory, upstream, s.recording)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +354,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return reporter.Reports(), nil
 	}
 
-	multiprogress, err := scan.CreateProgressBar(discoveredAssets, s.disableProgressBar)
+	multiprogress, err := createProgressBar(discoveredAssets, s.disableProgressBar)
 	if err != nil {
 		return nil, err
 	}
@@ -858,7 +858,7 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
-	if cnquery.GetFeatures(s.job.Ctx).IsActive(cnquery.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
+	if mql.GetFeatures(s.job.Ctx).IsActive(mql.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()
 		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
@@ -960,7 +960,7 @@ func (s *localAssetScanner) prepareAsset() error {
 		AssetMrn:      s.job.Asset.Mrn,
 		PolicyMrns:    policyMrns,
 		FrameworkMrns: frameworkMrns,
-		Action:        explorer.Action_ACTIVATE,
+		Action:        policy.Action_ACTIVATE,
 	})
 	if err != nil {
 		return err
@@ -980,11 +980,11 @@ func (s *localAssetScanner) prepareAsset() error {
 	return nil
 }
 
-func (s *localAssetScanner) mapPropOverrides() (*explorer.PropsReq, error) {
+func (s *localAssetScanner) mapPropOverrides() (*policy.PropsReq, error) {
 	exposedProps := make(map[string][]string, len(s.job.Props))
 	for _, pol := range s.job.Bundle.Policies {
 		for _, prop := range pol.Props {
-			propUid, err := explorer.GetPropName(prop.Mrn)
+			propUid, err := policy.GetPropName(prop.Mrn)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get property name for %s: %w", prop.Mrn, err)
 			}
@@ -992,12 +992,12 @@ func (s *localAssetScanner) mapPropOverrides() (*explorer.PropsReq, error) {
 		}
 	}
 
-	propsReq := explorer.PropsReq{
+	propsReq := policy.PropsReq{
 		EntityMrn: s.job.Asset.Mrn,
-		Props:     make([]*explorer.Property, 0, len(s.job.Props)),
+		Props:     make([]*policy.Property, 0, len(s.job.Props)),
 	}
 	for k, v := range s.job.Props {
-		newProp := &explorer.Property{
+		newProp := &policy.Property{
 			Uid: k,
 			Mql: v,
 		}
@@ -1006,7 +1006,7 @@ func (s *localAssetScanner) mapPropOverrides() (*explorer.PropsReq, error) {
 			continue
 		}
 		for _, propMrn := range forProps {
-			newProp.For = append(newProp.For, &explorer.ObjectRef{
+			newProp.For = append(newProp.For, &policy.ObjectRef{
 				Mrn: propMrn,
 			})
 		}
@@ -1019,10 +1019,10 @@ func (s *localAssetScanner) mapPropOverrides() (*explorer.PropsReq, error) {
 	return &propsReq, nil
 }
 
-var assetDetectBundle = ee.MustCompile("asset { kind platform runtime version family }")
+var assetDetectBundle = mustCompile("asset { kind platform runtime version family }")
 
 func (s *localAssetScanner) fetchPublicRegistryBundle() error {
-	features := cnquery.GetFeatures(s.job.Ctx)
+	features := mql.GetFeatures(s.job.Ctx)
 	_, res, err := executor.ExecuteQuery(s.Runtime, assetDetectBundle, nil, features)
 	if err != nil {
 		return errors.Wrap(err, "failed to run asset detection query")
@@ -1085,7 +1085,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.TraceJSON(rawFilters)
 	logger.DebugDumpYAML("policyFilters", rawFilters)
 
-	filters, err := s.UpdateFilters(&explorer.Mqueries{Items: rawFilters.Items}, 5*time.Second)
+	filters, err := s.UpdateFilters(&policy.Mqueries{Items: rawFilters.Items}, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -1102,7 +1102,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got resolved policy bundle for asset")
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
-	features := cnquery.GetFeatures(s.job.Ctx)
+	features := mql.GetFeatures(s.job.Ctx)
 	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
 		return nil, err
@@ -1142,13 +1142,13 @@ func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*p
 }
 
 // FilterQueries returns all queries whose result is truthy
-func (s *localAssetScanner) FilterQueries(queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
+func (s *localAssetScanner) FilterQueries(queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
 	return executor.ExecuteFilterQueries(s.Runtime, queries, timeout)
 }
 
 // UpdateFilters takes a list of test filters and runs them against the backend
 // to return the matching ones
-func (s *localAssetScanner) UpdateFilters(filters *explorer.Mqueries, timeout time.Duration) ([]*explorer.Mquery, error) {
+func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time.Duration) ([]*policy.Mquery, error) {
 	queries, errs := s.FilterQueries(filters.Items, timeout)
 
 	var err error
@@ -1194,10 +1194,44 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 
 func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
 	var withServicesFunc func(context.Context, llx.Runtime, string, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
-	if cnquery.IsFeatureActive(ctx, cnquery.UploadResultsV2) {
+	if mql.IsFeatureActive(ctx, mql.UploadResultsV2) {
 		withServicesFunc = sqlite.WithServices
 	} else {
 		withServicesFunc = inmemory.WithServices
 	}
 	return withServicesFunc(ctx, runtime, assetMrn, upstreamClient, f)
+}
+
+func mustCompile(code string) *llx.CodeBundle {
+	codeBundle, err := mqlc.Compile(code, nil,
+		mqlc.NewConfig(providers.Coordinator.Schema(), mql.DefaultFeatures))
+	if err != nil {
+		panic(err)
+	}
+	return codeBundle
+}
+
+func createProgressBar(discoveredAssets *discovery.DiscoveredAssets, disableProgressBar bool) (progress.MultiProgress, error) {
+	var multiprogress progress.MultiProgress
+	if isatty.IsTerminal(os.Stdout.Fd()) && !disableProgressBar && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
+		progressBarElements := map[string]string{}
+		orderedKeys := []string{}
+		for i := range discoveredAssets.Assets {
+			asset := discoveredAssets.Assets[i].Asset
+			slices.Sort(asset.PlatformIds)
+			if presentAsset, present := progressBarElements[asset.PlatformIds[0]]; present {
+				return nil, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, asset.Name, asset.PlatformIds[0])
+			}
+			progressBarElements[asset.PlatformIds[0]] = asset.Name
+			orderedKeys = append(orderedKeys, asset.PlatformIds[0])
+		}
+		var err error
+		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys, progress.WithScore())
+		if err != nil {
+			return nil, multierr.Wrap(err, "failed to create progress bars")
+		}
+	} else {
+		multiprogress = progress.NoopMultiProgressBars{}
+	}
+	return multiprogress, nil
 }

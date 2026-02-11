@@ -13,10 +13,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
 func risks(risks ...*ScoredRiskFactor) *ScoredRiskFactors {
@@ -31,15 +30,15 @@ func genRiskFactor1() RiskFactor {
 			Active:   "Does exist",
 			Inactive: "Does not exist",
 		},
-		Filters: &explorer.Filters{
-			Items: map[string]*explorer.Mquery{
+		Filters: &Filters{
+			Items: map[string]*Mquery{
 				"//filters/mrn": {
 					Mrn: "//filters/mrn",
 					Mql: "true",
 				},
 			},
 		},
-		Checks: []*explorer.Mquery{
+		Checks: []*Mquery{
 			{
 				Mrn: "//some/check/1",
 				Mql: "1 == 1",
@@ -68,7 +67,7 @@ func TestRiskFactor_Checksums(t *testing.T) {
 	base := genRiskFactor1()
 
 	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
-	conf := mqlc.NewConfig(coreSchema, cnquery.DefaultFeatures)
+	conf := mqlc.NewConfig(coreSchema, mql.DefaultFeatures)
 
 	ctx := context.Background()
 	baseEsum, baseCsum, err := base.RefreshChecksum(ctx, conf)
@@ -153,7 +152,7 @@ func TestRiskFactor_Checksums(t *testing.T) {
 		},
 		// 6
 		func(rf RiskFactor) RiskFactor {
-			rf.Action = explorer.Action_DEACTIVATE
+			rf.Action = Action_DEACTIVATE
 			return rf
 		},
 	}

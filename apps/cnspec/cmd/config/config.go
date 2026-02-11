@@ -6,7 +6,7 @@ package config
 import (
 	"github.com/cockroachdb/errors"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnquery/v12/cli/config"
+	"go.mondoo.com/mql/v13/cli/config"
 )
 
 const (

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnquery/v12/cli/theme/colors"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
 )
 
 type PaperCharsTheme struct {

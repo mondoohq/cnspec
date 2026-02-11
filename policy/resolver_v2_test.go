@@ -10,14 +10,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnspec/v12/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
-func collectQueriesFromRiskFactors(p *policy.Policy, query map[string]*explorer.Mquery) {
+func collectQueriesFromRiskFactors(p *policy.Policy, query map[string]*policy.Mquery) {
 	for _, rf := range p.RiskFactors {
 		for _, c := range rf.Checks {
 			query[c.Mrn] = c
@@ -117,11 +116,11 @@ type resolvedPolicyTesterReportingJobNotifiesBuilder struct {
 	childMrn          string
 	childMrnForCodeId string
 	parent            string
-	impact            *explorer.Impact
+	impact            *policy.Impact
 	impactSet         bool
 }
 
-func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) WithImpact(impact *explorer.Impact) *resolvedPolicyTesterReportingJobNotifiesBuilder {
+func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) WithImpact(impact *policy.Impact) *resolvedPolicyTesterReportingJobNotifiesBuilder {
 	r.impact = impact
 	r.impactSet = true
 	return r
@@ -173,7 +172,7 @@ type resolvedPolicyTesterReportingJobBuilder struct {
 	mrn           string
 	mrnForCodeId  string
 	typ           *policy.ReportingJob_Type
-	scoringSystem *explorer.ScoringSystem
+	scoringSystem *policy.ScoringSystem
 	notifies      []*resolvedPolicyTesterReportingJobNotifiesBuilder
 	notifiesSet   bool
 	doesNotExist  bool
@@ -226,7 +225,7 @@ func (r *resolvedPolicyTesterReportingJobBuilder) Notifies(qrId string) *resolve
 	return n
 }
 
-func (r *resolvedPolicyTesterReportingJobBuilder) WithScoringSystem(scoringSystem explorer.ScoringSystem) *resolvedPolicyTesterReportingJobBuilder {
+func (r *resolvedPolicyTesterReportingJobBuilder) WithScoringSystem(scoringSystem policy.ScoringSystem) *resolvedPolicyTesterReportingJobBuilder {
 	r.scoringSystem = &scoringSystem
 	return r
 }
@@ -289,7 +288,7 @@ policies:
 	t.Run("resolve with empty filters", func(t *testing.T) {
 		_, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{}},
+			AssetFilters: []*policy.Mquery{{}},
 		})
 		assert.EqualError(t, err, "failed to compile query: failed to compile query '': query is not implemented ''")
 	})
@@ -297,7 +296,7 @@ policies:
 	t.Run("resolve with random filters", func(t *testing.T) {
 		_, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		assert.EqualError(t, err,
 			"rpc error: code = InvalidArgument desc = asset isn't supported by any policies\n"+
@@ -333,7 +332,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -357,7 +356,7 @@ policies:
 	t.Run("resolve with many filters (one is correct)", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{
+			AssetFilters: []*policy.Mquery{
 				{Mql: "asset.family.contains(\"linux\")"},
 				{Mql: "true"},
 				{Mql: "asset.family.contains(\"windows\")"},
@@ -370,7 +369,7 @@ policies:
 	t.Run("resolve with incorrect filters", func(t *testing.T) {
 		_, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{
+			AssetFilters: []*policy.Mquery{
 				{Mql: "asset.family.contains(\"linux\")"},
 				{Mql: "false"},
 				{Mql: "asset.family.contains(\"windows\")"},
@@ -441,7 +440,7 @@ queries:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -453,8 +452,8 @@ queries:
 			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
 		rpTester.ExecutesQuery(queryMrn("check2"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("check2")).Notifies(queryMrn("check2")).WithImpact(&explorer.Impact{Value: &explorer.ImpactValue{Value: 70}})
-		rpTester.CodeIdReportingJobForMrn(queryMrn("check3")).Notifies(queryMrn("check3")).WithImpact(&explorer.Impact{Value: &explorer.ImpactValue{Value: 80}})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check2")).Notifies(queryMrn("check2")).WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 70}})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check3")).Notifies(queryMrn("check3")).WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 80}})
 		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
 		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy1"))
@@ -500,7 +499,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -514,7 +513,7 @@ policies:
 		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
-		rpTester.ReportingJobByMrn(policyMrn("policy1")).WithScoringSystem(explorer.ScoringSystem_WORST).Notifies("root")
+		rpTester.ReportingJobByMrn(policyMrn("policy1")).WithScoringSystem(policy.ScoringSystem_WORST).Notifies("root")
 
 		rpTester.doTest(t, rp)
 	})
@@ -554,7 +553,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -568,7 +567,7 @@ policies:
 		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
-		rpTester.ReportingJobByMrn(policyMrn("policy1")).WithScoringSystem(explorer.ScoringSystem_BANDED).Notifies("root")
+		rpTester.ReportingJobByMrn(policyMrn("policy1")).WithScoringSystem(policy.ScoringSystem_BANDED).Notifies("root")
 
 		rpTester.doTest(t, rp)
 	})
@@ -617,7 +616,7 @@ policies:
 	t.Run("resolve with ignored policy", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -632,7 +631,7 @@ policies:
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(policyMrn("policy-active")).Notifies("root")
-		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -683,7 +682,7 @@ policies:
 	t.Run("resolve with scoring system", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -697,8 +696,8 @@ policies:
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy-active"))
 		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy-ignored"))
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy-ignored"))
-		rpTester.ReportingJobByMrn(policyMrn("policy-active")).WithScoringSystem(explorer.ScoringSystem_BANDED).Notifies("root")
-		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.ReportingJobByMrn(policyMrn("policy-active")).WithScoringSystem(policy.ScoringSystem_BANDED).Notifies("root")
+		rpTester.ReportingJobByMrn(policyMrn("policy-ignored")).Notifies("root").WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -735,7 +734,7 @@ policies:
 
 	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    "asset1",
-		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
 	})
 
 	require.NoError(t, err)
@@ -744,7 +743,7 @@ policies:
 	rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 	rpTester.ExecutesQuery(queryMrn("check1"))
 	rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
-	rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies("policy-1").WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+	rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies("policy-1").WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 	rpTester.ReportingJobByMrn(policyMrn("policy-1")).Notifies("root")
 }
 
@@ -870,7 +869,7 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -899,11 +898,11 @@ framework_maps:
 		rpTester.ReportingJobByMrn(queryMrn("check-pass-2")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(queryMrn("active-query"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query")).Notifies(controlMrn("control1")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 		rpTester.ReportingJobByMrn(queryMrn("active-query")).Notifies(policyMrn("policy1"))
 
 		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(queryMrn("active-query-2"))
-		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(controlMrn("control1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("active-query-2")).Notifies(controlMrn("control1")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 		rpTester.ReportingJobByMrn(queryMrn("active-query-2")).Notifies(policyMrn("policy1"))
 
 		rpTester.ReportingJobByMrn(queryMrn("check-overlap")).Notifies(policyMrn("policy1"))
@@ -990,7 +989,7 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1076,7 +1075,7 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1108,7 +1107,7 @@ framework_maps:
 
 		rpInitial, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rpInitial)
@@ -1122,7 +1121,7 @@ framework_maps:
 
 		rpFrameworkUpdate, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rpFrameworkUpdate)
@@ -1196,7 +1195,7 @@ queries:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1237,7 +1236,7 @@ queries:
 
 	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    "asset1",
-		AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rp)
@@ -1280,7 +1279,7 @@ queries:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+			AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1323,7 +1322,7 @@ policies:
 	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+			AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1375,7 +1374,7 @@ policies:
 	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+			AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1422,7 +1421,7 @@ policies:
 	t.Run("resolve two MRNs to one codeID matching filter", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+			AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1475,7 +1474,7 @@ queries:
 	t.Run("resolve two variants to different codeIDs matching filter", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn: policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{
+			AssetFilters: []*policy.Mquery{
 				{Mql: "asset.name == \"asset1\""},
 				{Mql: "asset.family.contains(\"unix\")"},
 			},
@@ -1552,7 +1551,7 @@ queries:
 
 	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    policyMrn("example2"),
-		AssetFilters: []*explorer.Mquery{{Mql: "asset.family.contains(\"windows\")"}},
+		AssetFilters: []*policy.Mquery{{Mql: "asset.family.contains(\"windows\")"}},
 	})
 
 	require.NoError(t, err)
@@ -1644,7 +1643,7 @@ policies:
 
 	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 		PolicyMrn:    "asset1",
-		AssetFilters: []*explorer.Mquery{{Mql: "asset.name == \"asset1\""}},
+		AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rp)
@@ -1664,7 +1663,7 @@ policies:
 	rpTester.CodeIdReportingJobForMrn(queryMrn("query-2")).Notifies(queryMrn("query-2"))
 
 	// rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(queryMrn("sshd-service-running"))
-	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 	rpTester.ReportingJobByMrn(riskFactorMrn("sshd-service")).WithType(policy.ReportingJob_RISK_FACTOR).Notifies(policyMrn("risk-factors-security"))
 
 	rpTester.ReportingJobByMrn(queryMrn("query-1")).Notifies(policyMrn("testpolicy1"))
@@ -1753,14 +1752,14 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 
 		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 
-		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -1779,14 +1778,14 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
 
 		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
 
-		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.ReportingJobByMrn(controlMrn("mondoo-ucf-02")).Notifies(frameworkMrn("mondoo-ucf")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 
 		rpTester.doTest(t, rp)
 	})
@@ -1805,7 +1804,7 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1836,7 +1835,7 @@ framework_maps:
 
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1858,7 +1857,7 @@ framework_maps:
 			Dependencies: []*policy.FrameworkRef{
 				{
 					Mrn:    frameworkMrn("mondoo-ucf"),
-					Action: explorer.Action_ACTIVATE,
+					Action: policy.Action_ACTIVATE,
 				},
 			},
 			Groups: []*policy.FrameworkGroup{
@@ -1882,7 +1881,7 @@ framework_maps:
 
 		rp, err := srv.Resolve(context.Background(), &policy.ResolveReq{
 			PolicyMrn:    "asset1",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1931,7 +1930,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -1943,7 +1942,7 @@ policies:
 			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
-		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1")).WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE})
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
 		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
 		rpTester.ReportingJobByMrn(policyMrn("policy1")).Notifies("root")
 
@@ -1987,7 +1986,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    "//test.sth",
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -2036,7 +2035,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -2085,7 +2084,7 @@ policies:
 	t.Run("resolve with correct filters", func(t *testing.T) {
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("policy1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -2142,7 +2141,7 @@ policies:
 		}
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("example1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -2151,7 +2150,7 @@ policies:
 		rpTester.ExecutesQuery(queryMrn("check-01"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check-01")).
 			Notifies(queryMrn("check-01")).
-			WithImpact(&explorer.Impact{Scoring: explorer.ScoringSystem_IGNORE_SCORE, Action: explorer.Action_IGNORE, Value: &explorer.ImpactValue{Value: 95}})
+			WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE, Value: &policy.ImpactValue{Value: 95}})
 		rpTester.ReportingJobByMrn(queryMrn("check-01")).Notifies("root")
 		rpTester.doTest(t, rp)
 	})
@@ -2166,7 +2165,7 @@ policies:
 		}
 		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
 			PolicyMrn:    policyMrn("example1"),
-			AssetFilters: []*explorer.Mquery{{Mql: "true"}},
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, rp)
@@ -2175,7 +2174,7 @@ policies:
 		rpTester.ExecutesQuery(queryMrn("check-01"))
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check-01")).
 			Notifies(queryMrn("check-01")).
-			WithImpact(&explorer.Impact{Value: &explorer.ImpactValue{Value: 95}})
+			WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 95}})
 		rpTester.ReportingJobByMrn(queryMrn("check-01")).Notifies("root")
 		rpTester.doTest(t, rp)
 	})

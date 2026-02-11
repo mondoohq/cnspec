@@ -11,13 +11,13 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v12/policy"
-	"go.mondoo.com/cnspec/v12/policy/scan"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/scan"
 )
 
 func init() {
@@ -29,7 +29,7 @@ func BenchmarkScan_SingleAsset(b *testing.B) {
 	defer providers.Coordinator.Shutdown()
 	ctx := context.Background()
 	runtime := testutils.Local()
-	conf := mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)
+	conf := mqlc.NewConfig(runtime.Schema(), mql.DefaultFeatures)
 	job := &scan.Job{
 		Inventory: &inventory.Inventory{
 			Spec: &inventory.InventorySpec{
@@ -81,7 +81,7 @@ func BenchmarkScan_MultipleAssets(b *testing.B) {
 	defer providers.Coordinator.Shutdown()
 	ctx := context.Background()
 	runtime := testutils.Local()
-	conf := mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures)
+	conf := mqlc.NewConfig(runtime.Schema(), mql.DefaultFeatures)
 	job := &scan.Job{
 		Inventory: &inventory.Inventory{
 			Spec: &inventory.InventorySpec{

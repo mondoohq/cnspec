@@ -8,13 +8,12 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/cli/progress"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnspec/v12/policy"
-	"go.mondoo.com/cnspec/v12/policy/executor/internal"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/cli/progress"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/executor/internal"
 )
 
 type GraphExecutor interface {
@@ -22,7 +21,7 @@ type GraphExecutor interface {
 }
 
 func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
-	resolvedPolicy *policy.ResolvedPolicy, features cnquery.Features, progressReporter progress.Progress,
+	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
 ) error {
 	var opts []internal.BufferedCollectorOpt
 
@@ -47,7 +46,7 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 		builder.WithProgressReporter(progressReporter)
 	}
 
-	if features.IsActive(cnquery.ErrorsAsFailures) {
+	if features.IsActive(mql.ErrorsAsFailures) {
 		builder.WithFeatureFlagFailErrors()
 	}
 
@@ -61,12 +60,12 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	return ge.Execute()
 }
 
-func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeout time.Duration) ([]*explorer.Mquery, []error) {
-	queryMap := map[string]*explorer.Mquery{}
+func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+	queryMap := map[string]*policy.Mquery{}
 
 	builder := internal.NewBuilder()
 	for _, m := range queries {
-		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(runtime.Schema(), cnquery.DefaultFeatures))
+		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(runtime.Schema(), mql.DefaultFeatures))
 		// Errors for filter queries are common when they reference resources for
 		// providers that are not found on the system.
 		if err != nil {
@@ -106,7 +105,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 		return nil, []error{err}
 	}
 
-	filteredQueries := []*explorer.Mquery{}
+	filteredQueries := []*policy.Mquery{}
 	for id, query := range queryMap {
 		if _, ok := passingFilterQueries[id]; ok {
 			filteredQueries = append(filteredQueries, query)
@@ -116,7 +115,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*explorer.Mquery, timeo
 	return filteredQueries, errors
 }
 
-func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features cnquery.Features) (*policy.Score, map[string]*llx.RawResult, error) {
+func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features mql.Features) (*policy.Score, map[string]*llx.RawResult, error) {
 	builder := internal.NewBuilder()
 
 	builder.AddQuery(codeBundle, nil, props, nil)

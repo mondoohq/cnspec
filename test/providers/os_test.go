@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12/test"
+	"go.mondoo.com/mql/v13/test"
 )
 
 var once sync.Once

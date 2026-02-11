@@ -12,14 +12,13 @@ import (
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnquery/v12/cli/printer"
-	"go.mondoo.com/cnquery/v12/cli/theme/colors"
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnquery/v12/utils/stringx"
-	"go.mondoo.com/cnspec/v12/cli/components"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/utils/stringx"
+	"go.mondoo.com/cnspec/v13/cli/components"
 )
 
 const (
@@ -128,7 +127,7 @@ func (r *reportRenderer) assetSummary(assetObj *inventory.Asset, score *policy.S
 }
 
 // policyModActions tracks the remove and modify actions to pass them to childs for proper rendering of ignores
-type policyModActions map[string]explorer.Action
+type policyModActions map[string]policy.Action
 
 func (p policyModActions) Clone() policyModActions {
 	res := policyModActions{}
@@ -217,7 +216,7 @@ func (r *reportRenderer) policyReportChildren(policyObj *policy.Policy, bundle *
 }
 
 func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolved *policy.ResolvedPolicy, parentQueryActions policyModActions) ([]reportRow, policyModActions) {
-	checks := map[string]*explorer.Mquery{}
+	checks := map[string]*policy.Mquery{}
 	for i := range policyObj.Groups {
 		group := policyObj.Groups[i]
 		for i := range group.Checks {
@@ -242,7 +241,7 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 		// NOTE: we need to copy the map when we pass eg. Remove to Children, since multiple children can add the same query
 		// FIXME: DEPRECATED, remove in v9.0 vv
 		// Remove Action_UNSPECIFIED in v9.0
-		if action != explorer.Action_ACTIVATE && action != explorer.Action_UNSPECIFIED {
+		if action != policy.Action_ACTIVATE && action != policy.Action_UNSPECIFIED {
 			// ^^
 			actionsForChilds[qid] = check.Action
 			continue
@@ -297,11 +296,11 @@ func (r *reportRenderer) generateScoringResults(policyObj *policy.Policy, report
 }
 
 type reportRow struct {
-	Query      *explorer.Mquery
+	Query      *policy.Mquery
 	Bundle     *llx.CodeBundle
 	Score      *policy.Score
-	Action     explorer.Action
-	Impact     *explorer.Impact
+	Action     policy.Action
+	Impact     *policy.Impact
 	Assessment *llx.Assessment
 }
 
@@ -316,12 +315,12 @@ func (row reportRow) Indicator() string {
 			char = '×'
 		}
 
-		if row.Action == explorer.Action_DEACTIVATE {
+		if row.Action == policy.Action_DEACTIVATE {
 			color = colors.DefaultColorTheme.Disabled
 			char = '×'
 		}
 
-		if row.Action == explorer.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
+		if row.Action == policy.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			color = colors.DefaultColorTheme.Secondary
 			char = '»'
 		}
@@ -364,12 +363,12 @@ func colorizeRow(row reportRow, text string) string {
 			explain = "(unscored)"
 		}
 
-		if row.Action == explorer.Action_DEACTIVATE {
+		if row.Action == policy.Action_DEACTIVATE {
 			color = colors.DefaultColorTheme.Disabled
 			explain = "(removed)"
 		}
 
-		if row.Action == explorer.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
+		if row.Action == policy.Action_MODIFY && row.Impact != nil && row.Impact.Weight == 0 {
 			color = colors.DefaultColorTheme.Low
 			explain = "(modified)"
 		}
@@ -399,10 +398,10 @@ var sortedScores = map[uint32]uint32{
 // sort by severity and title
 func (data rowByScoreAndAction) Less(i, j int) bool {
 	if data[i].Action != data[j].Action {
-		if data[i].Action == explorer.Action_DEACTIVATE {
+		if data[i].Action == policy.Action_DEACTIVATE {
 			return false
 		}
-		if data[j].Action == explorer.Action_DEACTIVATE {
+		if data[j].Action == policy.Action_DEACTIVATE {
 			return true
 		}
 	}

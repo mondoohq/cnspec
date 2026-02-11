@@ -7,10 +7,9 @@ import (
 	"context"
 	"time"
 
-	"go.mondoo.com/cnquery/v12/explorer"
-	"go.mondoo.com/cnquery/v12/explorer/resources"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/types"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/types"
 )
 
 // DataLake provides additional database calls, that are not accessible to
@@ -19,7 +18,7 @@ import (
 // changes.
 type DataLake interface {
 	// GetPolicyFilters retrieves the list of asset filters for a policy (fast)
-	GetPolicyFilters(ctx context.Context, mrn string) ([]*explorer.Mquery, error)
+	GetPolicyFilters(ctx context.Context, mrn string) ([]*Mquery, error)
 
 	// QueryExists checks if the given MRN exists
 	QueryExists(ctx context.Context, mrn string) (bool, error)
@@ -27,10 +26,10 @@ type DataLake interface {
 	PolicyExists(ctx context.Context, mrn string) (bool, error)
 
 	// GetQuery retrieves a given query
-	GetQuery(ctx context.Context, mrn string) (*explorer.Mquery, error)
+	GetQuery(ctx context.Context, mrn string) (*Mquery, error)
 	// SetQuery stores a given query
 	// Note: the query must be defined, it cannot be nil
-	SetQuery(ctx context.Context, mrn string, query *explorer.Mquery) error
+	SetQuery(ctx context.Context, mrn string, query *Mquery) error
 
 	// GetValidatedPolicy retrieves and if necessary updates the policy
 	GetValidatedPolicy(ctx context.Context, mrn string) (*Policy, error)
@@ -60,7 +59,7 @@ type DataLake interface {
 	// GetRawPolicy retrieves the policy without fixing any invalidations (fast)
 	GetRawPolicy(ctx context.Context, mrn string) (*Policy, error)
 	// SetPolicy stores a given policy in the data lake
-	SetPolicy(ctx context.Context, policy *Policy, recalculateAt *time.Time, filters []*explorer.Mquery) error
+	SetPolicy(ctx context.Context, policy *Policy, recalculateAt *time.Time, filters []*Mquery) error
 	// SetRiskFactor creates and stores a risk factor
 	SetRiskFactor(ctx context.Context, ownerMrn string, riskFactor *RiskFactor) error
 
@@ -73,7 +72,7 @@ type DataLake interface {
 	// Deprecated for MutateAssignment.
 	DeprecatedV8_MutatePolicy(ctx context.Context, mutation *PolicyMutationDelta, createIfMissing bool) (*Policy, error)
 	// SetProps will override properties for a given entity (asset, space, org)
-	SetProps(ctx context.Context, req *explorer.PropsReq) error
+	SetProps(ctx context.Context, req *PropsReq) error
 	// SetAssetResolvedPolicy sets and initialized all fields for an asset's resolved policy
 	SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resolvedPolicy *ResolvedPolicy, version ResolvedPolicyVersion) error
 
@@ -82,7 +81,7 @@ type DataLake interface {
 	// GetResolvedPolicy returns the resolved policy for a given asset
 	GetResolvedPolicy(ctx context.Context, assetMrn string) (*ResolvedPolicy, error)
 	// ResolveQuery looks up a given query and caches it for later access (optional)
-	ResolveQuery(ctx context.Context, mrn string) (*explorer.Mquery, error)
+	ResolveQuery(ctx context.Context, mrn string) (*Mquery, error)
 	// SetResolvedPolicy to the data store; cached indicates if it was cached from
 	// upstream, thus preventing any attempts of resolving it in the client
 	SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy *ResolvedPolicy, version ResolvedPolicyVersion, cached bool) error
@@ -98,7 +97,7 @@ type DataLake interface {
 	// UpdateRisks sets the given risks and returns any that were updated
 	UpdateRisks(ctx context.Context, assetMrn string, data []*ScoredRiskFactor) (map[string]struct{}, error)
 	// GetResources retrieves previously stored resources about an asset
-	GetResources(ctx context.Context, assetMrn string, req []*resources.ResourceDataReq) ([]*llx.ResourceRecording, error)
+	GetResources(ctx context.Context, assetMrn string, req []*recording.ResourceDataReq) ([]*llx.ResourceRecording, error)
 	// UpdateResources stores resources recording data for a given asset
 	UpdateResources(ctx context.Context, assetMrn string, resourcesRecording map[string]*llx.ResourceRecording) error
 

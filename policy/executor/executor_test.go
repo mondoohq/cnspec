@@ -10,12 +10,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnquery/v12"
-	"go.mondoo.com/cnquery/v12/llx"
-	"go.mondoo.com/cnquery/v12/mqlc"
-	"go.mondoo.com/cnquery/v12/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnquery/v12/types"
-	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
+	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/cnspec/v13"
 )
 
 func initExecutor() *Executor {
@@ -87,7 +87,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 			received[res.CodeID]++
 		})
 
-		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(executor.Schema(), cnquery.DefaultFeatures))
+		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(executor.Schema(), mql.DefaultFeatures))
 		require.NoError(t, err)
 		executor.AddCodeBundle(codeBundle, nil)
 
