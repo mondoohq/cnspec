@@ -147,7 +147,7 @@ var policyPublishCmd = &cobra.Command{
 		// the use-case for ephemeral containers where all the provider versions stay static. This can be achieved by
 		// disabling auto-update. We keep auto-update as default to have a better cli experience.
 		// If linting is enabled, do not need to update the providers as this has been done during linting stage.
-		if err = policyBundle.EnsureRequirements(true, autoUpdate && noLint); err != nil {
+		if err = policyBundle.EnsureRequirements(autoUpdate && noLint); err != nil {
 			log.Fatal().Err(err).Msg("could not install requirements")
 		}
 
