@@ -353,6 +353,7 @@ func (m *QueryGroup) CloneVT() *QueryGroup {
 		return (*QueryGroup)(nil)
 	}
 	r := new(QueryGroup)
+	r.Uid = m.Uid
 	r.Filters = m.Filters.CloneVT()
 	r.Title = m.Title
 	r.Created = m.Created
@@ -3826,6 +3827,13 @@ func (m *QueryGroup) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		dAtA[i] = 0x1
 		i--
 		dAtA[i] = 0xa2
+	}
+	if len(m.Uid) > 0 {
+		i -= len(m.Uid)
+		copy(dAtA[i:], m.Uid)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Uid)))
+		i--
+		dAtA[i] = 0x2a
 	}
 	if len(m.Queries) > 0 {
 		for iNdEx := len(m.Queries) - 1; iNdEx >= 0; iNdEx-- {
@@ -11183,6 +11191,10 @@ func (m *QueryGroup) SizeVT() (n int) {
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
+	l = len(m.Uid)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
 	if m.Filters != nil {
 		l = m.Filters.SizeVT()
 		n += 2 + l + protohelpers.SizeOfVarint(uint64(l))
@@ -16865,6 +16877,38 @@ func (m *QueryGroup) UnmarshalVT(dAtA []byte) error {
 			if err := m.Queries[len(m.Queries)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Uid", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Uid = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 20:
 			if wireType != 2 {

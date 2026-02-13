@@ -1474,7 +1474,7 @@ func (x *Filters) GetItems() map[string]*Mquery {
 
 // Properties allow users to configure queries and bundles in pre-defined ways.
 // They return one value only, have a type, and may specify which query they
-// target, while used in querypacks (or other groupings like policies).
+// target, while used in policies.
 // They may contain additional metadata to provide more information.
 //
 // Note: At the time of writing properties do not pull from other properties.
@@ -1833,6 +1833,8 @@ func (x *QueryPackDocs) GetDesc() string {
 type QueryGroup struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Queries []*Mquery              `protobuf:"bytes,3,rep,name=queries,proto3" json:"queries,omitempty"`
+	// user-defined UID for the group
+	Uid string `protobuf:"bytes,5,opt,name=uid,proto3" json:"uid,omitempty"`
 	// filter for the assets this applies to
 	Filters *Filters `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty"`
 	// metadata
@@ -1878,6 +1880,13 @@ func (x *QueryGroup) GetQueries() []*Mquery {
 		return x.Queries
 	}
 	return nil
+}
+
+func (x *QueryGroup) GetUid() string {
+	if x != nil {
+		return x.Uid
+	}
+	return ""
 }
 
 func (x *QueryGroup) GetFilters() *Filters {
@@ -8790,10 +8799,11 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"#\n" +
 	"\rQueryPackDocs\x12\x12\n" +
-	"\x04desc\x18\x01 \x01(\tR\x04desc\"\xc1\x01\n" +
+	"\x04desc\x18\x01 \x01(\tR\x04desc\"\xd3\x01\n" +
 	"\n" +
 	"QueryGroup\x122\n" +
-	"\aqueries\x18\x03 \x03(\v2\x18.cnspec.policy.v1.MqueryR\aqueries\x123\n" +
+	"\aqueries\x18\x03 \x03(\v2\x18.cnspec.policy.v1.MqueryR\aqueries\x12\x10\n" +
+	"\x03uid\x18\x05 \x01(\tR\x03uid\x123\n" +
 	"\afilters\x18\x14 \x01(\v2\x19.cnspec.policy.v1.FiltersR\afilters\x12\x14\n" +
 	"\x05title\x18\x18 \x01(\tR\x05title\x12\x18\n" +
 	"\acreated\x18  \x01(\x03R\acreated\x12\x1a\n" +

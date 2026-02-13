@@ -234,6 +234,28 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 		}
 	}
 
+	// Also track query assignments from querypacks
+	for _, pack := range policyBundle.Packs {
+		for _, queryRef := range pack.Queries {
+			lintCtx.AssignedQueryUIDs[queryRef.Uid] = struct{}{}
+			lintCtx.QueryUsageAsData[queryRef.Uid] = struct{}{}
+			for _, v := range queryRef.Variants {
+				lintCtx.AssignedQueryUIDs[v.Uid] = struct{}{}
+				lintCtx.QueryUsageAsData[v.Uid] = struct{}{}
+			}
+		}
+		for _, group := range pack.Groups {
+			for _, queryRef := range group.Queries {
+				lintCtx.AssignedQueryUIDs[queryRef.Uid] = struct{}{}
+				lintCtx.QueryUsageAsData[queryRef.Uid] = struct{}{}
+				for _, v := range queryRef.Variants {
+					lintCtx.AssignedQueryUIDs[v.Uid] = struct{}{}
+					lintCtx.QueryUsageAsData[v.Uid] = struct{}{}
+				}
+			}
+		}
+	}
+
 	// Run bundle rules
 	for _, check := range bundleRules {
 		entries := check.Run(lintCtx, policyBundle)

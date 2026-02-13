@@ -223,6 +223,7 @@ func convertQueryPackGroups(p *QueryPack) []*PolicyGroup {
 		res = append(res, &PolicyGroup{
 			Queries:  g.Queries,
 			Type:     GroupType_CHAPTER,
+			Uid:      g.Uid,
 			Filters:  g.Filters,
 			Created:  g.Created,
 			Modified: g.Modified,
