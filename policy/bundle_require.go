@@ -9,10 +9,15 @@ import (
 	"go.mondoo.com/mql/v13/utils/multierr"
 )
 
-// HasRequirements returns true if any policy in the bundle has provider requirements defined.
+// HasRequirements returns true if any policy or querypack in the bundle has provider requirements defined.
 func (p *Bundle) HasRequirements() bool {
 	for _, policy := range p.Policies {
 		if len(policy.Require) > 0 {
+			return true
+		}
+	}
+	for _, pack := range p.Packs {
+		if len(pack.Require) > 0 {
 			return true
 		}
 	}
@@ -40,6 +45,21 @@ func (p *Bundle) EnsureRequirements(autoUpdate bool) error {
 					log.Warn().Str("provider", require.Provider).Msgf("failed to ensure policy requirements for policy %q", policy.Name)
 				} else {
 					return multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'")
+				}
+			}
+		}
+	}
+
+	for _, pack := range p.Packs {
+		for _, require := range pack.Require {
+			if require.Provider == "" {
+				continue
+			}
+			if _, err := providers.EnsureProvider(providers.ProviderLookup{ID: require.Id, ProviderName: require.Provider}, autoUpdate, existing); err != nil {
+				if !autoUpdate {
+					log.Warn().Str("provider", require.Provider).Msgf("failed to ensure querypack requirements for querypack %q", pack.Name)
+				} else {
+					return multierr.Wrap(err, "failed to validate querypack '"+pack.Name+"'")
 				}
 			}
 		}

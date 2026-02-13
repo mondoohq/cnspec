@@ -1862,6 +1862,7 @@ type QueryPack struct {
 	Filters                *Filters          `protobuf:"bytes,48,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
 	Props                  []*Property       `protobuf:"bytes,35,rep,name=props,proto3" json:"props,omitempty" yaml:"props,omitempty"`
 	Tags                   map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
+	Require                []*Requirement    `protobuf:"bytes,49,rep,name=require,proto3" json:"require,omitempty" yaml:"require,omitempty"`
 	Queries                []*Mquery         `protobuf:"bytes,6,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
 	Authors                []*Author         `protobuf:"bytes,30,rep,name=authors,proto3" json:"authors,omitempty" yaml:"authors,omitempty"`
 	Docs                   *QueryPackDocs    `protobuf:"bytes,22,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`

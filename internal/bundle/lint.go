@@ -159,6 +159,7 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 
 	bundleRules := GetBundleLintRules()
 	policyRules := GetPolicyLintRules()
+	querypackRules := GetQueryPackLintRules()
 	queryRules := GetQueryLintRules()
 	migrationRules := GetBundleMigrationsLintRules()
 
@@ -266,6 +267,14 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 	for _, p := range policyBundle.Policies {
 		for _, check := range policyRules {
 			entries := check.Run(lintCtx, p)
+			aggregatedEntries = append(aggregatedEntries, entries...)
+		}
+	}
+
+	// Run querypack rules
+	for _, pack := range policyBundle.Packs {
+		for _, check := range querypackRules {
+			entries := check.Run(lintCtx, pack)
 			aggregatedEntries = append(aggregatedEntries, entries...)
 		}
 	}

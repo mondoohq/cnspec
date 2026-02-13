@@ -59,6 +59,8 @@ const (
 	PolicyWrongVersionRuleID         = "policy-wrong-version"
 	PolicyRequiredTagsMissingRuleID  = "policy-required-tags-missing"
 	PolicyMissingRequireRuleID       = "policy-missing-require"
+
+	QueryPackMissingRequireRuleID = "querypack-missing-require"
 )
 
 // GetPolicyLintRules returns a list of lint checks for policies.
@@ -441,6 +443,50 @@ func queryRefIdentifier(q *Mquery) string {
 // A full definition would have MQL, Title, or Variants.
 func isQueryDefinitionComplete(q *Mquery) bool {
 	return q.Mql != "" || q.Title != "" || len(q.Variants) > 0 || (q.Docs != nil && q.Docs.Desc != "")
+}
+
+// GetQueryPackLintRules returns a list of lint checks for querypacks.
+func GetQueryPackLintRules() []LintRule {
+	return []LintRule{
+		{
+			ID:          QueryPackMissingRequireRuleID,
+			Name:        "QueryPack Require Providers",
+			Description: "Ensures that querypacks define required providers.",
+			Severity:    LevelWarning,
+			Run:         runRuleQueryPackRequireExist,
+		},
+	}
+}
+
+func querypackIdentifier(p *QueryPack) string {
+	if p.Uid != "" {
+		return fmt.Sprintf("querypack '%s'", p.Uid)
+	}
+	if p.Name != "" {
+		return fmt.Sprintf("querypack '%s' (at line %d)", p.Name, p.FileContext.Line)
+	}
+	return fmt.Sprintf("querypack at line %d", p.FileContext.Line)
+}
+
+func runRuleQueryPackRequireExist(ctx *LintContext, item any) []*Entry {
+	p, ok := item.(*QueryPack)
+	if !ok {
+		return nil
+	}
+	var entries []*Entry
+	if len(p.Require) == 0 {
+		entries = append(entries, &Entry{
+			RuleID:  QueryPackMissingRequireRuleID,
+			Message: fmt.Sprintf("%s does not define any required providers, please add a `require` statement (e.g. `require: [{provider: os}]`)", querypackIdentifier(p)),
+			Level:   LevelWarning,
+			Location: []Location{{
+				File:   ctx.FilePath,
+				Line:   p.FileContext.Line,
+				Column: p.FileContext.Column,
+			}},
+		})
+	}
+	return entries
 }
 
 // Helper: (similar to original)

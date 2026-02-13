@@ -176,6 +176,7 @@ func (p *Bundle) ConvertQuerypacks() {
 			Modified: pack.Modified,
 			Tags:     pack.Tags,
 			Props:    pack.Props,
+			Require:  pack.Require,
 			Groups:   convertQueryPackGroups(pack),
 			// we need this to indicate that the policy was converted from a querypack
 			ScoringSystem: ScoringSystem_DATA_ONLY,
