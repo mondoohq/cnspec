@@ -3,8 +3,6 @@
 
 package policy
 
-// This file contains Filters methods that were previously in the explorer package.
-
 import (
 	"context"
 	"encoding/json"

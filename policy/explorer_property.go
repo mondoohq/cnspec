@@ -3,8 +3,6 @@
 
 package policy
 
-// This file contains Property methods and PropsCache that were previously in the explorer package.
-
 import (
 	"errors"
 

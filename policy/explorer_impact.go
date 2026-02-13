@@ -3,9 +3,6 @@
 
 package policy
 
-// This file contains Impact, ImpactValue, and ScoringSystem methods
-// that were previously in the explorer package.
-
 import (
 	"encoding/json"
 	"errors"

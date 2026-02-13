@@ -276,7 +276,6 @@ func (x GroupType) MarshalYAML() (any, error) {
 }
 
 // MarshalYAML cannot be a pointer since action are assigned as non-pointer to Mquery
-// see func (a *Action) UnmarshalJSON(data []byte) error in cnquery explorer package
 func (x Action) MarshalYAML() (any, error) {
 	value := policy.Action_name[int32(x)]
 	value = strings.ToLower(value)
