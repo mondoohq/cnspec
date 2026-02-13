@@ -23,11 +23,11 @@ policies:
         - BigQuery
         - Cloud DNS
         - Cloud Key Management Service (KMS)
-        - Cloud Memorystore for Redis
         - Cloud SQL
         - Cloud Storage
         - Compute Engine instances, firewalls, networks, and subnetworks
         - Google Kubernetes Engine (GKE)
+        - Memorystore for Redis / Redis Cluster
 
         ## Join the community!
 
@@ -107,10 +107,13 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose
           - uid: mondoo-gcp-security-cloud-sql-sql-server-connections-require-ssl-tls
           - uid: mondoo-gcp-security-cloud-sql-sql-server-instances-not-publicly-exposed
-      - title: Cloud Redis
+      - title: Memorystore for Redis / Redis Cluster
         checks:
           - uid: mondoo-gcp-security-cloud-redis-auth-enabled
           - uid: mondoo-gcp-security-cloud-redis-cmek-configured
+          - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled
+          - uid: mondoo-gcp-security-cloud-redis-cluster-iam-auth-enabled
+          - uid: mondoo-gcp-security-cloud-redis-cluster-deletion-protection-enabled
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -6817,3 +6820,214 @@ queries:
         values.customer_managed_key != null &&
         values.customer_managed_key != ""
       )
+  - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled
+    title: Ensure in-transit encryption is enabled for Cloud Memorystore for Redis
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled-memorystore-redis
+      - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled-memorystore-rediscluster
+    docs:
+      desc: |
+        This check ensures that in-transit encryption (TLS) is enabled on Cloud Memorystore for Redis instances and clusters. In-transit encryption encrypts all data transmitted between the client application and the Redis instance, preventing eavesdropping and man-in-the-middle attacks.
+
+        **Why this matters**
+
+        Without in-transit encryption, data exchanged between clients and Redis travels in plaintext over the network:
+          - Attackers with network access can intercept sensitive cached data, session tokens, or application secrets.
+          - Man-in-the-middle attacks can modify data in transit, leading to cache poisoning or data corruption.
+          - Regulatory frameworks such as PCI-DSS, HIPAA, and SOC 2 require encryption of data in transit for services handling sensitive information.
+
+        Enabling in-transit encryption provides:
+          - TLS encryption for all client-to-server communication, protecting data confidentiality.
+          - Server authentication via certificates, ensuring clients connect to the legitimate Redis endpoint.
+          - Compliance with security standards that mandate encryption of data in transit.
+          - Defense-in-depth when combined with AUTH and VPC network isolation.
+
+        Risk mitigation:
+          - Enable in-transit encryption on all Cloud Memorystore for Redis instances and clusters.
+          - Ensure client applications are configured to use TLS when connecting to Redis.
+          - Combine in-transit encryption with AUTH and network-level access controls.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            For Cloud Memorystore for Redis instances:
+
+            ```hcl
+            resource "google_redis_instance" "cache" {
+              name           = "my-redis-instance"
+              tier           = "STANDARD_HA"
+              memory_size_gb = 1
+              region         = "us-central1"
+
+              transit_encryption_mode = "SERVER_AUTHENTICATION"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: In-transit encryption must be configured at instance creation time and cannot be changed on an existing instance.
+
+            1. Go to the **Memorystore > Redis** page in the Google Cloud Console.
+            2. Select **Create Instance**.
+            3. In the **Security** section, select **Enable in-transit encryption**.
+            4. Complete the instance creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: In-transit encryption must be configured at instance creation time.
+
+            For Cloud Memorystore for Redis instances:
+
+            ```bash
+            gcloud redis instances create INSTANCE_NAME \
+              --region=REGION \
+              --transit-encryption-mode=SERVER_AUTHENTICATION
+            ```
+    refs:
+      - title: Cloud Memorystore for Redis in-transit encryption documentation
+        url: https://cloud.google.com/memorystore/docs/redis/in-transit-encryption
+  - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled-memorystore-redis
+    filters: asset.platform == "gcp-memorystore-redis"
+    mql: |
+      gcp.project.redisService.instance.transitEncryptionMode == "SERVER_AUTHENTICATION"
+  - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled-memorystore-rediscluster
+    filters: asset.platform == "gcp-memorystore-rediscluster"
+    mql: |
+      gcp.project.redisService.cluster.transitEncryptionMode == "TRANSIT_ENCRYPTION_MODE_SERVER_AUTHENTICATION"
+  - uid: mondoo-gcp-security-cloud-redis-cluster-iam-auth-enabled
+    title: Ensure IAM authentication is enabled for Cloud Memorystore for Redis Cluster
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-cloud-redis-cluster-iam-auth-enabled-memorystore-rediscluster
+    docs:
+      desc: |
+        This check ensures that IAM authentication is enabled on Cloud Memorystore for Redis Cluster instances. IAM authentication integrates Redis Cluster with Google Cloud's Identity and Access Management, replacing open or password-based access with identity-based access control.
+
+        **Why this matters**
+
+        Without IAM authentication, Redis Cluster access relies on network-level controls alone, which increases risk:
+          - Any workload with network access to the cluster can execute commands without identity verification.
+          - There is no audit trail of which identity accessed or modified data in the cluster.
+          - Compromised workloads within the same network can freely access cached data.
+
+        Enabling IAM authentication provides:
+          - Identity-based access control using Google Cloud IAM roles and policies.
+          - Audit logging of authentication attempts, enabling security monitoring and incident response.
+          - Fine-grained access management through IAM, allowing different permissions for different service accounts.
+          - Alignment with the principle of least privilege by granting access only to authorized identities.
+
+        Risk mitigation:
+          - Enable IAM authentication on all Cloud Memorystore for Redis Cluster instances.
+          - Assign the appropriate IAM roles to service accounts that need Redis access.
+          - Monitor IAM authentication logs through Cloud Audit Logs.
+          - Combine IAM authentication with in-transit encryption and VPC network isolation.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_redis_cluster" "cluster" {
+              name        = "my-redis-cluster"
+              region      = "us-central1"
+              shard_count = 3
+
+              authorization_mode = "AUTH_MODE_IAM_AUTH"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Memorystore > Redis Cluster** page in the Google Cloud Console.
+            2. Select **Create Cluster**.
+            3. In the **Security** section, select **IAM Auth** as the authorization mode.
+            4. Complete the cluster creation.
+
+            For existing clusters, update the authorization mode in the cluster settings.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud redis clusters create CLUSTER_NAME \
+              --region=REGION \
+              --shard-count=3 \
+              --authorization-mode=iam-auth
+            ```
+    refs:
+      - title: Cloud Memorystore for Redis Cluster IAM authentication documentation
+        url: https://cloud.google.com/memorystore/docs/cluster/about-iam-auth
+  - uid: mondoo-gcp-security-cloud-redis-cluster-iam-auth-enabled-memorystore-rediscluster
+    filters: asset.platform == "gcp-memorystore-rediscluster"
+    mql: |
+      gcp.project.redisService.cluster.authorizationMode == "AUTH_MODE_IAM_AUTH"
+  - uid: mondoo-gcp-security-cloud-redis-cluster-deletion-protection-enabled
+    title: Ensure deletion protection is enabled for Cloud Memorystore for Redis Cluster
+    impact: 50
+    variants:
+      - uid: mondoo-gcp-security-cloud-redis-cluster-deletion-protection-enabled-memorystore-rediscluster
+    docs:
+      desc: |
+        This check ensures that deletion protection is enabled on Cloud Memorystore for Redis Cluster instances. Deletion protection prevents accidental or malicious deletion of the cluster, safeguarding data availability and service continuity.
+
+        **Why this matters**
+
+        Without deletion protection, a Redis Cluster can be deleted by any user or service account with sufficient IAM permissions:
+          - Accidental deletion by an administrator can cause immediate data loss and service outages.
+          - A compromised service account could be used to destroy critical infrastructure.
+          - Automated tooling or scripts with overly broad permissions could inadvertently delete production clusters.
+
+        Enabling deletion protection provides:
+          - A safeguard against accidental cluster deletion, requiring explicit disabling before deletion can proceed.
+          - An additional layer of defense against malicious actors who gain administrative access.
+          - Protection for production workloads that depend on the cluster for caching or session management.
+          - Alignment with operational best practices for critical infrastructure protection.
+
+        Risk mitigation:
+          - Enable deletion protection on all production Cloud Memorystore for Redis Cluster instances.
+          - Use IAM policies to restrict who can disable deletion protection.
+          - Implement change management processes for any modifications to deletion protection settings.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_redis_cluster" "cluster" {
+              name        = "my-redis-cluster"
+              region      = "us-central1"
+              shard_count = 3
+
+              deletion_protection_enabled = true
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Memorystore > Redis Cluster** page in the Google Cloud Console.
+            2. Select the cluster you want to update.
+            3. Select **Edit**.
+            4. Enable **Deletion protection**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud redis clusters update CLUSTER_NAME \
+              --region=REGION \
+              --deletion-protection-enabled
+            ```
+    refs:
+      - title: Cloud Memorystore for Redis Cluster deletion protection documentation
+        url: https://cloud.google.com/memorystore/docs/cluster/about-delete-protection
+  - uid: mondoo-gcp-security-cloud-redis-cluster-deletion-protection-enabled-memorystore-rediscluster
+    filters: asset.platform == "gcp-memorystore-rediscluster"
+    mql: |
+      gcp.project.redisService.cluster.deletionProtectionEnabled == true
