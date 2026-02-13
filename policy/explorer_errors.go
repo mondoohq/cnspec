@@ -3,9 +3,6 @@
 
 package policy
 
-// This file contains error types and NewAssetMatchError that were previously
-// in the explorer package.
-
 import (
 	"sort"
 	"strings"
