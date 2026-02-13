@@ -108,8 +108,9 @@ cnspec/dist/goreleaser/edge:
 
 test/lint: test/lint/golangci-lint/run
 
-test/lint/policies:
-	cnspec policies lint ./content
+test/lint/content:
+	cnspec policy lint ./content
+	cnspec policy lint ./content/querypacks
 
 test: test/go test/lint
 
