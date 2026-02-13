@@ -637,10 +637,10 @@ func runPolicyFmt(cmd *cobra.Command, args []string) {
 }
 
 var policyLintCmd = &cobra.Command{
-	Use:     "lint [path]",
+	Use:     "lint [path ...]",
 	Aliases: []string{"validate"},
-	Short:   "Lint a policy bundle",
-	Args:    cobra.ExactArgs(1),
+	Short:   "Lint one or more policy bundles",
+	Args:    cobra.MinimumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
 			return err
@@ -654,14 +654,14 @@ var policyLintCmd = &cobra.Command{
 }
 
 func runPolicyLint(cmd *cobra.Command, args []string) {
-	log.Info().Str("file", args[0]).Msg("lint policy bundle")
+	log.Info().Strs("files", args).Msg("lint policy bundle(s)")
 
 	autoUpdate := true
 	if viper.IsSet("auto-update") {
 		autoUpdate = viper.GetBool("auto-update")
 	}
 
-	files, err := policy.WalkPolicyBundleFiles(args[0])
+	files, err := policy.WalkPolicyBundleFiles(args...)
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not find bundle files")
 	}
@@ -700,9 +700,9 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 
 	if viper.GetString("output-file") == "" {
 		if result.HasError() {
-			log.Fatal().Msg("invalid policy bundle")
+			log.Fatal().Msg("invalid policy bundle(s)")
 		} else {
-			log.Info().Msg("valid policy bundle")
+			log.Info().Msg("valid policy bundle(s)")
 		}
 	}
 }
