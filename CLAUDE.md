@@ -65,8 +65,8 @@ make test/go/plain-ci
 # Run linter
 make test/lint
 
-# Lint policy files
-make test/lint/policies
+# Lint policy and querypack files
+make test/lint/content
 
 # Run benchmarks
 make benchmark/go
