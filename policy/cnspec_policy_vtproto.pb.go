@@ -417,6 +417,13 @@ func (m *QueryPack) CloneVT() *QueryPack {
 		}
 		r.Props = tmpContainer
 	}
+	if rhs := m.Require; rhs != nil {
+		tmpContainer := make([]*Requirement, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Require = tmpContainer
+	}
 	if rhs := m.Authors; rhs != nil {
 		tmpContainer := make([]*Author, len(rhs))
 		for k, v := range rhs {
@@ -3879,6 +3886,20 @@ func (m *QueryPack) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.Require) > 0 {
+		for iNdEx := len(m.Require) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.Require[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x3
+			i--
+			dAtA[i] = 0x8a
+		}
 	}
 	if m.Filters != nil {
 		size, err := m.Filters.MarshalToSizedBufferVT(dAtA[:i])
@@ -11309,6 +11330,12 @@ func (m *QueryPack) SizeVT() (n int) {
 		l = m.Filters.SizeVT()
 		n += 2 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
+	if len(m.Require) > 0 {
+		for _, e := range m.Require {
+			l = e.SizeVT()
+			n += 2 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -17793,6 +17820,40 @@ func (m *QueryPack) UnmarshalVT(dAtA []byte) error {
 				m.Filters = &Filters{}
 			}
 			if err := m.Filters.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 49:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Require", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Require = append(m.Require, &Requirement{})
+			if err := m.Require[len(m.Require)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
