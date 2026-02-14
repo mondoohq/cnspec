@@ -89,10 +89,10 @@ go test -race ./...
 
 ```bash
 # Lint all policies in content directory
-cnspec policies lint ./content
+cnspec policy lint ./content
 
 # Lint a specific policy file
-cnspec policies lint ./content/mondoo-linux-security.mql.yaml
+cnspec policy lint ./content/mondoo-linux-security.mql.yaml
 ```
 
 ## High-Level Architecture
@@ -297,7 +297,7 @@ Test policy files:
 
 ```bash
 # Lint before committing
-cnspec policies lint ./content/your-policy.mql.yaml
+cnspec policy lint ./content/your-policy.mql.yaml
 
 # Test locally
 cnspec scan local -f ./content/your-policy.mql.yaml
@@ -327,7 +327,7 @@ For MQL resources available per provider, see [MQL resources documentation](http
 
 When adding/modifying policies:
 
-1. **Lint the policy**: `cnspec policies lint <file>`
+1. **Lint the policy**: `cnspec policy lint <file>`
 2. **Test against target**: `cnspec scan <target> -f <policy-file>`
 3. **Check for regressions**: Run existing policy tests in `content/` directory
 4. **Verify scoring**: Ensure impact ratings and scoring systems work correctly
