@@ -6,9 +6,9 @@ package upstream
 import (
 	"context"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
 	policy "go.mondoo.com/cnspec/v13/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
 )
 
 type PageInfo struct {

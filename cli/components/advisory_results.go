@@ -13,9 +13,9 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/renderer"
 	"github.com/olekukonko/tablewriter/tw"
+	"go.mondoo.com/cnspec/v13/cli/components/advisories"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd/cvss"
-	"go.mondoo.com/cnspec/v13/cli/components/advisories"
 )
 
 func NewAdvisoryResultTable() AdvisoryResultTable {

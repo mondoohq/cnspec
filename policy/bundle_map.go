@@ -17,14 +17,14 @@ import (
 
 // PolicyBundleMap is a PolicyBundle with easier access to policies and queries
 type PolicyBundleMap struct {
-	OwnerMrn    string                        `json:"owner_mrn,omitempty"`
-	Policies    map[string]*Policy            `json:"policies,omitempty"`
-	Frameworks  map[string]*Framework         `json:"frameworks,omitempty"`
-	Queries     map[string]*Mquery   `json:"queries,omitempty"`
-	Props       map[string]*Property `json:"props,omitempty"`
-	Code        map[string]*llx.CodeBundle    `json:"code,omitempty"`
-	RiskFactors map[string]*RiskFactor        `json:"risk_factors,omitempty"`
-	Library     Library                       `json:"library,omitempty"`
+	OwnerMrn    string                     `json:"owner_mrn,omitempty"`
+	Policies    map[string]*Policy         `json:"policies,omitempty"`
+	Frameworks  map[string]*Framework      `json:"frameworks,omitempty"`
+	Queries     map[string]*Mquery         `json:"queries,omitempty"`
+	Props       map[string]*Property       `json:"props,omitempty"`
+	Code        map[string]*llx.CodeBundle `json:"code,omitempty"`
+	RiskFactors map[string]*RiskFactor     `json:"risk_factors,omitempty"`
+	Library     Library                    `json:"library,omitempty"`
 }
 
 // NewPolicyBundleMap creates a new empty initialized map

@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/mql/v13/test"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/test"
 )
 
 func TestScanFlags(t *testing.T) {

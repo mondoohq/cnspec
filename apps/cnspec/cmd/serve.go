@@ -15,6 +15,10 @@ import (
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/logger"
 
+	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd/backgroundjob"
+	cnspec_config "go.mondoo.com/cnspec/v13/apps/cnspec/cmd/config"
+	"go.mondoo.com/cnspec/v13/policy/scan"
 	cli_errors "go.mondoo.com/mql/v13/cli/errors"
 	"go.mondoo.com/mql/v13/cli/execruntime"
 	"go.mondoo.com/mql/v13/cli/inventoryloader"
@@ -22,10 +26,6 @@ import (
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd/backgroundjob"
-	cnspec_config "go.mondoo.com/cnspec/v13/apps/cnspec/cmd/config"
-	"go.mondoo.com/cnspec/v13/policy/scan"
 )
 
 // we send a 78 exit code to prevent systemd from restart

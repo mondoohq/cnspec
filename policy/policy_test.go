@@ -11,11 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/mrn"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v13/policy"
 )
 
 var conf mqlc.CompilerConfig

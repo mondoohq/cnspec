@@ -12,13 +12,13 @@ import (
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13/cli/components"
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
-	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/utils/stringx"
-	"go.mondoo.com/cnspec/v13/cli/components"
 )
 
 const (

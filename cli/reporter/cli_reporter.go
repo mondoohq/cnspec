@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/printer"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
@@ -19,7 +20,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/v13/utils/iox"
-	"go.mondoo.com/cnspec/v13/policy"
 	"sigs.k8s.io/yaml"
 )
 

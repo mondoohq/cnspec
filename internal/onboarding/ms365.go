@@ -11,8 +11,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/mql/v13/cli/theme"
 	"go.mondoo.com/cnspec/v13/internal/tfgen"
+	"go.mondoo.com/mql/v13/cli/theme"
 )
 
 // Ms365Integration represents the configuration of a Microsoft 365 integration to be created.

@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/v13/internal/bundle"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
-	"go.mondoo.com/cnspec/v13/internal/bundle"
 )
 
 func ensureProviders(ids []string) error {
@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	providers.DefaultPath = dir
 
 	err := ensureProviders([]string{
-		"go.mondoo.com/cnquery/v9/providers/os",
+		"go.mondoo.com/mql/providers/os",
 	})
 	if err != nil {
 		panic(err)

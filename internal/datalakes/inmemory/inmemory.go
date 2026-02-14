@@ -8,9 +8,9 @@ import (
 	"errors"
 	"time"
 
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v13/policy"
 )
 
 // Db is the ent-based Database backend for Mondoo services
