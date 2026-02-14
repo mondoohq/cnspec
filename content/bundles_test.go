@@ -11,11 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/scan"
 	"go.mondoo.com/mql/v13/logger"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/scan"
 )
 
 func init() {

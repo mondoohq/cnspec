@@ -6,8 +6,8 @@ package components
 import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"go.mondoo.com/mql/v13/cli/theme/colors"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/cli/theme/colors"
 )
 
 var DefaultRatingColors = NewRating(colors.DefaultColorTheme)

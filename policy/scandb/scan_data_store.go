@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"time"
 
-	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb/sqlc"
+	"go.mondoo.com/mql/v13/llx"
 	"google.golang.org/protobuf/proto"
 )
 

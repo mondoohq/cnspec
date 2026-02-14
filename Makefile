@@ -54,7 +54,7 @@ prep/tools/windows:
 prep/tools:
 	# additional helper
 	go install gotest.tools/gotestsum@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
 
 #   🌙 cnspec   #

@@ -51,7 +51,7 @@ type YAMLBundle struct {
 type YAMLPropsHandler struct {
 	Props    map[string]*MQLNode       // Map of prop name to MQL node
 	Schema   resources.ResourcesSchema // Schema for compiling props
-	Features mql.Features          // Feature flags
+	Features mql.Features              // Feature flags
 }
 
 // Get retrieves a property by name

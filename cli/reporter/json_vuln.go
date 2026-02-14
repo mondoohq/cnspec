@@ -10,10 +10,10 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/mql/v13/utils/iox"
 	"go.mondoo.com/cnspec/v13/cli/components"
 	"go.mondoo.com/cnspec/v13/cli/components/advisories"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/v13/utils/iox"
 )
 
 // advisoryPrintable is a snapshot of the fields that get exported

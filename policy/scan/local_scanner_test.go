@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/providers"
@@ -18,7 +19,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
-	"go.mondoo.com/cnspec/v13/policy"
 )
 
 func TestFilterPreprocess(t *testing.T) {

@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
-	"go.mondoo.com/cnspec/v13/policy"
 	k8sYaml "sigs.k8s.io/yaml"
 )
 

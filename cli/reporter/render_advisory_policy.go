@@ -12,13 +12,13 @@ import (
 	mapstructure "github.com/go-viper/mapstructure/v2"
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13/cli/components"
+	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/v13/utils/stringx"
-	"go.mondoo.com/cnspec/v13/cli/components"
-	"go.mondoo.com/cnspec/v13/policy"
 )
 
 // TODO: re-use the structure without importing all os resources

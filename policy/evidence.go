@@ -5,7 +5,6 @@ package policy
 
 import (
 	"fmt"
-
 )
 
 func (e *Evidence) fillUidIfEmpty(frameworkUid string, controlUid string, suffix string) {

@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
+	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/mql/v13"
 	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
 	"go.mondoo.com/mql/v13/cli/config"
@@ -25,7 +26,6 @@ import (
 	"go.mondoo.com/mql/v13/cli/theme/colors"
 	"go.mondoo.com/mql/v13/logger"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
