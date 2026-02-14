@@ -212,7 +212,7 @@ Join the [Mondoo Community GitHub Discussions](https://github.com/orgs/mondoohq/
 
 ## Additional policies
 
-Additional certified security and compliance policies can be found in the Policy Hub on Mondoo Platform. [Sign up for a free account](https://mondoo.com/pricing) to view the list of policies available.
+Additional certified security and compliance policies can be found on Mondoo Platform. [Sign up for a free account](https://mondoo.com/pricing) to view the list of policies available.
 
 ## License
 
