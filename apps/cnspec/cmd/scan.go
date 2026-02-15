@@ -61,7 +61,7 @@ func init() {
 	// bundles, packs & incognito mode
 	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to Mondoo Platform")
 	_ = scanCmd.Flags().StringSlice("policy", nil, "Specify policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY")
-	_ = scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Set the path to a local policy file")
+	_ = scanCmd.Flags().StringSliceP("policy-bundle", "f", nil, "Set the path to a policy file. Supports local paths, s3:// URIs, and http(s):// URLs")
 	// flag completion command
 	_ = scanCmd.RegisterFlagCompletionFunc("policy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
