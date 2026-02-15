@@ -8,11 +8,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v12"
+	"go.mondoo.com/cnspec/v13"
 )
+
+const maxBundleSize = 10 << 20 // 10 MiB
 
 // HTTPDoer is an interface for making HTTP requests. It is implemented by
 // *http.Client and can be replaced in tests.
@@ -42,10 +45,7 @@ func (r *httpBundleResolver) Load(ctx context.Context, path string) (*Bundle, er
 	client := r.client
 	if client == nil {
 		client = &http.Client{
-			CheckRedirect: func(r *http.Request, via []*http.Request) error {
-				r.URL.Opaque = r.URL.Path
-				return nil
-			},
+			Timeout: 30 * time.Second,
 		}
 	}
 
@@ -66,7 +66,7 @@ func (r *httpBundleResolver) Load(ctx context.Context, path string) (*Bundle, er
 		return nil, httpError(path, resp.StatusCode, resp.Status)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBundleSize))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to read policy bundle response from "+path)
 	}

@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v12/policy"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 func TestHTTPBundleResolver_IsApplicable(t *testing.T) {
@@ -33,7 +33,7 @@ func TestBundleFromHTTP(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		_, _ = w.Write(data)
 	}))
 	defer server.Close()
 
@@ -115,7 +115,7 @@ func TestBundleFromMixedSources_HTTPAndLocal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		_, _ = w.Write(data)
 	}))
 	defer server.Close()
 
