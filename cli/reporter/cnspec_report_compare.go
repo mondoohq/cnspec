@@ -8,10 +8,10 @@ import (
 	"reflect"
 
 	"github.com/rs/zerolog/log"
-	cnquery_reporter "go.mondoo.com/mql/v13/cli/reporter"
+	mql_reporter "go.mondoo.com/mql/v13/cli/reporter"
 )
 
-func FindSameAsset(name string, assets map[string]*cnquery_reporter.Asset) string {
+func FindSameAsset(name string, assets map[string]*mql_reporter.Asset) string {
 	for k := range assets {
 		if assets[k].Name == name {
 			return assets[k].Mrn

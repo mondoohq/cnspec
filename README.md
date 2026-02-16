@@ -256,9 +256,9 @@ Explore our:
 
 - [cnspec docs](https://mondoo.com/docs/cnspec/home)
 - [Policy as code](https://mondoo.com/docs/cnspec/cnspec-policies/write/)
+- [MQL](https://github.com/mondoohq/mql), our open source, cloud-native asset inventory framework
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources/)
-- [cnquery](https://github.com/mondoohq/cnquery), our open source, cloud-native asset inventory tool
 - [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-mondoo) to integrate cnspec with HashiCorp Packer!
 
 ## Join the community!
