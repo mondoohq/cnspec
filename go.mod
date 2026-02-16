@@ -2,7 +2,7 @@ module go.mondoo.com/cnspec/v13
 
 go 1.25.1
 
-// replace go.mondoo.com/mql/v13 => ../cnquery
+// replace go.mondoo.com/mql/v13 => ../mql
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
