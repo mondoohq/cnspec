@@ -38,6 +38,9 @@ type defaultReporter struct {
 	// indicates if the StoreResourcesData MQL feature is enabled
 	isStoreResourcesEnabled bool
 
+	// faint dims the output for exceptions
+	faint bool
+
 	// vv the items below will be automatically filled
 	bundle *policy.PolicyBundleMap
 }
@@ -109,6 +112,15 @@ func (r *defaultReporter) querypackDataQueryIDs(resolved *policy.ResolvedPolicy)
 	}
 
 	return result
+}
+
+// styled returns a termenv.Style with faint applied if r.faint is set.
+func (r *defaultReporter) styled(s string) termenv.Style {
+	st := termenv.String(s)
+	if r.faint {
+		st = st.Faint()
+	}
+	return st
 }
 
 func (r *defaultReporter) print() error {
@@ -491,10 +503,12 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 	}
 
 	if r.Conf.printChecks {
+		exceptionSet := buildExceptionSet(resolved)
 		foundChecks := map[string]simpleScore{}
 		sortedPassed := []string{}
 		sortedWarnings := []string{}
 		sortedFailed := []string{}
+		sortedExceptions := []string{}
 
 		for id, query := range queries {
 			_, ok := resolved.CollectorJob.ReportingQueries[id]
@@ -526,6 +540,11 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				Success: isSuccess,
 			}
 			foundChecks[id] = score
+
+			if _, isException := exceptionSet[id]; isException {
+				sortedExceptions = append(sortedExceptions, id)
+				continue
+			}
 
 			if score.Success {
 				sortedPassed = append(sortedPassed, id)
@@ -649,6 +668,23 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 		}
 
+		if len(sortedExceptions) > 0 {
+			if prevPrinted {
+				r.out(NewLineCharacter)
+			}
+
+			sort.Slice(sortedExceptions, func(i, j int) bool {
+				return queries[sortedExceptions[i]].Title < queries[sortedExceptions[j]].Title
+			})
+
+			r.out("Exceptions:" + NewLineCharacter)
+			r.faint = true
+			for _, id := range sortedExceptions {
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+			}
+			r.faint = false
+		}
+
 	}
 }
 
@@ -719,7 +755,7 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *pol
 
 	var passfail string
 	if score.Success {
-		passfail = termenv.String("✓ ").Foreground(r.Colors.Success).String()
+		passfail = r.styled("✓ ").Foreground(r.Colors.Success).String()
 	} else {
 		scoreIndicator := ""
 		if query.Impact != nil {
@@ -729,9 +765,10 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *pol
 		if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 			scoreSymbol = "!"
 		}
-		passfail = termenv.String(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()
+		passfail = r.styled(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()
 	}
 
+	title = r.styled(title).String()
 	return passfail + title + NewLineCharacter
 }
 
@@ -743,22 +780,22 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out(termenv.String(checkStatus("!", "Error")).Foreground(r.Colors.Error).String())
-		r.out(title)
+		r.out(r.styled(checkStatus("!", "Error")).Foreground(r.Colors.Error).String())
+		r.out(r.styled(title).String())
 		r.out(NewLineCharacter)
 		if !r.Conf.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out(termenv.String("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
+			r.out(r.styled("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
 			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out(termenv.String(checkStatus(".", "Unknown")).Foreground(r.Colors.Disabled).String())
-		r.out(title)
+		r.out(r.styled(checkStatus(".", "Unknown")).Foreground(r.Colors.Disabled).String())
+		r.out(r.styled(title).String())
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out(termenv.String(checkStatus(".", "Skipped")).Foreground(r.Colors.Disabled).String())
-		r.out(title)
+		r.out(r.styled(checkStatus(".", "Skipped")).Foreground(r.Colors.Disabled).String())
+		r.out(r.styled(title).String())
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Result:
@@ -795,6 +832,36 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 }
 
 // ============================= ^^ ============================================
+
+// buildExceptionSet builds a set of check MRNs that have exceptions applied,
+// by inspecting the ReportingJob.ChildJobs edges in the resolved policy for
+// IGNORE_SCORE impacts.
+func buildExceptionSet(resolved *policy.ResolvedPolicy) map[string]struct{} {
+	if resolved == nil || resolved.CollectorJob == nil {
+		return nil
+	}
+
+	uuidToQrId := make(map[string]string, len(resolved.CollectorJob.ReportingJobs))
+	for _, rj := range resolved.CollectorJob.ReportingJobs {
+		uuidToQrId[rj.Uuid] = rj.QrId
+	}
+
+	exceptions := map[string]struct{}{}
+	for _, rj := range resolved.CollectorJob.ReportingJobs {
+		for childUuid, impact := range rj.ChildJobs {
+			if impact == nil {
+				continue
+			}
+			if impact.Scoring == policy.ScoringSystem_IGNORE_SCORE ||
+				impact.Scoring == policy.ScoringSystem_DISABLED {
+				if qrId, ok := uuidToQrId[childUuid]; ok {
+					exceptions[qrId] = struct{}{}
+				}
+			}
+		}
+	}
+	return exceptions
+}
 
 func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
 	print := r.Printer
