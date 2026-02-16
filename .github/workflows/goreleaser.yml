@@ -26,6 +26,11 @@ on:
         required: false
         default: false
         type: boolean
+      make-latest:
+        description: "Mark GitHub release as 'latest'"
+        required: false
+        default: true
+        type: boolean
 
 env:
   REGISTRY: docker.io
@@ -57,11 +62,11 @@ jobs:
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
 
-      - name: Skip Publish for Alpha and Beta Tags
+      - name: Skip Publish for non-release tags
         id: skip-publish
-        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') || inputs.skip-publish == true
+        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'pre') || contains(github.ref, 'rc') || inputs.skip-publish == true
         run: |
-          echo "Skipping publish for alpha and beta tags"
+          echo "Skipping publish for non-release tags"
           echo "skip-publish=true" >> $GITHUB_OUTPUT
           echo "skip-publish=true" >> $GITHUB_ENV
 
@@ -130,8 +135,8 @@ jobs:
       # This is because a goreleaser dep was changed to https://github.com/goreleaser/nfpm/releases/tag/v2.41.2
       # created a discussion on the issue here https://github.com/orgs/goreleaser/discussions/5943
 
-      - name: Run GoReleaser
-        if: ${{ inputs.skip-publish != true }}
+      - name: Run GoReleaser and promote latest
+        if: ${{ inputs.skip-publish != true && steps.skip-publish.outputs.skip-publish != 'true' }}
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
@@ -154,9 +159,10 @@ jobs:
           TSIGN_ACCOUNT_NAME: ${{ vars.TSIGN_ACCOUNT_NAME }}
           TSIGN_CERT_PROFILE_NAME: ${{ github.event.inputs.use-test-cert == 'true' && vars.TSIGN_TEST_CERT_PROFILE_NAME || vars.TSIGN_CERT_PROFILE_NAME }}
           TSIGN_ACCESS_TOKEN: ${{ steps.get_token.outputs.TSIGN_ACCESS_TOKEN }}
+          MAKE_LATEST: ${{ inputs.make-latest == false && 'false' || 'true' }}
 
-      - name: Run GoReleaser unstable
-        if: ${{ inputs.skip-publish == true }}
+      - name: Run GoReleaser without promoting 'latest'
+        if: ${{ inputs.skip-publish == true || steps.skip-publish.outputs.skip-publish == 'true' }}
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
