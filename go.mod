@@ -43,7 +43,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.17.0
-	go.mondoo.com/cnquery/v12 v12.23.0
+	go.mondoo.com/cnquery/v12 v12.23.1
 	go.mondoo.com/mondoo-go v0.0.0-20260211131346-5a2e107d8ab4
 	go.mondoo.com/ranger-rpc v0.8.0
 	gocloud.dev v0.44.0
