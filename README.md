@@ -1,7 +1,7 @@
 # cnspec
 
-![cnspec light-mode logo](docs/images/cnspec-light.svg#gh-light-mode-only)
-![cnspec dark-mode logo](docs/images/cnspec-dark.svg#gh-dark-mode-only)
+![cnspec light-mode logo](.github/images/cnspec-light.svg#gh-light-mode-only)
+![cnspec dark-mode logo](.github/images/cnspec-dark.svg#gh-dark-mode-only)
 
 **Open source, cloud-native security and policy project**
 
@@ -9,7 +9,7 @@ cnspec assesses your entire infrastructure's security and compliance. It finds v
 
 A powerful policy as code engine, cnspec is built upon Mondoo's security data fabric. It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
-![cnspec scan example](docs/images/cnspec-scan.gif)
+![cnspec scan example](.github/images/cnspec-scan.gif)
 
 ## Installation
 
@@ -81,7 +81,7 @@ cnspec policies are built on the concept of policy as code. cnspec comes with de
 
 cnspec scans for vulnerabilities in a wide range of platforms. Vulnerability scanning is not restricted to container images; it works for build and runtime as well.
 
-![cnspec vulnerability scan example](docs/images/cnspec-vuln.gif)
+![cnspec vulnerability scan example](.github/images/cnspec-vuln.gif)
 
 NOTE: The current version requires you to log into Mondoo Platform. Future versions will let you scan the platforms without logging in.
 
