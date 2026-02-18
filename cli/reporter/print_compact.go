@@ -35,7 +35,7 @@ type defaultReporter struct {
 	output io.Writer
 	data   *policy.ReportCollection
 
-	// indicates if the StoreResourcesData cnquery feature is enabled
+	// indicates if the StoreResourcesData MQL feature is enabled
 	isStoreResourcesEnabled bool
 
 	// vv the items below will be automatically filled

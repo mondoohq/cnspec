@@ -4,9 +4,9 @@
 package cmd
 
 import (
-	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
+	mql_app "go.mondoo.com/mql/v13/apps/mql/cmd"
 )
 
 func init() {
-	rootCmd.AddCommand(cnquery_app.LoginCmd)
+	rootCmd.AddCommand(mql_app.LoginCmd)
 }
