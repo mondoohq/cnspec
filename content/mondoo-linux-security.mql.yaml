@@ -5502,9 +5502,8 @@ queries:
     mql: |
       paths = ["/var/log/lastlog", "/var/log/faillog", "/var/log/tallylog"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "logins"
         )
       )
@@ -5513,9 +5512,8 @@ queries:
     mql: |
       paths = ["/var/run/faillock", "/var/log/lastlog", "/var/log/tallylog"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "logins"
         )
       )
@@ -5524,9 +5522,8 @@ queries:
     mql: |
       paths = ["/var/log/lastlog", "/var/log/tallylog"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "logins"
         )
       )
@@ -5535,17 +5532,15 @@ queries:
     impact: 50
     mql: |
       // Check utmp with session key
-      auditd.rules.syscalls.contains(
-        fields.contains(key == "path" && value == "/var/run/utmp")
-        && fields.contains(key == "perm" && value == "wa")
+      auditd.rules.files.contains( f:
+        f.path == "/var/run/utmp" && f.permissions == "wa"
         && keyname == "session"
       )
       // Check wtmp and btmp with logins or session key
       sessionPaths = ["/var/log/wtmp", "/var/log/btmp"]
       sessionPaths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname.in(["logins", "session"])
         )
       )
@@ -5815,18 +5810,16 @@ queries:
     mql: |
       appArmorPaths = ["/etc/apparmor", "/etc/apparmor.d"]
       appArmorConfigured = appArmorPaths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "MAC-policy"
         )
       )
 
       seLinuxPaths = ["/etc/selinux", "/usr/share/selinux"]
       seLinuxConfigured = seLinuxPaths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "MAC-policy"
         )
       )
@@ -5858,15 +5851,15 @@ queries:
             2. Add the following lines, for SELinux:
 
                 ```
-                -w /etc/selinux/ -p wa -k MAC-policy
-                -w /usr/share/selinux/ -p wa -k MAC-policy
+                -w /etc/selinux -p wa -k MAC-policy
+                -w /usr/share/selinux -p wa -k MAC-policy
                 ```
 
             3. Add the following lines, for AppArmor:
 
                 ```
-                -w /etc/apparmor/ -p wa -k MAC-policy
-                -w /etc/apparmor.d/ -p wa -k MAC-policy
+                -w /etc/apparmor -p wa -k MAC-policy
+                -w /etc/apparmor.d -p wa -k MAC-policy
                 ```
 
             4. To load the newly added rules into the running configuration:
@@ -5899,10 +5892,10 @@ queries:
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-MAC_policy.rules
                     block: |
-                      -w /etc/selinux/ -p wa -k MAC-policy
-                      -w /usr/share/selinux/ -p wa -k MAC-policy
-                      -w /etc/apparmor/ -p wa -k MAC-policy
-                      -w /etc/apparmor.d/ -p wa -k MAC-policy
+                      -w /etc/selinux -p wa -k MAC-policy
+                      -w /usr/share/selinux -p wa -k MAC-policy
+                      -w /etc/apparmor -p wa -k MAC-policy
+                      -w /etc/apparmor.d -p wa -k MAC-policy
                     create: yes
                     owner: root
                     group: root
@@ -5939,10 +5932,10 @@ queries:
 
             echo "Ensuring audit rules for MAC policy changes are configured in $RULES_FILE"
             cat > "$RULES_FILE" <<EOF
-            -w /etc/selinux/ -p wa -k MAC-policy
-            -w /usr/share/selinux/ -p wa -k MAC-policy
-            -w /etc/apparmor/ -p wa -k MAC-policy
-            -w /etc/apparmor.d/ -p wa -k MAC-policy
+            -w /etc/selinux -p wa -k MAC-policy
+            -w /usr/share/selinux -p wa -k MAC-policy
+            -w /etc/apparmor -p wa -k MAC-policy
+            -w /etc/apparmor.d -p wa -k MAC-policy
             EOF
 
             echo "Loading audit rules"
@@ -6028,54 +6021,60 @@ queries:
 
             ```yaml
             ---
-            - name: Gather network file facts
-              ansible.builtin.stat:
-                path: "{{ item }}"
-              register: network_files
-              loop:
-                - /etc/sysconfig/network
-                - /etc/network
+            - name: Ensure events that modify the system's network environment are audited
+              hosts: all
+              become: true
+              gather_facts: yes
 
-            - name: Configure base audit rules
-              ansible.builtin.blockinfile:
-                path: /etc/audit/rules.d/50-system_local.rules
-                block: |
-                  -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
-                  -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
-                  -w /etc/issue -p wa -k system-locale
-                  -w /etc/issue.net -p wa -k system-locale
-                  -w /etc/hosts -p wa -k system-locale
-                marker: "# {mark} ANSIBLE MANAGED - base network rules"
-                state: present
-                create: true
-              register: base_audit_rules
+              tasks:
+                - name: Gather network file facts
+                  ansible.builtin.stat:
+                    path: "{{ item }}"
+                  register: network_files
+                  loop:
+                    - /etc/sysconfig/network
+                    - /etc/network
 
-            - name: Configure conditional network file monitoring
-              ansible.builtin.blockinfile:
-                path: /etc/audit/rules.d/50-system_local.rules
-                block: "-w {{ item.item }} -p wa -k system-locale"
-                marker: "# {mark} ANSIBLE MANAGED - {{ item.item | basename }}"
-                state: present
-              loop: "{{ network_files.results }}"
-              when: item.stat.exists
-              register: conditional_audit_rules
+                - name: Configure base audit rules
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    block: |
+                      -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+                      -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+                      -w /etc/issue -p wa -k system-locale
+                      -w /etc/issue.net -p wa -k system-locale
+                      -w /etc/hosts -p wa -k system-locale
+                    marker: "# {mark} ANSIBLE MANAGED - base network rules"
+                    state: present
+                    create: true
+                  register: base_audit_rules
 
-            - name: Set secure file permissions
-              ansible.builtin.file:
-                path: /etc/audit/rules.d/50-system_local.rules
-                owner: root
-                group: root
-                mode: '0600'
+                - name: Configure conditional network file monitoring
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    block: "-w {{ item.item }} -p wa -k system-locale"
+                    marker: "# {mark} ANSIBLE MANAGED - {{ item.item | basename }}"
+                    state: present
+                  loop: "{{ network_files.results }}"
+                  when: item.stat.exists
+                  register: conditional_audit_rules
 
-            - name: Reload audit rules with proper error handling
-              ansible.builtin.command: augenrules --load
-              register: augenrules_result
-              failed_when:
-                - augenrules_result.rc != 0
-                - not audit_immutable
-              when: >
-                base_audit_rules.changed or
-                conditional_audit_rules.changed
+                - name: Set secure file permissions
+                  ansible.builtin.file:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    owner: root
+                    group: root
+                    mode: '0600'
+
+                - name: Reload audit rules with proper error handling
+                  ansible.builtin.command: augenrules --load
+                  register: augenrules_result
+                  failed_when:
+                    - augenrules_result.rc != 0
+                    - not audit_immutable
+                  when: >
+                    base_audit_rules.changed or
+                    conditional_audit_rules.changed
             ```
         - id: bash
           desc: |
@@ -6138,9 +6137,8 @@ queries:
       // Watch rules for network config files
       paths = ["/etc/issue", "/etc/issue.net", "/etc/hosts"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "system-locale"
         )
       )
@@ -6148,9 +6146,8 @@ queries:
       // Watch rule for network directory (redhat or debian)
       networkDirPaths = ["/etc/sysconfig/network", "/etc/network"]
       networkDirPaths.any(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "system-locale"
         )
       )
@@ -6178,9 +6175,8 @@ queries:
       // Watch rules for network config files
       paths = ["/etc/issue", "/etc/issue.net", "/etc/hosts"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "system-locale"
         )
       )
@@ -6598,9 +6594,8 @@ queries:
     mql: |
       paths = ["/etc/group", "/etc/passwd", "/etc/gshadow", "/etc/shadow", "/etc/security/opasswd"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "wa")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "wa"
           && keyname == "identity"
         )
       )
@@ -7050,9 +7045,8 @@ queries:
       // Watch rules for module tools
       paths = ["/sbin/insmod", "/sbin/rmmod", "/sbin/modprobe"]
       paths.all(p:
-        auditd.rules.syscalls.contains(
-          fields.contains(key == "path" && value == p)
-          && fields.contains(key == "perm" && value == "x")
+        auditd.rules.files.contains( f:
+          f.path == p && f.permissions == "x"
           && keyname == "modules"
         )
       )
@@ -7131,7 +7125,7 @@ queries:
                     owner: root
                     group: root
                     mode: '0640'
-                    register: modules_audit_rules_updated
+                  register: modules_audit_rules_updated
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
                   when: modules_audit_rules_updated.changed
@@ -7178,9 +7172,8 @@ queries:
     title: Ensure system administrator actions (sudolog) are audited
     impact: 50
     mql: |
-      auditd.rules.syscalls.contains(
-        fields.contains(key == "path" && value == "/var/log/sudo.log")
-        && fields.contains(key == "perm" && value == "wa")
+      auditd.rules.files.contains( f:
+        f.path == "/var/log/sudo.log" && f.permissions == "wa"
         && keyname == "actions"
       )
     docs:
