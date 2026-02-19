@@ -29,7 +29,7 @@ func init() {
 	serveApiCmd.Flags().String("address", "127.0.0.1", "Set the address to listen on")
 	serveApiCmd.Flags().Uint("port", 8080, "Set the port to listen on")
 	serveApiCmd.Flags().Uint("http-timeout", 30, "Set the timeout for HTTP requests in seconds")
-	serveApiCmd.Flags().MarkHidden("http-timeout")
+	_ = serveApiCmd.Flags().MarkHidden("http-timeout")
 	rootCmd.AddCommand(serveApiCmd)
 }
 
@@ -38,9 +38,9 @@ var serveApiCmd = &cobra.Command{
 	Hidden: true,
 	Short:  "EXPERIMENTAL: Serve a REST API for running scans",
 	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("port", cmd.Flags().Lookup("port"))
-		viper.BindPFlag("address", cmd.Flags().Lookup("address"))
-		viper.BindPFlag("http-timeout", cmd.Flags().Lookup("http-timeout"))
+		_ = viper.BindPFlag("port", cmd.Flags().Lookup("port"))
+		_ = viper.BindPFlag("address", cmd.Flags().Lookup("address"))
+		_ = viper.BindPFlag("http-timeout", cmd.Flags().Lookup("http-timeout"))
 
 		logger.StandardZerologLogger()
 

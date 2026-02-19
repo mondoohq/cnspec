@@ -532,8 +532,7 @@ func CodepointChecksums(codeBundle *llx.CodeBundle) []string {
 }
 
 func EntrypointChecksums(codeBundle *llx.CodeBundle) []string {
-	var checksums []string
-	checksums = make([]string, len(codeBundle.CodeV2.Blocks[0].Entrypoints))
+	checksums := make([]string, len(codeBundle.CodeV2.Blocks[0].Entrypoints))
 	for i, ref := range codeBundle.CodeV2.Blocks[0].Entrypoints {
 		checksums[i] = codeBundle.CodeV2.Checksums[ref]
 	}
@@ -541,8 +540,7 @@ func EntrypointChecksums(codeBundle *llx.CodeBundle) []string {
 }
 
 func DatapointChecksums(codeBundle *llx.CodeBundle) []string {
-	var checksums []string
-	checksums = make([]string, len(codeBundle.CodeV2.Blocks[0].Datapoints))
+	checksums := make([]string, len(codeBundle.CodeV2.Blocks[0].Datapoints))
 	for i, ref := range codeBundle.CodeV2.Blocks[0].Datapoints {
 		checksums[i] = codeBundle.CodeV2.Checksums[ref]
 	}

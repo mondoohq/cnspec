@@ -290,7 +290,7 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 			}
 
 			// retrieve the bundle for the parent (which is the space). That bundle contains all policies, queries and checks
-			bundle, err := services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn})
+			bundle, err := services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn}) //nolint:staticcheck // SA1019: ParentMrn is deprecated but still used for backward compatibility
 			if err != nil {
 				return nil, err
 			}

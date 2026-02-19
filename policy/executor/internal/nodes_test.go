@@ -333,7 +333,7 @@ func TestExecutionQueryNode(t *testing.T) {
 			data = nodeData.recalculate()
 			assert.NotNil(t, data)
 			select {
-			case _ = <-q:
+			case <-q:
 			default:
 				assert.Fail(t, "expected something to be executed")
 			}
@@ -344,9 +344,9 @@ func TestExecutionQueryNode(t *testing.T) {
 					Data:   llx.BoolTrue,
 				},
 			})
-			data = nodeData.recalculate()
+			_ = nodeData.recalculate()
 			select {
-			case _ = <-q:
+			case <-q:
 				assert.Fail(t, "query should not re-execute")
 			default:
 			}
@@ -1389,7 +1389,7 @@ func TestCollectionFinisherNode(t *testing.T) {
 			nodeData.recalculate()
 
 			select {
-			case _, _ = <-nodeData.doneChan:
+			case <-nodeData.doneChan:
 				assert.Fail(t, "expected channel to be open")
 			default:
 			}
@@ -1417,7 +1417,7 @@ func TestCollectionFinisherNode(t *testing.T) {
 
 			assert.True(t, progressCalled)
 			select {
-			case _, _ = <-nodeData.doneChan:
+			case <-nodeData.doneChan:
 				assert.Fail(t, "expected channel to be open")
 			default:
 			}

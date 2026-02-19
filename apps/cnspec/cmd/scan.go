@@ -30,11 +30,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 )
 
-const (
-	// allow sending reports to alternative URLs
-	featureReportAlternateUrlEnv = "REPORT_URL"
-)
-
 func init() {
 	rootCmd.AddCommand(scanCmd)
 

@@ -182,7 +182,7 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	// checksum
 	x, err := llx.NewExecutorV2(codeBundle.CodeV2, em.runtime, props, sendResult)
 	if err == nil {
-		x.Run()
+		_ = x.Run()
 	}
 
 	if memDebug {

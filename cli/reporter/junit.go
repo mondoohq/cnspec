@@ -74,11 +74,11 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper) error {
 	}
 
 	if !noXMLHeader {
-		out.WriteString(xml.Header)
+		_ = out.WriteString(xml.Header)
 	}
 
-	out.Write(data)
-	out.WriteString("\n")
+	_, _ = out.Write(data)
+	_ = out.WriteString("\n")
 
 	return nil
 }
@@ -198,7 +198,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 
 		for i := range vulnReport.Packages {
 			pkg := vulnReport.Packages[i]
-			if pkg == nil || pkg.Affected == false {
+			if pkg == nil || !pkg.Affected {
 				continue
 			}
 
@@ -209,7 +209,7 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 				Failure:   nil,
 			}
 
-			if pkg.Affected == true {
+			if pkg.Affected {
 				ts.Failures++
 
 				var content string

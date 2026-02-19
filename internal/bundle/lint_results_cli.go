@@ -127,7 +127,7 @@ func (r *Results) ToCli() []byte {
 			lineNumber = strconv.Itoa(entry.Location[0].Line)
 		}
 
-		table.Append([]string{
+		_ = table.Append([]string{
 			entry.RuleID,
 			entry.Level,
 			fileName,
@@ -135,6 +135,6 @@ func (r *Results) ToCli() []byte {
 			entry.Message,
 		})
 	}
-	table.Render()
+	_ = table.Render()
 	return buf.Bytes()
 }

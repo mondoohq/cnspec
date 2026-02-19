@@ -53,7 +53,7 @@ func getVulnReport[T any](results map[string]*T) (*T, error) {
 		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
 		return nil, errors.New("no vulnerabilities for this provider")
 	}
-	value, _ := results[vulnChecksum]
+	value := results[vulnChecksum]
 	return value, nil
 	// ^^
 }

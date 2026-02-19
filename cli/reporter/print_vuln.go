@@ -32,12 +32,12 @@ func (r *defaultVulnReporter) print() error {
 	}
 
 	header := fmt.Sprintf("\nTarget:     %s\n", r.target)
-	r.out.Write([]byte(termenv.String(header).Foreground(theme.DefaultTheme.Colors.Primary).String()))
+	_, _ = r.out.Write([]byte(termenv.String(header).Foreground(theme.DefaultTheme.Colors.Primary).String()))
 	summaryDivider := strings.Repeat("=", utf8.RuneCountInString(header))
-	r.out.Write([]byte(termenv.String(summaryDivider + "\n\n").Foreground(theme.DefaultTheme.Colors.Secondary).String()))
-	r.out.Write([]byte(RenderVulnerabilityStats(r.data)))
+	_, _ = r.out.Write([]byte(termenv.String(summaryDivider + "\n\n").Foreground(theme.DefaultTheme.Colors.Secondary).String()))
+	_, _ = r.out.Write([]byte(RenderVulnerabilityStats(r.data)))
 	if !r.isSummary {
-		r.out.Write([]byte(RenderVulnReportDetailed(r.data, !r.isCompact)))
+		_, _ = r.out.Write([]byte(RenderVulnReportDetailed(r.data, !r.isCompact)))
 	}
 	return nil
 }

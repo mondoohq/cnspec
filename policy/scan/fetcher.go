@@ -25,12 +25,14 @@ func newFetcher() *fetcher {
 }
 
 func (f *fetcher) fetchBundles(ctx context.Context, conf mqlc.CompilerConfig, urls ...string) (*policy.Bundle, error) {
-	var res *policy.Bundle = &policy.Bundle{}
+	res := &policy.Bundle{}
 
 	for i := range urls {
 		url := urls[i]
 		if cur, ok := f.cache[url]; ok {
-			res.AddBundle(cur)
+			if err := res.AddBundle(cur); err != nil {
+				return nil, errors.Wrap(err, "failed to add cached bundle")
+			}
 			continue
 		}
 

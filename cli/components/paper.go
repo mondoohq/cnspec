@@ -75,11 +75,14 @@ func (p *Paper) Render(width int, height int) string {
 	b := strings.Builder{}
 
 	for i := 0; i < height; i++ {
-		firstChar := p.theme.Vertical
-		if i == 0 {
+		var firstChar rune
+		switch i {
+		case 0:
 			firstChar = p.theme.TopLeft
-		} else if i == height-1 {
+		case height - 1:
 			firstChar = p.theme.BottomLeft
+		default:
+			firstChar = p.theme.Vertical
 		}
 		b.WriteRune(firstChar)
 
@@ -90,11 +93,14 @@ func (p *Paper) Render(width int, height int) string {
 		}
 		b.WriteString(strings.Repeat(horizontal, width-2))
 
-		lastChar := p.theme.Vertical
-		if i == 0 {
+		var lastChar rune
+		switch i {
+		case 0:
 			lastChar = p.theme.TopRight
-		} else if i == height-1 {
+		case height - 1:
 			lastChar = p.theme.BottomRight
+		default:
+			lastChar = p.theme.Vertical
 		}
 		b.WriteRune(lastChar)
 		b.WriteByte('\n')

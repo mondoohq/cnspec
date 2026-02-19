@@ -87,8 +87,8 @@ func (db *Db) mutateFramework(ctx context.Context, mrn string, actions map[strin
 		return frameworkw, true, errors.New("failed to store updated framework in cache")
 	}
 
-	frameworkw.Framework.ClearExecutionChecksums()
-	err = frameworkw.Framework.UpdateChecksums(ctx,
+	frameworkw.ClearExecutionChecksums()
+	err = frameworkw.UpdateChecksums(ctx,
 		func(ctx context.Context, mrn string) (*policy.Framework, error) { return db.GetFramework(ctx, mrn) },
 		func(ctx context.Context, mrn string) ([]*policy.FrameworkMap, error) {
 			return db.GetFrameworkMaps(ctx, mrn)
@@ -108,12 +108,12 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]p
 		return policyw, false, err
 	}
 
-	if len(policyw.Policy.Groups) == 0 {
+	if len(policyw.Groups) == 0 {
 		log.Error().Str("policy", mrn).Msg("resolver.db> failed to modify policy, it has no specs")
 		return policyw, false, errors.New("cannot modify policy, it has no specs (invalid state)")
 	}
 
-	group := policyw.Policy.Groups[0]
+	group := policyw.Groups[0]
 	changed := false
 
 	// prepare a map for easier processing
@@ -184,8 +184,8 @@ func (db *Db) mutatePolicy(ctx context.Context, mrn string, actions map[string]p
 		return policyw, true, err
 	}
 
-	policyw.Policy.InvalidateExecutionChecksums()
-	_, err = policyw.Policy.UpdateChecksums(ctx,
+	policyw.InvalidateExecutionChecksums()
+	_, err = policyw.UpdateChecksums(ctx,
 		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
@@ -369,8 +369,8 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 				return err
 			}
 
-			policyw.Policy.InvalidateGraphChecksums()
-			_, err = policyw.Policy.UpdateChecksums(ctx,
+			policyw.InvalidateGraphChecksums()
+			_, err = policyw.UpdateChecksums(ctx,
 				time.Now(),
 				func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 				func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
@@ -381,8 +381,8 @@ func (db *Db) refreshDependentAssetFilters(ctx context.Context, startPolicy wrap
 				return err
 			}
 
-			db.cache.Set(dbIDPolicy+policyw.Policy.Mrn, policyw, 2)
-			err = db.checkAndInvalidatePolicyBundle(ctx, policyw.Policy.Mrn, &policyw, nil)
+			db.cache.Set(dbIDPolicy+policyw.Mrn, policyw, 2)
+			err = db.checkAndInvalidatePolicyBundle(ctx, policyw.Mrn, &policyw, nil)
 			if err != nil {
 				return err
 			}
@@ -636,7 +636,7 @@ func (db *Db) SetResolvedPolicy(ctx context.Context, mrn string, resolvedPolicy 
 		}
 
 		policyw := x.(wrapPolicy)
-		policyw.Policy.GraphExecutionChecksum = resolvedPolicy.GraphExecutionChecksum
+		policyw.GraphExecutionChecksum = resolvedPolicy.GraphExecutionChecksum
 		policyw.invalidated = false
 
 		ok = db.cache.Set(dbIDPolicy+mrn, policyw, 1)
@@ -969,8 +969,8 @@ func (db *Db) SetProps(ctx context.Context, req *policy.PropsReq) error {
 		policyw.Props = append(policyw.Props, v)
 	}
 
-	policyw.Policy.InvalidateExecutionChecksums()
-	_, err = policyw.Policy.UpdateChecksums(ctx,
+	policyw.InvalidateExecutionChecksums()
+	_, err = policyw.UpdateChecksums(ctx,
 		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
@@ -986,7 +986,7 @@ func (db *Db) SetProps(ctx context.Context, req *policy.PropsReq) error {
 		return errors.New("")
 	}
 
-	err = db.checkAndInvalidatePolicyBundle(ctx, policyw.Policy.Mrn, &policyw, nil)
+	err = db.checkAndInvalidatePolicyBundle(ctx, policyw.Mrn, &policyw, nil)
 	if err != nil {
 		return err
 	}

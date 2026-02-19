@@ -223,10 +223,7 @@ func (m MicroScoreCard) Render(score *policy.Score) string {
 	// category code can be 3-8 chars, ensure we always render 8 chars
 	cc := rating.Text()
 	ccColor := DefaultScoreRatingColors.Color(cc)
-	for {
-		if len(cc) >= 8 {
-			break
-		}
+	for len(cc) < 8 {
 		cc = cc + " "
 	}
 	cc = " " + cc + " "

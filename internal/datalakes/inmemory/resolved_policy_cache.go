@@ -20,10 +20,6 @@ type cachedResolvedPolicy struct {
 	size           int64
 }
 
-func (c *cachedResolvedPolicy) isExpired(now time.Time) bool {
-	return now.Sub(c.createdOn) > ResolvedPolicyCacheTTL
-}
-
 type ResolvedPolicyCache struct {
 	mu          sync.Mutex
 	data        map[string]*cachedResolvedPolicy

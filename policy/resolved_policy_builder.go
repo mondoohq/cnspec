@@ -708,7 +708,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 }
 
 func canRun(action Action) bool {
-	return !(action == Action_DEACTIVATE || action == Action_OUT_OF_SCOPE)
+	return action != Action_DEACTIVATE && action != Action_OUT_OF_SCOPE
 }
 
 type group interface {

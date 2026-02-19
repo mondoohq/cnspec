@@ -120,7 +120,7 @@ var serveCmd = &cobra.Command{
 			autoUpdate = viper.GetBool("auto_update")
 		}
 
-		bj.Run(func() error {
+		_ = bj.Run(func() error {
 			// Try to update the os provider before each scan
 			if autoUpdate {
 				err = updateProviders()
@@ -162,7 +162,7 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 	}
 	config.DisplayUsedConfig()
 
-	logClientInfo(opts.SpaceMrn, opts.AgentMrn, opts.ServiceAccountMrn)
+	logClientInfo(opts.SpaceMrn, opts.AgentMrn, opts.ServiceAccountMrn) //nolint:staticcheck // SA1019: opts.SpaceMrn is deprecated but still used for backward compatibility
 
 	if len(opts.Features) > 0 {
 		log.Info().Strs("features", opts.Features).Msg("user activated features")

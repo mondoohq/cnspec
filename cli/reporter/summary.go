@@ -5,7 +5,6 @@ package reporter
 
 import (
 	"bytes"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -14,49 +13,7 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
-	"go.mondoo.com/mql/v13/mrn"
 )
-
-type policyScore struct {
-	score *policy.Score
-	title string
-}
-
-func policyScores(report *policy.Report, bundle *policy.PolicyBundleMap) []policyScore {
-	scores := []policyScore{}
-
-	for id, score := range report.Scores {
-		pol, ok := bundle.Policies[id]
-		if !ok {
-			continue
-		}
-
-		// We only keep queries and policies in printing. Normal queries will typically
-		// not be a MRN. Everything except for policies and queries can be skipped
-		if m, err := mrn.NewMRN(id); err == nil {
-			rid, _ := m.ResourceID(policy.MRN_RESOURCE_POLICY)
-			qid, _ := m.ResourceID(policy.MRN_RESOURCE_QUERY)
-			if rid == "" && qid == "" {
-				continue
-			}
-		}
-
-		x := policyScore{
-			score: score,
-			title: pol.Name,
-		}
-		if x.title == "" {
-			x.title = id
-		}
-		scores = append(scores, x)
-	}
-
-	sort.Slice(scores, func(i, j int) bool {
-		return scores[i].score.Value < scores[j].score.Value
-	})
-
-	return scores
-}
 
 // TODO: ================== vv CLEAN UP vv ========================
 

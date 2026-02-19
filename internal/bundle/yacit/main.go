@@ -73,5 +73,7 @@ func main() {
 		panic(err)
 	}
 
-	os.WriteFile("../bundle.yac.go", formatted, 0o644)
+	if err := os.WriteFile("../bundle.yac.go", formatted, 0o644); err != nil {
+		panic(err)
+	}
 }

@@ -5,8 +5,6 @@ package scan
 
 import (
 	"context"
-	"math/rand"
-	"time"
 
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/progress"
@@ -19,10 +17,6 @@ import (
 // and it makes it easier and faster to serialize.
 
 //go:generate protoc --plugin=protoc-gen-go=../../scripts/protoc/protoc-gen-go --plugin=protoc-gen-rangerrpc=../../scripts/protoc/protoc-gen-rangerrpc --proto_path=../../:../../mql:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. scan.proto
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 
 type AssetJob struct {
 	DoRecord         bool

@@ -54,7 +54,7 @@ func (s *LocalServices) Assign(ctx context.Context, assignment *PolicyAssignment
 
 	// all remote, call upstream
 	if s.Upstream != nil && !s.Incognito {
-		return s.Upstream.PolicyResolver.Assign(ctx, assignment)
+		return s.Upstream.Assign(ctx, assignment)
 	}
 
 	// policies may be stored in upstream, cache them first
@@ -93,7 +93,7 @@ func (s *LocalServices) Unassign(ctx context.Context, assignment *PolicyAssignme
 
 	// all remote, call upstream
 	if s.Upstream != nil && !s.Incognito {
-		return s.Upstream.PolicyResolver.Unassign(ctx, assignment)
+		return s.Upstream.Unassign(ctx, assignment)
 	}
 
 	err := s.DataLake.MutateAssignments(ctx, &AssetMutation{
@@ -158,7 +158,7 @@ func (s *LocalServices) ResolveAndUpdateJobs(ctx context.Context, req *UpdateAss
 		return res, nil
 	}
 
-	res, err := s.Upstream.PolicyResolver.ResolveAndUpdateJobs(ctx, req)
+	res, err := s.Upstream.ResolveAndUpdateJobs(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -177,11 +177,11 @@ func (s *LocalServices) UpdateAssetJobs(ctx context.Context, req *UpdateAssetJob
 		return globalEmpty, s.updateAssetJobs(ctx, req.AssetMrn, req.AssetFilters)
 	}
 
-	if _, err := s.Upstream.PolicyResolver.UpdateAssetJobs(ctx, req); err != nil {
+	if _, err := s.Upstream.UpdateAssetJobs(ctx, req); err != nil {
 		return nil, err
 	}
 
-	resolvedPolicy, err := s.Upstream.PolicyResolver.Resolve(ctx, &ResolveReq{
+	resolvedPolicy, err := s.Upstream.Resolve(ctx, &ResolveReq{
 		PolicyMrn:    req.AssetMrn,
 		AssetFilters: req.AssetFilters,
 	})
@@ -227,7 +227,7 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 	}
 
 	if s.Upstream != nil && !s.Incognito {
-		_, err := s.Upstream.PolicyResolver.StoreResults(ctx, req)
+		_, err := s.Upstream.StoreResults(ctx, req)
 		if err != nil {
 			return globalEmpty, err
 		}
@@ -339,7 +339,6 @@ func (s *LocalServices) CreateFrameworkObject(frameworkMrn string, ownerMrn stri
 	// this is the case when we are in incognito mode
 	if ownerMrn == "" {
 		log.Debug().Str("frameworkMrn", frameworkMrn).Msg("resolver> ownerMrn is missing")
-		ownerMrn = "//policy.api.mondoo.app"
 	}
 
 	name, _ := mrn.GetResource(frameworkMrn, MRN_RESOURCE_ASSET)
@@ -367,44 +366,6 @@ const (
 
 var ErrRetryResolution = errors.New("retry policy resolution")
 
-type policyResolutionError struct {
-	ID       string
-	IsPolicy bool
-	Error    string
-}
-
-type resolverCache struct {
-	baseChecksum         string
-	assetFiltersChecksum string
-	assetFilters         map[string]struct{}
-	codeIdToMrn          map[string][]string
-	riskFactors          map[string]*RiskFactor
-	// assigned queries, listed by their UUID (i.e. policy context)
-	executionQueries map[string]*ExecutionQuery
-	dataQueries      map[string]struct{}
-	queriesByMsum    map[string]*Mquery // Msum == Mquery.Checksum
-	riskMrns         map[string]*Mquery
-	riskInfos        map[string]*RiskFactor
-	propsCache       PropsCache
-
-	reportingJobsByUUID   map[string]*ReportingJob
-	reportingJobsByMsum   map[string][]*ReportingJob // Msum == Mquery.Checksum, i.e. only reporting jobs for mqueries
-	reportingJobsByCodeId map[string][]*ReportingJob // CodeId == Mquery.CodeId
-	reportingJobsActive   map[string]bool
-	errors                []*policyResolutionError
-	bundleMap             *PolicyBundleMap
-
-	compilerConfig mqlc.CompilerConfig
-}
-
-type policyResolverCache struct {
-	removedPolicies map[string]struct{}        // tracks policies that will not be added
-	removedQueries  map[string]struct{}        // tracks queries that will not be added
-	parentPolicies  map[string]struct{}        // tracks policies in the ancestry, to prevent loops
-	childJobsByMrn  map[string][]*ReportingJob // tracks policies+queries+checks that were added below (at any level)
-	global          *resolverCache
-}
-
 func checksum2string(checksum uint64) string {
 	b := make([]byte, 8)
 	binary.LittleEndian.PutUint64(b, checksum)
@@ -417,42 +378,6 @@ func checksumStrings(strings ...string) string {
 		checksum = fnv1a.AddString64(checksum, strings[i])
 	}
 	return checksum2string(checksum)
-}
-
-func (r *resolverCache) relativeChecksum(s string) string {
-	return checksumStrings(r.baseChecksum, r.assetFiltersChecksum, "v2", s)
-}
-
-func (p *policyResolverCache) clone() *policyResolverCache {
-	res := &policyResolverCache{
-		removedPolicies: map[string]struct{}{},
-		removedQueries:  map[string]struct{}{},
-		parentPolicies:  map[string]struct{}{},
-		childJobsByMrn:  map[string][]*ReportingJob{},
-		global:          p.global,
-	}
-
-	for k, v := range p.removedPolicies {
-		res.removedPolicies[k] = v
-	}
-	for k, v := range p.removedQueries {
-		res.removedQueries[k] = v
-	}
-	for k, v := range p.parentPolicies {
-		res.parentPolicies[k] = v
-	}
-
-	return res
-}
-
-func (p *policyResolverCache) addChildren(other *policyResolverCache) {
-	// we copy these back into the parent, but don't keep them around in the global
-	// cache. The reason for that is that policy siblings could accidentally access
-	// each others jobs when they shouldn't be able to.
-	// In this sense, reporting jobs by MRN only bubble up, never down or sideways.
-	for k, v := range other.childJobsByMrn {
-		p.childJobsByMrn[k] = append(p.childJobsByMrn[k], v...)
-	}
 }
 
 func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {

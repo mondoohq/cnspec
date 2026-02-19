@@ -379,7 +379,7 @@ func buildHumanReadablePlannedActions(workingDir, execPath string, data []*tfjso
 	outputString.WriteString("Resource details:\n")
 
 	for _, c := range data {
-		outputString.WriteString(fmt.Sprintf("  %s.%s will be %s\n", c.Type, c.Name,
+		fmt.Fprintf(&outputString, "  %s.%s will be %s\n", c.Type, c.Name,
 			createOrDestroy(
 				c.Change.Actions.Create(),
 				c.Change.Actions.Delete(),
@@ -390,14 +390,13 @@ func buildHumanReadablePlannedActions(workingDir, execPath string, data []*tfjso
 				c.Change.Actions.CreateBeforeDestroy(),
 				c.Change.Actions.DestroyBeforeCreate(),
 			),
-		),
 		)
 	}
 	outputString.WriteString("\n")
-	outputString.WriteString(fmt.Sprintf(
+	fmt.Fprintf(&outputString,
 		"More details can be viewed by running:\n\n  cd %s\n  %s show tfplan.json",
 		workingDir, execPath,
-	))
+	)
 	outputString.WriteString("\n")
 	return outputString.String()
 }

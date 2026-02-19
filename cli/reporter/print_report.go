@@ -339,11 +339,12 @@ func colorizeRow(row reportRow, text string) string {
 	severity := scoreRating(row.Score)
 	color := components.DefaultRatingColors.Color(severity)
 
-	if severity == policy.ScoreRating_aPlus {
+	switch severity {
+	case policy.ScoreRating_aPlus:
 		explain = "(passed)"
-	} else if severity == policy.ScoreRating_unrated {
+	case policy.ScoreRating_unrated:
 		explain = ""
-	} else {
+	default:
 		explain = "(failed)"
 	}
 

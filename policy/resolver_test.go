@@ -5,7 +5,6 @@ package policy_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,16 +67,4 @@ func queryMrn(uid string) string {
 
 func riskFactorMrn(uid string) string {
 	return "//test.sth/risks/" + uid
-}
-
-func isFramework(queryId string) bool {
-	return strings.Contains(queryId, "/frameworks/")
-}
-
-func isControl(queryId string) bool {
-	return strings.Contains(queryId, "/controls/")
-}
-
-func isPolicy(queryId string) bool {
-	return strings.Contains(queryId, "/policies/")
 }

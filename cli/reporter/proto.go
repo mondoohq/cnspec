@@ -87,7 +87,7 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			}
 			// checks
 			if rj, ok := reportingJobByQrId[mrn]; ok {
-				if !(rj.Type == policy.ReportingJob_DATA_QUERY || rj.Type == policy.ReportingJob_CHECK_AND_DATA_QUERY) {
+				if rj.Type != policy.ReportingJob_DATA_QUERY && rj.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
 					continue
 				}
 			}

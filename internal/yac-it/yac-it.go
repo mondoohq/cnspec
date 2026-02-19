@@ -169,7 +169,7 @@ func (t *YacIt) createStruct(typ reflect.Type) {
 	res.WriteString("}\n")
 
 	if _, isCustom := t.customUnmarshal[name]; !isCustom {
-		res.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&res, `
 func (x *%s) UnmarshalYAML(node *yaml.Node) error {
 	// prevent recursive calls into UnmarshalYAML with a placeholder type
 	type tmp %s
@@ -212,9 +212,9 @@ func (d %s) MarshalYAML() (any, error) {
 	node.FootComment = d.Comments.FootComment
 	return node, nil
 }
-`, name, name, name, name))
+`, name, name, name, name)
 	} else {
-		res.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&res, `
 func (x *%s) addFileContext(node *yaml.Node) {
 	x.FileContext.Column = node.Column
 	x.FileContext.Line = node.Line
@@ -222,7 +222,7 @@ func (x *%s) addFileContext(node *yaml.Node) {
 	x.Comments.LineComment = node.LineComment
 	x.Comments.FootComment = node.FootComment
 }
-`, name))
+`, name)
 	}
 
 	t.types[name] = res.String()
@@ -231,7 +231,7 @@ func (x *%s) addFileContext(node *yaml.Node) {
 		typ := baseType(nuFields[i].Type)
 		switch typ.Kind() {
 		case reflect.Struct:
-			t.io.Write([]byte("process type: " + typ.Name() + "\n"))
+			_, _ = t.io.Write([]byte("process type: " + typ.Name() + "\n"))
 			t.createStruct(typ)
 		default:
 			// If the type is a protobuf enum, we allow it to be a string or int
@@ -312,7 +312,7 @@ type YamlUnmarshaler interface {
 }
 
 func hasYamlUnmarshaler(typ reflect.Type) bool {
-	return reflect.PtrTo(typ).Implements(reflect.TypeOf((*YamlUnmarshaler)(nil)).Elem())
+	return reflect.PointerTo(typ).Implements(reflect.TypeOf((*YamlUnmarshaler)(nil)).Elem())
 }
 
 func shouldGenerateTypeForEnum(typ reflect.Type) bool {

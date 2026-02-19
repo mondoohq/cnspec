@@ -184,7 +184,9 @@ func (s *Filters) AddQueryFiltersFn(ctx context.Context, query *Mquery, lookupQu
 		if err != nil {
 			return multierr.Wrap(err, "cannot find query variant "+mrn)
 		}
-		s.AddQueryFiltersFn(ctx, variant, lookupQuery)
+		if err := s.AddQueryFiltersFn(ctx, variant, lookupQuery); err != nil {
+			return err
+		}
 	}
 	return nil
 }

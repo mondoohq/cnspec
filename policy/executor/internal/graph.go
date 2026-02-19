@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
@@ -55,11 +54,10 @@ type nodeData interface {
 }
 
 type GraphExecutor struct {
-	nodes         map[NodeID]*Node
-	edges         map[NodeID][]NodeID
-	priorityMap   map[NodeID]int
-	queryTimeout  time.Duration
-	mondooVersion *vrs.Version
+	nodes        map[NodeID]*Node
+	edges        map[NodeID][]NodeID
+	priorityMap  map[NodeID]int
+	queryTimeout time.Duration
 
 	executionManager *executionManager
 	resultChan       chan *llx.RawResult
@@ -200,7 +198,7 @@ func (ge *GraphExecutor) Debug() {
 	}
 	defer f.Close()
 
-	f.WriteString("digraph \"resolvedpolicy\" {\n")
+	_, _ = f.WriteString("digraph \"resolvedpolicy\" {\n")
 	for k, n := range ge.nodes {
 		var shape string
 		label := fmt.Sprintf("priority\n%d\ntype\n%s\n", ge.priorityMap[k], n.nodeType)
@@ -239,7 +237,7 @@ func (ge *GraphExecutor) Debug() {
 			fmt.Fprintf(f, "\t%q -> %q\n", from, to)
 		}
 	}
-	f.WriteString("}")
+	_, _ = f.WriteString("}")
 
 	if err := f.Close(); err != nil {
 		log.Error().Err(err).Msg("failed to write debug graph")

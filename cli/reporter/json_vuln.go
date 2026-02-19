@@ -51,20 +51,20 @@ func VulnReportToJSON(target string, data *mvd.VulnReport, out iox.OutputHelper)
 		return nil
 	}
 
-	out.WriteString(
+	_ = out.WriteString(
 		"{" +
 			"\"target\": ")
-	out.WriteString("\"" + target + "\"")
+	_ = out.WriteString("\"" + target + "\"")
 
-	out.WriteString("," +
+	_ = out.WriteString("," +
 		"\"stats\":" +
 		"{")
-	out.WriteString(renderVulnerabilityStatsAsJson(data))
-	out.WriteString("}")
-	out.WriteString("," +
+	_ = out.WriteString(renderVulnerabilityStatsAsJson(data))
+	_ = out.WriteString("}")
+	_ = out.WriteString("," +
 		"\"vulnerabilities\":")
-	out.WriteString(renderVulnerabilitiesAsJson(data))
-	out.WriteString("}")
+	_ = out.WriteString(renderVulnerabilitiesAsJson(data))
+	_ = out.WriteString("}")
 
 	return nil
 }

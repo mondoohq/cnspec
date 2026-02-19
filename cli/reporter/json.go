@@ -29,7 +29,7 @@ func printScore(score *policy.Score, mrn string, out iox.OutputHelper, prefix st
 		}
 	}
 
-	out.WriteString(prefix + llx.PrettyPrintString(mrn) +
+	_ = out.WriteString(prefix + llx.PrettyPrintString(mrn) +
 		":{\"score\":" + strconv.FormatUint(uint64(score.Value), 10) + "," +
 		"\"riskScore\":" + strconv.FormatUint(uint64(100-score.Value), 10) + "," +
 		"\"status\":\"" + status + "\"}")
@@ -81,7 +81,7 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 		qid2mrn = make(map[string]string, 0)
 	}
 
-	out.WriteString(
+	_ = out.WriteString(
 		"{" +
 			"\"assets\":")
 	// preserve json output to ignore recently introduced fields
@@ -91,14 +91,14 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 	if err != nil {
 		return err
 	}
-	out.WriteString(string(assets))
+	_ = out.WriteString(string(assets))
 
-	out.WriteString("," +
+	_ = out.WriteString("," +
 		"\"data\":" +
 		"{")
 	pre := ""
 	for id, report := range data.Reports {
-		out.WriteString(pre + llx.PrettyPrintString(id) + ":{")
+		_ = out.WriteString(pre + llx.PrettyPrintString(id) + ":{")
 		pre = ","
 
 		resolved, ok := data.ResolvedPolicies[id]
@@ -121,12 +121,12 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 			}
 			// checks
 			if rj, ok := reportingJobByQrId[mrn]; ok {
-				if !(rj.Type == policy.ReportingJob_DATA_QUERY || rj.Type == policy.ReportingJob_CHECK_AND_DATA_QUERY) {
+				if rj.Type != policy.ReportingJob_DATA_QUERY && rj.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
 					continue
 				}
 			}
 
-			out.WriteString(pre2 + llx.PrettyPrintString(mrn) + ":")
+			_ = out.WriteString(pre2 + llx.PrettyPrintString(mrn) + ":")
 			pre2 = ","
 
 			err := cr.CodeBundleToJSON(query.Code, results, out)
@@ -134,15 +134,15 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 				return err
 			}
 		}
-		out.WriteString("}")
+		_ = out.WriteString("}")
 	}
 
-	out.WriteString("}," +
+	_ = out.WriteString("}," +
 		"\"scores\":" +
 		"{")
 	pre = ""
 	for id, report := range data.Reports {
-		out.WriteString(pre + llx.PrettyPrintString(id) + ":{")
+		_ = out.WriteString(pre + llx.PrettyPrintString(id) + ":{")
 		pre = ","
 
 		resolved, ok := data.ResolvedPolicies[id]
@@ -174,18 +174,18 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 			}
 		}
 
-		out.WriteString("}")
+		_ = out.WriteString("}")
 	}
 
-	out.WriteString("}," +
+	_ = out.WriteString("}," +
 		"\"errors\":" +
 		"{")
 	pre = ""
 	for id, err := range data.Errors {
-		out.WriteString(pre + llx.PrettyPrintString(id) + ":" + llx.PrettyPrintString(err))
+		_ = out.WriteString(pre + llx.PrettyPrintString(id) + ":" + llx.PrettyPrintString(err))
 		pre = ","
 	}
-	out.WriteString("}}")
+	_ = out.WriteString("}}")
 
 	return nil
 }

@@ -462,7 +462,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				return
 			}
 			data := query.Code.FilterResults(results)
-			result := r.Reporter.Printer.Datas(query.Code, data)
+			result := r.Printer.Datas(query.Code, data)
 			if result == "" {
 				return
 			}
@@ -772,7 +772,7 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 			codeBundle := resolved.GetCodeBundle(query)
 			if codeBundle == nil {
-				r.out(r.Reporter.Printer.Error("failed to find code bundle for query '" + query.Mrn + "' in bundle"))
+				r.out(r.Printer.Error("failed to find code bundle for query '" + query.Mrn + "' in bundle"))
 			} else {
 				r.out("  Result:" + NewLineCharacter)
 				assessment := policy.Query2Assessment(codeBundle, report)
@@ -782,7 +782,7 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 					r.out(assessmentString)
 				} else {
 					data := codeBundle.FilterResults(results)
-					result := stringx.Indent(4, r.Reporter.Printer.Results(codeBundle, data))
+					result := stringx.Indent(4, r.Printer.Results(codeBundle, data))
 					result = strings.ReplaceAll(result, "\n", NewLineCharacter)
 					r.out(result)
 				}

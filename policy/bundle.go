@@ -412,7 +412,7 @@ func (p *Bundle) PolicyMRNs() []string {
 	mrns := []string{}
 	for i := range p.Policies {
 		// ensure a mrn is generated
-		p.Policies[i].RefreshMRN(p.OwnerMrn)
+		_ = p.Policies[i].RefreshMRN(p.OwnerMrn)
 		mrns = append(mrns, p.Policies[i].Mrn)
 	}
 	return mrns
@@ -486,10 +486,10 @@ func (n docsWriter) Write(section string, data string) {
 	if data == "" {
 		return
 	}
-	io.WriteString(n.out, section)
-	io.WriteString(n.out, ": ")
-	io.WriteString(n.out, data)
-	n.out.Write([]byte{'\n'})
+	_, _ = io.WriteString(n.out, section)
+	_, _ = io.WriteString(n.out, ": ")
+	_, _ = io.WriteString(n.out, data)
+	_, _ = n.out.Write([]byte{'\n'})
 }
 
 func extractQueryDocs(query *Mquery, w docsPrinter, noIDs bool) {
@@ -663,10 +663,10 @@ func detectVariantCyclesDFS(mrn string, statusMap map[string]nodeVisitStatus, qu
 	if q == nil {
 		return nil
 	}
-	s := statusMap[mrn]
-	if s == VISITED {
+	switch statusMap[mrn] {
+	case VISITED:
 		return nil
-	} else if s == ACTIVE {
+	case ACTIVE:
 		return ErrVariantCycleDetected(mrn)
 	}
 	statusMap[q.Mrn] = ACTIVE
@@ -1276,7 +1276,7 @@ func (cache *bundleCache) prepareMRNs() error {
 	// We'll replace the properties that do not have an implementation
 	replacePropIfNecessary := func(prop *Property) {
 		for _, forProp := range prop.For {
-			if existing, ok := cache.lookupProps[forProp.Mrn]; ok && existing.Property.Mql == "" {
+			if existing, ok := cache.lookupProps[forProp.Mrn]; ok && existing.Mql == "" {
 				cache.lookupProps[forProp.Mrn] = PropertyRef{
 					Property: prop,
 					Name:     existing.Name,
@@ -1295,7 +1295,7 @@ func (cache *bundleCache) prepareMRNs() error {
 
 	// Compile the properties
 	for _, prop := range cache.lookupProps {
-		if prop.Property.Mql == "" {
+		if prop.Mql == "" {
 			continue
 		}
 		if _, err := prop.RefreshChecksumAndType(cache.conf.CompilerConfig); err != nil {

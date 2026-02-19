@@ -47,7 +47,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 			assert.Equal(t, cur.value, res.Data.Value, "codeID="+res.CodeID)
 			received[res.CodeID]++
 		})
-		executor.AddCode(code, nil)
+		_, _ = executor.AddCode(code, nil)
 
 		ok := executor.WaitForResults(2 * time.Second)
 		if !ok {
@@ -89,7 +89,7 @@ func runTest(t *testing.T, code string, expected map[string]value, callers ...fu
 
 		codeBundle, err := mqlc.Compile(code, nil, mqlc.NewConfig(executor.Schema(), mql.DefaultFeatures))
 		require.NoError(t, err)
-		executor.AddCodeBundle(codeBundle, nil)
+		_ = executor.AddCodeBundle(codeBundle, nil)
 
 		ok := executor.WaitForResults(2 * time.Second)
 		if !ok {

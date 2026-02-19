@@ -36,7 +36,7 @@ scan_interval:
 `
 
 	viper.SetConfigType("yaml")
-	viper.ReadConfig(strings.NewReader(data))
+	_ = viper.ReadConfig(strings.NewReader(data))
 
 	cfg, err := ReadConfig()
 	require.NoError(t, err)

@@ -147,7 +147,7 @@ func (r *Results) ToSarif(rootDir string) ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	report.Write(&buf)
+	_ = report.Write(&buf)
 	return buf.Bytes(), nil
 }
 

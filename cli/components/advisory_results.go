@@ -117,9 +117,9 @@ func (a AdvisoryResultTable) Render(r *mvd.VulnReport) (string, error) {
 			}
 
 			line := []string{icon, fmt.Sprintf("%v", score), advisory.ID, currentVersion, fixedVersion, patch}
-			table.Append(line)
+			_ = table.Append(line)
 		}
-		table.Render()
+		_ = table.Render()
 	}
 
 	// packages advisories
@@ -232,7 +232,7 @@ func (c *CliTableWriter) renderRow(row *advisories.ReportFindingRow, overrideInd
 
 	line := append([]string{icon}, record...)
 
-	c.table.Append(line)
+	_ = c.table.Append(line)
 }
 
 func (c *CliTableWriter) Write(row advisories.ReportFindingRow) error {
@@ -301,7 +301,7 @@ func (c *CliTableWriter) Flush() {
 	}
 
 	// and render the table
-	c.table.Render()
+	_ = c.table.Render()
 }
 
 func IntScore2Float(score int32) float32 {

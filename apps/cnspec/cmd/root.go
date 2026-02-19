@@ -4,7 +4,6 @@
 package cmd
 
 import (
-	"net/http"
 	"os"
 	"regexp"
 	"runtime"
@@ -16,8 +15,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/mql/v13"
 	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
 	"go.mondoo.com/mql/v13/cli/config"
 	cli_errors "go.mondoo.com/mql/v13/cli/errors"
@@ -25,9 +22,6 @@ import (
 	"go.mondoo.com/mql/v13/cli/theme"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
 	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/ranger-rpc"
-	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
 
 const (
@@ -229,36 +223,4 @@ func GenerateMarkdown(dir string) error {
 	}
 
 	return nil
-}
-
-func defaultRangerPlugins(sysInfo *sysinfo.SystemInfo, features mql.Features) []ranger.ClientPlugin {
-	plugins := []ranger.ClientPlugin{}
-	plugins = append(plugins, scope.NewRequestIDRangerPlugin())
-	plugins = append(plugins, sysInfoHeader(sysInfo, features))
-	return plugins
-}
-
-func sysInfoHeader(sysInfo *sysinfo.SystemInfo, features mql.Features) ranger.ClientPlugin {
-	const (
-		HttpHeaderUserAgent      = "User-Agent"
-		HttpHeaderClientFeatures = "Mondoo-Features"
-		HttpHeaderPlatformID     = "Mondoo-PlatformID"
-	)
-
-	h := http.Header{}
-	info := map[string]string{
-		"cnspec": cnspec.Version,
-		"build":  cnspec.Build,
-	}
-	if sysInfo != nil {
-		info["PN"] = sysInfo.Platform.Name
-		info["PR"] = sysInfo.Platform.Version
-		info["PA"] = sysInfo.Platform.Arch
-		info["IP"] = sysInfo.IP
-		info["HN"] = sysInfo.Hostname
-		h.Set(HttpHeaderPlatformID, sysInfo.PlatformId)
-	}
-	h.Set(HttpHeaderUserAgent, scope.XInfoHeader(info))
-	h.Set(HttpHeaderClientFeatures, features.Encode())
-	return scope.NewCustomHeaderRangerPlugin(h)
 }

@@ -79,8 +79,8 @@ var policyLintDeprecatedCmd = &cobra.Command{
 	Short:      "Lint a policy bundle",
 	Args:       cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("output", cmd.Flags().Lookup("output"))
-		viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
+		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
+		_ = viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
 	},
 	Run: runPolicyLint,
 }
@@ -93,8 +93,8 @@ var policyPublishCmd = &cobra.Command{
 	Short:      "Add a user-owned policy to the Mondoo Security Registry",
 	Args:       cobra.ExactArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
-		viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
+		_ = viper.BindPFlag("policy-version", cmd.Flags().Lookup("policy-version"))
+		_ = viper.BindPFlag("no-lint", cmd.Flags().Lookup("no-lint"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		opts, optsErr := config.Read()
@@ -151,7 +151,7 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not install requirements")
 		}
 
-		log.Info().Str("space", opts.SpaceMrn).Msg("add policy bundle to space")
+		log.Info().Str("space", opts.SpaceMrn).Msg("add policy bundle to space") //nolint:staticcheck // SA1019: opts.SpaceMrn is deprecated but still used for backward compatibility
 		overrideVersionFlag := false
 		overrideVersion := viper.GetString("policy-version")
 		if len(overrideVersion) > 0 {
@@ -179,7 +179,7 @@ var policyPublishCmd = &cobra.Command{
 		}
 
 		// set the owner mrn for spaces
-		policyBundle.OwnerMrn = opts.SpaceMrn
+		policyBundle.OwnerMrn = opts.SpaceMrn //nolint:staticcheck // SA1019: opts.SpaceMrn is deprecated but still used for backward compatibility
 		ctx := context.Background()
 
 		// override version and/or labels
@@ -210,8 +210,8 @@ var policyDocsDeprecatedCmd = &cobra.Command{
 	Short:      "Retrieve only the docs for a bundle",
 	Args:       cobra.MinimumNArgs(1),
 	PreRun: func(cmd *cobra.Command, args []string) {
-		viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))
-		viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
+		_ = viper.BindPFlag("no-ids", cmd.Flags().Lookup("no-ids"))
+		_ = viper.BindPFlag("no-code", cmd.Flags().Lookup("no-code"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		bundleLoader := policy.DefaultBundleLoader()

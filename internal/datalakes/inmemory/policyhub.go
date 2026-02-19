@@ -102,7 +102,7 @@ func (db *Db) GetRawPolicy(ctx context.Context, mrn string) (*policy.Policy, err
 	if !ok {
 		return nil, errors.New("policy '" + mrn + "' not found")
 	}
-	return (q.(wrapPolicy)).Policy.CloneVT(), nil
+	return (q.(wrapPolicy)).CloneVT(), nil
 }
 
 // GetPolicyFilters retrieves the list of asset filters for a policy (fast)
@@ -149,7 +149,7 @@ func (db *Db) setPolicy(ctx context.Context, policyObj *policy.Policy, filters [
 			existing.LocalExecutionChecksum == policyObj.LocalExecutionChecksum {
 			if existing.GraphContentChecksum != policyObj.GraphContentChecksum ||
 				existing.GraphExecutionChecksum != policyObj.GraphExecutionChecksum {
-				return wrapPolicy{}, db.checkAndInvalidatePolicyBundle(ctx, existing.Policy.Mrn, &existing, nil)
+				return wrapPolicy{}, db.checkAndInvalidatePolicyBundle(ctx, existing.Mrn, &existing, nil)
 			}
 			return wrapPolicy{}, nil
 		}
@@ -217,11 +217,11 @@ func (db *Db) checkAndInvalidatePolicyBundle(ctx context.Context, mrn string, po
 	if ok {
 		bundleObj := x.(wrapBundle)
 		// We don't want to unnecessarily update things that are up to date
-		if policyw != nil && bundleObj.policyChecksum == policyw.Policy.GraphContentChecksum {
+		if policyw != nil && bundleObj.policyChecksum == policyw.GraphContentChecksum {
 			log.Trace().Str("policy", mrn).Msg("marketplace> policy cache is up-to-date")
 			invalidatePolicy = false
 		}
-		if frameworkw != nil && bundleObj.frameworkChecksum == frameworkw.Framework.GraphContentChecksum {
+		if frameworkw != nil && bundleObj.frameworkChecksum == frameworkw.GraphContentChecksum {
 			log.Trace().Str("framework", mrn).Msg("marketplace> framework cache is up-to-date")
 			invalidateFramework = false
 		}
@@ -243,7 +243,7 @@ func (db *Db) checkAndInvalidatePolicyBundle(ctx context.Context, mrn string, po
 }
 
 func (db *Db) invalidatePolicyAndBundleAncestors(ctx context.Context, wrap *wrapPolicy) error {
-	mrn := wrap.Policy.Mrn
+	mrn := wrap.Mrn
 	log.Debug().Str("policy", mrn).Msg("invalidate policy cache")
 
 	// invalidate the policy if it isn't invalidated
@@ -280,7 +280,7 @@ func (db *Db) invalidatePolicyAndBundleAncestors(ctx context.Context, wrap *wrap
 }
 
 func (db *Db) invalidateFrameworkAndBundleAncestors(ctx context.Context, wrap *wrapFramework) error {
-	mrn := wrap.Framework.Mrn
+	mrn := wrap.Mrn
 	log.Debug().Str("framework", mrn).Msg("invalidate framework cache")
 
 	// invalidate the framework if it isn't invalidated
@@ -490,7 +490,7 @@ func (db *Db) GetValidatedPolicy(ctx context.Context, mrn string) (*policy.Polic
 		}
 	}
 
-	return p.Policy.CloneVT(), nil
+	return p.CloneVT(), nil
 }
 
 // entityGraphExecutionChecksum retrieves the execution checksum for a given entity.
@@ -547,18 +547,20 @@ func (db *Db) EntityGraphContentChecksum(ctx context.Context, mrn string) (strin
 }
 
 func (db *Db) fixInvalidatedPolicy(ctx context.Context, wrap *wrapPolicy) error {
-	wrap.Policy.InvalidateGraphChecksums()
-	wrap.Policy.UpdateChecksums(ctx,
+	wrap.InvalidateGraphChecksums()
+	if _, err := wrap.UpdateChecksums(ctx,
 		time.Now(),
 		func(ctx context.Context, mrn string) (*policy.Policy, error) { return db.GetValidatedPolicy(ctx, mrn) },
 		func(ctx context.Context, mrn string) (*policy.Mquery, error) { return db.GetQuery(ctx, mrn) },
 		nil,
 		db.services.NewCompilerConfig(),
-	)
+	); err != nil {
+		return err
+	}
 
-	ok := db.cache.Set(dbIDPolicy+wrap.Policy.Mrn, *wrap, 2)
+	ok := db.cache.Set(dbIDPolicy+wrap.Mrn, *wrap, 2)
 	if !ok {
-		return errors.New("failed to save policy '" + wrap.Policy.Mrn + "' to cache")
+		return errors.New("failed to save policy '" + wrap.Mrn + "' to cache")
 	}
 	return nil
 }
@@ -623,7 +625,7 @@ func (db *Db) GetFramework(ctx context.Context, mrn string) (*policy.Framework, 
 		return nil, errors.New("framework '" + mrn + "' not found")
 	}
 
-	return raw.(wrapFramework).Framework.CloneVT(), nil
+	return raw.(wrapFramework).CloneVT(), nil
 }
 
 // GetFrameworkMaps retrieves a set of framework maps for a given framework

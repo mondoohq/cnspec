@@ -963,12 +963,12 @@ func (h *MQLHandler) analyzeCompiledCode(bundle *llx.CodeBundle, query string) s
 					}
 				}
 
-				info.WriteString(fmt.Sprintf("**Type**: `%s`\n\n", typeLabel))
+				fmt.Fprintf(&info, "**Type**: `%s`\n\n", typeLabel)
 
 				// Try to identify the provider
 				provider := h.identifyProvider(chunk, bundle.CodeV2)
 				if provider != "" {
-					info.WriteString(fmt.Sprintf("**Provider**: `%s`\n\n", provider))
+					fmt.Fprintf(&info, "**Provider**: `%s`\n\n", provider)
 				}
 			}
 		}
@@ -1126,17 +1126,17 @@ func (h *MQLHandler) getResourceDocumentation(query string) string {
 		if resourceInfo := h.combinedSchema.Lookup(word); resourceInfo != nil {
 			seen[word] = true
 			if resourceInfo.Title != "" || resourceInfo.Desc != "" {
-				docs.WriteString(fmt.Sprintf("**%s**", word))
+				fmt.Fprintf(&docs, "**%s**", word)
 				if resourceInfo.Provider != "" {
-					docs.WriteString(fmt.Sprintf(" (from `%s`)", resourceInfo.Provider))
+					fmt.Fprintf(&docs, " (from `%s`)", resourceInfo.Provider)
 				}
 				docs.WriteString("\n")
 
 				if resourceInfo.Title != "" {
-					docs.WriteString(fmt.Sprintf("*%s*\n", resourceInfo.Title))
+					fmt.Fprintf(&docs, "*%s*\n", resourceInfo.Title)
 				}
 				if resourceInfo.Desc != "" {
-					docs.WriteString(fmt.Sprintf("%s\n", resourceInfo.Desc))
+					fmt.Fprintf(&docs, "%s\n", resourceInfo.Desc)
 				}
 				docs.WriteString("\n")
 			}

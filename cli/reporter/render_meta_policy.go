@@ -7,13 +7,10 @@ import (
 	"bytes"
 	"sort"
 
-	"github.com/muesli/termenv"
 	"go.mondoo.com/cnspec/v13/cli/components"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
 )
-
-var colorProfile func(string) termenv.Color = termenv.ColorProfile().Color
 
 func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, scoringData []reportRow) string {
 	var res bytes.Buffer
