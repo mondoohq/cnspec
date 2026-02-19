@@ -88,6 +88,7 @@ policies:
           - uid: mondoo-aws-security-s3-bucket-logging-enabled
           - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled
           - uid: mondoo-aws-security-s3-bucket-public-read-prohibited
+          - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled
       - title: AWS Security Group
         checks:
           - uid: mondoo-aws-security-secgroup-restricted-ssh
@@ -4860,6 +4861,7 @@ queries:
         tags:
           mondoo.com/filter-title: "AWS EBS Snapshot"
           mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-hcl
       - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-plan
       - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-state
     docs:
@@ -5012,6 +5014,12 @@ queries:
     filters: asset.platform == "aws-ebs-snapshot"
     mql: |
       aws.ec2.snapshot.encrypted == true
+  - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_snapshot" || nameLabel == "aws_ebs_snapshot_copy")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_ebs_snapshot_copy").all(
+        arguments['encrypted'] == true
+      )
   - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ebs_snapshot")
     mql: |
@@ -7684,6 +7692,10 @@ queries:
     title: Ensure API Gateway stages have execution logging enabled
     impact: 60
     variants:
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
       - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
       - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
       - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
@@ -7762,6 +7774,16 @@ queries:
         title: AWS Config Managed Rules
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_stage
         title: Terraform Documentation - api_gateway_stage Resource
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigateway.restApis.all(
+        stages.all(
+          methodSettings['*/*'] != empty &&
+          methodSettings['*/*']['LoggingLevel'] != "" &&
+          methodSettings['*/*']['LoggingLevel'] != "OFF"
+        )
+      )
   - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_stage" || nameLabel == "aws_apigatewayv2_stage")
     mql: |
@@ -7891,6 +7913,10 @@ queries:
     title: Ensure API Gateway uses TLS 1.2 or higher
     impact: 80
     variants:
+      - uid: mondoo-aws-security-api-gw-tls-api
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
       - uid: mondoo-aws-security-api-gw-tls-terraform-hcl
       - uid: mondoo-aws-security-api-gw-tls-terraform-plan
       - uid: mondoo-aws-security-api-gw-tls-terraform-state
@@ -7956,6 +7982,12 @@ queries:
         title: AWS Config Managed Rules
       - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_domain_name
         title: Terraform Documentation - api_gateway_domain_name Resource
+  - uid: mondoo-aws-security-api-gw-tls-api
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigateway.restApis.all(
+        securityPolicy == "TLS_1_2"
+      )
   - uid: mondoo-aws-security-api-gw-tls-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_domain_name")
     mql: |
@@ -8742,6 +8774,87 @@ queries:
       terraform.state.resources.where(type == "aws_s3_bucket_acl").all(
         values.acl.downcase != /public-read/
       )
+  - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled
+    title: Ensure S3 bucket static website hosting is disabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-api
+        tags:
+          mondoo.com/filter-title: "AWS S3 Bucket"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-hcl
+      - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-plan
+      - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-state
+    docs:
+      desc: |
+        This check ensures that Amazon S3 buckets do not have static website hosting enabled. When static website hosting is enabled on an S3 bucket, it serves content over an unauthenticated HTTP endpoint, which can expose data to the public internet.
+
+        **Why this matters**
+
+        When static website hosting is enabled:
+
+        - **Data exposure:** The bucket's contents may be accessible over the internet without authentication.
+        - **Attack surface:** The publicly accessible endpoint can be exploited for phishing, malware distribution, or data exfiltration.
+        - **Compliance violations:** Regulations such as PCI DSS, HIPAA, and GDPR require strict control over public-facing resources.
+
+        **Risk mitigation:**
+
+        - Prevents accidental exposure of sensitive data through public website endpoints.
+        - Reduces the attack surface by eliminating unnecessary public-facing services.
+        - Ensures compliance with data protection and access control requirements.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon S3 Console.
+            2. Select the desired bucket.
+            3. Go to the "Properties" tab.
+            4. Under "Static website hosting", click "Edit".
+            5. Select "Disable" and save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            ```bash
+            aws s3api delete-bucket-website --bucket <bucket-name>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Remove any `aws_s3_bucket_website_configuration` resources associated with the bucket:
+
+            ```hcl
+            # Remove or comment out website configuration resources
+            # resource "aws_s3_bucket_website_configuration" "example" {
+            #   bucket = aws_s3_bucket.example.id
+            #   index_document {
+            #     suffix = "index.html"
+            #   }
+            # }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/WebsiteHosting.html
+        title: Hosting a static website using Amazon S3
+      - url: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_website_configuration
+        title: Terraform Documentation - s3_bucket_website_configuration Resource
+  - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-api
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.staticWebsiteHosting == empty
+  - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_website_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_s3_bucket_website_configuration").length == 0
+  - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_website_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3_bucket_website_configuration").length == 0
+  - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3_bucket_website_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3_bucket_website_configuration").length == 0
   - uid: mondoo-aws-security-cloud-trail-multi-region-enabled
     title: Ensure CloudTrail is enabled in all regions with a multi-region trail
     impact: 90
@@ -13796,6 +13909,7 @@ queries:
         tags:
           mondoo.com/filter-title: "AWS RDS Snapshot"
           mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-hcl
       - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-plan
       - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-state
     docs:
@@ -13884,6 +13998,12 @@ queries:
     filters: asset.platform == "aws-rds-snapshot"
     mql: |
       aws.rds.snapshot.encrypted == true
+  - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_db_instance").all(
+        arguments['storage_encrypted'] == true
+      )
   - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_db_snapshot")
     mql: |
