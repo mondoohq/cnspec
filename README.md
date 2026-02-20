@@ -231,7 +231,7 @@ If you're interested in writing your own policies or contributing policies back 
 | Kubernetes workloads          | `k8s`                      | `cnspec scan k8s --discover pods,deployments`                                                                                                         |
 | Linux hosts                   | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@host`                                                                                            |
 | macOS hosts                   | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@IP_ADDRESS`                                                                                      |
-| Microsoft 365 accounts        | `ms365`                    | `cnspec scan ms365 --tenant-id TENANT_ID --client-id CLIENT_ID --certificate-path PFX_FILE`                                                           |
+| Microsoft 365 tenants         | `ms365`                    | `cnspec scan ms365 --tenant-id TENANT_ID --client-id CLIENT_ID --certificate-path PFX_FILE`                                                           |
 | Microsoft Azure instances     | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
 | Microsoft Azure subscriptions | `azure`                    | `cnspec scan azure --subscription SUBSCRIPTION_ID`                                                                                                    |
 | Okta org                      | `okta`                     | `cnspec shell okta --token TOKEN --organization ORGANIZATION`                                                                                         |
@@ -267,10 +267,10 @@ Our goal is to secure all layers of your infrastructure. If you need support or 
 
 ## Development
 
-See our [development docs](docs/development.md) for information on building and contributing to cnspec.
+See our [development documentation](docs/development.md) for information on building and contributing to cnquery.
 
 ## Legal
 
-- **Copyright:** 2018-2025, Mondoo, Inc.
+- **Copyright:** 2018-2026, Mondoo, Inc.
 - **License:** BUSL 1.1
 - **Authors:** Christoph Hartmann, Dominik Richter
