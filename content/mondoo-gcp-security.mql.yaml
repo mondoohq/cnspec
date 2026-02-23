@@ -161,7 +161,6 @@ policies:
           - uid: mondoo-gcp-security-pubsub-subscription-expiration-configured
           - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible
           - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible
-          - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated
       - title: Cloud Functions
         checks:
           - uid: mondoo-gcp-security-cloud-functions-ingress-restricted
@@ -9302,134 +9301,6 @@ queries:
       terraform.state.resources.where(type == 'google_pubsub_subscription_iam_member').all(
         values.member != 'allUsers' && values.member != 'allAuthenticatedUsers'
       )
-  - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated
-    title: Ensure Pub/Sub push subscriptions have authentication configured
-    impact: 75
-    variants:
-      - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-gcp
-        tags:
-          mondoo.com/filter-title: "GCP Pub/Sub Subscription"
-          mondoo.com/icon: "gcp"
-      - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-terraform-hcl
-        tags:
-          mondoo.com/filter-title: "Terraform HCL"
-          mondoo.com/icon: "terraform"
-      - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-terraform-plan
-        tags:
-          mondoo.com/filter-title: "Terraform Plan"
-          mondoo.com/icon: "terraform"
-      - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-terraform-state
-        tags:
-          mondoo.com/filter-title: "Terraform State"
-          mondoo.com/icon: "terraform"
-    docs:
-      desc: |
-        This check ensures that Pub/Sub push subscriptions are configured with authenticated endpoints. Push subscriptions deliver messages to an HTTPS endpoint, and without authentication, anyone who discovers the endpoint URL could send fake messages or acknowledgements.
-
-        **Why this matters**
-
-        Push subscriptions deliver messages directly to a specified endpoint, which introduces additional security considerations:
-          - Without OIDC token authentication, the push endpoint has no way to verify that incoming requests originate from Pub/Sub.
-          - An unauthenticated endpoint is vulnerable to message spoofing, where attackers send crafted requests that mimic Pub/Sub message delivery.
-          - Attackers who discover the endpoint URL can flood it with fake messages, causing application errors or data corruption.
-          - OIDC tokens provide a signed JWT that the endpoint can verify to confirm the request came from a specific Pub/Sub subscription.
-
-        If push subscriptions do not have authentication configured, it can lead to:
-          - Message spoofing attacks where fake messages are injected into the application.
-          - Data integrity issues from processing unauthorized or malformed messages.
-          - Denial-of-service through endpoint flooding with fake delivery requests.
-          - Inability to audit and trace message delivery to the originating subscription.
-
-        **Risk mitigation:**
-          - Configure OIDC token authentication on all push subscriptions.
-          - Verify the OIDC token signature and claims in the push endpoint handler.
-          - Use a dedicated service account for push subscription authentication.
-          - Ensure push endpoints use HTTPS with valid TLS certificates.
-      remediation:
-        - id: terraform
-          desc: |
-            **Using Terraform**
-
-            Configure a push subscription with OIDC token authentication:
-
-            ```hcl
-            resource "google_pubsub_subscription" "example" {
-              name  = "example-subscription"
-              topic = google_pubsub_topic.example.id
-
-              push_config {
-                push_endpoint = "https://example.com/push"
-
-                oidc_token {
-                  service_account_email = google_service_account.push_sa.email
-                  audience              = "https://example.com"
-                }
-              }
-            }
-            ```
-        - id: console
-          desc: |
-            **Using Google Cloud Console**
-
-            1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
-            2. Select the push subscription to update, or click **Create Subscription**.
-            3. Under **Delivery type**, select **Push**.
-            4. Enter the HTTPS endpoint URL.
-            5. Check **Enable authentication**.
-            6. Select a service account for OIDC token generation.
-            7. Optionally specify an audience claim.
-            8. Click **Create** or **Update**.
-        - id: cli
-          desc: |
-            **Using Google Cloud CLI**
-
-            Create a push subscription with OIDC authentication:
-
-            ```bash
-            gcloud pubsub subscriptions create SUBSCRIPTION_NAME \
-              --topic=TOPIC_NAME \
-              --push-endpoint=https://example.com/push \
-              --push-auth-service-account=SERVICE_ACCOUNT_EMAIL \
-              --push-auth-token-audience=https://example.com
-            ```
-    refs:
-      - url: https://cloud.google.com/pubsub/docs/authenticate-push-subscriptions
-        title: Authenticate push subscriptions
-      - url: https://cloud.google.com/pubsub/docs/push
-        title: Push subscriptions
-  - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-gcp
-    filters: asset.platform == 'gcp-pubsub-subscription'
-    mql: |
-      gcp.project.pubsubService.subscription.config().pushConfig.endpoint == "" || gcp.project.pubsubService.subscription.config().pushConfig.attributes['x-goog-oidc-token-audience'] != empty
-  - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription')
-    mql: |
-      terraform.resources('google_pubsub_subscription').where(
-        blocks.contains(type == 'push_config')
-      ).all(
-        blocks.where(type == 'push_config').all(
-          blocks.contains(type == 'oidc_token')
-        )
-      )
-  - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_subscription')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_pubsub_subscription').where(
-        change.after.push_config != empty
-      ).all(
-        change.after.push_config.all(oidc_token != empty)
-      )
-  - uid: mondoo-gcp-security-pubsub-push-subscription-authenticated-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_subscription')
-    mql: |
-      terraform.state.resources.where(type == 'google_pubsub_subscription').where(
-        values.push_config != empty
-      ).all(
-        values.push_config.all(oidc_token != empty)
-      )
   # ============================================================================
   # Cloud Functions Checks
   # ============================================================================
@@ -12610,10 +12481,8 @@ queries:
       )
   - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-plan
     filters: |
-      asset.platform == 'terraform-plan'
-      terraform.plan.resourceChanges.contains(type == 'google_secret_manager_secret_iam_policy') ||
-      terraform.plan.resourceChanges.contains(type == 'google_secret_manager_secret_iam_binding') ||
-      terraform.plan.resourceChanges.contains(type == 'google_secret_manager_secret_iam_member')
+      asset.platform == 'terraform-plan' &&
+        terraform.plan.resourceChanges.where(type.in(['google_secret_manager_secret_iam_policy', 'google_secret_manager_secret_iam_binding', 'google_secret_manager_secret_iam_member'])) != empty
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_secret_manager_secret_iam_policy' || type == 'google_secret_manager_secret_iam_binding').all(
         change.after.members == empty ||
@@ -12624,10 +12493,8 @@ queries:
       )
   - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-state
     filters: |
-      asset.platform == 'terraform-state'
-      terraform.state.resources.contains(type == 'google_secret_manager_secret_iam_policy') ||
-      terraform.state.resources.contains(type == 'google_secret_manager_secret_iam_binding') ||
-      terraform.state.resources.contains(type == 'google_secret_manager_secret_iam_member')
+      asset.platform == 'terraform-state' &&
+        terraform.state.resources.where(type.in(['google_secret_manager_secret_iam_policy', 'google_secret_manager_secret_iam_binding', 'google_secret_manager_secret_iam_member'])) != empty
     mql: |
       terraform.state.resources.where(type == 'google_secret_manager_secret_iam_policy' || type == 'google_secret_manager_secret_iam_binding').all(
         values.members == empty ||
