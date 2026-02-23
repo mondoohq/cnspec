@@ -5827,14 +5827,13 @@ queries:
   - uid: mondoo-gcp-security-cloud-dns-dnssec-nsec3-enabled-gcp
     filters: |
       asset.platform == "gcp-dns-managedzone"
-      gcp.project.dnsService.managedzone.visibility == "public"
+      gcp.dns.managedzone.visibility == "public"
     mql: |
       gcp.dns.managedzone.dnssecConfig['state'] == 'on'
       gcp.dns.managedzone.dnssecConfig['nonExistence'] == 'nsec3'
   - uid: mondoo-gcp-security-cloud-dns-dnssec-nsec3-enabled-terraform-hcl
     filters: |
-      asset.platform == 'terraform-hcl' &&
-        terraform.resources('google_dns_managed_zone') != empty
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dns_managed_zone')
     mql: |
       terraform.resources('google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == empty).all(
         blocks.where(type == 'dnssec_config').where(arguments['state'] == 'on').all(
@@ -5843,16 +5842,14 @@ queries:
       )
   - uid: mondoo-gcp-security-cloud-dns-dnssec-nsec3-enabled-terraform-plan
     filters: |
-      asset.platform == 'terraform-plan'
-      terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == empty).all(
         change.after['dnssec_config'] != empty && change.after['dnssec_config'].any(_['state'] == "on" && _['non_existence'] == "nsec3")
       )
   - uid: mondoo-gcp-security-cloud-dns-dnssec-nsec3-enabled-terraform-state
     filters: |
-      asset.platform == 'terraform-state'
-      terraform.state.resources.contains(type == 'google_dns_managed_zone')
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dns_managed_zone')
     mql: |
       terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
         values['dnssec_config'] != empty && values['dnssec_config'].any(_['state'] == "on" && _['non_existence'] == "nsec3")
@@ -9163,7 +9160,7 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_topic_iam_binding' || nameLabel == 'google_pubsub_topic_iam_member')
     mql: |
       terraform.resources('google_pubsub_topic_iam_binding').all(
-        arguments.members.none(member: member == 'allUsers' || member == 'allAuthenticatedUsers')
+        arguments.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
       )
       terraform.resources('google_pubsub_topic_iam_member').all(
         arguments.member != 'allUsers' && arguments.member != 'allAuthenticatedUsers'
@@ -9276,7 +9273,7 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription_iam_binding' || nameLabel == 'google_pubsub_subscription_iam_member')
     mql: |
       terraform.resources('google_pubsub_subscription_iam_binding').all(
-        arguments.members.none(member: member == 'allUsers' || member == 'allAuthenticatedUsers')
+        arguments.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
       )
       terraform.resources('google_pubsub_subscription_iam_member').all(
         arguments.member != 'allUsers' && arguments.member != 'allAuthenticatedUsers'
@@ -10284,7 +10281,9 @@ queries:
       terraform.resources('google_cloud_run_v2_job').all(
         blocks.where(type == 'template').all(
           blocks.where(type == 'template').all(
-            arguments.service_account != empty
+            arguments.service_account != empty &&
+            arguments.service_account != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+            arguments.service_account != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
           )
         )
       )
@@ -10294,7 +10293,14 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_cloud_run_v2_job').all(
         change.after.template != empty &&
-        change.after.template.all(_['template'] != empty && _['template'].all(_['service_account'] != empty))
+        change.after.template.all(
+          _['template'] != empty &&
+          _['template'].all(
+            _['service_account'] != empty &&
+            _['service_account'] != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+            _['service_account'] != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+          )
+        )
       )
   - uid: mondoo-gcp-security-cloud-run-job-no-default-service-account-terraform-state
     filters: |
@@ -11353,14 +11359,26 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_apikeys_key')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_apikeys_key').all(
-        change.after.restrictions != empty
+        change.after.restrictions != empty &&
+        change.after.restrictions.any(
+          _['server_key_restrictions'] != empty ||
+          _['browser_key_restrictions'] != empty ||
+          _['android_key_restrictions'] != empty ||
+          _['ios_key_restrictions'] != empty
+        )
       )
   - uid: mondoo-gcp-security-api-keys-application-restrictions-configured-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_apikeys_key')
     mql: |
       terraform.state.resources.where(type == 'google_apikeys_key').all(
-        values.restrictions != empty
+        values.restrictions != empty &&
+        values.restrictions.any(
+          _['server_key_restrictions'] != empty ||
+          _['browser_key_restrictions'] != empty ||
+          _['android_key_restrictions'] != empty ||
+          _['ios_key_restrictions'] != empty
+        )
       )
   - uid: mondoo-gcp-security-api-keys-not-stale
     title: Ensure API keys have been rotated within 90 days
@@ -11615,21 +11633,21 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dns_policy')
     mql: |
-      terraform.resources('google_dns_policy').any(
+      terraform.resources('google_dns_policy').all(
         arguments.enable_logging == true
       )
   - uid: mondoo-gcp-security-compute-network-dns-logging-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dns_policy')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_dns_policy').any(
+      terraform.plan.resourceChanges.where(type == 'google_dns_policy').all(
         change.after.enable_logging == true
       )
   - uid: mondoo-gcp-security-compute-network-dns-logging-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dns_policy')
     mql: |
-      terraform.state.resources.where(type == 'google_dns_policy').any(
+      terraform.state.resources.where(type == 'google_dns_policy').all(
         values.enable_logging == true
       )
   # ============================================================================
@@ -11815,22 +11833,31 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_redis_instance' || nameLabel == 'google_redis_cluster')
     mql: |
-      terraform.resources.where(nameLabel == 'google_redis_instance' || nameLabel == 'google_redis_cluster').all(
+      terraform.resources.where(nameLabel == 'google_redis_instance').all(
         arguments.transit_encryption_mode == "SERVER_AUTHENTICATION"
+      )
+      terraform.resources.where(nameLabel == 'google_redis_cluster').all(
+        arguments.transit_encryption_mode == "TRANSIT_ENCRYPTION_MODE_SERVER_AUTHENTICATION"
       )
   - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_redis_instance' || type == 'google_redis_cluster')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_redis_instance' || type == 'google_redis_cluster').all(
+      terraform.plan.resourceChanges.where(type == 'google_redis_instance').all(
         change.after.transit_encryption_mode == "SERVER_AUTHENTICATION"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_redis_cluster').all(
+        change.after.transit_encryption_mode == "TRANSIT_ENCRYPTION_MODE_SERVER_AUTHENTICATION"
       )
   - uid: mondoo-gcp-security-cloud-redis-transit-encryption-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_redis_instance' || type == 'google_redis_cluster')
     mql: |
-      terraform.state.resources.where(type == 'google_redis_instance' || type == 'google_redis_cluster').all(
+      terraform.state.resources.where(type == 'google_redis_instance').all(
         values.transit_encryption_mode == "SERVER_AUTHENTICATION"
+      )
+      terraform.state.resources.where(type == 'google_redis_cluster').all(
+        values.transit_encryption_mode == "TRANSIT_ENCRYPTION_MODE_SERVER_AUTHENTICATION"
       )
   - uid: mondoo-gcp-security-cloud-redis-standard-ha-tier
     title: Ensure Cloud Redis instances use the Standard HA tier
@@ -12712,8 +12739,10 @@ queries:
         terraform.resources('google_compute_instance') != empty
     mql: |
       terraform.resources('google_compute_instance').all(
-        arguments['metadata'] == empty ||
-        arguments['metadata']['serial-port-enable'] != "true"
+        arguments['metadata'] == empty || arguments['metadata']['serial-port-enable'] != "true"
+      )
+      terraform.resources('google_compute_instance').all(
+        arguments['metadata'] == empty || arguments['metadata']['serial-port-enable'] != "1"
       )
   - uid: mondoo-gcp-security-compute-instances-serial-port-disabled-terraform-plan
     filters: |
@@ -13857,7 +13886,7 @@ queries:
   - uid: mondoo-gcp-security-cloud-functions-docker-repository-configured-gcp
     filters: asset.platform == 'gcp-cloud-function'
     mql: |
-      gcp.project.cloudFunction.dockerRepository != ""
+      gcp.project.cloudFunction.dockerRepository != empty
   - uid: mondoo-gcp-security-cloud-functions-docker-repository-configured-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudfunctions2_function')
