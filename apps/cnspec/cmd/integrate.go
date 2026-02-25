@@ -48,6 +48,9 @@ func init() {
 
 	// cnspec integrate ms365
 	integrateCmd.AddCommand(integrateMs365Cmd)
+
+	// cnspec integrate intune
+	integrateCmd.AddCommand(integrateIntuneCmd)
 }
 
 var (
@@ -373,6 +376,96 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 
 			// Write generated code to disk
 			dirname, err := onboarding.WriteHCL(hcl, output, "ms365")
+			if err != nil {
+				return err
+			}
+			log.Info().Msgf("code stored at %s", theme.DefaultTheme.Secondary(dirname))
+
+			// Run Terraform
+			applied, err := onboarding.TerraformPlanAndExecute(dirname)
+			if err != nil {
+				return err
+			}
+
+			if applied {
+				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
+				log.Info().Msgf(
+					"To view integration status, visit https://console.mondoo.com/space/integrations/ms365?spaceId=%s",
+					space,
+				)
+			}
+			return nil
+		},
+	}
+	integrateIntuneCmd = &cobra.Command{
+		Use:   "intune",
+		Short: "Onboard Microsoft Intune",
+		Long: `Use this command to connect your Microsoft Intune environment into the Mondoo Platform.
+
+Flags are optional:
+
+	cnspec integrate intune --space <space_id> --output <output_dir> --integration-name <name>
+
+Ensure that the Azure account used for execution has the Azure AD Role "Privileged Role Administrator" or "Global Administrator".`,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			errs := []error{
+				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
+				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
+				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
+			}
+			return errors.Join(errs...)
+		},
+		RunE: func(_ *cobra.Command, _ []string) error {
+			var (
+				space           = viper.GetString("space")
+				output          = viper.GetString("output")
+				integrationName = viper.GetString("integration-name")
+			)
+
+			// Verify if space exists, which verifies we have access to the Mondoo Platform
+			opts, err := config.Read()
+			if err != nil {
+				return err
+			}
+			config.DisplayUsedConfig()
+			mondooClient, err := getGqlClient(opts)
+			if err != nil {
+				return err
+			}
+			// by default, use the MRN from the config
+			spaceMrn := opts.GetParentMrn()
+			if space != "" {
+				// unless it was specified via flag
+				spaceMrn = spacePrefix + space
+			}
+			spaceInfo, err := cnspec_upstream.GetSpace(context.Background(), mondooClient, spaceMrn)
+			if err != nil {
+				log.Fatal().Msgf("unable to verify access to space '%s': %s", space, err)
+			}
+			log.Info().Msg("using space " + theme.DefaultTheme.Success(spaceInfo.Mrn))
+
+			if space == "" {
+				space = strings.Split(spaceInfo.Mrn, "/")[4] // Extract space ID from MRN
+			}
+
+			// Verify that the user has the right role assignments to onboard
+			log.Info().Msg("verifying role assignments for the currently logged-in user")
+			if err := onboarding.VerifyUserRoleAssignments(); err != nil {
+				return errors.Wrap(err, "preflight verification failed")
+			}
+
+			// Generate HCL for Intune deployment
+			log.Info().Msg("generating automation code")
+			hcl, err := onboarding.GenerateIntuneHCL(onboarding.IntuneIntegration{
+				Name:  integrationName,
+				Space: space,
+			})
+			if err != nil {
+				return errors.Wrap(err, "unable to generate automation code")
+			}
+
+			// Write generated code to disk
+			dirname, err := onboarding.WriteHCL(hcl, output, "intune")
 			if err != nil {
 				return err
 			}
