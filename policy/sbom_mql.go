@@ -22,16 +22,16 @@ type mqlSbomData struct {
 // mqlSbomPackage mirrors the SPDX-like JSON output from MQL queries such as
 // github.repository.sbom.
 type mqlSbomPackage struct {
-	Name              string           `json:"name"`
-	VersionInfo       string           `json:"versionInfo"`
-	CopyrightText     string           `json:"copyrightText"`
-	DownloadLocation  string           `json:"downloadLocation"`
-	ExternalRefs      []mqlExternalRef `json:"externalRefs"`
-	FilesAnalyzed     bool             `json:"filesAnalyzed"`
-	LicenseDeclared   any              `json:"licenseDeclared"`
-	SpdxId            string           `json:"spdxId"`
-	LicenseConcluded  string           `json:"licenseConcluded"`
-	Supplier          string           `json:"supplier"`
+	Name             string           `json:"name"`
+	VersionInfo      string           `json:"versionInfo"`
+	CopyrightText    string           `json:"copyrightText"`
+	DownloadLocation string           `json:"downloadLocation"`
+	ExternalRefs     []mqlExternalRef `json:"externalRefs"`
+	FilesAnalyzed    bool             `json:"filesAnalyzed"`
+	LicenseDeclared  any              `json:"licenseDeclared"`
+	SpdxId           string           `json:"spdxId"`
+	LicenseConcluded string           `json:"licenseConcluded"`
+	Supplier         string           `json:"supplier"`
 }
 
 type mqlExternalRef struct {

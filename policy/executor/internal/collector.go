@@ -438,6 +438,7 @@ func (c *PolicyServiceCollector) SinkSbom(ctx context.Context, packages []*sbom.
 	log.Debug().Int("packages", len(packages)).Msg("Uploading SBOM")
 	_, err := c.sbomSvc.BulkUploadSbom(ctx, &policy.BulkUploadSbomRequest{
 		SpaceMrn: spaceMrn,
+		AssetMrn: c.assetMrn,
 		Sboms:    []*sbom.Sbom{sbomMsg},
 	})
 	if err != nil {

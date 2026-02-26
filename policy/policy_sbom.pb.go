@@ -100,7 +100,8 @@ type BulkUploadSbomRequest struct {
 	Sboms []*sbom.Sbom `protobuf:"bytes,2,rep,name=sboms,proto3" json:"sboms,omitempty"`
 	// create_assets indicates whether to create assets in the backend when they
 	// are not found
-	CreateAssets  bool `protobuf:"varint,3,opt,name=create_assets,json=createAssets,proto3" json:"create_assets,omitempty"`
+	CreateAssets  bool   `protobuf:"varint,3,opt,name=create_assets,json=createAssets,proto3" json:"create_assets,omitempty"`
+	AssetMrn      string `protobuf:"bytes,4,opt,name=asset_mrn,json=assetMrn,proto3" json:"asset_mrn,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -154,6 +155,13 @@ func (x *BulkUploadSbomRequest) GetCreateAssets() bool {
 		return x.CreateAssets
 	}
 	return false
+}
+
+func (x *BulkUploadSbomRequest) GetAssetMrn() string {
+	if x != nil {
+		return x.AssetMrn
+	}
+	return ""
 }
 
 type BulkUploadSbomResponse struct {
@@ -213,11 +221,12 @@ var File_policy_sbom_proto protoreflect.FileDescriptor
 
 const file_policy_sbom_proto_rawDesc = "" +
 	"\n" +
-	"\x11policy_sbom.proto\x12\x10cnspec.policy.v1\x1a\x13sbom/mql_sbom.proto\"\x85\x01\n" +
+	"\x11policy_sbom.proto\x12\x10cnspec.policy.v1\x1a\x13sbom/mql_sbom.proto\"\xa2\x01\n" +
 	"\x15BulkUploadSbomRequest\x12\x1b\n" +
 	"\tspace_mrn\x18\x01 \x01(\tR\bspaceMrn\x12*\n" +
 	"\x05sboms\x18\x02 \x03(\v2\x14.mondoo.sbom.v1.SbomR\x05sboms\x12#\n" +
-	"\rcreate_assets\x18\x03 \x01(\bR\fcreateAssets\"M\n" +
+	"\rcreate_assets\x18\x03 \x01(\bR\fcreateAssets\x12\x1b\n" +
+	"\tasset_mrn\x18\x04 \x01(\tR\bassetMrn\"M\n" +
 	"\x16BulkUploadSbomResponse\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x05R\x05count\x12\x1d\n" +
 	"\n" +

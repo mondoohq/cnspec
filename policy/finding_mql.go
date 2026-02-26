@@ -171,8 +171,8 @@ func BuildCodeBundleMap(queries map[string]*ExecutionQuery) map[string]*llx.Code
 
 // ExtractFindings examines raw results for finding resources and converts them
 // to FindingDocument protos. It follows the JSON intermediary pattern: serialize
-// RawData to JSON, unmarshal into Go structs, then convert to proto.
 func ExtractFindings(results []*llx.RawResult, codeBundleMap map[string]*llx.CodeBundle) []*FindingDocument {
+	// RawData to JSON, unmarshal into Go structs, then convert to proto.
 	var findings []*FindingDocument
 
 	for _, rr := range results {
@@ -245,7 +245,15 @@ func mqlFindingToProto(f *mqlFinding) *FindingExchange {
 		Mrn:     f.Mrn,
 		GroupId: f.GroupId,
 		Summary: f.Summary,
-		Status:  parseFindingStatus(f.Status),
+		// Status:  parseFindingStatus(f.Status),
+		Status: FindingStatus_FINDING_STATUS_AFFECTED,
+		Source: &FindingSource{
+			Name: "github-dependabot",
+		},
+		Details: &FindingDetail{
+			Severity: &FindingSeverity{Rating: SeverityRating_SEVERITY_RATING_HIGH},
+			Category: FindingDetail_CATEGORY_SECURITY, // hardcoded for now
+		},
 	}
 
 	if f.FirstSeenAt != nil {
