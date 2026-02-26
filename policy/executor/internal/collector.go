@@ -15,7 +15,9 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/mrn"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/mql/v13/sbom"
 	"go.mondoo.com/mql/v13/utils/iox"
 )
 
@@ -45,9 +47,12 @@ type BufferedCollector struct {
 	ctx            context.Context
 	results        map[string]*llx.RawResult
 	scores         map[string]*policy.Score
+	findings       []*policy.FindingDocument
+	sbomPackages   []*sbom.Package
 	lock           sync.Mutex
 	collector      *PolicyServiceCollector
 	resolvedPolicy *policy.ResolvedPolicy
+	codeBundleMap  map[string]*llx.CodeBundle
 	riskMRNs       map[string][]string
 	keepQrIds      map[string]bool
 	duration       time.Duration
@@ -89,6 +94,7 @@ func WithResolvedPolicy(resolved *policy.ResolvedPolicy) (BufferedCollectorOpt, 
 		b.resolvedPolicy = resolved
 		b.riskMRNs = riskMRNs
 		b.keepQrIds = keepQrIds
+		b.codeBundleMap = policy.BuildCodeBundleMap(resolved.ExecutionJob.Queries)
 	}, nil
 }
 
@@ -132,6 +138,8 @@ func (c *BufferedCollector) run() {
 		done := false
 		results := []*llx.RawResult{}
 		scores := []*policy.Score{}
+		findings := []*policy.FindingDocument{}
+		sbomPackages := []*sbom.Package{}
 		risksIdx := map[string]bool{}
 		for {
 
@@ -155,18 +163,42 @@ func (c *BufferedCollector) run() {
 				delete(c.scores, k)
 			}
 
+			findings = append(findings, c.findings...)
+			c.findings = c.findings[:0]
+
+			sbomPackages = append(sbomPackages, c.sbomPackages...)
+			c.sbomPackages = c.sbomPackages[:0]
+
 			c.lock.Unlock()
 
+			// Extract findings and SBOM packages from results using the code bundle map
+			if len(results) > 0 && len(c.codeBundleMap) > 0 {
+				extracted := policy.ExtractFindings(results, c.codeBundleMap)
+				if len(extracted) > 0 {
+					findings = append(findings, extracted...)
+				}
+
+				extractedPkgs := policy.ExtractSbomPackages(results, c.codeBundleMap)
+				if len(extractedPkgs) > 0 {
+					sbomPackages = append(sbomPackages, extractedPkgs...)
+				}
+			}
+
 			if len(results) > 0 {
-				c.collector.Sink(c.ctx, results, nil, nil, false)
+				c.collector.Sink(c.ctx, results, nil, nil, nil, false)
 				results = results[:0]
 			}
 
 			if done {
 				risks := listScoredRisks(risksIdx)
 				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
-				c.collector.Sink(c.ctx, nil, scores, risks, done)
+				c.collector.Sink(c.ctx, nil, scores, risks, findings, done)
+				if len(sbomPackages) > 0 {
+					c.collector.SinkSbom(c.ctx, sbomPackages)
+				}
 				scores = scores[:0]
+				findings = findings[:0]
+				sbomPackages = sbomPackages[:0]
 				risksIdx = map[string]bool{}
 			}
 
@@ -222,15 +254,35 @@ func (c *BufferedCollector) SinkScore(scores []*policy.Score) {
 	}
 }
 
+func (c *BufferedCollector) SinkFindings(findings []*policy.FindingDocument) {
+	if len(findings) == 0 {
+		return
+	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.findings = append(c.findings, findings...)
+}
+
+func (c *BufferedCollector) SinkSbomPackages(packages []*sbom.Package) {
+	if len(packages) == 0 {
+		return
+	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.sbomPackages = append(c.sbomPackages, packages...)
+}
+
 type PolicyServiceCollector struct {
 	assetMrn string
 	resolver policy.PolicyResolver
+	sbomSvc  policy.Sbom
 }
 
-func NewPolicyServiceCollector(assetMrn string, resolver policy.PolicyResolver) *PolicyServiceCollector {
+func NewPolicyServiceCollector(assetMrn string, resolver policy.PolicyResolver, sbomSvc policy.Sbom) *PolicyServiceCollector {
 	return &PolicyServiceCollector{
 		assetMrn: assetMrn,
 		resolver: resolver,
+		sbomSvc:  sbomSvc,
 	}
 }
 
@@ -302,9 +354,9 @@ func (c *PolicyServiceCollector) updateRiskScores(resolvedPolicy *policy.Resolve
 	}
 }
 
-func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawResult, scores []*policy.Score, risks []*policy.ScoredRiskFactor, isDone bool) {
+func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawResult, scores []*policy.Score, risks []*policy.ScoredRiskFactor, findings []*policy.FindingDocument, isDone bool) {
 	// If we have nothing to send and also this is not the last batch, we just skip
-	if len(results) == 0 && len(scores) == 0 && len(risks) == 0 && !isDone {
+	if len(results) == 0 && len(scores) == 0 && len(risks) == 0 && len(findings) == 0 && !isDone {
 		return
 	}
 
@@ -341,13 +393,8 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 		}
 	}
 
-	if len(scores) > 0 || len(risks) > 0 {
-		findings := []*policy.FindingDocument{}
-		if isDone {
-			// add mock finding for now.
-			findings = append(findings, mockFinding())
-		}
-		log.Debug().Msg("Sending scores")
+	if len(scores) > 0 || len(risks) > 0 || len(findings) > 0 {
+		log.Debug().Msg("Sending scores|risks|findings")
 		_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
 			AssetMrn:       c.assetMrn,
 			Scores:         scores,
@@ -363,9 +410,58 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 	}
 }
 
+func (c *PolicyServiceCollector) SinkSbom(ctx context.Context, packages []*sbom.Package) {
+	if c.sbomSvc == nil || len(packages) == 0 {
+		return
+	}
+
+	spaceMrn := deriveSpaceMrn(c.assetMrn)
+	if spaceMrn == "" {
+		log.Warn().Msg("cannot derive space MRN from asset MRN, skipping SBOM upload")
+		return
+	}
+
+	sbomMsg := &sbom.Sbom{
+		Generator: &sbom.Generator{
+			Vendor:  "Mondoo, Inc.",
+			Name:    "cnspec",
+			Version: cnspec.Version,
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+		Status:    sbom.Status_STATUS_SUCCEEDED,
+		Asset: &sbom.Asset{
+			PlatformIds: []string{c.assetMrn},
+		},
+		Packages: packages,
+	}
+
+	log.Debug().Int("packages", len(packages)).Msg("Uploading SBOM")
+	_, err := c.sbomSvc.BulkUploadSbom(ctx, &policy.BulkUploadSbomRequest{
+		SpaceMrn: spaceMrn,
+		Sboms:    []*sbom.Sbom{sbomMsg},
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("failed to upload SBOM")
+	}
+}
+
+func deriveSpaceMrn(assetMrn string) string {
+	m, err := mrn.NewMRN(assetMrn)
+	if err != nil {
+		return ""
+	}
+	spaceID, err := m.ResourceID("spaces")
+	if err != nil {
+		return ""
+	}
+	return "//" + m.ServiceName + "/spaces/" + spaceID
+}
+
 type FuncCollector struct {
-	SinkDataFunc  func(results []*llx.RawResult)
-	SinkScoreFunc func(scores []*policy.Score)
+	SinkDataFunc         func(results []*llx.RawResult)
+	SinkScoreFunc        func(scores []*policy.Score)
+	SinkFindingsFunc     func(findings []*policy.FindingDocument)
+	SinkSbomPackagesFunc func(packages []*sbom.Package)
 }
 
 func (c *FuncCollector) SinkData(results []*llx.RawResult) {
@@ -380,4 +476,18 @@ func (c *FuncCollector) SinkScore(scores []*policy.Score) {
 		return
 	}
 	c.SinkScoreFunc(scores)
+}
+
+func (c *FuncCollector) SinkFindings(findings []*policy.FindingDocument) {
+	if len(findings) == 0 || c.SinkFindingsFunc == nil {
+		return
+	}
+	c.SinkFindingsFunc(findings)
+}
+
+func (c *FuncCollector) SinkSbomPackages(packages []*sbom.Package) {
+	if len(packages) == 0 || c.SinkSbomPackagesFunc == nil {
+		return
+	}
+	c.SinkSbomPackagesFunc(packages)
 }

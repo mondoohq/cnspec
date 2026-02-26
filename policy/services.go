@@ -35,6 +35,7 @@ type Library interface {
 type Services struct {
 	PolicyHub
 	PolicyResolver
+	Sbom
 }
 
 // LocalServices is a bundle of all the services for handling policies.
@@ -80,9 +81,15 @@ func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http
 		return nil, err
 	}
 
+	sbomSvc, err := NewSbomClient(addr, httpClient, auth...)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Services{
 		PolicyHub:      policyHub,
 		PolicyResolver: policyResolver,
+		Sbom:           sbomSvc,
 	}, nil
 }
 
@@ -114,6 +121,13 @@ func newMaxParallelConnTransport(transport http.RoundTripper, parallel int64) *m
 		transport:     transport,
 		parallelConns: semaphore.NewWeighted(parallel),
 	}
+}
+
+func (s *LocalServices) BulkUploadSbom(ctx context.Context, req *BulkUploadSbomRequest) (*BulkUploadSbomResponse, error) {
+	if s.Upstream != nil {
+		return s.Upstream.BulkUploadSbom(ctx, req)
+	}
+	return &BulkUploadSbomResponse{}, nil
 }
 
 type NoStoreResults struct {

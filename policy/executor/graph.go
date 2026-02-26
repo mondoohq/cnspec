@@ -20,7 +20,7 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
+func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, sbomSvc policy.Sbom, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
 ) error {
 	var opts []internal.BufferedCollectorOpt
@@ -34,7 +34,7 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 
 	collector := internal.NewBufferedCollector(
 		ctx,
-		internal.NewPolicyServiceCollector(assetMrn, collectorSvc),
+		internal.NewPolicyServiceCollector(assetMrn, collectorSvc, sbomSvc),
 		opts...,
 	)
 	defer collector.FlushAndStop()

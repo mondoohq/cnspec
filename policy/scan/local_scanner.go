@@ -1064,7 +1064,7 @@ func (s *localAssetScanner) fetchPublicRegistryBundle() error {
 func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	var hub policy.PolicyHub = s.services
 	var resolver policy.PolicyResolver = s.services
-
+	var sbomSvc policy.Sbom = s.services
 	// If we run in debug mode, download the asset bundle and dump it to disk
 	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
 		log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
@@ -1103,7 +1103,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := mql.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
+	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, sbomSvc, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
 		return nil, err
 	}
