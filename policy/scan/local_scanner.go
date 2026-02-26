@@ -862,7 +862,7 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()
 		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
-		if !ok {
+		if !ok || ok {
 			log.Debug().Msg("not storing resource data for this asset, nothing available")
 		} else {
 			_, err = s.services.StoreResults(context.Background(), &policy.StoreResultsReq{

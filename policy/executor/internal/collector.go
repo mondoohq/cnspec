@@ -317,6 +317,7 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 		for _, rr := range chunk {
 			resultsToSend[rr.CodeId] = rr
 		}
+
 		_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
 			AssetMrn:       c.assetMrn,
 			Data:           resultsToSend,
@@ -341,6 +342,11 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 	}
 
 	if len(scores) > 0 || len(risks) > 0 {
+		findings := []*policy.FindingDocument{}
+		if isDone {
+			// add mock finding for now.
+			findings = append(findings, mockFinding())
+		}
 		log.Debug().Msg("Sending scores")
 		_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
 			AssetMrn:       c.assetMrn,
@@ -348,6 +354,7 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 			Risks:          risks,
 			IsPreprocessed: true,
 			IsLastBatch:    isDone,
+			Findings:       findings,
 		})
 		if err != nil {
 			log.Error().Err(err).Msg("failed to send datapoints and scores")

@@ -21,6 +21,7 @@ import (
 )
 
 //go:generate protoc --plugin=protoc-gen-go=../scripts/protoc/protoc-gen-go --plugin=protoc-gen-rangerrpc=../scripts/protoc/protoc-gen-rangerrpc --plugin=protoc-gen-go-vtproto=../scripts/protoc/protoc-gen-go-vtproto --proto_path=../:../mql:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. --go-vtproto_out=. --go-vtproto_opt=paths=source_relative --go-vtproto_opt=features=marshal+unmarshal+size+clone cnspec_policy.proto
+//go:generate protoc --plugin=protoc-gen-go=../scripts/protoc/protoc-gen-go --plugin=protoc-gen-rangerrpc=../scripts/protoc/protoc-gen-rangerrpc --plugin=protoc-gen-go-vtproto=../scripts/protoc/protoc-gen-go-vtproto --proto_path=../:../mql:. --go_out=. --go_opt=paths=source_relative --rangerrpc_out=. --go-vtproto_out=. --go-vtproto_opt=paths=source_relative --go-vtproto_opt=features=marshal+unmarshal+size+clone policy_sbom.proto
 
 type dataQueryInfo struct {
 	Type   types.Type `json:"type,omitempty"`
