@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 5.0.0
+    version: 6.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -21,23 +21,32 @@ policies:
 
         This policy provides security checks across key GCP services, uncovering misconfigurations that could put critical resources at risk, particularly those exposed to the public internet:
 
+        - AlloyDB
         - API Keys
+        - Audit Logging
         - BigQuery
+        - Bigtable
         - Binary Authorization
+        - Cloud Armor
         - Cloud DNS
         - Cloud Functions
         - Cloud Key Management Service (KMS)
         - Cloud Logging
+        - Cloud NAT
         - Cloud Run
         - Cloud SQL
         - Cloud Storage
         - Compute Engine instances, firewalls, networks, and subnetworks
         - Dataproc
+        - Firestore
         - Google Kubernetes Engine (GKE)
         - Identity and Access Management (IAM)
         - Memorystore for Redis / Redis Cluster
+        - Organization Policies
         - Pub/Sub
         - Secret Manager
+        - Spanner
+        - SSL/TLS Policies
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
@@ -197,6 +206,39 @@ policies:
           - uid: mondoo-gcp-security-secretmanager-cmek-encryption
           - uid: mondoo-gcp-security-secretmanager-rotation-configured
           - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible
+      - title: Cloud Armor
+        checks:
+          - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only
+          - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow
+      - title: SSL/TLS Policies
+        checks:
+          - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2
+          - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile
+          - uid: mondoo-gcp-security-ssl-certificate-not-expired
+      - title: Cloud NAT
+        checks:
+          - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping
+      - title: Audit Logging
+        checks:
+          - uid: mondoo-gcp-security-audit-logging-enabled-all-services
+      - title: Organization Policies
+        checks:
+          - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted
+          - uid: mondoo-gcp-security-org-policy-serial-port-disabled
+          - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access
+      - title: Firestore
+        checks:
+          - uid: mondoo-gcp-security-firestore-cmek-encryption
+      - title: Spanner
+        checks:
+          - uid: mondoo-gcp-security-spanner-cmek-encryption
+      - title: Bigtable
+        checks:
+          - uid: mondoo-gcp-security-bigtable-cmek-encryption
+      - title: AlloyDB
+        checks:
+          - uid: mondoo-gcp-security-alloydb-cmek-encryption
+          - uid: mondoo-gcp-security-alloydb-no-public-ip
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -14813,4 +14855,1726 @@ queries:
       terraform.state.resources.where(type == 'google_cloudfunctions2_function').all(
         values['build_config'] != empty &&
         values['build_config'].any(_['docker_repository'] != empty)
+      )
+  # ============================================================================
+  # Cloud Armor Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only
+    title: Ensure Cloud Armor security policy rules are not in preview-only mode
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+    variants:
+      - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Cloud Armor"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Cloud Armor security policy rules are not configured in preview mode. When a rule is in preview mode, it logs matching requests but does not enforce the configured action, leaving services unprotected against the threats the rule was designed to block.
+
+        **Why this matters**
+
+        Cloud Armor security policies protect applications behind load balancers from DDoS attacks, cross-site scripting, SQL injection, and other web-based threats. Rules in preview mode provide no actual protection:
+          - Malicious traffic matching preview-only rules is allowed through to backend services.
+          - Organizations may have a false sense of security believing rules are active when they are only logging.
+          - Preview mode is intended for temporary testing and should not be the steady state for production rules.
+          - An attacker can exploit the gap between perceived and actual protection.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Set `preview` to `false` on all security policy rules:
+
+            ```hcl
+            resource "google_compute_security_policy" "policy" {
+              name = "my-policy"
+
+              rule {
+                action   = "deny(403)"
+                priority = 1000
+                preview  = false
+
+                match {
+                  versioned_expr = "SRC_IPS_V1"
+                  config {
+                    src_ip_ranges = ["0.0.0.0/0"]
+                  }
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Network Security > Cloud Armor policies** page.
+            2. Select the security policy.
+            3. For each rule in preview mode, click **Edit**.
+            4. Uncheck **Enable preview mode**.
+            5. Click **Update**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute security-policies rules update PRIORITY \
+              --security-policy=POLICY_NAME \
+              --no-preview
+            ```
+    refs:
+      - url: https://cloud.google.com/armor/docs/security-policy-overview
+        title: Cloud Armor security policies overview
+      - url: https://cloud.google.com/armor/docs/configure-security-policies
+        title: Configure Cloud Armor security policies
+  - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.securityPolicies.all(
+        rules().none(preview == true)
+      )
+  - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_security_policy')
+    mql: |
+      terraform.resources('google_compute_security_policy').all(
+        blocks.where(type == 'rule').all(
+          arguments.preview != true
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_security_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_security_policy').all(
+        change.after['rule'] == empty ||
+        change.after['rule'].all(_['preview'] != true)
+      )
+  - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_security_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_security_policy').all(
+        values['rule'] == empty ||
+        values['rule'].all(_['preview'] != true)
+      )
+  - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow
+    title: Ensure Cloud Armor security policy default rule does not allow all traffic
+    impact: 90
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+    variants:
+      - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Cloud Armor"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Cloud Armor security policies do not have a default rule that allows all traffic. The default rule (priority 2147483647) is the catch-all rule that applies to any request not matching a higher-priority rule. If the default rule action is "allow", all unmatched traffic passes through, effectively bypassing the security policy.
+
+        **Why this matters**
+
+        A Cloud Armor security policy with a default allow rule provides no protection for unmatched traffic:
+          - Any traffic not explicitly matched by a higher-priority rule is allowed through to backend services.
+          - New attack vectors not covered by existing rules will bypass Cloud Armor entirely.
+          - The security policy operates as an allowlist rather than a denylist, which is less secure for internet-facing services.
+          - A deny-by-default posture ensures that only explicitly permitted traffic reaches backend services.
+
+        Best practice is to set the default rule action to "deny(403)" and create specific allow rules for legitimate traffic patterns.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Set the default rule action to deny:
+
+            ```hcl
+            resource "google_compute_security_policy" "policy" {
+              name = "my-policy"
+
+              # Default rule - deny all unmatched traffic
+              rule {
+                action   = "deny(403)"
+                priority = 2147483647
+
+                match {
+                  versioned_expr = "SRC_IPS_V1"
+                  config {
+                    src_ip_ranges = ["*"]
+                  }
+                }
+
+                description = "Default deny rule"
+              }
+
+              # Add specific allow rules for legitimate traffic
+              rule {
+                action   = "allow"
+                priority = 1000
+
+                match {
+                  versioned_expr = "SRC_IPS_V1"
+                  config {
+                    src_ip_ranges = ["203.0.113.0/24"]
+                  }
+                }
+
+                description = "Allow known IP range"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Network Security > Cloud Armor policies** page.
+            2. Select the security policy.
+            3. Find the default rule (priority 2147483647).
+            4. Click **Edit** on the default rule.
+            5. Set the action to **Deny** with an appropriate response code (e.g., 403).
+            6. Click **Update**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute security-policies rules update 2147483647 \
+              --security-policy=POLICY_NAME \
+              --action=deny-403
+            ```
+    refs:
+      - url: https://cloud.google.com/armor/docs/security-policy-overview
+        title: Cloud Armor security policies overview
+      - url: https://cloud.google.com/armor/docs/configure-security-policies
+        title: Configure Cloud Armor security policies
+  - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.securityPolicies.all(
+        rules().where(priority == 2147483647).all(action != "allow")
+      )
+  - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_security_policy')
+    mql: |
+      terraform.resources('google_compute_security_policy').all(
+        blocks.where(type == 'rule').where(arguments.priority == 2147483647).all(
+          arguments.action != "allow"
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_security_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_security_policy').all(
+        change.after['rule'] == empty ||
+        change.after['rule'].where(_['priority'] == 2147483647).all(_['action'] != "allow")
+      )
+  - uid: mondoo-gcp-security-cloud-armor-default-rule-not-allow-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_security_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_security_policy').all(
+        values['rule'] == empty ||
+        values['rule'].where(_['priority'] == 2147483647).all(_['action'] != "allow")
+      )
+  # ============================================================================
+  # SSL/TLS Policy Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2
+    title: Ensure SSL policies enforce a minimum TLS version of 1.2
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+    variants:
+      - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-gcp
+        tags:
+          mondoo.com/filter-title: "GCP SSL Policy"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that SSL policies configured for Google Cloud load balancers enforce a minimum TLS version of 1.2. TLS 1.0 and 1.1 have known vulnerabilities and are deprecated by major standards bodies including IETF (RFC 8996), PCI DSS, and NIST.
+
+        **Why this matters**
+
+        Allowing TLS versions below 1.2 exposes traffic to known cryptographic attacks:
+          - TLS 1.0 is vulnerable to the BEAST and POODLE attacks.
+          - TLS 1.1 lacks support for modern authenticated encryption ciphers (AEAD).
+          - PCI DSS requires TLS 1.2 or higher for cardholder data environments.
+          - Major browsers have deprecated TLS 1.0 and 1.1, so there is minimal legitimate client impact from requiring TLS 1.2.
+          - NIST SP 800-52 Rev 2 mandates TLS 1.2 as the minimum for federal systems.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_compute_ssl_policy" "modern" {
+              name            = "modern-ssl-policy"
+              min_tls_version = "TLS_1_2"
+              profile         = "MODERN"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Network Security > SSL Policies** page.
+            2. Select the SSL policy or click **Create SSL Policy**.
+            3. Set **Minimum TLS version** to **TLS 1.2**.
+            4. Click **Save** or **Create**.
+            5. Attach the policy to your target HTTPS proxy or SSL proxy.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute ssl-policies update SSL_POLICY_NAME \
+              --min-tls-version=1.2
+            ```
+    refs:
+      - url: https://cloud.google.com/load-balancing/docs/ssl-policies-concepts
+        title: SSL policies concepts
+      - url: https://cloud.google.com/load-balancing/docs/use-ssl-policies
+        title: Using SSL policies
+  - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.sslPolicies.all(
+        minTlsVersion == "TLS_1_2"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_ssl_policy')
+    mql: |
+      terraform.resources('google_compute_ssl_policy').all(
+        arguments.min_tls_version == "TLS_1_2"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_ssl_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_ssl_policy').all(
+        change.after['min_tls_version'] == "TLS_1_2"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_ssl_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_ssl_policy').all(
+        values['min_tls_version'] == "TLS_1_2"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile
+    title: Ensure SSL policies use MODERN or RESTRICTED profile
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+    variants:
+      - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-gcp
+        tags:
+          mondoo.com/filter-title: "GCP SSL Policy"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that SSL policies use the MODERN or RESTRICTED profile rather than the COMPATIBLE or CUSTOM profile. The profile determines which cipher suites are available for TLS negotiation.
+
+        **Why this matters**
+
+        The COMPATIBLE profile includes older, weaker cipher suites for backwards compatibility with legacy clients. This increases the attack surface:
+          - COMPATIBLE allows cipher suites vulnerable to known attacks.
+          - CUSTOM profiles may inadvertently include weak ciphers if not carefully managed.
+          - MODERN provides a balanced set of modern ciphers with broad client support.
+          - RESTRICTED provides the strongest ciphers but may not support older clients.
+          - Both MODERN and RESTRICTED profiles exclude known-weak cipher suites and prioritize forward secrecy.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_compute_ssl_policy" "modern" {
+              name            = "modern-ssl-policy"
+              min_tls_version = "TLS_1_2"
+              profile         = "MODERN"
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Network Security > SSL Policies** page.
+            2. Select the SSL policy.
+            3. Set **Profile** to **Modern** or **Restricted**.
+            4. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute ssl-policies update SSL_POLICY_NAME \
+              --profile=MODERN
+            ```
+    refs:
+      - url: https://cloud.google.com/load-balancing/docs/ssl-policies-concepts
+        title: SSL policies concepts
+  - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.sslPolicies.all(
+        profile == "MODERN" || profile == "RESTRICTED"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_ssl_policy')
+    mql: |
+      terraform.resources('google_compute_ssl_policy').all(
+        arguments.profile == "MODERN" || arguments.profile == "RESTRICTED"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_ssl_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_ssl_policy').all(
+        change.after['profile'] == "MODERN" || change.after['profile'] == "RESTRICTED"
+      )
+  - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_ssl_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_ssl_policy').all(
+        values['profile'] == "MODERN" || values['profile'] == "RESTRICTED"
+      )
+  - uid: mondoo-gcp-security-ssl-certificate-not-expired
+    title: Ensure SSL certificates are not expired or expiring within 30 days
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+    variants:
+      - uid: mondoo-gcp-security-ssl-certificate-not-expired-gcp
+        tags:
+          mondoo.com/filter-title: "GCP SSL Certificate"
+          mondoo.com/icon: "gcp"
+    docs:
+      desc: |
+        This check ensures that self-managed SSL certificates registered with Google Cloud are not expired or nearing expiration (within 30 days). Expired certificates cause service outages and security warnings for users. This check applies only to self-managed certificates, as Google-managed certificates are automatically renewed.
+
+        **Why this matters**
+
+        Expired or soon-to-expire SSL certificates pose operational and security risks:
+          - Expired certificates cause browsers to display security warnings, eroding user trust.
+          - Services behind expired certificates may become inaccessible as clients refuse to connect.
+          - Certificate expiration indicates a gap in lifecycle management and operational readiness.
+          - Proactively monitoring certificate expiration prevents unplanned outages.
+          - Self-managed certificates require manual renewal, making them more prone to oversight.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Certificate Manager** page or **Load Balancing > SSL Certificates** page.
+            2. Identify certificates that are expired or expiring within 30 days.
+            3. Upload a renewed certificate or switch to Google-managed certificates for automatic renewal.
+            4. Update the target HTTPS proxy to use the new certificate.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Create a new self-managed certificate with the renewed key and certificate:
+
+            ```bash
+            gcloud compute ssl-certificates create NEW_CERT_NAME \
+              --certificate=PATH_TO_CERT \
+              --private-key=PATH_TO_KEY
+
+            gcloud compute target-https-proxies update PROXY_NAME \
+              --ssl-certificates=NEW_CERT_NAME
+            ```
+
+            Consider switching to Google-managed certificates:
+
+            ```bash
+            gcloud compute ssl-certificates create CERT_NAME \
+              --domains=DOMAIN_NAME \
+              --global
+            ```
+    refs:
+      - url: https://cloud.google.com/load-balancing/docs/ssl-certificates-concepts
+        title: SSL certificates overview
+  - uid: mondoo-gcp-security-ssl-certificate-not-expired-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.sslCertificates.where(type == "SELF_MANAGED").all(
+        parse.date(expireTime) > time.now + 30 * time.day
+      )
+  # ============================================================================
+  # Cloud NAT Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping
+    title: Ensure Cloud NAT does not use endpoint-independent mapping
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+    variants:
+      - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Cloud NAT"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Cloud NAT gateways do not have endpoint-independent mapping enabled. Endpoint-independent mapping causes the NAT gateway to use the same external IP and port for all connections from a given internal IP and port, regardless of the destination. This behavior can expose internal services to certain reflection and amplification attacks.
+
+        **Why this matters**
+
+        Endpoint-independent mapping creates predictable NAT translation behavior that attackers can exploit:
+          - It enables NAT traversal techniques that can be used to reach internal services from the internet.
+          - Reflection attacks become possible because the NAT mapping is predictable and destination-independent.
+          - Google Cloud recommends disabling endpoint-independent mapping for improved security.
+          - Disabling it uses endpoint-dependent mapping, which creates unique mappings per destination, making it harder for attackers to predict and exploit NAT behavior.
+          - Dynamic port allocation (recommended) is incompatible with endpoint-independent mapping.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_compute_router_nat" "nat" {
+              name                               = "my-nat-gateway"
+              router                             = google_compute_router.router.name
+              region                             = "us-central1"
+              nat_ip_allocate_option             = "AUTO_ONLY"
+              source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+              enable_endpoint_independent_mapping = false
+              enable_dynamic_port_allocation      = true
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Network services > Cloud NAT** page.
+            2. Select the NAT gateway.
+            3. Click **Edit**.
+            4. Under **Advanced configurations**, disable **Endpoint-Independent Mapping**.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud compute routers nats update NAT_NAME \
+              --router=ROUTER_NAME \
+              --region=REGION \
+              --no-enable-endpoint-independent-mapping
+            ```
+    refs:
+      - url: https://cloud.google.com/nat/docs/overview
+        title: Cloud NAT overview
+      - url: https://cloud.google.com/nat/docs/ports-and-addresses
+        title: Cloud NAT ports and addresses
+  - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.routers.all(
+        natServices.all(enableEndpointIndependentMapping == false)
+      )
+  - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_router_nat')
+    mql: |
+      terraform.resources('google_compute_router_nat').all(
+        arguments.enable_endpoint_independent_mapping != true
+      )
+  - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_router_nat')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_router_nat').all(
+        change.after['enable_endpoint_independent_mapping'] != true
+      )
+  - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_router_nat')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_router_nat').all(
+        values['enable_endpoint_independent_mapping'] != true
+      )
+  # ============================================================================
+  # Audit Logging Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-audit-logging-enabled-all-services
+    title: Ensure audit logging is enabled for all services
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+    variants:
+      - uid: mondoo-gcp-security-audit-logging-enabled-all-services-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Project"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-audit-logging-enabled-all-services-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-audit-logging-enabled-all-services-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-audit-logging-enabled-all-services-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that audit logging is configured for all services in the GCP project with at least ADMIN_READ log type enabled. Audit logs record administrative actions and data access events, providing critical visibility for security monitoring, incident response, and compliance.
+
+        **Why this matters**
+
+        Without audit logging enabled for all services, security-relevant events may go unrecorded:
+          - Admin activity logs capture configuration changes, IAM modifications, and resource creation/deletion.
+          - Without an "allServices" audit config, newly enabled services will not have audit logging by default.
+          - Gaps in audit logging create blind spots that attackers can exploit to perform undetected actions.
+          - CIS Google Cloud Foundation Benchmark 2.1 requires default audit log configuration for all services.
+          - Compliance frameworks including SOC 2, ISO 27001, and NIST 800-53 require comprehensive audit logging.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_project_iam_audit_config" "all_services" {
+              project = "my-project"
+              service = "allServices"
+
+              audit_log_config {
+                log_type = "ADMIN_READ"
+              }
+
+              audit_log_config {
+                log_type = "DATA_READ"
+              }
+
+              audit_log_config {
+                log_type = "DATA_WRITE"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **IAM & Admin > Audit Logs** page.
+            2. In the **Default Audit Config** section at the top, ensure that **Admin Read**, **Data Read**, and **Data Write** are enabled for all services.
+            3. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Get the current IAM policy:
+
+            ```bash
+            gcloud projects get-iam-policy PROJECT_ID --format=json > policy.json
+            ```
+
+            Add the audit config to the policy JSON:
+
+            ```json
+            {
+              "auditConfigs": [
+                {
+                  "service": "allServices",
+                  "auditLogConfigs": [
+                    { "logType": "ADMIN_READ" },
+                    { "logType": "DATA_READ" },
+                    { "logType": "DATA_WRITE" }
+                  ]
+                }
+              ]
+            }
+            ```
+
+            Apply the updated policy:
+
+            ```bash
+            gcloud projects set-iam-policy PROJECT_ID policy.json
+            ```
+    refs:
+      - url: https://cloud.google.com/logging/docs/audit
+        title: Cloud Audit Logs overview
+      - url: https://cloud.google.com/logging/docs/audit/configure-data-access
+        title: Configure Data Access audit logs
+  - uid: mondoo-gcp-security-audit-logging-enabled-all-services-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.auditConfig.where(service == "allServices").length > 0
+      gcp.project.auditConfig.where(service == "allServices").all(
+        auditLogConfigs.where(logType == "ADMIN_READ").length > 0
+      )
+  - uid: mondoo-gcp-security-audit-logging-enabled-all-services-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_audit_config')
+    mql: |
+      terraform.resources('google_project_iam_audit_config').where(arguments.service == "allServices").length > 0
+  - uid: mondoo-gcp-security-audit-logging-enabled-all-services-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_audit_config')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_audit_config').where(
+        change.after['service'] == "allServices"
+      ).length > 0
+  - uid: mondoo-gcp-security-audit-logging-enabled-all-services-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_audit_config')
+    mql: |
+      terraform.state.resources.where(type == 'google_project_iam_audit_config').where(
+        values['service'] == "allServices"
+      ).length > 0
+  # ============================================================================
+  # Organization Policy Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted
+    title: Ensure VM external IP access is restricted via organization policy
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+    variants:
+      - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Project"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that the `constraints/compute.vmExternalIpAccess` organization policy is configured to restrict which VM instances can have external IP addresses. This constraint limits the set of Compute Engine instances that are allowed to use external IP addresses, reducing the attack surface by preventing unnecessary internet exposure.
+
+        **Why this matters**
+
+        VM instances with external IP addresses are directly reachable from the internet, increasing their exposure to attacks:
+          - External IPs create a direct attack surface for brute-force, vulnerability exploitation, and reconnaissance.
+          - Without this constraint, any project member with compute permissions can create internet-facing VMs.
+          - The organization policy provides a preventive control that is enforced before resources are created.
+          - This supplements instance-level checks by preventing non-compliant configurations at the organizational level.
+          - Workloads that need internet access should use Cloud NAT for egress without requiring external IPs.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_org_policy_policy" "vm_external_ip" {
+              name   = "projects/PROJECT_ID/policies/compute.vmExternalIpAccess"
+              parent = "projects/PROJECT_ID"
+
+              spec {
+                rules {
+                  deny_all = "TRUE"
+                }
+              }
+            }
+            ```
+
+            To allow specific VMs, use an allow list:
+
+            ```hcl
+            resource "google_org_policy_policy" "vm_external_ip" {
+              name   = "projects/PROJECT_ID/policies/compute.vmExternalIpAccess"
+              parent = "projects/PROJECT_ID"
+
+              spec {
+                rules {
+                  values {
+                    allowed_values = ["projects/PROJECT_ID/zones/ZONE/instances/INSTANCE_NAME"]
+                  }
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **IAM & Admin > Organization Policies** page.
+            2. Search for **Define allowed external IPs for VM instances** (`compute.vmExternalIpAccess`).
+            3. Click the policy and select **Manage Policy**.
+            4. Set the policy to **Deny All** or configure an allow list of specific VM instances.
+            5. Click **Set Policy**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Deny all external IPs:
+
+            ```bash
+            gcloud resource-manager org-policies deny \
+              compute.vmExternalIpAccess --project=PROJECT_ID \
+              --all
+            ```
+    refs:
+      - url: https://cloud.google.com/compute/docs/ip-addresses/reserve-static-external-ip-address
+        title: External IP addresses
+      - url: https://cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
+        title: Organization policy constraints
+  - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.orgPolicies.where(constraintName == "constraints/compute.vmExternalIpAccess").length > 0
+  - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_org_policy_policy')
+    mql: |
+      terraform.resources('google_org_policy_policy').where(
+        arguments.name.contains("compute.vmExternalIpAccess")
+      ).length > 0
+  - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_org_policy_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_org_policy_policy').where(
+        change.after['name'] != empty && change.after['name'].contains("compute.vmExternalIpAccess")
+      ).length > 0
+  - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_org_policy_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_org_policy_policy').where(
+        values['name'] != empty && values['name'].contains("compute.vmExternalIpAccess")
+      ).length > 0
+  - uid: mondoo-gcp-security-org-policy-serial-port-disabled
+    title: Ensure serial port access is disabled via organization policy
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+    variants:
+      - uid: mondoo-gcp-security-org-policy-serial-port-disabled-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Project"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that the `constraints/compute.disableSerialPortAccess` organization policy is enforced. When enforced, this constraint prevents interactive serial console access on all VM instances in the project, providing an organization-wide preventive control that supplements instance-level metadata checks.
+
+        **Why this matters**
+
+        The serial console provides direct access to VM instances that bypasses network-level security controls:
+          - Serial console access is not subject to firewall rules or VPC network restrictions.
+          - It is accessible from any IP address if enabled, creating a backdoor around network security.
+          - Enforcing this at the organization policy level prevents any project member from re-enabling serial port access.
+          - Instance-level metadata settings can be overridden by users with sufficient permissions, but organization policies cannot.
+          - This provides defense-in-depth when combined with the instance-level serial port check.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_org_policy_policy" "disable_serial_port" {
+              name   = "projects/PROJECT_ID/policies/compute.disableSerialPortAccess"
+              parent = "projects/PROJECT_ID"
+
+              spec {
+                rules {
+                  enforce = "TRUE"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **IAM & Admin > Organization Policies** page.
+            2. Search for **Disable VM serial port access** (`compute.disableSerialPortAccess`).
+            3. Click the policy and select **Manage Policy**.
+            4. Set the enforcement to **On**.
+            5. Click **Set Policy**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud resource-manager org-policies enable-enforce \
+              compute.disableSerialPortAccess --project=PROJECT_ID
+            ```
+    refs:
+      - url: https://cloud.google.com/compute/docs/instances/interacting-with-serial-console
+        title: Interacting with the serial console
+      - url: https://cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
+        title: Organization policy constraints
+  - uid: mondoo-gcp-security-org-policy-serial-port-disabled-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.orgPolicies.where(constraintName == "constraints/compute.disableSerialPortAccess").any(
+        spec['rules'].any(_['enforce'] == true)
+      )
+  - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_org_policy_policy')
+    mql: |
+      terraform.resources('google_org_policy_policy').where(
+        arguments.name.contains("compute.disableSerialPortAccess")
+      ).any(
+        blocks.where(type == 'spec').any(
+          blocks.where(type == 'rules').any(arguments.enforce == "TRUE")
+        )
+      )
+  - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_org_policy_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_org_policy_policy').where(
+        change.after['name'] != empty && change.after['name'].contains("compute.disableSerialPortAccess")
+      ).any(
+        change.after['spec'] != empty &&
+        change.after['spec'].any(_['rules'] != empty && _['rules'].any(_['enforce'] == "TRUE"))
+      )
+  - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_org_policy_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_org_policy_policy').where(
+        values['name'] != empty && values['name'].contains("compute.disableSerialPortAccess")
+      ).any(
+        values['spec'] != empty &&
+        values['spec'].any(_['rules'] != empty && _['rules'].any(_['enforce'] == "TRUE"))
+      )
+  - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access
+    title: Ensure uniform bucket-level access is enforced via organization policy
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    variants:
+      - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Project"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that the `constraints/storage.uniformBucketLevelAccess` organization policy is enforced. When enabled, this constraint requires all new and existing Cloud Storage buckets to use uniform bucket-level access (IAM) instead of fine-grained ACLs, simplifying access management and reducing the risk of misconfiguration.
+
+        **Why this matters**
+
+        Without uniform bucket-level access enforcement, buckets can use legacy ACLs alongside IAM policies, creating confusing and potentially insecure access configurations:
+          - ACLs and IAM policies can grant conflicting permissions, making it difficult to audit effective access.
+          - ACLs operate at the object level and can inadvertently expose individual objects even when bucket-level IAM is restrictive.
+          - Uniform bucket-level access ensures a single, consistent authorization system (IAM) for all access decisions.
+          - Enforcing this at the organization policy level prevents project members from creating buckets with legacy ACLs.
+          - This supplements the bucket-level check by providing a preventive organizational control.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "google_org_policy_policy" "uniform_bucket_access" {
+              name   = "projects/PROJECT_ID/policies/storage.uniformBucketLevelAccess"
+              parent = "projects/PROJECT_ID"
+
+              spec {
+                rules {
+                  enforce = "TRUE"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **IAM & Admin > Organization Policies** page.
+            2. Search for **Enforce uniform bucket-level access** (`storage.uniformBucketLevelAccess`).
+            3. Click the policy and select **Manage Policy**.
+            4. Set the enforcement to **On**.
+            5. Click **Set Policy**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud resource-manager org-policies enable-enforce \
+              storage.uniformBucketLevelAccess --project=PROJECT_ID
+            ```
+    refs:
+      - url: https://cloud.google.com/storage/docs/uniform-bucket-level-access
+        title: Uniform bucket-level access
+      - url: https://cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
+        title: Organization policy constraints
+  - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.orgPolicies.where(constraintName == "constraints/storage.uniformBucketLevelAccess").any(
+        spec['rules'].any(_['enforce'] == true)
+      )
+  - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_org_policy_policy')
+    mql: |
+      terraform.resources('google_org_policy_policy').where(
+        arguments.name.contains("storage.uniformBucketLevelAccess")
+      ).any(
+        blocks.where(type == 'spec').any(
+          blocks.where(type == 'rules').any(arguments.enforce == "TRUE")
+        )
+      )
+  - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_org_policy_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_org_policy_policy').where(
+        change.after['name'] != empty && change.after['name'].contains("storage.uniformBucketLevelAccess")
+      ).any(
+        change.after['spec'] != empty &&
+        change.after['spec'].any(_['rules'] != empty && _['rules'].any(_['enforce'] == "TRUE"))
+      )
+  - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_org_policy_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_org_policy_policy').where(
+        values['name'] != empty && values['name'].contains("storage.uniformBucketLevelAccess")
+      ).any(
+        values['spec'] != empty &&
+        values['spec'].any(_['rules'] != empty && _['rules'].any(_['enforce'] == "TRUE"))
+      )
+  # ============================================================================
+  # Firestore Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-firestore-cmek-encryption
+    title: Ensure Firestore databases are encrypted with customer-managed encryption keys (CMEK)
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-gcp-security-firestore-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Firestore"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Firestore databases are encrypted using customer-managed encryption keys (CMEK) rather than Google-managed keys. CMEK provides organizations with full control over the encryption key lifecycle, including rotation, access policies, and the ability to revoke access by disabling or destroying keys.
+
+        **Why this matters**
+
+        By default, Firestore encrypts data at rest using Google-managed keys. While this provides baseline protection, it does not give organizations control over key management:
+          - Google-managed keys cannot be independently rotated on a custom schedule.
+          - Organizations cannot revoke access to encrypted data by destroying or disabling the key.
+          - Audit logs for key usage are not available with Google-managed keys.
+          - Compliance frameworks such as PCI-DSS, HIPAA, and SOC 2 may require customer-managed encryption.
+          - CMEK must be configured at database creation time and cannot be added retroactively.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Note: CMEK must be configured at database creation time.
+
+            ```hcl
+            resource "google_firestore_database" "database" {
+              project     = "my-project"
+              name        = "my-database"
+              location_id = "us-central1"
+              type        = "FIRESTORE_NATIVE"
+
+              cmek_config {
+                kms_key_name = google_kms_crypto_key.firestore_key.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at database creation time and cannot be added to existing databases.
+
+            1. Go to the **Firestore** page in the Google Cloud Console.
+            2. Click **Create Database**.
+            3. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            4. Select or create a Cloud KMS key.
+            5. Complete the database creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at database creation time.
+
+            ```bash
+            gcloud firestore databases create \
+              --database=DATABASE_ID \
+              --location=LOCATION \
+              --type=firestore-native \
+              --kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/firestore/docs/cmek
+        title: Customer-managed encryption keys (CMEK) for Firestore
+  - uid: mondoo-gcp-security-firestore-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.firestore.databases.all(
+        cmekConfig != empty
+      )
+  - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_firestore_database')
+    mql: |
+      terraform.resources('google_firestore_database').all(
+        blocks.where(type == 'cmek_config') != empty &&
+        blocks.where(type == 'cmek_config').all(arguments.kms_key_name != empty)
+      )
+  - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_firestore_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_firestore_database').all(
+        change.after['cmek_config'] != empty &&
+        change.after['cmek_config'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_firestore_database')
+    mql: |
+      terraform.state.resources.where(type == 'google_firestore_database').all(
+        values['cmek_config'] != empty &&
+        values['cmek_config'].any(_['kms_key_name'] != empty)
+      )
+  # ============================================================================
+  # Spanner Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-spanner-cmek-encryption
+    title: Ensure Spanner databases are encrypted with customer-managed encryption keys (CMEK)
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-gcp-security-spanner-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Spanner"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Cloud Spanner databases are encrypted using customer-managed encryption keys (CMEK). CMEK provides full control over the encryption key lifecycle and meets compliance requirements for customer-controlled key management.
+
+        **Why this matters**
+
+        Cloud Spanner stores critical transactional data that often contains sensitive information:
+          - Without CMEK, data is encrypted with Google-managed keys that organizations cannot independently control.
+          - CMEK enables organizations to revoke access to encrypted data by disabling or destroying the encryption key.
+          - Key usage can be audited through Cloud Audit Logs for Cloud KMS.
+          - Compliance frameworks such as PCI-DSS, HIPAA, and SOC 2 may require customer-managed encryption for databases containing sensitive data.
+          - CMEK must be configured at database creation time.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Note: CMEK must be configured at database creation time.
+
+            ```hcl
+            resource "google_spanner_database" "database" {
+              instance = google_spanner_instance.instance.name
+              name     = "my-database"
+
+              encryption_config {
+                kms_key_name = google_kms_crypto_key.spanner_key.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at database creation time.
+
+            1. Go to the **Spanner** page in the Google Cloud Console.
+            2. Select an instance and click **Create Database**.
+            3. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            4. Select or create a Cloud KMS key.
+            5. Complete the database creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at database creation time.
+
+            ```bash
+            gcloud spanner databases create DATABASE_ID \
+              --instance=INSTANCE_ID \
+              --kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/spanner/docs/cmek
+        title: Customer-managed encryption keys (CMEK) for Cloud Spanner
+  - uid: mondoo-gcp-security-spanner-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.spanner.instances.all(
+        databases().all(encryptionConfig != empty)
+      )
+  - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database')
+    mql: |
+      terraform.resources('google_spanner_database').all(
+        blocks.where(type == 'encryption_config') != empty &&
+        blocks.where(type == 'encryption_config').all(arguments.kms_key_name != empty)
+      )
+  - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_spanner_database').all(
+        change.after['encryption_config'] != empty &&
+        change.after['encryption_config'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database')
+    mql: |
+      terraform.state.resources.where(type == 'google_spanner_database').all(
+        values['encryption_config'] != empty &&
+        values['encryption_config'].any(_['kms_key_name'] != empty)
+      )
+  # ============================================================================
+  # Bigtable Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-bigtable-cmek-encryption
+    title: Ensure Bigtable clusters are encrypted with customer-managed encryption keys (CMEK)
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-gcp-security-bigtable-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: "GCP Bigtable"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Bigtable clusters are encrypted using customer-managed encryption keys (CMEK). CMEK is configured at the cluster level in Bigtable, and all data stored in the cluster is encrypted with the specified Cloud KMS key.
+
+        **Why this matters**
+
+        Bigtable is used for large-scale analytical and operational workloads that may contain sensitive data:
+          - Without CMEK, data is encrypted with Google-managed keys that organizations cannot independently control.
+          - CMEK enables organizations to revoke access to encrypted data by disabling or destroying the encryption key.
+          - Key usage can be audited through Cloud Audit Logs for Cloud KMS.
+          - Compliance frameworks may require customer-managed encryption for data stores.
+          - CMEK must be configured at cluster creation time and cannot be added to existing clusters.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Note: CMEK must be configured at cluster creation time.
+
+            ```hcl
+            resource "google_bigtable_instance" "instance" {
+              name = "my-instance"
+
+              cluster {
+                cluster_id   = "my-cluster"
+                zone         = "us-central1-a"
+                num_nodes    = 3
+                storage_type = "SSD"
+                kms_key_name = google_kms_crypto_key.bigtable_key.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at cluster creation time.
+
+            1. Go to the **Bigtable** page in the Google Cloud Console.
+            2. Click **Create Instance**.
+            3. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            4. Select or create a Cloud KMS key for each cluster.
+            5. Complete the instance creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at cluster creation time.
+
+            ```bash
+            cbt createinstance INSTANCE_ID DISPLAY_NAME \
+              CLUSTER_ID ZONE NUM_NODES SSD \
+              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/bigtable/docs/cmek
+        title: Customer-managed encryption keys (CMEK) for Bigtable
+  - uid: mondoo-gcp-security-bigtable-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.bigtable.instances.all(
+        clusters().all(encryptionConfig != empty)
+      )
+  - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance')
+    mql: |
+      terraform.resources('google_bigtable_instance').all(
+        blocks.where(type == 'cluster').all(
+          arguments.kms_key_name != empty
+        )
+      )
+  - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance').all(
+        change.after['cluster'] != empty &&
+        change.after['cluster'].all(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigtable_instance').all(
+        values['cluster'] != empty &&
+        values['cluster'].all(_['kms_key_name'] != empty)
+      )
+  # ============================================================================
+  # AlloyDB Checks
+  # ============================================================================
+  - uid: mondoo-gcp-security-alloydb-cmek-encryption
+    title: Ensure AlloyDB clusters are encrypted with customer-managed encryption keys (CMEK)
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-gcp-security-alloydb-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: "GCP AlloyDB"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-alloydb-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-alloydb-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-alloydb-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that AlloyDB clusters are encrypted using customer-managed encryption keys (CMEK). AlloyDB is a fully managed PostgreSQL-compatible database, and CMEK provides organizations with full control over the encryption key lifecycle.
+
+        **Why this matters**
+
+        AlloyDB stores critical relational data that often contains sensitive information:
+          - Without CMEK, data is encrypted with Google-managed keys that organizations cannot independently control.
+          - CMEK enables organizations to revoke access to encrypted data by disabling or destroying the encryption key.
+          - Key usage can be audited through Cloud Audit Logs for Cloud KMS.
+          - Compliance frameworks such as PCI-DSS, HIPAA, and SOC 2 may require customer-managed encryption for databases.
+          - CMEK must be configured at cluster creation time and applies to all instances and backups in the cluster.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Note: CMEK must be configured at cluster creation time.
+
+            ```hcl
+            resource "google_alloydb_cluster" "cluster" {
+              cluster_id = "my-cluster"
+              location   = "us-central1"
+
+              encryption_config {
+                kms_key_name = google_kms_crypto_key.alloydb_key.id
+              }
+
+              network_config {
+                network = google_compute_network.default.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at cluster creation time.
+
+            1. Go to the **AlloyDB** page in the Google Cloud Console.
+            2. Click **Create Cluster**.
+            3. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            4. Select or create a Cloud KMS key.
+            5. Complete the cluster creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at cluster creation time.
+
+            ```bash
+            gcloud alloydb clusters create CLUSTER_ID \
+              --region=REGION \
+              --network=NETWORK \
+              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/alloydb/docs/cmek
+        title: Customer-managed encryption keys (CMEK) for AlloyDB
+  - uid: mondoo-gcp-security-alloydb-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.alloydb.clusters.all(
+        encryptionConfig != empty
+      )
+  - uid: mondoo-gcp-security-alloydb-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_alloydb_cluster')
+    mql: |
+      terraform.resources('google_alloydb_cluster').all(
+        blocks.where(type == 'encryption_config') != empty &&
+        blocks.where(type == 'encryption_config').all(arguments.kms_key_name != empty)
+      )
+  - uid: mondoo-gcp-security-alloydb-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_alloydb_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_alloydb_cluster').all(
+        change.after['encryption_config'] != empty &&
+        change.after['encryption_config'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-alloydb-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_alloydb_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_alloydb_cluster').all(
+        values['encryption_config'] != empty &&
+        values['encryption_config'].any(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-alloydb-no-public-ip
+    title: Ensure AlloyDB instances do not have public IP addresses
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+    variants:
+      - uid: mondoo-gcp-security-alloydb-no-public-ip-gcp
+        tags:
+          mondoo.com/filter-title: "GCP AlloyDB"
+          mondoo.com/icon: "gcp"
+      - uid: mondoo-gcp-security-alloydb-no-public-ip-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-alloydb-no-public-ip-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-gcp-security-alloydb-no-public-ip-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that AlloyDB instances do not have public IP addresses assigned. AlloyDB instances with public IPs are directly reachable from the internet, significantly increasing their exposure to brute-force attacks, SQL injection, and unauthorized access.
+
+        **Why this matters**
+
+        Database instances should not be directly accessible from the internet:
+          - Public IP addresses expose the database to the entire internet, increasing the attack surface.
+          - Attackers routinely scan for publicly accessible databases to exploit misconfigurations or weak credentials.
+          - AlloyDB instances should be accessed through Private Service Connect, private IP, or the AlloyDB Auth Proxy.
+          - Private connectivity ensures that database traffic stays within the Google Cloud network.
+          - This aligns with the principle of least exposure and defense-in-depth.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure `enable_public_ip` is not set to `true` in the instance configuration:
+
+            ```hcl
+            resource "google_alloydb_instance" "primary" {
+              cluster       = google_alloydb_cluster.cluster.name
+              instance_id   = "my-instance"
+              instance_type = "PRIMARY"
+
+              network_config {
+                enable_public_ip = false
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **AlloyDB** page in the Google Cloud Console.
+            2. Select the cluster and instance.
+            3. Click **Edit**.
+            4. Under **Connectivity**, ensure **Enable public IP** is unchecked.
+            5. Click **Update Instance**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud alloydb instances update INSTANCE_ID \
+              --cluster=CLUSTER_ID \
+              --region=REGION \
+              --no-assign-inbound-public-ip
+            ```
+    refs:
+      - url: https://cloud.google.com/alloydb/docs/connect-overview
+        title: AlloyDB connectivity overview
+      - url: https://cloud.google.com/alloydb/docs/connect-public-ip
+        title: Connect using public IP
+  - uid: mondoo-gcp-security-alloydb-no-public-ip-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.alloydb.clusters.all(
+        instances().all(publicIpAddress == "")
+      )
+  - uid: mondoo-gcp-security-alloydb-no-public-ip-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_alloydb_instance')
+    mql: |
+      terraform.resources('google_alloydb_instance').all(
+        blocks.where(type == 'network_config') == empty ||
+        blocks.where(type == 'network_config').all(
+          arguments.enable_public_ip != true
+        )
+      )
+  - uid: mondoo-gcp-security-alloydb-no-public-ip-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_alloydb_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_alloydb_instance').all(
+        change.after['network_config'] == empty ||
+        change.after['network_config'].all(_['enable_public_ip'] != true)
+      )
+  - uid: mondoo-gcp-security-alloydb-no-public-ip-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_alloydb_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_alloydb_instance').all(
+        values['network_config'] == empty ||
+        values['network_config'].all(_['enable_public_ip'] != true)
       )
