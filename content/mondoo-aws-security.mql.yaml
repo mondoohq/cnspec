@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 6.1.0
+    version: 6.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -87,6 +87,8 @@ policies:
         checks:
           - uid: mondoo-aws-security-lambda-concurrency-check
           - uid: mondoo-aws-security-lambda-function-public-access-prohibited
+          - uid: mondoo-aws-security-lambda-env-encryption
+          - uid: mondoo-aws-security-lambda-code-signing-configured
       - title: Amazon S3 Bucket
         checks:
           - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited
@@ -96,6 +98,7 @@ policies:
           - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled
           - uid: mondoo-aws-security-s3-bucket-public-read-prohibited
           - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled
+          - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk
       - title: AWS Security Group
         checks:
           - uid: mondoo-aws-security-secgroup-restricted-ssh
@@ -146,6 +149,7 @@ policies:
           - uid: mondoo-aws-security-ec2-user-data-no-secrets
           - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited
           - uid: mondoo-aws-security-ec2-keypair-type
+          - uid: mondoo-aws-security-ec2-source-dest-check
       - title: Amazon ECR
         checks:
           - uid: mondoo-aws-security-ecr-image-scan-on-push
@@ -196,6 +200,8 @@ policies:
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
           - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet
+          - uid: mondoo-aws-security-sagemaker-notebook-imdsv2
+          - uid: mondoo-aws-security-sagemaker-notebook-no-root-access
       - title: Amazon CloudFront
         checks:
           - uid: mondoo-aws-security-cloudfront-viewer-policy-https
@@ -260,10 +266,12 @@ policies:
           - uid: mondoo-aws-security-codebuild-no-privileged-mode
           - uid: mondoo-aws-security-codebuild-no-plaintext-credentials
           - uid: mondoo-aws-security-codebuild-source-ssl-verification
+          - uid: mondoo-aws-security-codebuild-encryption-key-configured
       - title: Amazon Neptune
         checks:
           - uid: mondoo-aws-security-neptune-cluster-encrypted
           - uid: mondoo-aws-security-neptune-cluster-iam-authentication
+          - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted
       - title: Amazon Inspector
         checks:
           - uid: mondoo-aws-security-inspector-ec2-scanning-enabled
@@ -18619,3 +18627,1083 @@ queries:
         keyAlgorithm == "RSA_2048" || keyAlgorithm == "RSA_3072" || keyAlgorithm == "RSA_4096" ||
         keyAlgorithm == "EC_prime256v1" || keyAlgorithm == "EC_secp384r1" || keyAlgorithm == "EC_secp521r1"
       )
+  - uid: mondoo-aws-security-lambda-env-encryption
+    title: Ensure Lambda functions use KMS encryption for environment variables
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-aws-security-lambda-env-encryption-aws
+        tags:
+          mondoo.com/filter-title: "AWS Lambda Function"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-lambda-env-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-lambda-env-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-lambda-env-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that AWS Lambda functions with environment variables are configured with a KMS customer managed key (CMK) to encrypt those variables at rest. By default, Lambda encrypts environment variables with an AWS-managed key, but using a CMK provides centralized key management, audit logging, and fine-grained access control.
+
+        **Why this matters**
+
+        Lambda environment variables frequently contain sensitive data such as API keys, database credentials, and service tokens. Without a customer managed KMS key:
+
+        - Environment variables are encrypted with an AWS-managed key that cannot be audited or rotated by the customer.
+        - Any principal with `lambda:GetFunctionConfiguration` permission can view decrypted environment variable values.
+        - There is no centralized key management or access control for encryption keys.
+        - Compliance frameworks such as PCI DSS, HIPAA, and CIS AWS Foundations Benchmark recommend customer managed encryption keys for sensitive data.
+
+        **Risk mitigation:**
+
+        - Prevents unauthorized access to sensitive environment variable values.
+        - Enables audit logging of encryption key usage through AWS CloudTrail.
+        - Provides fine-grained access control over who can decrypt environment variables.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the AWS Lambda Console.
+            2. Select Functions in the left panel.
+            3. Select the Lambda function to update.
+            4. Go to the Configuration tab and select Environment variables.
+            5. Under Encryption configuration, select "Use a customer master key".
+            6. Choose an existing KMS key or create a new one.
+            7. Select Save to apply the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Update a Lambda function to use a KMS key for environment variable encryption:
+
+            ```bash
+            aws lambda update-function-configuration \
+              --function-name <function-name> \
+              --kms-key-arn arn:aws:kms:<region>:<account-id>:key/<key-id>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_lambda_function" "example" {
+              function_name = "example"
+              kms_key_arn   = aws_kms_key.lambda_env.arn
+
+              environment {
+                variables = {
+                  DB_HOST = "example.com"
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              LambdaFunction:
+                Type: AWS::Lambda::Function
+                Properties:
+                  FunctionName: example
+                  KmsKeyArn: !GetAtt LambdaKMSKey.Arn
+                  Environment:
+                    Variables:
+                      DB_HOST: example.com
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html
+        title: AWS Documentation - Using Lambda environment variables
+      - url: https://docs.aws.amazon.com/lambda/latest/dg/security-dataprotection.html
+        title: AWS Documentation - Data protection in AWS Lambda
+  - uid: mondoo-aws-security-lambda-env-encryption-aws
+    filters: asset.platform == "aws-lambda-function"
+    mql: |
+      if (aws.lambda.function.environment.length > 0) {
+        aws.lambda.function.kmsKeyArn != "" && aws.lambda.function.kmsKeyArn != empty
+      }
+  - uid: mondoo-aws-security-lambda-env-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_function")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_lambda_function").all(
+        blocks.where(type == "environment").length == 0 ||
+        arguments.kms_key_arn != empty
+      )
+  - uid: mondoo-aws-security-lambda-env-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_function")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_lambda_function").all(
+        change.after.environment == empty ||
+        change.after.kms_key_arn != ""
+      )
+  - uid: mondoo-aws-security-lambda-env-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_function")
+    mql: |
+      terraform.state.resources.where(type == "aws_lambda_function").all(
+        values.environment == empty ||
+        values.kms_key_arn != ""
+      )
+  - uid: mondoo-aws-security-lambda-code-signing-configured
+    title: Ensure Lambda functions have code signing configured
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc8-1-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-25
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sa-10
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+    variants:
+      - uid: mondoo-aws-security-lambda-code-signing-configured-aws
+        tags:
+          mondoo.com/filter-title: "AWS Lambda Function"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-lambda-code-signing-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-lambda-code-signing-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-lambda-code-signing-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that AWS Lambda functions have code signing configured to verify that only trusted code packages are deployed. Code signing uses AWS Signer to validate deployment packages against a set of allowed signing profiles, preventing unauthorized or tampered code from being deployed.
+
+        **Why this matters**
+
+        Without code signing, Lambda functions can accept any deployment package regardless of its origin or integrity:
+
+        - Malicious actors with deployment permissions could deploy tampered or backdoored code.
+        - Supply chain attacks can inject unauthorized code into the deployment pipeline.
+        - There is no cryptographic verification that the deployed code matches what was built and approved.
+        - Compliance frameworks increasingly require code integrity verification as part of secure software supply chain practices.
+
+        **Risk mitigation:**
+
+        - Prevents deployment of unauthorized or tampered Lambda function code.
+        - Provides cryptographic verification of code package integrity.
+        - Establishes a chain of trust from code build to deployment.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the AWS Lambda Console.
+            2. Select Functions in the left panel.
+            3. Select the Lambda function to update.
+            4. Go to the Configuration tab and select Code signing.
+            5. Select Edit and choose a code signing configuration.
+            6. If no code signing configuration exists, create one:
+              - Go to Code signing configurations in the left panel.
+              - Select Create configuration.
+              - Add allowed signing profiles and set the validation policy to "Enforce".
+            7. Select Save to apply the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a code signing configuration:
+
+            ```bash
+            aws lambda create-code-signing-config \
+              --allowed-publishers SigningProfileVersionArns=arn:aws:signer:<region>:<account-id>:/signing-profiles/<profile-name> \
+              --code-signing-policies UntrustedArtifactOnDeployment=Enforce
+            ```
+
+            Attach the code signing configuration to a function:
+
+            ```bash
+            aws lambda put-function-code-signing-config \
+              --function-name <function-name> \
+              --code-signing-config-arn <code-signing-config-arn>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_lambda_code_signing_config" "example" {
+              allowed_publishers {
+                signing_profile_version_arns = [
+                  aws_signer_signing_profile.example.version_arn
+                ]
+              }
+
+              policies {
+                untrusted_artifact_on_deployment = "Enforce"
+              }
+            }
+
+            resource "aws_lambda_function" "example" {
+              function_name         = "example"
+              code_signing_config_arn = aws_lambda_code_signing_config.example.arn
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              CodeSigningConfig:
+                Type: AWS::Lambda::CodeSigningConfig
+                Properties:
+                  AllowedPublishers:
+                    SigningProfileVersionArns:
+                      - !GetAtt SigningProfile.ProfileVersionArn
+                  CodeSigningPolicies:
+                    UntrustedArtifactOnDeployment: Enforce
+              LambdaFunction:
+                Type: AWS::Lambda::Function
+                Properties:
+                  FunctionName: example
+                  CodeSigningConfigArn: !Ref CodeSigningConfig
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/lambda/latest/dg/configuration-codesigning.html
+        title: AWS Documentation - Configuring code signing for AWS Lambda
+      - url: https://docs.aws.amazon.com/signer/latest/developerguide/Welcome.html
+        title: AWS Documentation - AWS Signer Developer Guide
+  - uid: mondoo-aws-security-lambda-code-signing-configured-aws
+    filters: asset.platform == "aws-lambda-function"
+    mql: aws.lambda.function.codeSigningConfig != null
+  - uid: mondoo-aws-security-lambda-code-signing-configured-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_function")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_lambda_function").all(
+        arguments.code_signing_config_arn != empty
+      )
+  - uid: mondoo-aws-security-lambda-code-signing-configured-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_function")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_lambda_function").all(
+        change.after.code_signing_config_arn != ""
+      )
+  - uid: mondoo-aws-security-lambda-code-signing-configured-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_function")
+    mql: |
+      terraform.state.resources.where(type == "aws_lambda_function").all(
+        values.code_signing_config_arn != ""
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-imdsv2
+    title: Ensure SageMaker notebook instances use IMDSv2
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+    variants:
+      - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-aws
+        tags:
+          mondoo.com/filter-title: "AWS SageMaker Notebook Instance"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker notebook instances are configured to require Instance Metadata Service Version 2 (IMDSv2). IMDSv1 is vulnerable to Server-Side Request Forgery (SSRF) attacks that can expose instance credentials and metadata to attackers.
+
+        **Why this matters**
+
+        SageMaker notebook instances, like EC2 instances, use the Instance Metadata Service (IMDS) to access instance credentials and configuration. IMDSv1 allows simple unauthenticated HTTP GET requests, making it a known target for SSRF attacks:
+
+        - SSRF vulnerabilities in notebook code or dependencies can be exploited to steal IAM role credentials from the metadata endpoint.
+        - IMDSv1 does not require session tokens, making credential theft trivially easy for attackers.
+        - The Capital One breach in 2019 demonstrated the real-world impact of IMDSv1 exploitation.
+        - CIS AWS Foundations Benchmark and NIST recommend enforcing IMDSv2 for all compute instances.
+
+        **Risk mitigation:**
+
+        - Prevents credential theft through SSRF attacks by requiring session-based authentication.
+        - Enforces PUT-based token requests that are blocked by most SSRF attack vectors.
+        - Aligns with security best practices for instance metadata access.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            Note: The minimum IMDS version cannot be changed on an existing notebook instance. You must create a new instance.
+
+            1. Navigate to the Amazon SageMaker Console.
+            2. Select Notebook instances in the left panel.
+            3. Select Create notebook instance.
+            4. Under Network, set Minimum IMDS version to 2.
+            5. Complete the remaining configuration and select Create notebook instance.
+            6. Migrate data from the old notebook instance and delete it.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a new SageMaker notebook instance with IMDSv2 enforced:
+
+            ```bash
+            aws sagemaker create-notebook-instance \
+              --notebook-instance-name "secure-notebook" \
+              --instance-type ml.t3.medium \
+              --role-arn arn:aws:iam::<account-id>:role/<role-name> \
+              --minimum-instance-metadata-service-version "2"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_sagemaker_notebook_instance" "example" {
+              name                                  = "secure-notebook"
+              instance_type                         = "ml.t3.medium"
+              role_arn                               = aws_iam_role.sagemaker.arn
+              minimum_instance_metadata_service_version = "2"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              SageMakerNotebook:
+                Type: AWS::SageMaker::NotebookInstance
+                Properties:
+                  NotebookInstanceName: secure-notebook
+                  InstanceType: ml.t3.medium
+                  RoleArn: !GetAtt SageMakerRole.Arn
+                  InstanceMetadataServiceConfiguration:
+                    MinimumInstanceMetadataServiceVersion: "2"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/notebook-interface-endpoint.html
+        title: AWS Documentation - SageMaker Notebook Instance Security
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
+        title: AWS Documentation - Instance Metadata Service Version 2
+  - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-aws
+    filters: asset.platform == "aws-sagemaker-notebookinstance"
+    mql: aws.sagemaker.notebookinstance.details.minimumInstanceMetadataServiceVersion == "2"
+  - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_sagemaker_notebook_instance").all(
+        arguments.minimum_instance_metadata_service_version == "2"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_sagemaker_notebook_instance").all(
+        change.after.instance_metadata_service_configuration[0].minimum_instance_metadata_service_version == "2"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-imdsv2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_sagemaker_notebook_instance").all(
+        values.instance_metadata_service_configuration[0].minimum_instance_metadata_service_version == "2"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-no-root-access
+    title: Ensure SageMaker notebook instances do not allow root access
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    variants:
+      - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-aws
+        tags:
+          mondoo.com/filter-title: "AWS SageMaker Notebook Instance"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker notebook instances have root access disabled. When root access is enabled, users within the notebook instance have full administrator privileges, which violates the principle of least privilege and increases the risk of privilege escalation.
+
+        **Why this matters**
+
+        SageMaker notebook instances with root access enabled pose several security risks:
+
+        - Users can install arbitrary software packages, potentially introducing vulnerabilities.
+        - Root access enables modification of system-level configurations that could weaken security controls.
+        - Container escape vulnerabilities are more impactful when the process runs as root.
+        - Compliance frameworks such as CIS, NIST, and PCI DSS require enforcing least privilege access.
+
+        **Risk mitigation:**
+
+        - Enforces the principle of least privilege by restricting administrator access.
+        - Reduces the attack surface by preventing installation of unauthorized packages.
+        - Limits the impact of potential container escape or code execution vulnerabilities.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            Note: Root access cannot be changed on an existing notebook instance. You must create a new instance.
+
+            1. Navigate to the Amazon SageMaker Console.
+            2. Select Notebook instances in the left panel.
+            3. Select Create notebook instance.
+            4. Under Permissions and encryption, set Root access to Disabled.
+            5. Complete the remaining configuration and select Create notebook instance.
+            6. Migrate data from the old notebook instance and delete it.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a new SageMaker notebook instance with root access disabled:
+
+            ```bash
+            aws sagemaker create-notebook-instance \
+              --notebook-instance-name "secure-notebook" \
+              --instance-type ml.t3.medium \
+              --role-arn arn:aws:iam::<account-id>:role/<role-name> \
+              --root-access "Disabled"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_sagemaker_notebook_instance" "example" {
+              name          = "secure-notebook"
+              instance_type = "ml.t3.medium"
+              role_arn      = aws_iam_role.sagemaker.arn
+              root_access   = "Disabled"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              SageMakerNotebook:
+                Type: AWS::SageMaker::NotebookInstance
+                Properties:
+                  NotebookInstanceName: secure-notebook
+                  InstanceType: ml.t3.medium
+                  RoleArn: !GetAtt SageMakerRole.Arn
+                  RootAccess: Disabled
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/nbi-root-access.html
+        title: AWS Documentation - Control root access to a SageMaker notebook instance
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/sagemaker-controls.html
+        title: AWS Documentation - SageMaker controls
+  - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-aws
+    filters: asset.platform == "aws-sagemaker-notebookinstance"
+    mql: aws.sagemaker.notebookinstance.details.rootAccess == false
+  - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_sagemaker_notebook_instance").all(
+        arguments.root_access == "Disabled"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_sagemaker_notebook_instance").all(
+        change.after.root_access == "Disabled"
+      )
+  - uid: mondoo-aws-security-sagemaker-notebook-no-root-access-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sagemaker_notebook_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_sagemaker_notebook_instance").all(
+        values.root_access == "Disabled"
+      )
+  - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk
+    title: Ensure S3 buckets use KMS customer managed keys for encryption
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-aws
+        tags:
+          mondoo.com/filter-title: "AWS S3 Bucket"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Amazon S3 buckets are configured to use AWS KMS customer managed keys (CMKs) for server-side encryption rather than the default AES-256 (SSE-S3) encryption. While SSE-S3 provides encryption, KMS CMKs offer additional security benefits including key rotation control, access auditing, and fine-grained permissions.
+
+        **Why this matters**
+
+        S3 buckets encrypted with AES-256 (SSE-S3) use AWS-managed keys that provide limited visibility and control:
+
+        - No audit trail for encryption key usage (KMS keys log all usage to CloudTrail).
+        - No ability to manage key rotation policies (KMS supports automatic annual rotation).
+        - No fine-grained access control over encryption keys (KMS key policies control who can encrypt/decrypt).
+        - Compliance frameworks such as PCI DSS, HIPAA, and FedRAMP often require customer managed encryption keys for sensitive data.
+
+        **Risk mitigation:**
+
+        - Provides centralized key management with full audit logging through CloudTrail.
+        - Enables custom key rotation policies to meet compliance requirements.
+        - Allows fine-grained access control through KMS key policies and grants.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon S3 Console.
+            2. Select the bucket to update.
+            3. Go to the Properties tab.
+            4. Under Default encryption, select Edit.
+            5. Change the encryption type to "Server-side encryption with AWS Key Management Service keys (SSE-KMS)".
+            6. Select a KMS key (create a new one or choose an existing customer managed key).
+            7. Optionally enable Bucket Key to reduce KMS API costs.
+            8. Select Save changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Update the bucket encryption to use a KMS CMK:
+
+            ```bash
+            aws s3api put-bucket-encryption \
+              --bucket <bucket-name> \
+              --server-side-encryption-configuration '{
+                "Rules": [{
+                  "ApplyServerSideEncryptionByDefault": {
+                    "SSEAlgorithm": "aws:kms",
+                    "KMSMasterKeyID": "arn:aws:kms:<region>:<account-id>:key/<key-id>"
+                  },
+                  "BucketKeyEnabled": true
+                }]
+              }'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_s3_bucket_server_side_encryption_configuration" "example" {
+              bucket = aws_s3_bucket.example.id
+
+              rule {
+                apply_server_side_encryption_by_default {
+                  sse_algorithm     = "aws:kms"
+                  kms_master_key_id = aws_kms_key.s3.arn
+                }
+                bucket_key_enabled = true
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              S3Bucket:
+                Type: AWS::S3::Bucket
+                Properties:
+                  BucketEncryption:
+                    ServerSideEncryptionConfiguration:
+                      - ServerSideEncryptionByDefault:
+                          SSEAlgorithm: aws:kms
+                          KMSMasterKeyID: !Ref S3KMSKey
+                        BucketKeyEnabled: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
+        title: AWS Documentation - Using SSE-KMS encryption for S3
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-key.html
+        title: AWS Documentation - Reducing the cost of SSE-KMS with Amazon S3 Bucket Keys
+  - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-aws
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.encryptionRules.all(
+        sseAlgorithm == "aws:kms" || sseAlgorithm == "aws:kms:dsse"
+      )
+  - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_server_side_encryption_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_s3_bucket_server_side_encryption_configuration").all(
+        blocks.where(type == "rule").all(
+          blocks.where(type == "apply_server_side_encryption_by_default").all(
+            arguments.sse_algorithm == "aws:kms" || arguments.sse_algorithm == "aws:kms:dsse"
+          )
+        )
+      )
+  - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_server_side_encryption_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3_bucket_server_side_encryption_configuration").all(
+        change.after.rule[0].apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms" ||
+        change.after.rule[0].apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms:dsse"
+      )
+  - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3_bucket_server_side_encryption_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3_bucket_server_side_encryption_configuration").all(
+        values.rule[0].apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms" ||
+        values.rule[0].apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms:dsse"
+      )
+  - uid: mondoo-aws-security-codebuild-encryption-key-configured
+    title: Ensure CodeBuild projects use KMS customer managed keys for artifact encryption
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-aws-security-codebuild-encryption-key-configured-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that AWS CodeBuild projects are configured with a KMS customer managed key (CMK) for encrypting build artifacts. By default, CodeBuild uses an AWS-managed key for artifact encryption, but a customer managed key provides audit logging, key rotation control, and fine-grained access permissions.
+
+        **Why this matters**
+
+        CodeBuild artifacts may contain compiled binaries, deployment packages, test results, and other sensitive data. Without a customer managed KMS key:
+
+        - There is no audit trail for encryption key usage in CloudTrail.
+        - Key rotation cannot be customized to meet organizational or compliance requirements.
+        - Access to decrypt build artifacts cannot be controlled through KMS key policies.
+        - Compliance frameworks such as PCI DSS and HIPAA require customer managed encryption keys for sensitive data.
+
+        **Risk mitigation:**
+
+        - Provides centralized key management with full audit logging for build artifact encryption.
+        - Enables custom key rotation policies for compliance requirements.
+        - Allows fine-grained access control over who can decrypt build artifacts.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the AWS CodeBuild Console.
+            2. Select Build projects in the left panel.
+            3. Select the project to update.
+            4. Choose Edit and then Artifacts.
+            5. Under Encryption key, select Custom key.
+            6. Choose an existing KMS key or create a new one.
+            7. Choose Update artifacts to save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Update a CodeBuild project to use a KMS CMK:
+
+            ```bash
+            aws codebuild update-project \
+              --name <project-name> \
+              --encryption-key arn:aws:kms:<region>:<account-id>:key/<key-id>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_codebuild_project" "example" {
+              name          = "example"
+              encryption_key = aws_kms_key.codebuild.arn
+
+              artifacts {
+                type = "S3"
+              }
+
+              environment {
+                compute_type = "BUILD_GENERAL1_SMALL"
+                image        = "aws/codebuild/standard:7.0"
+                type         = "LINUX_CONTAINER"
+              }
+
+              source {
+                type = "GITHUB"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              CodeBuildProject:
+                Type: AWS::CodeBuild::Project
+                Properties:
+                  Name: example
+                  EncryptionKey: !GetAtt CodeBuildKMSKey.Arn
+                  Artifacts:
+                    Type: S3
+                  Environment:
+                    ComputeType: BUILD_GENERAL1_SMALL
+                    Image: aws/codebuild/standard:7.0
+                    Type: LINUX_CONTAINER
+                  Source:
+                    Type: GITHUB
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/codebuild/latest/userguide/security-encryption.html
+        title: AWS Documentation - Data encryption in AWS CodeBuild
+      - url: https://docs.aws.amazon.com/codebuild/latest/userguide/security.html
+        title: AWS Documentation - Security in AWS CodeBuild
+  - uid: mondoo-aws-security-codebuild-encryption-key-configured-aws
+    filters: asset.platform == "aws"
+    mql: aws.codebuild.projects.all(encryptionKey != empty)
+  - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_codebuild_project").all(
+        arguments.encryption_key != empty
+      )
+  - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_codebuild_project")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_codebuild_project").all(
+        change.after.encryption_key != ""
+      )
+  - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_codebuild_project")
+    mql: |
+      terraform.state.resources.where(type == "aws_codebuild_project").all(
+        values.encryption_key != ""
+      )
+  - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted
+    title: Ensure Neptune DB cluster snapshots are encrypted at rest
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+    variants:
+      - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that Amazon Neptune DB cluster snapshots are encrypted at rest. While the existing cluster encryption check verifies that Neptune clusters themselves are encrypted, snapshots can be shared across accounts, making their encryption status independently important.
+
+        **Why this matters**
+
+        Neptune DB cluster snapshots contain a complete copy of the graph database at a point in time. Unencrypted snapshots pose several risks:
+
+        - Snapshots shared with other AWS accounts expose unencrypted data to those accounts.
+        - If a snapshot is made public (accidentally or intentionally), all graph data is exposed in plaintext.
+        - Backup copies of sensitive graph data should maintain the same encryption standards as the source cluster.
+        - Compliance frameworks require encryption at rest for all copies and backups of sensitive data.
+
+        **Risk mitigation:**
+
+        - Ensures all snapshots maintain encryption at rest, protecting data in backup copies.
+        - Prevents accidental exposure of plaintext data when snapshots are shared.
+        - Maintains compliance with data protection requirements across all copies of data.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            Neptune snapshots inherit the encryption setting from the source cluster. To ensure snapshots are encrypted:
+
+            1. Navigate to the Amazon Neptune Console.
+            2. Select Databases in the left panel.
+            3. Verify the source cluster has encryption enabled.
+            4. If the cluster is not encrypted, create a new encrypted cluster and migrate data.
+            5. For existing unencrypted snapshots, copy them with encryption enabled:
+              - Select Snapshots in the left panel.
+              - Select the unencrypted snapshot.
+              - Choose Actions > Copy snapshot.
+              - Enable encryption and select a KMS key.
+              - Select Copy snapshot.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check if Neptune cluster snapshots are encrypted:
+
+            ```bash
+            aws neptune describe-db-cluster-snapshots \
+              --query "DBClusterSnapshots[*].{SnapshotId:DBClusterSnapshotIdentifier,Encrypted:StorageEncrypted}"
+            ```
+
+            Copy an unencrypted snapshot with encryption:
+
+            ```bash
+            aws neptune copy-db-cluster-snapshot \
+              --source-db-cluster-snapshot-identifier <snapshot-id> \
+              --target-db-cluster-snapshot-identifier <new-snapshot-id> \
+              --kms-key-id arn:aws:kms:<region>:<account-id>:key/<key-id>
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure the source Neptune cluster is encrypted (snapshots inherit encryption):
+
+            ```hcl
+            resource "aws_neptune_cluster" "example" {
+              cluster_identifier  = "example"
+              engine              = "neptune"
+              storage_encrypted   = true
+              kms_key_arn         = aws_kms_key.neptune.arn
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Ensure the source Neptune cluster is encrypted (snapshots inherit encryption):
+
+            ```yaml
+            Resources:
+              NeptuneCluster:
+                Type: AWS::Neptune::DBCluster
+                Properties:
+                  DBClusterIdentifier: example
+                  StorageEncrypted: true
+                  KmsKeyId: !Ref NeptuneKMSKey
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/neptune/latest/userguide/encrypt.html
+        title: AWS Documentation - Encrypting Neptune resources
+      - url: https://docs.aws.amazon.com/neptune/latest/userguide/backup-restore-overview.html
+        title: AWS Documentation - Neptune DB cluster snapshots
+  - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.neptune.clusters.all(
+        snapshots.all(storageEncrypted == true)
+      )
+  - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_neptune_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_neptune_cluster").all(
+        arguments.storage_encrypted == true
+      )
+  - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_neptune_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_neptune_cluster").all(
+        change.after.storage_encrypted == true
+      )
+  - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_neptune_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_neptune_cluster").all(
+        values.storage_encrypted == true
+      )
+  - uid: mondoo-aws-security-ec2-source-dest-check
+    title: Ensure EC2 instances have source/destination check enabled
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+    variants:
+      - uid: mondoo-aws-security-ec2-source-dest-check-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+      - uid: mondoo-aws-security-ec2-source-dest-check-terraform-hcl
+        tags:
+          mondoo.com/filter-title: "Terraform HCL"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-ec2-source-dest-check-terraform-plan
+        tags:
+          mondoo.com/filter-title: "Terraform Plan"
+          mondoo.com/icon: "terraform"
+      - uid: mondoo-aws-security-ec2-source-dest-check-terraform-state
+        tags:
+          mondoo.com/filter-title: "Terraform State"
+          mondoo.com/icon: "terraform"
+    docs:
+      desc: |
+        This check ensures that EC2 instances have the source/destination check enabled. When this check is disabled, an instance can route network traffic that is not specifically destined for or originating from the instance, effectively allowing it to act as a network bridge, NAT gateway, or router.
+
+        **Why this matters**
+
+        Disabling source/destination checks on EC2 instances introduces network security risks:
+
+        - An instance with this check disabled can forward traffic between subnets, potentially bypassing security group rules and network ACLs.
+        - Compromised instances with disabled source/dest checks can be used to intercept or redirect network traffic (man-in-the-middle attacks).
+        - It can mask the true source of malicious traffic by allowing an instance to send packets with spoofed source IP addresses.
+        - Source/destination checks should only be disabled on instances intentionally functioning as NAT gateways, VPN appliances, or load balancers.
+
+        **Risk mitigation:**
+
+        - Prevents instances from being used as unauthorized network bridges or traffic interceptors.
+        - Maintains the integrity of VPC routing by ensuring instances only process their own traffic.
+        - Reduces the risk of network-based attacks from compromised instances.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon EC2 Console.
+            2. Select Instances in the left panel.
+            3. Select the instance to update.
+            4. Choose Actions > Networking > Change source/destination check.
+            5. Ensure the source/destination check is enabled (checked).
+            6. Select Save.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable source/destination check on an instance:
+
+            ```bash
+            aws ec2 modify-instance-attribute \
+              --instance-id <instance-id> \
+              --source-dest-check
+            ```
+
+            Verify the current setting:
+
+            ```bash
+            aws ec2 describe-instance-attribute \
+              --instance-id <instance-id> \
+              --attribute sourceDestCheck
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_instance" "example" {
+              ami               = "ami-12345678"
+              instance_type     = "t3.micro"
+              source_dest_check = true  # This is the default
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              EC2Instance:
+                Type: AWS::EC2::Instance
+                Properties:
+                  InstanceType: t3.micro
+                  ImageId: ami-12345678
+                  SourceDestCheck: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-eni.html#change_source_dest_check
+        title: AWS Documentation - Change the source/destination check
+      - url: https://docs.aws.amazon.com/vpc/latest/userguide/VPC_NAT_Instance.html
+        title: AWS Documentation - NAT instances
+  - uid: mondoo-aws-security-ec2-source-dest-check-aws
+    filters: |
+      asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.where(
+        state != /terminated|shutting-down/
+      ).all(
+        sourceDestCheck == true
+      )
+  - uid: mondoo-aws-security-ec2-source-dest-check-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_instance").all(
+        arguments.source_dest_check != false
+      )
+  - uid: mondoo-aws-security-ec2-source-dest-check-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
+    mql: terraform.plan.resourceChanges.where(type == "aws_instance").all(change.after.source_dest_check != false)
+  - uid: mondoo-aws-security-ec2-source-dest-check-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_instance")
+    mql: terraform.state.resources.where(type == "aws_instance").all(values.source_dest_check != false)
