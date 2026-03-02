@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-github-organization-security
     name: Mondoo GitHub Organization Security
-    version: 1.6.0
+    version: 1.7.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -64,24 +64,32 @@ policies:
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
-      - title: GitHub Org
+      - title: Authentication & Access
         filters: asset.platform == "github-org"
         checks:
+          - uid: mondoo-github-organization-security-two-factor-auth
+          - uid: mondoo-github-organization-security-verified-domain
           - uid: mondoo-github-organization-security-default-permission-level
-          - uid: mondoo-github-organization-security-dependabot-alerts-new-repos
-          - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos
           - uid: mondoo-github-organization-security-fork-private-repos
           - uid: mondoo-github-organization-security-members-cannot-change-repo-visibility
           - uid: mondoo-github-organization-security-members-cannot-delete-repos
+      - title: Security Features for New Repos
+        filters: asset.platform == "github-org"
+        checks:
+          - uid: mondoo-github-organization-security-advanced-security-new-repos
+          - uid: mondoo-github-organization-security-dependency-graph-new-repos
+          - uid: mondoo-github-organization-security-dependabot-alerts-new-repos
+          - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos
           - uid: mondoo-github-organization-security-secret-scanning-new-repos
           - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos
+      - title: Organizational Policies
+        filters: asset.platform == "github-org"
+        checks:
           - uid: mondoo-github-organization-security-security-policy
-          - uid: mondoo-github-organization-security-two-factor-auth
-          - uid: mondoo-github-organization-security-verified-domain
     scoring_system: highest impact
   - uid: mondoo-github-repository-security
     name: GitHub Repository Security
-    version: 1.6.0
+    version: 1.7.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -132,20 +140,43 @@ policies:
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
-      - filters: |
+      - title: Branch Protection
+        filters: |
           asset.platform == "github-repo"
         checks:
-          - uid: mondoo-github-repository-security-binary-artifacts
-          - uid: mondoo-github-repository-security-enforce-branch-protection
           - uid: mondoo-github-repository-security-ensure-default-branch-protection
-          - uid: mondoo-github-repository-security-ensure-dependabot-workflow
           - uid: mondoo-github-repository-security-ensure-release-branch-protection
-          - uid: mondoo-github-repository-security-no-open-secret-scanning-alerts
+          - uid: mondoo-github-repository-security-enforce-branch-protection
           - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch
           - uid: mondoo-github-repository-security-prevent-force-pushes-release-branch
+          - uid: mondoo-github-repository-security-require-pull-request-reviews
           - uid: mondoo-github-repository-security-require-conversation-resolution
           - uid: mondoo-github-repository-security-require-status-checks-before-merging
           - uid: mondoo-github-repository-security-required-signed-commits
+          - uid: mondoo-github-repository-security-block-creations-default-branch
+      - title: Security Scanning
+        filters: |
+          asset.platform == "github-repo"
+        checks:
+          - uid: mondoo-github-repository-security-no-open-secret-scanning-alerts
+          - uid: mondoo-github-repository-security-no-open-code-scanning-alerts
+          - uid: mondoo-github-repository-security-no-open-critical-dependabot-alerts
+      - title: Supply Chain Security
+        filters: |
+          asset.platform == "github-repo"
+        checks:
+          - uid: mondoo-github-repository-security-binary-artifacts
+          - uid: mondoo-github-repository-security-actions-require-sha-pinning
+          - uid: mondoo-github-repository-security-ensure-dependabot-workflow
+      - title: Environment & Deployment
+        filters: |
+          asset.platform == "github-repo"
+        checks:
+          - uid: mondoo-github-repository-security-environment-prevent-self-review
+      - title: Repository Policies
+        filters: |
+          asset.platform == "github-repo"
+        checks:
           - uid: mondoo-github-repository-security-security-policy
           - uid: mondoo-github-repository-security-webhooks-use-ssl
     scoring_system: highest impact
@@ -1467,3 +1498,397 @@ queries:
     refs:
       - url: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks
         title: Creating webhooks
+  - uid: mondoo-github-repository-security-actions-require-sha-pinning
+    title: Ensure GitHub Actions require SHA pinning
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+    mql: |
+      github.repository.actionsSettings.shaPinningRequired == true
+    docs:
+      desc: |
+        This check ensures that GitHub Actions workflows are required to use SHA-pinned action references instead of mutable tags.
+
+        **Why this matters**
+
+        Mutable action references (tags and branches) are vulnerable to supply chain attacks:
+
+          - **Tag hijacking**: An attacker who compromises an action repository can move a tag to point to malicious code, affecting all workflows that reference that tag.
+          - **Dependency confusion**: Without SHA pinning, there is no guarantee that the action code has not been modified since it was last reviewed.
+          - **Supply chain integrity**: SHA pinning ensures that the exact reviewed version of an action is used in every workflow run.
+          - **Audit trail**: Pinned SHAs provide a deterministic record of which action versions were executed.
+          - **Transitive dependency risk**: Popular actions are high-value targets; a single compromise can affect thousands of repositories.
+
+        Require SHA pinning for all GitHub Actions to ensure supply chain integrity and prevent tag-hijacking attacks.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your repository on GitHub.
+            2. Go to **Settings** > **Actions** > **General**.
+            3. Under "Actions permissions," enable **Require SHA pinning for actions**.
+            4. Save the changes.
+
+            To manually pin actions in workflow files, replace tag references with full SHA hashes:
+
+            ```yaml
+            # Before (vulnerable to tag hijacking)
+            - uses: actions/checkout@v4
+
+            # After (SHA pinned)
+            - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+            ```
+
+            For more details, see [Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+        title: Security hardening for GitHub Actions
+      - url: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository
+        title: Managing GitHub Actions settings for a repository
+  - uid: mondoo-github-repository-security-no-open-code-scanning-alerts
+    title: Ensure repository has no open code scanning alerts
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+    mql: |
+      github.repository.codeScanningAlerts.where(state == "open").length == 0
+    docs:
+      desc: |
+        This check ensures that the repository has no open code scanning alerts. Code scanning identifies security vulnerabilities and coding errors in your codebase using static analysis tools like CodeQL.
+
+        **Why this matters**
+
+        Open code scanning alerts indicate known security vulnerabilities in your codebase:
+
+          - **Known vulnerabilities**: Open alerts represent identified security issues such as SQL injection, XSS, path traversal, and other OWASP Top 10 vulnerabilities.
+          - **Attack surface**: Unresolved alerts provide attackers with a roadmap of exploitable vulnerabilities.
+          - **Compliance requirements**: Many security frameworks require timely remediation of identified vulnerabilities.
+          - **Risk accumulation**: Unresolved alerts compound over time, increasing the overall risk to the application.
+          - **Supply chain impact**: Vulnerabilities in your code can affect downstream consumers of your software.
+
+        Address all open code scanning alerts promptly by fixing the underlying issues, or dismiss false positives with documented justification.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your repository on GitHub.
+            2. Go to the **Security** tab > **Code scanning alerts**.
+            3. Review each open alert and take action:
+               - **Fix the vulnerability**: Implement the suggested fix and push the change.
+               - **Dismiss false positives**: If the alert is a false positive, dismiss it with a reason.
+            4. For repositories without code scanning, enable it via **Settings** > **Code security and analysis** > **Code scanning**.
+
+            For more details, see [Managing code scanning alerts](https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/managing-code-scanning-alerts-for-your-repository) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/managing-code-scanning-alerts-for-your-repository
+        title: Managing code scanning alerts for your repository
+      - url: https://docs.github.com/en/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning
+        title: About code scanning
+  - uid: mondoo-github-repository-security-no-open-critical-dependabot-alerts
+    title: Ensure repository has no open critical Dependabot alerts
+    impact: 90
+    tags:
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+    mql: |
+      github.repository.dependabotAlerts.where(state == "open" && securityVulnerability['severity'] == "critical").length == 0
+    docs:
+      desc: |
+        This check ensures that the repository has no open Dependabot alerts with critical severity. Dependabot identifies known vulnerabilities in your project's dependencies.
+
+        **Why this matters**
+
+        Critical Dependabot alerts represent the most severe known vulnerabilities in your dependency tree:
+
+          - **Transitive risk**: Vulnerable dependencies can be exploited even if your own code is secure.
+          - **Known exploits**: Critical severity alerts often have publicly available exploit code.
+          - **Automated attacks**: Attackers routinely scan for applications using known vulnerable dependencies.
+          - **Supply chain compromise**: Dependency vulnerabilities are a primary vector for software supply chain attacks.
+          - **Compliance requirements**: Security frameworks require tracking and remediating known vulnerabilities in dependencies.
+
+        Address critical Dependabot alerts immediately by updating to patched versions, or document risk acceptance for any that cannot be resolved.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your repository on GitHub.
+            2. Go to the **Security** tab > **Dependabot alerts**.
+            3. Filter alerts by **Critical** severity.
+            4. For each critical alert:
+               - Click the alert to review the vulnerability details and affected dependency.
+               - If a patched version is available, update the dependency in your manifest file.
+               - If Dependabot security updates are enabled, review and merge the suggested pull request.
+               - If the alert is a false positive, dismiss it with documented justification.
+            5. Ensure Dependabot alerts are enabled via **Settings** > **Code security and analysis**.
+
+            For more details, see [Viewing and updating Dependabot alerts](https://docs.github.com/en/code-security/dependabot/dependabot-alerts/viewing-and-updating-dependabot-alerts) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/code-security/dependabot/dependabot-alerts/viewing-and-updating-dependabot-alerts
+        title: Viewing and updating Dependabot alerts
+      - url: https://docs.github.com/en/code-security/dependabot/dependabot-alerts/about-dependabot-alerts
+        title: About Dependabot alerts
+  - uid: mondoo-github-repository-security-require-pull-request-reviews
+    title: Ensure repository default branch requires pull request reviews
+    impact: 90
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { requiredPullRequestReviews['enabled'] == true } )
+    docs:
+      desc: |
+        This check ensures that the default branch requires pull request reviews before merging. Without required reviews, any user with write access can push changes directly to the default branch without peer review.
+
+        **Why this matters**
+
+        Pull request reviews are a fundamental code quality and security control:
+
+          - **Code review enforcement**: Without required reviews, a single compromised account can push malicious code directly to production branches.
+          - **Bug detection**: Peer review catches bugs, security vulnerabilities, and logic errors before they reach production.
+          - **Audit trail**: Required reviews create a record of who reviewed and approved each change.
+          - **Separation of duties**: Compliance frameworks like SOC 2 and ISO 27001 require independent review of code changes.
+          - **Knowledge sharing**: Code reviews distribute knowledge across the team and improve code quality.
+
+        Enable required pull request reviews on the default branch with at least one required reviewer.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your repository on GitHub.
+            2. Go to **Settings** > **Branches**.
+            3. Under "Branch protection rules," click **Edit** next to the default branch rule (or **Add rule** if none exists).
+            4. Check **Require a pull request before merging**.
+            5. Under that option, check **Require approvals** and set the required number of approvals to at least 1.
+            6. Click **Save changes**.
+
+            For more details, see [Managing a branch protection rule](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/managing-a-branch-protection-rule) in the GitHub documentation.
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "github_branch_protection" "default" {
+              repository_id = github_repository.example.node_id
+              pattern       = "main"
+
+              required_pull_request_reviews {
+                required_approving_review_count = 1
+              }
+            }
+            ```
+
+            For more details, see [github_branch_protection](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/branch_protection) in the Terraform Registry.
+    refs:
+      - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/managing-a-branch-protection-rule
+        title: Managing a branch protection rule
+      - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/about-protected-branches
+        title: About protected branches
+  - uid: mondoo-github-repository-security-block-creations-default-branch
+    title: Ensure repository default branch blocks direct creations
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { blockCreations == true } )
+    docs:
+      desc: |
+        This check ensures that the default branch protection rule blocks the creation of matching branches that bypass protection. When block creations is disabled, users can create branches that match the protection pattern without going through the required checks.
+
+        **Why this matters**
+
+        Allowing uncontrolled branch creation can undermine branch protection rules:
+
+          - **Protection bypass**: Without block creations, users may create branches matching wildcard patterns that bypass intended protections.
+          - **Namespace pollution**: Uncontrolled branch creation can lead to confusion about which branches are authoritative.
+          - **CI/CD triggering**: New branches may trigger CI/CD pipelines, potentially consuming resources or deploying unreviewed code.
+          - **Access control**: Branch creation should be governed by the same access controls as other branch operations.
+
+        Enable block creations on branch protection rules to prevent unauthorized branch creation.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your repository on GitHub.
+            2. Go to **Settings** > **Branches**.
+            3. Under "Branch protection rules," click **Edit** next to the default branch rule.
+            4. Check **Block creations** to prevent creation of matching branches.
+            5. Click **Save changes**.
+
+            For more details, see [Managing a branch protection rule](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/managing-a-branch-protection-rule) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/managing-a-branch-protection-rule
+        title: Managing a branch protection rule
+      - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/about-protected-branches
+        title: About protected branches
+  - uid: mondoo-github-repository-security-environment-prevent-self-review
+    title: Ensure environment protection rules prevent self-review
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+    mql: |
+      github.repository.environments
+        .where( protectionRules.length > 0 )
+        .all( protectionRules.where( type == "required_reviewers" ).all( preventSelfReview == true ) )
+    docs:
+      desc: |
+        This check ensures that environment protection rules that require reviewers also prevent the deploying user from approving their own deployment. Self-review defeats the purpose of required reviewers by allowing a single person to initiate and approve a deployment.
+
+        **Why this matters**
+
+        Self-review of deployments undermines separation of duties:
+
+          - **Single actor risk**: A compromised account can both trigger and approve deployments without independent verification.
+          - **Compliance gap**: Regulatory frameworks require separation between those who request and those who approve changes to production.
+          - **Insider threat**: Self-review enables a malicious insider to deploy unauthorized changes without detection.
+          - **Audit integrity**: Deployment approvals lose their value as an audit control when the same person can self-approve.
+
+        Enable prevent self-review on all environment protection rules that require reviewers.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your repository on GitHub.
+            2. Go to **Settings** > **Environments**.
+            3. Select the environment you want to configure.
+            4. Under **Environment protection rules**, ensure **Required reviewers** is enabled.
+            5. Check **Prevent self-review** to prevent the person who triggered the deployment from approving it.
+            6. Click **Save protection rules**.
+
+            For more details, see [Using environments for deployment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
+        title: Using environments for deployment
+      - url: https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment
+        title: Managing environments for deployment
+  - uid: mondoo-github-organization-security-advanced-security-new-repos
+    title: Ensure advanced security is enabled for new repositories
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+    mql: |
+      github.organization.advancedSecurityEnabledForNewRepos
+    docs:
+      desc: |
+        This check ensures that GitHub Advanced Security (GHAS) is automatically enabled for all new repositories created in the organization. GHAS provides code scanning (CodeQL), secret scanning, and dependency review capabilities.
+
+        **Why this matters**
+
+        Without automatic GHAS enablement, new repositories may lack critical security scanning:
+
+          - **Security gap**: New repositories created without GHAS lack code scanning, leaving vulnerabilities undetected.
+          - **Inconsistent coverage**: Manual enablement leads to inconsistent security coverage across the organization.
+          - **Developer friction**: Relying on developers to enable security features results in adoption gaps.
+          - **Time to detection**: Vulnerabilities introduced before GHAS is enabled may go undetected until manual activation.
+          - **Compliance coverage**: Automated security scanning is required by many compliance frameworks.
+
+        Enable advanced security for new repositories at the organization level to ensure consistent security coverage.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings** > **Code security and analysis**.
+            3. Under "GitHub Advanced Security," enable **Automatically enable for new repositories**.
+            4. Save the changes.
+
+            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization
+        title: Managing security and analysis settings for your organization
+      - url: https://docs.github.com/en/get-started/learning-about-github/about-github-advanced-security
+        title: About GitHub Advanced Security
+  - uid: mondoo-github-organization-security-dependency-graph-new-repos
+    title: Ensure dependency graph is enabled for new repositories
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+    mql: |
+      github.organization.dependencyGraphEnabledForNewRepos
+    docs:
+      desc: |
+        This check ensures that the dependency graph is automatically enabled for all new repositories in the organization. The dependency graph identifies all dependencies in your project and is required for Dependabot alerts, security updates, and SBOM generation.
+
+        **Why this matters**
+
+        Without the dependency graph, critical dependency security features are unavailable:
+
+          - **Dependency visibility**: The dependency graph provides a complete inventory of direct and transitive dependencies.
+          - **Dependabot prerequisite**: Dependabot alerts and security updates require the dependency graph to function.
+          - **SBOM generation**: Software Bill of Materials generation depends on dependency graph data.
+          - **Vulnerability detection**: Without the dependency graph, known vulnerabilities in dependencies go undetected.
+          - **License compliance**: The dependency graph enables tracking dependency licenses for compliance.
+
+        Enable the dependency graph for new repositories to ensure consistent dependency tracking and vulnerability detection.
+      remediation:
+        - id: github
+          desc: |
+            **Using GitHub UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings** > **Code security and analysis**.
+            3. Under "Dependency graph," enable **Automatically enable for new repositories**.
+            4. Save the changes.
+
+            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+    refs:
+      - url: https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization
+        title: Managing security and analysis settings for your organization
+      - url: https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph
+        title: About the dependency graph

@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-m365-security
     name: Mondoo Microsoft 365 Security
-    version: 2.0.0
+    version: 2.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -69,11 +69,21 @@ policies:
           asset.platform == "microsoft365"
         checks:
           - uid: mondoo-m365-security-ensure-that-spf-records-are-published-for-all-exchange-domains
+          - uid: mondoo-m365-security-ensure-dkim-signing-enabled-for-all-exchange-domains
+          - uid: mondoo-m365-security-ensure-safe-links-policies-configured
+          - uid: mondoo-m365-security-ensure-safe-attachments-policies-configured
+          - uid: mondoo-m365-security-ensure-anti-phishing-policies-enabled
+          - uid: mondoo-m365-security-ensure-transport-rules-enforce-tls
       - title: Application Security
         filters: |
           asset.platform == "microsoft365"
         checks:
           - uid: mondoo-m365-security-ensure-third-party-integrated-applications-are-not-allowed
+      - title: SharePoint Security
+        filters: |
+          asset.platform == "microsoft365"
+        checks:
+          - uid: mondoo-m365-security-ensure-sharepoint-external-sharing-restricted
     scoring_system: highest impact
 queries:
   - uid: mondoo-m365-security-enable-azure-ad-identity-protection-sign-in-risk-policies
@@ -1384,3 +1394,386 @@ queries:
     refs:
       - url: https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/what-is-application-management
         title: Microsoft Entra Application Management
+  - uid: mondoo-m365-security-ensure-dkim-signing-enabled-for-all-exchange-domains
+    title: Ensure DKIM signing is enabled for all Exchange domains
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+    mql: |
+      ms365.exchangeonline.dkimSigningConfig.all(_['enabled'] == true)
+    docs:
+      desc: |
+        This check ensures that DKIM (DomainKeys Identified Mail) signing is enabled for all Exchange Online domains. DKIM adds a digital signature to outbound email messages, allowing receiving servers to verify that the message was sent from an authorized mail server and was not modified in transit.
+
+        **Why this matters**
+
+        Without DKIM signing, your organization's email lacks cryptographic authentication:
+
+          - **Email spoofing**: Without DKIM, attackers can more easily forge emails that appear to come from your domain.
+          - **Business email compromise**: BEC attacks are more successful when email authentication mechanisms are not in place.
+          - **Deliverability impact**: Many email providers use DKIM verification as part of their spam filtering, and unsigned emails may be flagged.
+          - **Brand protection**: DKIM helps protect your domain's reputation by ensuring only authorized servers send email on its behalf.
+          - **DMARC dependency**: DKIM is a prerequisite for a complete DMARC implementation, which provides the strongest email authentication.
+
+        Enable DKIM signing for all Exchange Online domains to authenticate outbound email and protect against spoofing.
+      remediation:
+        - id: console
+          desc: |
+            **To enable DKIM signing:**
+
+            1. Navigate to the [Microsoft 365 Defender portal](https://security.microsoft.com).
+            2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies**.
+            3. Select **Email authentication settings** > **DKIM**.
+            4. For each domain, select the domain and toggle **Sign messages for this domain with DKIM signatures** to **Enabled**.
+            5. If DKIM keys have not been created, follow the prompts to publish the required CNAME records in your DNS.
+        - id: powershell
+          desc: |
+            **Using Exchange Online PowerShell**
+
+            ```powershell
+            Connect-ExchangeOnline
+
+            # List DKIM signing configuration for all domains
+            Get-DkimSigningConfig
+
+            # Enable DKIM signing for a specific domain
+            Set-DkimSigningConfig -Identity "example.com" -Enabled $true
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/email-authentication-dkim-configure
+        title: Configure DKIM signing in Microsoft 365
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/email-authentication-about
+        title: Email authentication in Microsoft 365
+  - uid: mondoo-m365-security-ensure-safe-links-policies-configured
+    title: Ensure Safe Links policies are configured
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+    mql: |
+      ms365.exchangeonline.safeLinksPolicy.length > 0
+    docs:
+      desc: |
+        This check ensures that at least one Safe Links policy is configured in Microsoft Defender for Office 365. Safe Links provides URL scanning and rewriting of inbound email messages, protecting users from malicious links.
+
+        **Why this matters**
+
+        Without Safe Links policies, users are unprotected against malicious URLs in email:
+
+          - **Phishing protection**: Safe Links scans URLs at time of click, catching links that become malicious after email delivery.
+          - **Time-of-click verification**: Unlike traditional email scanning, Safe Links checks URLs when the user clicks, detecting delayed attacks.
+          - **Zero-day URL protection**: Safe Links can block newly identified malicious URLs without waiting for signature updates.
+          - **Internal email protection**: Safe Links can protect against malicious links in internal email, not just external messages.
+          - **Reporting and visibility**: Safe Links provides click tracking and reporting to help identify targeted users and attack patterns.
+
+        Configure Safe Links policies to protect all users from malicious URLs in email and other Microsoft 365 applications.
+      remediation:
+        - id: console
+          desc: |
+            **To configure Safe Links policies:**
+
+            1. Navigate to the [Microsoft 365 Defender portal](https://security.microsoft.com).
+            2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies**.
+            3. Select **Safe Links**.
+            4. Click **Create** to create a new policy.
+            5. Configure the policy:
+               - Name the policy and add a description.
+               - Under **Users and domains**, add all users or specific groups.
+               - Under **URL & click protection settings**, enable **On: Safe Links checks a list of known, malicious links when users click links in email**.
+               - Enable **Apply Safe Links to email messages sent within the organization**.
+               - Enable **Do not let users click through to the original URL**.
+            6. Click **Submit** to save the policy.
+        - id: powershell
+          desc: |
+            **Using Exchange Online PowerShell**
+
+            ```powershell
+            Connect-ExchangeOnline
+
+            # Create a Safe Links policy
+            New-SafeLinksPolicy -Name "Organization Safe Links Policy" `
+              -EnableSafeLinksForEmail $true `
+              -EnableSafeLinksForTeams $true `
+              -EnableSafeLinksForOffice $true `
+              -TrackClicks $true `
+              -AllowClickThrough $false
+
+            # Create a Safe Links rule to apply the policy
+            New-SafeLinksRule -Name "Organization Safe Links Rule" `
+              -SafeLinksPolicy "Organization Safe Links Policy" `
+              -RecipientDomainIs "example.com"
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/safe-links-about
+        title: Safe Links in Microsoft Defender for Office 365
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/safe-links-policies-configure
+        title: Set up Safe Links policies
+  - uid: mondoo-m365-security-ensure-safe-attachments-policies-configured
+    title: Ensure Safe Attachments policies are configured
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+    mql: |
+      ms365.exchangeonline.safeAttachmentPolicy.length > 0
+    docs:
+      desc: |
+        This check ensures that at least one Safe Attachments policy is configured in Microsoft Defender for Office 365. Safe Attachments opens email attachments in a virtual environment to detect malicious behavior before delivering them to users.
+
+        **Why this matters**
+
+        Without Safe Attachments, users receive email attachments without advanced malware scanning:
+
+          - **Malware delivery**: Email attachments are a primary vector for malware, ransomware, and other threats.
+          - **Zero-day detection**: Safe Attachments uses behavioral analysis in a sandbox environment to detect unknown malware that signature-based scanning may miss.
+          - **Ransomware prevention**: Safe Attachments can block malicious attachments before they execute, preventing ransomware infections.
+          - **Protection beyond signatures**: Traditional antivirus relies on known signatures; Safe Attachments detonates files to detect novel threats.
+          - **SharePoint and OneDrive protection**: Safe Attachments can also scan files uploaded to SharePoint and OneDrive.
+
+        Configure Safe Attachments policies to protect all users from malicious email attachments.
+      remediation:
+        - id: console
+          desc: |
+            **To configure Safe Attachments policies:**
+
+            1. Navigate to the [Microsoft 365 Defender portal](https://security.microsoft.com).
+            2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies**.
+            3. Select **Safe Attachments**.
+            4. Click **Create** to create a new policy.
+            5. Configure the policy:
+               - Name the policy and add a description.
+               - Under **Users and domains**, add all users or specific groups.
+               - Under **Settings**, select **Dynamic Delivery** or **Block** as the Safe Attachments unknown malware response.
+               - Enable **Redirect attachment on detection** and specify a security admin email for review.
+            6. Click **Submit** to save the policy.
+        - id: powershell
+          desc: |
+            **Using Exchange Online PowerShell**
+
+            ```powershell
+            Connect-ExchangeOnline
+
+            # Create a Safe Attachments policy
+            New-SafeAttachmentPolicy -Name "Organization Safe Attachments Policy" `
+              -Enable $true `
+              -Action Block `
+              -Redirect $true `
+              -RedirectAddress "secadmin@example.com"
+
+            # Create a Safe Attachments rule to apply the policy
+            New-SafeAttachmentRule -Name "Organization Safe Attachments Rule" `
+              -SafeAttachmentPolicy "Organization Safe Attachments Policy" `
+              -RecipientDomainIs "example.com"
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/safe-attachments-about
+        title: Safe Attachments in Microsoft Defender for Office 365
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/safe-attachments-policies-configure
+        title: Set up Safe Attachments policies
+  - uid: mondoo-m365-security-ensure-anti-phishing-policies-enabled
+    title: Ensure anti-phishing policies are enabled
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+    mql: |
+      ms365.exchangeonline.antiPhishPolicy.length > 0
+    docs:
+      desc: |
+        This check ensures that at least one anti-phishing policy is configured in Microsoft Defender for Office 365. Anti-phishing policies protect against impersonation attacks, spoofing, and other phishing techniques.
+
+        **Why this matters**
+
+        Without anti-phishing policies, users lack protection against sophisticated phishing attacks:
+
+          - **Impersonation attacks**: Anti-phishing policies detect emails that impersonate specific users or domains your organization trusts.
+          - **Business email compromise (BEC)**: Impersonation protection helps prevent BEC attacks that target executives and financial staff.
+          - **Spoof intelligence**: Anti-phishing policies use spoof intelligence to identify and block spoofed senders.
+          - **Mailbox intelligence**: Machine learning analyzes communication patterns to detect unusual sending behavior.
+          - **First contact safety tips**: Users can be warned when receiving email from a sender for the first time.
+
+        Configure anti-phishing policies with impersonation protection for high-value users and domains.
+      remediation:
+        - id: console
+          desc: |
+            **To configure anti-phishing policies:**
+
+            1. Navigate to the [Microsoft 365 Defender portal](https://security.microsoft.com).
+            2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies**.
+            3. Select **Anti-phishing**.
+            4. Click **Create** to create a new policy (or edit the default policy).
+            5. Configure the policy:
+               - Under **Users and domains**, add users and domains to protect.
+               - Under **Phishing threshold & protection**, set the phishing email threshold.
+               - Enable **User impersonation protection** and add high-value users (executives, finance).
+               - Enable **Domain impersonation protection** and add trusted domains.
+               - Enable **Mailbox intelligence** and **Intelligence for impersonation protection**.
+            6. Configure actions for detected impersonation attempts (quarantine recommended).
+            7. Click **Submit** to save the policy.
+        - id: powershell
+          desc: |
+            **Using Exchange Online PowerShell**
+
+            ```powershell
+            Connect-ExchangeOnline
+
+            # Create an anti-phishing policy
+            New-AntiPhishPolicy -Name "Organization Anti-Phishing Policy" `
+              -EnableMailboxIntelligence $true `
+              -EnableMailboxIntelligenceProtection $true `
+              -EnableSpoofIntelligence $true `
+              -EnableFirstContactSafetyTips $true `
+              -PhishThresholdLevel 2
+
+            # Create an anti-phishing rule to apply the policy
+            New-AntiPhishRule -Name "Organization Anti-Phishing Rule" `
+              -AntiPhishPolicy "Organization Anti-Phishing Policy" `
+              -RecipientDomainIs "example.com"
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/anti-phishing-policies-about
+        title: Anti-phishing policies in Microsoft 365
+      - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/anti-phishing-policies-mdo-configure
+        title: Configure anti-phishing policies
+  - uid: mondoo-m365-security-ensure-sharepoint-external-sharing-restricted
+    title: Ensure SharePoint external sharing is restricted
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    mql: |
+      ms365.sharepointonline.spoTenant['SharingCapability'] != "ExternalUserAndGuestSharing"
+    docs:
+      desc: |
+        This check ensures that SharePoint Online external sharing is not set to the most permissive level (ExternalUserAndGuestSharing), which allows anyone to share content with external users without requiring authentication.
+
+        **Why this matters**
+
+        Unrestricted external sharing exposes organizational data to unauthorized access:
+
+          - **Data exfiltration**: Users can share sensitive documents with anyone, including personal email addresses, without oversight.
+          - **Guest account sprawl**: Permissive sharing creates unmanaged guest accounts with potential access to sensitive content.
+          - **Compliance violations**: Regulatory requirements often mandate controls on data sharing with external parties.
+          - **Loss of data control**: Once shared externally, organizations lose control over how data is used, stored, and further distributed.
+          - **Insider threat**: Malicious insiders can easily exfiltrate data by sharing with external accounts they control.
+
+        Restrict SharePoint external sharing to authenticated guests or existing guests only, and require approval for sharing with new external users.
+      remediation:
+        - id: console
+          desc: |
+            **To restrict SharePoint external sharing:**
+
+            1. Navigate to the [SharePoint admin center](https://admin.microsoft.com/sharepoint).
+            2. Go to **Policies** > **Sharing**.
+            3. Under **External sharing**, adjust the SharePoint slider to a more restrictive level:
+               - **New and existing guests**: Requires authentication but allows sharing with anyone who signs in.
+               - **Existing guests**: Only allows sharing with guests already in your directory.
+               - **Only people in your organization**: Disables external sharing entirely.
+            4. Click **Save**.
+
+            For most organizations, "New and existing guests" provides a good balance of collaboration and security.
+        - id: powershell
+          desc: |
+            **Using SharePoint Online PowerShell**
+
+            ```powershell
+            Connect-SPOService -Url https://yourtenant-admin.sharepoint.com
+
+            # Set sharing to "New and existing guests" (ExternalUserSharingOnly)
+            Set-SPOTenant -SharingCapability ExternalUserSharingOnly
+
+            # Or set to "Existing guests" only
+            Set-SPOTenant -SharingCapability ExistingExternalUserSharingOnly
+
+            # Or disable external sharing entirely
+            Set-SPOTenant -SharingCapability Disabled
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/sharepoint/turn-external-sharing-on-or-off
+        title: Manage sharing settings for SharePoint and OneDrive
+      - url: https://learn.microsoft.com/en-us/sharepoint/external-sharing-overview
+        title: Overview of external sharing in SharePoint and OneDrive
+  - uid: mondoo-m365-security-ensure-transport-rules-enforce-tls
+    title: Ensure Exchange transport rules enforce TLS for external email
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+    mql: |
+      ms365.exchangeonline.transportRule.any(_['state'] == "Enabled" && _['routeMessageOutboundRequireTls'] == true)
+    docs:
+      desc: |
+        This check ensures that at least one Exchange Online transport rule is configured and enabled to require TLS encryption for outbound email. Transport rules that enforce TLS ensure that email sent to external recipients is encrypted in transit.
+
+        **Why this matters**
+
+        Without TLS enforcement, email may be transmitted in plaintext:
+
+          - **Data exposure**: Email content and attachments can be intercepted when transmitted without encryption.
+          - **Regulatory compliance**: Many compliance frameworks (HIPAA, PCI DSS, GDPR) require encryption of sensitive data in transit.
+          - **Man-in-the-middle attacks**: Without TLS, attackers can intercept and read email communications.
+          - **Credential exposure**: Emails containing password resets, account notifications, or other sensitive information are vulnerable without encryption.
+          - **Business confidentiality**: Unencrypted email exposes business-sensitive communications to interception.
+
+        Configure transport rules to require TLS for outbound email to external recipients, with particular focus on domains that handle sensitive data.
+      remediation:
+        - id: console
+          desc: |
+            **To configure a transport rule requiring TLS:**
+
+            1. Navigate to the [Exchange admin center](https://admin.exchange.microsoft.com).
+            2. Go to **Mail flow** > **Rules**.
+            3. Click **Add a rule** > **Create a new rule**.
+            4. Name the rule (e.g., "Require TLS for outbound email").
+            5. Under **Apply this rule if**, select **The recipient is external/internal** > **Outside the organization**.
+            6. Under **Do the following**, select **Modify the message security** > **Require TLS encryption**.
+            7. Click **Save**.
+        - id: powershell
+          desc: |
+            **Using Exchange Online PowerShell**
+
+            ```powershell
+            Connect-ExchangeOnline
+
+            # Create a transport rule requiring TLS for outbound email
+            New-TransportRule -Name "Require TLS for outbound email" `
+              -SentToScope NotInOrganization `
+              -RouteMessageOutboundRequireTls $true `
+              -Priority 0
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/exchange/security-and-compliance/mail-flow-rules/mail-flow-rules
+        title: Mail flow rules in Exchange Online
+      - url: https://learn.microsoft.com/en-us/purview/exchange-online-uses-tls-to-secure-email-connections
+        title: How Exchange Online uses TLS

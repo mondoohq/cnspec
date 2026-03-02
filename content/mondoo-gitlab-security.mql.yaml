@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gitlab-security
     name: Mondoo GitLab Security
-    version: 1.5.0
+    version: 1.6.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -50,6 +50,8 @@ policies:
           - uid: mondoo-gitlab-security-private-group
           - uid: mondoo-gitlab-security-private-projects
           - uid: mondoo-gitlab-security-require-two-factor
+          - uid: mondoo-gitlab-security-group-prevent-forking-outside
+          - uid: mondoo-gitlab-security-group-access-tokens-have-expiry
       - title: Project
         filters: asset.platform == "gitlab-project"
         checks:
@@ -66,6 +68,15 @@ policies:
         filters: asset.platform == "gitlab-project"
         checks:
           - uid: mondoo-gitlab-security-no-force-push-default-branch
+      - title: Token and Key Security
+        filters: asset.platform == "gitlab-project"
+        checks:
+          - uid: mondoo-gitlab-security-project-access-tokens-have-expiry
+          - uid: mondoo-gitlab-security-deploy-keys-no-push-access
+      - title: Security Scanning
+        filters: asset.platform == "gitlab-project"
+        checks:
+          - uid: mondoo-gitlab-security-continuous-vulnerability-scanning
     scoring_system: highest impact
 queries:
   - uid: mondoo-gitlab-security-private-group
@@ -691,3 +702,245 @@ queries:
         title: GitLab CI/CD Security
       - url: https://docs.gitlab.com/user/project/settings/
         title: GitLab Project Settings
+  - uid: mondoo-gitlab-security-project-access-tokens-have-expiry
+    title: Ensure project access tokens have expiration dates
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+    mql: |
+      gitlab.project.accessTokens.where(active == true && revoked == false).all(expiresAt != null)
+    docs:
+      desc: |
+        This check ensures that all active project access tokens have expiration dates configured. Tokens without expiration dates provide indefinite access to the project, increasing the risk of unauthorized access if the token is compromised.
+
+        **Why this matters**
+
+        Non-expiring access tokens create persistent security risks:
+
+          - **Indefinite access**: Tokens without expiration dates provide permanent access, even if the original need has passed.
+          - **Credential sprawl**: Over time, non-expiring tokens accumulate and become difficult to track and manage.
+          - **Compromised token risk**: If a non-expiring token is leaked, it remains valid until manually revoked.
+          - **Compliance violations**: Security frameworks require periodic credential rotation and expiration enforcement.
+          - **Least privilege**: Non-expiring tokens violate the principle of least privilege by granting access beyond what is needed.
+
+        Set expiration dates on all project access tokens and implement a process to rotate them before expiration.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **Access Tokens**.
+            3. Review all active tokens and note those without expiration dates.
+            4. Revoke tokens that have no expiration date.
+            5. Create replacement tokens with appropriate expiration dates (recommended: 90 days or less).
+            6. Update any integrations using the old tokens.
+
+            For more details, see [Project access tokens](https://docs.gitlab.com/ee/user/project/settings/project_access_tokens.html).
+    refs:
+      - url: https://docs.gitlab.com/user/project/settings/project_access_tokens.html
+        title: GitLab Project Access Tokens
+      - url: https://docs.gitlab.com/user/project/settings/
+        title: GitLab Project Settings
+  - uid: mondoo-gitlab-security-group-access-tokens-have-expiry
+    title: Ensure group access tokens have expiration dates
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+    mql: |
+      gitlab.group.accessTokens.where(active == true && revoked == false).all(expiresAt != null)
+    docs:
+      desc: |
+        This check ensures that all active group access tokens have expiration dates configured. Group tokens provide access to all projects within the group, making non-expiring tokens an even greater risk.
+
+        **Why this matters**
+
+        Non-expiring group access tokens pose an elevated risk compared to project tokens:
+
+          - **Broad access scope**: Group tokens grant access to all projects within the group, amplifying the impact of a compromise.
+          - **Indefinite validity**: Without expiration, compromised tokens remain valid until manually discovered and revoked.
+          - **Operational risk**: Teams that created tokens may leave the organization without transferring token management responsibility.
+          - **Audit challenges**: Non-expiring tokens are harder to include in periodic access reviews.
+          - **Compliance requirements**: Security frameworks require time-bound credentials with regular rotation.
+
+        Set expiration dates on all group access tokens and implement a rotation schedule.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your group in GitLab.
+            2. Go to **Settings** > **Access Tokens**.
+            3. Review all active tokens and note those without expiration dates.
+            4. Revoke tokens that have no expiration date.
+            5. Create replacement tokens with appropriate expiration dates (recommended: 90 days or less).
+            6. Update any integrations using the old tokens.
+
+            For more details, see [Group access tokens](https://docs.gitlab.com/ee/user/group/settings/group_access_tokens.html).
+    refs:
+      - url: https://docs.gitlab.com/user/group/settings/group_access_tokens.html
+        title: GitLab Group Access Tokens
+      - url: https://docs.gitlab.com/user/group/
+        title: GitLab Group Settings
+  - uid: mondoo-gitlab-security-deploy-keys-no-push-access
+    title: Ensure project deploy keys do not have push access
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    mql: |
+      gitlab.project.deployKeys.all(canPush == false)
+    docs:
+      desc: |
+        This check ensures that deploy keys configured for the project do not have push (write) access. Deploy keys with push access can be used to modify repository contents, which violates the principle of least privilege.
+
+        **Why this matters**
+
+        Deploy keys with push access create unnecessary write access to repositories:
+
+          - **Least privilege violation**: Deploy keys are typically used for read-only CI/CD operations; push access exceeds the required permission.
+          - **Unauthorized code changes**: A compromised deploy key with push access allows an attacker to modify repository contents directly.
+          - **Bypass controls**: Push access via deploy keys bypasses branch protection rules, merge request requirements, and code review processes.
+          - **Audit trail gaps**: Changes pushed via deploy keys may not have the same audit trail as changes made through merge requests.
+          - **Lateral movement**: Deploy keys are often stored in CI/CD systems, which may have weaker security controls.
+
+        Configure deploy keys with read-only access and use personal access tokens or project access tokens for write operations that require authentication.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **Repository**.
+            3. Expand the **Deploy keys** section.
+            4. For each deploy key with write access (indicated by a pencil icon), click **Edit**.
+            5. Uncheck **Grant write permissions to this key**.
+            6. Click **Save changes**.
+
+            For more details, see [Deploy keys](https://docs.gitlab.com/ee/user/project/deploy_keys/).
+    refs:
+      - url: https://docs.gitlab.com/user/project/deploy_keys/
+        title: GitLab Deploy Keys
+      - url: https://docs.gitlab.com/user/project/settings/
+        title: GitLab Project Settings
+  - uid: mondoo-gitlab-security-continuous-vulnerability-scanning
+    title: Ensure continuous vulnerability scanning is enabled
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+    mql: |
+      gitlab.project.securitySettings.continuousVulnerabilityScansEnabled == true
+    docs:
+      desc: |
+        This check ensures that continuous vulnerability scanning is enabled for the project. Continuous scanning monitors for newly disclosed vulnerabilities in your project's dependencies between pipeline runs.
+
+        **Why this matters**
+
+        Without continuous vulnerability scanning, new vulnerabilities go undetected between pipeline runs:
+
+          - **Detection gap**: Traditional pipeline-only scanning only checks for vulnerabilities when code is committed, not when new CVEs are published.
+          - **Zero-day response**: Continuous scanning detects newly disclosed vulnerabilities in existing dependencies without requiring a new commit.
+          - **Risk window**: The time between vulnerability disclosure and next pipeline run represents a window of undetected risk.
+          - **Dependency monitoring**: Projects with infrequent commits may go weeks without a vulnerability scan.
+          - **Compliance coverage**: Continuous monitoring aligns with compliance requirements for ongoing vulnerability management.
+
+        Enable continuous vulnerability scanning to detect newly disclosed vulnerabilities in your project's dependencies as they are published.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Secure** > **Security configuration**.
+            3. Under **Continuous Vulnerability Scanning**, toggle the feature to **Enabled**.
+            4. Alternatively, navigate to **Settings** > **Security & Compliance** and enable the feature.
+
+            Continuous vulnerability scanning requires GitLab Ultimate.
+
+            For more details, see [Continuous vulnerability scanning](https://docs.gitlab.com/ee/user/application_security/continuous_vulnerability_scanning/).
+    refs:
+      - url: https://docs.gitlab.com/user/application_security/continuous_vulnerability_scanning/
+        title: GitLab Continuous Vulnerability Scanning
+      - url: https://docs.gitlab.com/user/application_security/
+        title: GitLab Application Security
+  - uid: mondoo-gitlab-security-group-prevent-forking-outside
+    title: Ensure group prevents forking projects outside the group
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    mql: |
+      gitlab.group.preventForkingOutsideGroup == true
+    docs:
+      desc: |
+        This check ensures that the GitLab group prevents members from forking projects to namespaces outside the group. Without this restriction, users can fork private repositories to personal namespaces where group-level security controls do not apply.
+
+        **Why this matters**
+
+        Unrestricted forking allows code to escape group-level security controls:
+
+          - **Data exfiltration**: Members can fork private repositories to personal namespaces, effectively exporting proprietary source code outside organizational control.
+          - **Security control bypass**: Forked repositories outside the group do not inherit group-level branch protection, approval rules, or push rules.
+          - **Visibility changes**: Forks outside the group could be made public, exposing private code to the internet.
+          - **Compliance violations**: Regulatory requirements for data handling and access control may be violated when code leaves the controlled group namespace.
+          - **Intellectual property risk**: Former members retain access to their personal forks even after leaving the organization.
+
+        Restrict forking to within the group to maintain consistent security controls and prevent unauthorized code distribution.
+      remediation:
+        - id: gitlab
+          desc: |
+            **Using GitLab UI**
+
+            1. Navigate to your group in GitLab.
+            2. Go to **Settings** > **General**.
+            3. Expand the **Permissions and group features** section.
+            4. Check **Prevent forking outside of the group**.
+            5. Click **Save changes**.
+
+            For more details, see [Prevent forking outside the group](https://docs.gitlab.com/ee/user/group/#prevent-forking-outside-the-group).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "gitlab_group" "example" {
+              name                          = "example"
+              path                          = "example"
+              prevent_forking_outside_group = true
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/group).
+    refs:
+      - url: https://docs.gitlab.com/user/group/
+        title: GitLab Group Settings
+      - url: https://docs.gitlab.com/administration/settings/visibility_and_access_controls.html
+        title: GitLab Visibility and Access Controls

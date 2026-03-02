@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-google-workspace-security
     name: Mondoo Google Workspace Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -64,13 +64,23 @@ policies:
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
-      - filters: asset.platform == "google-workspace"
+      - title: Authentication & Admin Security
+        filters: asset.platform == "google-workspace"
         checks:
-          - uid: mondoo-googleworkspace-security-less-secure-app-access-should-not-be-allowed
+          - uid: mondoo-googleworkspace-security-two-step-verification-enforced
           - uid: mondoo-googleworkspace-security-limit-super-admins
           - uid: mondoo-googleworkspace-security-minimum-super-admins
           - uid: mondoo-googleworkspace-security-super-admins-should-use-hardware-based-2fa
-          - uid: mondoo-googleworkspace-security-two-step-verification-enforced
+          - uid: mondoo-googleworkspace-security-less-secure-app-access-should-not-be-allowed
+      - title: Domain & App Security
+        filters: asset.platform == "google-workspace"
+        checks:
+          - uid: mondoo-googleworkspace-security-domains-verified
+          - uid: mondoo-googleworkspace-security-connected-apps-no-full-access
+      - title: Data Sharing
+        filters: asset.platform == "google-workspace"
+        checks:
+          - uid: mondoo-googleworkspace-security-calendar-no-public-sharing
 queries:
   - uid: mondoo-googleworkspace-security-two-step-verification-enforced
     title: Ensure 2-step verification (multi-factor authentication) is enforced for all users
@@ -247,5 +257,151 @@ queries:
     refs:
       - url: https://support.google.com/a/answer/175197
         title: Google Workspace - Deploy 2-Step Verification
+      - url: https://support.google.com/a/answer/9011373
+        title: Google Workspace Security Best Practices
+  - uid: mondoo-googleworkspace-security-connected-apps-no-full-access
+    title: Ensure no connected apps have full Gmail or Drive access
+    impact: 80
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    mql: |
+      googleworkspace.connectedApps.none(
+        scopes.any(_ == "https://mail.google.com/") || scopes.any(_ == "https://www.googleapis.com/auth/drive")
+      )
+    docs:
+      desc: |
+        This check ensures that no third-party connected applications have been granted full access to Gmail or Google Drive. Full access scopes like `https://mail.google.com/` and `https://www.googleapis.com/auth/drive` allow applications to read, write, and delete all emails or files.
+
+        **Why this matters**
+
+        Third-party applications with full Gmail or Drive access pose significant data security risks:
+
+          - **Data exfiltration**: Applications with full access can read and export all email messages or files from users' accounts.
+          - **Email manipulation**: Full Gmail access allows applications to send, delete, or modify emails on behalf of users.
+          - **Unauthorized access**: Connected apps may be developed by untrusted parties and could be used for data harvesting.
+          - **Persistent access**: OAuth tokens provide ongoing access even after a user changes their password.
+          - **Supply chain risk**: Compromised third-party applications can be used as a vector to access organizational data.
+
+        Review all connected applications and revoke access for any that have overly broad scopes. Use the principle of least privilege when granting application access.
+      remediation:
+        - id: console
+          desc: |
+            To review and restrict third-party app access:
+
+            1. Sign in to the [Google Admin console](https://admin.google.com/).
+            2. Go to **Security** > **Access and data control** > **API controls**.
+            3. Under **Third-Party App access**, review connected apps and their scopes.
+            4. Block or restrict apps that have full Gmail (`https://mail.google.com/`) or Drive (`https://www.googleapis.com/auth/drive`) access.
+            5. Configure app access control to require admin approval for apps requesting sensitive scopes.
+
+            For more details, see [Control which third-party & internal apps access Google Workspace data](https://support.google.com/a/answer/7281227).
+    refs:
+      - url: https://support.google.com/a/answer/7281227
+        title: Google Workspace - Control Third-Party App Access
+      - url: https://support.google.com/a/answer/9011373
+        title: Google Workspace Security Best Practices
+  - uid: mondoo-googleworkspace-security-domains-verified
+    title: Ensure all domains are verified
+    impact: 70
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+    mql: |
+      googleworkspace.domains.all(verified == true)
+    docs:
+      desc: |
+        This check ensures that all domains registered in your Google Workspace organization are verified. Unverified domains may indicate misconfiguration or potential domain spoofing risks.
+
+        **Why this matters**
+
+        Unverified domains in your Google Workspace environment create trust and security issues:
+
+          - **Domain spoofing**: Unverified domains could be used to send emails that appear to come from your organization.
+          - **Incomplete setup**: Unverified domains indicate that DNS verification was not completed, meaning email routing and other services may not be properly configured.
+          - **Email deliverability**: Services like SPF, DKIM, and DMARC require verified domain ownership to function correctly.
+          - **Organizational trust**: Users and external parties may receive emails from unverified domains, creating confusion about message authenticity.
+          - **Compliance gaps**: Many security frameworks require organizations to verify and control all domains used for business communication.
+
+        Complete domain verification for all registered domains, or remove domains that are no longer needed.
+      remediation:
+        - id: console
+          desc: |
+            To verify domains in Google Workspace:
+
+            1. Sign in to the [Google Admin console](https://admin.google.com/).
+            2. Go to **Account** > **Domains** > **Manage domains**.
+            3. For each unverified domain, click **Verify** and follow the prompts.
+            4. Add the required DNS TXT or CNAME record to your domain's DNS configuration.
+            5. Return to the Admin console and click **Verify** to confirm the DNS record.
+            6. Remove any domains that are no longer needed by your organization.
+
+            For more details, see [Verify your domain](https://support.google.com/a/answer/60216).
+    refs:
+      - url: https://support.google.com/a/answer/60216
+        title: Google Workspace - Verify Your Domain
+      - url: https://support.google.com/a/answer/9011373
+        title: Google Workspace Security Best Practices
+  - uid: mondoo-googleworkspace-security-calendar-no-public-sharing
+    title: Ensure calendar sharing is not set to public
+    impact: 60
+    tags:
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+    mql: |
+      googleworkspace.calendars
+        .all(
+          acl.none( scope.type == "default" && role != "none" )
+        )
+    docs:
+      desc: |
+        This check ensures that no user calendars have public sharing enabled. When a calendar ACL rule has a scope type of "default" with a role other than "none," the calendar is accessible to anyone on the internet.
+
+        **Why this matters**
+
+        Publicly shared calendars expose sensitive organizational information:
+
+          - **Meeting intelligence**: Public calendars reveal meeting participants, topics, and schedules that can be used for social engineering.
+          - **Organizational structure**: Calendar data exposes reporting structures, team compositions, and internal processes.
+          - **Travel schedules**: Executive calendars may reveal travel plans, creating physical security risks.
+          - **Business intelligence**: Competitors can monitor public calendars to learn about upcoming projects, partnerships, and strategic initiatives.
+          - **Privacy violations**: Employee schedules, personal appointments, and medical appointments may be inadvertently exposed.
+
+        Ensure all calendars are shared only with specific users or groups within the organization, not publicly.
+      remediation:
+        - id: console
+          desc: |
+            To restrict calendar sharing:
+
+            1. Sign in to the [Google Admin console](https://admin.google.com/).
+            2. Go to **Apps** > **Google Workspace** > **Calendar**.
+            3. Under **Sharing settings**, set **External sharing options for primary calendars** to **Only free/busy information** or a more restrictive option.
+            4. Click **Save**.
+
+            For individual users who have already shared their calendars publicly:
+
+            1. Have the user open [Google Calendar](https://calendar.google.com/).
+            2. Click the three dots next to the calendar name > **Settings and sharing**.
+            3. Under **Access permissions for events**, uncheck **Make available to public**.
+
+            For more details, see [Set Calendar sharing options](https://support.google.com/a/answer/60765).
+    refs:
+      - url: https://support.google.com/a/answer/60765
+        title: Google Workspace - Set Calendar Sharing Options
       - url: https://support.google.com/a/answer/9011373
         title: Google Workspace Security Best Practices
