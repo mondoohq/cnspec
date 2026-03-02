@@ -38,9 +38,6 @@ type defaultReporter struct {
 	// indicates if the StoreResourcesData MQL feature is enabled
 	isStoreResourcesEnabled bool
 
-	// faint dims the output for exceptions
-	faint bool
-
 	// vv the items below will be automatically filled
 	bundle *policy.PolicyBundleMap
 }
@@ -114,10 +111,10 @@ func (r *defaultReporter) querypackDataQueryIDs(resolved *policy.ResolvedPolicy)
 	return result
 }
 
-// styled returns a termenv.Style with faint applied if r.faint is set.
-func (r *defaultReporter) styled(s string) termenv.Style {
+// styled returns a termenv.Style with faint applied if faint is true.
+func (r *defaultReporter) styled(s string, faint bool) termenv.Style {
 	st := termenv.String(s)
-	if r.faint {
+	if faint {
 		st = st.Faint()
 	}
 	return st
@@ -595,7 +592,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		if len(sortedPassed) != 0 {
 			r.out("Passing:" + NewLineCharacter)
 			for _, id := range sortedPassed {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results, false)
 			}
 			prevPrinted = true
 		}
@@ -607,7 +604,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			// FIXME v12: rename to risk threshold
 			r.out("Warnings (below risk threshold):" + NewLineCharacter)
 			for _, id := range sortedWarnings {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results, false)
 			}
 			prevPrinted = true
 		}
@@ -648,7 +645,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				score.Type = policy.ScoreType_Result
 				ps := policy.Score{Value: score.Value, Type: score.Type, ScoreCompletion: 100}
 				score.Rating = ps.Rating()
-				r.printCheck(score, queries[id], resolved, report, results)
+				r.printCheck(score, queries[id], resolved, report, results, false)
 			}
 
 			prevPrinted = true
@@ -664,11 +661,10 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			})
 
 			r.out("Exceptions:" + NewLineCharacter)
-			r.faint = true
 			for _, id := range sortedExceptions {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results, true)
 			}
-			r.faint = false
+			prevPrinted = true
 		}
 
 		if len(sortedFailed) != 0 {
@@ -681,7 +677,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				r.out("Failing:" + NewLineCharacter)
 			}
 			for _, id := range sortedFailed {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results)
+				r.printCheck(foundChecks[id], queries[id], resolved, report, results, false)
 			}
 		}
 	}
@@ -749,12 +745,12 @@ func checkStatus(symbol string, status string) string {
 }
 
 // only works with type == policy.ScoreType_Result
-func (r *defaultReporter) printScore(title string, score simpleScore, query *policy.Mquery) string {
+func (r *defaultReporter) printScore(title string, score simpleScore, query *policy.Mquery, faint bool) string {
 	color := cnspecComponents.DefaultRatingColors.Color(score.Rating)
 
 	var passfail string
 	if score.Success {
-		passfail = r.styled("✓ ").Foreground(r.Colors.Success).String()
+		passfail = r.styled("✓ ", faint).Foreground(r.Colors.Success).String()
 	} else {
 		scoreIndicator := ""
 		if query.Impact != nil {
@@ -764,14 +760,14 @@ func (r *defaultReporter) printScore(title string, score simpleScore, query *pol
 		if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 			scoreSymbol = "!"
 		}
-		passfail = r.styled(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator)).Foreground(color).String()
+		passfail = r.styled(checkStatus(scoreSymbol, score.Rating.Text()+scoreIndicator), faint).Foreground(color).String()
 	}
 
-	title = r.styled(title).String()
+	title = r.styled(title, faint).String()
 	return passfail + title + NewLineCharacter
 }
 
-func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult) {
+func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, resolved *policy.ResolvedPolicy, report *policy.Report, results map[string]*llx.RawResult, faint bool) {
 	title := query.Title
 	if title == "" {
 		title = query.Mrn
@@ -779,26 +775,26 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 	switch score.Type {
 	case policy.ScoreType_Error:
-		r.out(r.styled(checkStatus("!", "Error")).Foreground(r.Colors.Error).String())
-		r.out(r.styled(title).String())
+		r.out(r.styled(checkStatus("!", "Error"), faint).Foreground(r.Colors.Error).String())
+		r.out(r.styled(title, faint).String())
 		r.out(NewLineCharacter)
 		if !r.Conf.isCompact {
 			errorMessage := strings.ReplaceAll(score.Message, "\n", NewLineCharacter)
-			r.out(r.styled("  Message:    " + errorMessage).Foreground(r.Colors.Error).String())
+			r.out(r.styled("  Message:    "+errorMessage, faint).Foreground(r.Colors.Error).String())
 			r.out(NewLineCharacter)
 		}
 	case policy.ScoreType_Unknown, policy.ScoreType_Unscored:
-		r.out(r.styled(checkStatus(".", "Unknown")).Foreground(r.Colors.Disabled).String())
-		r.out(r.styled(title).String())
+		r.out(r.styled(checkStatus(".", "Unknown"), faint).Foreground(r.Colors.Disabled).String())
+		r.out(r.styled(title, faint).String())
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Skip:
-		r.out(r.styled(checkStatus(".", "Skipped")).Foreground(r.Colors.Disabled).String())
-		r.out(r.styled(title).String())
+		r.out(r.styled(checkStatus(".", "Skipped"), faint).Foreground(r.Colors.Disabled).String())
+		r.out(r.styled(title, faint).String())
 		r.out(NewLineCharacter)
 
 	case policy.ScoreType_Result:
-		r.out(r.printScore(title, score, query))
+		r.out(r.printScore(title, score, query, faint))
 
 		// additional information about the failed query
 		if !r.Conf.isCompact && score.Value != 100 {
@@ -834,7 +830,14 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 // buildExceptionSet builds a set of check MRNs that have exceptions applied,
 // by inspecting the ReportingJob.ChildJobs edges in the resolved policy for
-// IGNORE_SCORE impacts.
+// IGNORE_SCORE or DISABLED impacts.
+//
+// A check is considered excepted if any parent reporting job marks it with
+// IGNORE_SCORE or DISABLED. This means that if the same check appears under
+// multiple policies and only one policy excepts it, the check will still be
+// treated as an exception in the output. This is intentional: exceptions are
+// configured per-policy and the presence of any exception signals that the
+// check should appear in the exceptions section rather than pass/fail.
 func buildExceptionSet(resolved *policy.ResolvedPolicy) map[string]struct{} {
 	if resolved == nil || resolved.CollectorJob == nil {
 		return nil
