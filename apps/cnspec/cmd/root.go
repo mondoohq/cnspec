@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog"
@@ -22,6 +23,9 @@ import (
 	"go.mondoo.com/mql/v13/cli/theme"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
 	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	rangerUtils "go.mondoo.com/mql/v13/utils/ranger"
 )
 
 const (
@@ -143,6 +147,35 @@ func init() {
 	_ = viper.BindEnv("providers_url")
 
 	config.Init(rootCmd)
+
+	// Register system info provider so that upstream HTTP requests include the
+	// Mondoo-PlatformID header. Without this, the server cannot correlate scan
+	// requests with managed agents, causing stale check-in times.
+	var (
+		sysInfoOnce   sync.Once
+		cachedSysInfo *rangerUtils.ClientSysInfo
+	)
+	upstream.SysInfoProvider = func() *rangerUtils.ClientSysInfo {
+		sysInfoOnce.Do(func() {
+			si, err := sysinfo.Get()
+			if err != nil {
+				log.Warn().Err(err).Msg("could not determine system information for upstream headers")
+				return
+			}
+			csi := &rangerUtils.ClientSysInfo{
+				IP:         si.IP,
+				Hostname:   si.Hostname,
+				PlatformID: si.PlatformId,
+			}
+			if si.Platform != nil {
+				csi.PlatformName = si.Platform.Name
+				csi.PlatformVersion = si.Platform.Version
+				csi.PlatformArch = si.Platform.Arch
+			}
+			cachedSysInfo = csi
+		})
+		return cachedSysInfo
+	}
 }
 
 func initLogger(cmd *cobra.Command) {
