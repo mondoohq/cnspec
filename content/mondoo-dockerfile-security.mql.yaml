@@ -42,7 +42,6 @@ policies:
           - uid: mondoo-docker-security-no-insecure-certificate-validation-curl
           - uid: mondoo-docker-security-no-insecure-certificate-validation-wget
           - uid: mondoo-docker-security-no-gpg-skip-yum
-          - uid: mondoo-docker-best-practice-use-apt-get
       - title: Privilege & User Security
         filters: |
           asset.platform == "dockerfile"
@@ -50,11 +49,12 @@ policies:
           - uid: mondoo-docker-security-no-sudo-commands
           - uid: mondoo-docker-security-non-root-user
           - uid: mondoo-docker-security-non-root-uid
-      - title: Build Best Practices
+      - title: Build Security
         filters: |
           asset.platform == "dockerfile"
         checks:
           - uid: mondoo-docker-security-use-copy-instead-of-add
+          - uid: mondoo-docker-security-no-secrets-in-env
           - uid: mondoo-docker-best-practice-no-latest-tag
           - uid: mondoo-docker-best-practice-from-tag-specified
 queries:
@@ -348,32 +348,6 @@ queries:
         title: Dockerfile Best Practices
       - url: https://docs.docker.com/reference/dockerfile/#from
         title: Dockerfile Reference - FROM
-  - uid: mondoo-docker-best-practice-use-apt-get
-    title: Use `apt-get` instead of `apt` for consistent package management
-    impact: 100
-    mql: |
-      docker.file.stages.all(run.none(script.contains("apt")))
-    docs:
-      desc: |
-        This check ensures that Dockerfiles use the `apt-get` CLI instead of `apt`.
-
-        **Why this matters**
-
-        Using `apt-get` instead of `apt` in Dockerfiles provides several advantages:
-
-        - **Predictable behavior**: The `apt-get` CLI is designed for scripting and automation, offering more consistent and reliable behavior in Dockerfile contexts.
-        - **Stability**: `apt-get` is considered more stable and less prone to changes in behavior compared to `apt`, which is intended for interactive use.
-        - **Best practices**: Security standards and Dockerfile best practices recommend using `apt-get` for package management to ensure predictable and secure builds.
-        - **Reduced risk of errors**: Using `apt-get` minimizes the risk of unexpected issues during the build process, improving the reliability of containerized environments.
-
-        By ensuring the use of `apt-get` instead of `apt`, this check helps maintain a secure and predictable Dockerfile configuration, aligning with best practices and reducing potential risks.
-      remediation: |
-        Review the Dockerfile `RUN` instructions to replace any `apt` commands with `apt-get`. This ensures that package management operations are performed using the recommended and more stable CLI.
-    refs:
-      - url: https://docs.docker.com/build/building/best-practices/#run
-        title: Dockerfile Best Practices - RUN
-      - url: https://docs.docker.com/build/building/best-practices/
-        title: Dockerfile Best Practices
   - uid: mondoo-docker-security-non-root-uid
     title: Don't set container user to root UID (0)
     impact: 100
@@ -438,3 +412,48 @@ queries:
         ```dockerfile
         FROM python:3.12-slim@sha256:abc123...
         ```
+  - uid: mondoo-docker-security-no-secrets-in-env
+    title: Don't store secrets in Dockerfile ENV instructions
+    impact: 100
+    mql: |
+      docker.file.stages.all(env.none(name == /(?i)(password|passwd|secret|token|private[_.\-]key|access[_.\-]key|api[_.\-]key|apikey|credential)/))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `ENV` instructions do not define environment variables with names that suggest they contain secrets, such as passwords, API keys, or credentials.
+
+        **Why this matters**
+
+        Secrets stored in `ENV` instructions are baked into the image and exposed in multiple ways:
+
+        - **Image inspection**: Anyone with access to the image can run `docker inspect` or `docker history` to view all environment variables, including their values.
+        - **Container leakage**: Environment variables are inherited by all processes in the container and may appear in logs, error reports, or debug output.
+        - **Registry exposure**: Images pushed to registries (even private ones) carry all `ENV` values, expanding the blast radius of a registry compromise.
+        - **Layer persistence**: Even if a subsequent layer unsets the variable, the value remains in the earlier image layer and can be extracted.
+
+        This aligns with CIS Docker Benchmark check CIS-DI-0010.
+      remediation: |
+        Remove secrets from Dockerfile `ENV` instructions and use runtime secret injection instead:
+
+        ```dockerfile
+        # Instead of:
+        ENV API_KEY=sk-1234567890
+        ENV DATABASE_PASSWORD=changeme123
+
+        # Use runtime injection:
+        # docker run -e API_KEY="$API_KEY" myimage
+        # docker run --env-file .env myimage
+        ```
+
+        For build-time secrets, use Docker BuildKit secret mounts:
+
+        ```dockerfile
+        # syntax=docker/dockerfile:1
+        RUN --mount=type=secret,id=api_key cat /run/secrets/api_key
+        ```
+
+        This ensures secrets are never persisted in image layers.
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run---mounttypesecret
+        title: Dockerfile Best Practices - Secret Mounts
+      - url: https://docs.docker.com/reference/dockerfile/#run---mounttypesecret
+        title: Dockerfile Reference - RUN --mount=type=secret

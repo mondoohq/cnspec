@@ -1,0 +1,538 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-docker-best-practices
+    name: Mondoo Dockerfile Best Practices
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: best-practices
+      mondoo.com/platform: linux,docker
+    require:
+      - provider: os
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Enforce Dockerfile best practices for reliable, efficient container builds
+    docs:
+      desc: |-
+        The Mondoo Dockerfile Best Practices policy identifies patterns in Dockerfiles that lead to bloated images, non-reproducible builds, or unreliable container behavior. These checks complement the Mondoo Dockerfile Security policy by covering operational hygiene rather than direct security vulnerabilities.
+
+        ## Scan a Dockerfile
+
+        ```bash
+        cnspec scan docker file DOCKERFILE_PATH
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Package Management
+        filters: |
+          asset.platform == "dockerfile"
+        checks:
+          - uid: mondoo-docker-best-practice-use-apt-get
+          - uid: mondoo-docker-best-practice-no-update-alone
+          - uid: mondoo-docker-best-practice-apk-no-cache
+          - uid: mondoo-docker-best-practice-apt-clean-cache
+          - uid: mondoo-docker-best-practice-yum-clean-cache
+          - uid: mondoo-docker-best-practice-dnf-clean-cache
+          - uid: mondoo-docker-best-practice-zypper-clean-cache
+          - uid: mondoo-docker-best-practice-pip-no-cache-dir
+          - uid: mondoo-docker-best-practice-yarn-clean-cache
+          - uid: mondoo-docker-best-practice-npm-clean-cache
+          - uid: mondoo-docker-best-practice-apt-no-install-recommends
+      - title: Build Reliability
+        filters: |
+          asset.platform == "dockerfile"
+        checks:
+          - uid: mondoo-docker-best-practice-apt-get-assume-yes
+          - uid: mondoo-docker-best-practice-yum-assume-yes
+          - uid: mondoo-docker-best-practice-dnf-assume-yes
+          - uid: mondoo-docker-best-practice-zypper-non-interactive
+queries:
+  - uid: mondoo-docker-best-practice-use-apt-get
+    title: Use `apt-get` instead of `apt` for consistent package management
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.none(script.contains("apt install")))
+      docker.file.stages.all(run.none(script.contains("apt update")))
+      docker.file.stages.all(run.none(script.contains("apt upgrade")))
+      docker.file.stages.all(run.none(script.contains("apt remove")))
+      docker.file.stages.all(run.none(script.contains("apt purge")))
+    docs:
+      desc: |
+        This check ensures that Dockerfiles use the `apt-get` CLI instead of `apt`.
+
+        **Why this matters**
+
+        Using `apt-get` instead of `apt` in Dockerfiles provides several advantages:
+
+        - **Predictable behavior**: The `apt-get` CLI is designed for scripting and automation, offering more consistent and reliable behavior in Dockerfile contexts.
+        - **Stability**: `apt-get` is considered more stable and less prone to changes in behavior compared to `apt`, which is intended for interactive use.
+        - **Reduced risk of errors**: Using `apt-get` minimizes the risk of unexpected issues during the build process, improving the reliability of containerized environments.
+
+        By ensuring the use of `apt-get` instead of `apt`, this check helps maintain a predictable Dockerfile configuration, aligning with best practices.
+      remediation: |
+        Review the Dockerfile `RUN` instructions to replace any `apt` commands with `apt-get`. This ensures that package management operations are performed using the recommended and more stable CLI.
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+      - url: https://docs.docker.com/build/building/best-practices/
+        title: Dockerfile Best Practices
+  - uid: mondoo-docker-best-practice-no-update-alone
+    title: Don't use package update instructions alone in a RUN statement
+    impact: 60
+    mql: |
+      docker.file.stages.all(run.where(script.contains("apt-get update")).all(script.contains("apt-get install")))
+      docker.file.stages.all(run.where(script.contains("apk update")).all(script.contains("apk add")))
+    docs:
+      desc: |
+        This check ensures that package manager update commands (`apt-get update`, `apk update`) are not used alone in a `RUN` instruction without a corresponding install command in the same layer.
+
+        **Why this matters**
+
+        Running update commands in a separate `RUN` instruction from the install command causes several problems:
+
+        - **Stale package lists**: Docker caches each layer independently. If the update layer is cached but the install layer is rebuilt, the install uses outdated package indexes, potentially installing older versions with known vulnerabilities.
+        - **Non-reproducible builds**: Cached update layers create a false sense of freshness. Builds at different times produce different results depending on cache state.
+        - **Unnecessary layer bloat**: The update command creates a layer containing package index files that are only needed during installation and should be cleaned up afterward.
+
+        This aligns with CIS Docker Benchmark check CIS-DI-0007.
+      remediation: |
+        Combine update and install commands in a single `RUN` instruction:
+
+        ```dockerfile
+        # Instead of:
+        RUN apt-get update
+        RUN apt-get install -y package
+
+        # Use:
+        RUN apt-get update && apt-get install -y package && rm -rf /var/lib/apt/lists/*
+
+        # For Alpine:
+        # Instead of:
+        RUN apk update
+        RUN apk add package
+
+        # Use:
+        RUN apk add --no-cache package
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+      - url: https://docs.docker.com/build/building/best-practices/#apt-get
+        title: Dockerfile Best Practices - apt-get
+  - uid: mondoo-docker-best-practice-apk-no-cache
+    title: Use --no-cache with apk add
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("apk add")).all(script.contains("--no-cache")))
+    docs:
+      desc: |
+        This check ensures that Alpine's `apk add` command is always used with the `--no-cache` flag in Dockerfile `RUN` instructions.
+
+        **Why this matters**
+
+        Without `--no-cache`, `apk add` downloads and stores a local package index in `/var/cache/apk/`:
+
+        - **Image bloat**: The cached index files add unnecessary size to the image layer, increasing storage costs and pull times.
+        - **Stale cache risk**: A cached index in a layer can become outdated, leading to confusing behavior if the layer is reused.
+
+        The `--no-cache` flag tells `apk` to fetch the index temporarily and discard it after the operation, keeping the image layer clean.
+
+      remediation: |
+        Add the `--no-cache` flag to all `apk add` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN apk update && apk add git curl
+
+        # Use:
+        RUN apk add --no-cache git curl
+        ```
+
+        This eliminates the need for a separate `apk update` or a manual `rm -rf /var/cache/apk/*` cleanup step.
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+      - url: https://wiki.alpinelinux.org/wiki/Alpine_Package_Keeper
+        title: Alpine Package Keeper
+  - uid: mondoo-docker-best-practice-apt-clean-cache
+    title: Clean apt-get cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("/var/lib/apt/lists")))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions that use `apt-get install` also clean up the apt package lists in the same layer.
+
+        **Why this matters**
+
+        After `apt-get install`, the downloaded package index files remain in `/var/lib/apt/lists/`:
+
+        - **Image bloat**: These index files can add tens of megabytes to the image layer, significantly increasing image size.
+        - **Unnecessary data**: The package lists are only needed during installation and serve no purpose at runtime.
+        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the files still exist in the install layer due to how Docker's union filesystem works, providing no actual size savings.
+
+        Cleaning up in the same `RUN` instruction ensures the files never persist in any layer.
+
+      remediation: |
+        Add cache cleanup to the same `RUN` instruction as `apt-get install`:
+
+        ```dockerfile
+        # Instead of:
+        RUN apt-get update && apt-get install -y package
+        RUN rm -rf /var/lib/apt/lists/*
+
+        # Use:
+        RUN apt-get update && \
+            apt-get install -y --no-install-recommends package && \
+            rm -rf /var/lib/apt/lists/*
+        ```
+
+        Combining update, install, and cleanup in a single `RUN` instruction keeps the image layer as small as possible.
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#apt-get
+        title: Dockerfile Best Practices - apt-get
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-yum-clean-cache
+    title: Clean yum cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("yum install")).all(script.contains("yum clean all")))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions that use `yum install` also run `yum clean all` in the same layer.
+
+        **Why this matters**
+
+        After `yum install`, cached package data and metadata remain in `/var/cache/yum/`:
+
+        - **Image bloat**: The cached data can add significant size to the image layer.
+        - **Unnecessary data**: The cache is only needed during installation and serves no purpose at runtime.
+        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      remediation: |
+        Add `yum clean all` to the same `RUN` instruction as `yum install`:
+
+        ```dockerfile
+        # Instead of:
+        RUN yum install -y package
+
+        # Use:
+        RUN yum install -y package && \
+            yum clean all && \
+            rm -rf /var/cache/yum
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-dnf-clean-cache
+    title: Clean dnf cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("dnf install")).all(script.contains("dnf clean all")))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions that use `dnf install` also run `dnf clean all` in the same layer.
+
+        **Why this matters**
+
+        After `dnf install`, cached package data and metadata remain in `/var/cache/dnf/`:
+
+        - **Image bloat**: The cached data can add significant size to the image layer.
+        - **Unnecessary data**: The cache is only needed during installation and serves no purpose at runtime.
+        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      remediation: |
+        Add `dnf clean all` to the same `RUN` instruction as `dnf install`:
+
+        ```dockerfile
+        # Instead of:
+        RUN dnf install -y package
+
+        # Use:
+        RUN dnf install -y package && \
+            dnf clean all && \
+            rm -rf /var/cache/dnf
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-zypper-clean-cache
+    title: Clean zypper cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("zypper install")).all(script.contains("zypper clean")))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions that use `zypper install` also run `zypper clean` in the same layer.
+
+        **Why this matters**
+
+        After `zypper install`, cached package data and metadata remain on disk:
+
+        - **Image bloat**: The cached data can add significant size to the image layer.
+        - **Unnecessary data**: The cache is only needed during installation and serves no purpose at runtime.
+        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      remediation: |
+        Add `zypper clean` to the same `RUN` instruction as `zypper install`:
+
+        ```dockerfile
+        # Instead of:
+        RUN zypper --non-interactive install package
+
+        # Use:
+        RUN zypper --non-interactive install package && \
+            zypper clean --all
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-pip-no-cache-dir
+    title: Use --no-cache-dir with pip install
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("pip install")).all(script.contains("--no-cache-dir")))
+    docs:
+      desc: |
+        This check ensures that `pip install` commands in Dockerfile `RUN` instructions use the `--no-cache-dir` flag.
+
+        **Why this matters**
+
+        By default, pip caches downloaded packages and build artifacts in `~/.cache/pip/`:
+
+        - **Image bloat**: The pip cache can add tens or hundreds of megabytes to the image layer, especially for packages with large binary wheels.
+        - **Unnecessary data**: Cached packages serve no purpose in a container since packages are not reinstalled at runtime.
+        - **Layer persistence**: Even if the cache is deleted in a subsequent `RUN` instruction, it persists in the install layer.
+
+        The `--no-cache-dir` flag prevents pip from writing to the cache directory entirely.
+      remediation: |
+        Add `--no-cache-dir` to all `pip install` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN pip install flask gunicorn
+
+        # Use:
+        RUN pip install --no-cache-dir flask gunicorn
+
+        # Also works with requirements files:
+        RUN pip install --no-cache-dir -r requirements.txt
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+      - url: https://pip.pypa.io/en/stable/cli/pip_install/
+        title: pip install documentation
+  - uid: mondoo-docker-best-practice-yarn-clean-cache
+    title: Clean yarn cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("yarn install")).all(script.contains("yarn cache clean")))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions that use `yarn install` also run `yarn cache clean` in the same layer.
+
+        **Why this matters**
+
+        After `yarn install`, a local cache of downloaded packages is stored on disk:
+
+        - **Image bloat**: The yarn cache can add significant size to the image layer, often exceeding the size of the installed packages themselves.
+        - **Unnecessary data**: The cache is only useful for speeding up future installs, which do not happen at container runtime.
+        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      remediation: |
+        Add `yarn cache clean` to the same `RUN` instruction as `yarn install`:
+
+        ```dockerfile
+        # Instead of:
+        RUN yarn install
+
+        # Use:
+        RUN yarn install && yarn cache clean
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+      - url: https://classic.yarnpkg.com/en/docs/cli/cache
+        title: Yarn Cache documentation
+  - uid: mondoo-docker-best-practice-npm-clean-cache
+    title: Clean npm cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("npm install")).all(script.contains("npm cache clean")))
+      docker.file.stages.all(run.where(script.contains("npm ci")).all(script.contains("npm cache clean")))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions that use `npm install` or `npm ci` also run `npm cache clean` in the same layer.
+
+        **Why this matters**
+
+        After `npm install` or `npm ci`, a local cache of downloaded packages is stored in `~/.npm/`:
+
+        - **Image bloat**: The npm cache can add significant size to the image layer, often comparable to or exceeding the size of `node_modules` itself.
+        - **Unnecessary data**: The cache speeds up future installs but serves no purpose at container runtime.
+        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      remediation: |
+        Add `npm cache clean --force` to the same `RUN` instruction as `npm install` or `npm ci`:
+
+        ```dockerfile
+        # Instead of:
+        RUN npm install
+        RUN npm ci
+
+        # Use:
+        RUN npm install && npm cache clean --force
+        RUN npm ci && npm cache clean --force
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+      - url: https://docs.npmjs.com/cli/commands/npm-cache
+        title: npm cache documentation
+  - uid: mondoo-docker-best-practice-apt-no-install-recommends
+    title: Use --no-install-recommends with apt-get install
+    impact: 60
+    mql: |
+      docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("--no-install-recommends")))
+    docs:
+      desc: |
+        This check ensures that `apt-get install` commands in Dockerfile `RUN` instructions use the `--no-install-recommends` flag.
+
+        **Why this matters**
+
+        By default, `apt-get install` pulls in "recommended" packages in addition to the direct dependencies:
+
+        - **Image bloat**: Recommended packages often include documentation, man pages, X11 libraries, and other utilities that are unnecessary in a container. This can add hundreds of megabytes to the image.
+        - **Increased attack surface**: Every additional package is a potential source of vulnerabilities that must be tracked and patched.
+        - **Slower builds and pulls**: Larger images take longer to build, push, and pull, increasing CI/CD cycle times and deployment latency.
+
+        The `--no-install-recommends` flag restricts apt to installing only the direct dependencies, producing a significantly smaller and more focused image.
+      remediation: |
+        Add `--no-install-recommends` to all `apt-get install` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN apt-get update && apt-get install -y package
+
+        # Use:
+        RUN apt-get update && \
+            apt-get install -y --no-install-recommends package && \
+            rm -rf /var/lib/apt/lists/*
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#apt-get
+        title: Dockerfile Best Practices - apt-get
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-apt-get-assume-yes
+    title: Use -y flag with apt-get install
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("-y")))
+    docs:
+      desc: |
+        This check ensures that `apt-get install` commands in Dockerfile `RUN` instructions include the `-y` (or `--yes`) flag.
+
+        **Why this matters**
+
+        Without the `-y` flag, `apt-get install` prompts for interactive confirmation:
+
+        - **Build failure**: Docker builds run non-interactively. Without `-y`, the command waits for input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      remediation: |
+        Add the `-y` flag to all `apt-get install` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN apt-get install package
+
+        # Use:
+        RUN apt-get install -y package
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#apt-get
+        title: Dockerfile Best Practices - apt-get
+  - uid: mondoo-docker-best-practice-yum-assume-yes
+    title: Use -y flag with yum install
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("yum install")).all(script.contains("-y")))
+    docs:
+      desc: |
+        This check ensures that `yum install` commands in Dockerfile `RUN` instructions include the `-y` (or `--assumeyes`) flag.
+
+        **Why this matters**
+
+        Without the `-y` flag, `yum install` prompts for interactive confirmation:
+
+        - **Build failure**: Docker builds run non-interactively. Without `-y`, the command waits for input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      remediation: |
+        Add the `-y` flag to all `yum install` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN yum install package
+
+        # Use:
+        RUN yum install -y package
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-dnf-assume-yes
+    title: Use -y flag with dnf install
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("dnf install")).all(script.contains("-y")))
+    docs:
+      desc: |
+        This check ensures that `dnf install` commands in Dockerfile `RUN` instructions include the `-y` (or `--assumeyes`) flag.
+
+        **Why this matters**
+
+        Without the `-y` flag, `dnf install` prompts for interactive confirmation:
+
+        - **Build failure**: Docker builds run non-interactively. Without `-y`, the command waits for input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      remediation: |
+        Add the `-y` flag to all `dnf install` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN dnf install package
+
+        # Use:
+        RUN dnf install -y package
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-zypper-non-interactive
+    title: Use --non-interactive flag with zypper install
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("zypper install")).all(script.contains("--non-interactive")))
+    docs:
+      desc: |
+        This check ensures that `zypper install` commands in Dockerfile `RUN` instructions include the `--non-interactive` flag.
+
+        **Why this matters**
+
+        Without the `--non-interactive` flag, `zypper install` prompts for interactive confirmation:
+
+        - **Build failure**: Docker builds run non-interactively. Without `--non-interactive`, the command waits for input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      remediation: |
+        Add the `--non-interactive` flag to all `zypper install` commands:
+
+        ```dockerfile
+        # Instead of:
+        RUN zypper install package
+
+        # Use:
+        RUN zypper --non-interactive install package
+        ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#run
+        title: Dockerfile Best Practices - RUN
