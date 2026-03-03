@@ -43,6 +43,11 @@ resource "google_sql_database_instance" "postgres_public_instance" {
       value = "default"
     }
 
+    # Enable password validation policy
+    password_validation_policy {
+      enable_password_policy = true
+    }
+
     # Enable maintenance window
     maintenance_window {
       day          = 7 # Sunday
