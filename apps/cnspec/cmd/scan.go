@@ -359,7 +359,10 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		}
 		providers.DefaultRuntime().UpstreamConfig = conf.runtime.UpstreamConfig
 	} else {
-		log.Warn().Msg("No credentials provided. Switching to --incognito mode.")
+		// only warn users that we switch to incognito if we aren't already in incognito
+		if !conf.IsIncognito {
+			log.Warn().Msg("No credentials provided. Switching to --incognito mode.")
+		}
 		conf.IsIncognito = true
 	}
 
