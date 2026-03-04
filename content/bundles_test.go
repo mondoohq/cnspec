@@ -6,7 +6,10 @@ package content
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,7 +207,20 @@ func TestBundles(t *testing.T) {
 			require.NoError(t, err)
 
 			score := report.Scores[test.policyMrn]
-			assert.Equal(t, test.score, score.Value)
+			if !assert.Equal(t, test.score, score.Value) {
+				// Log all failing checks to make regressions from new checks easy to diagnose
+				var failingChecks []string
+				for mrn, s := range report.Scores {
+					if mrn == test.policyMrn || s == nil || s.ScoreCompletion == 0 || s.Weight == 0 {
+						continue
+					}
+					if s.Value < 100 {
+						failingChecks = append(failingChecks, fmt.Sprintf("  score=%d  %s", s.Value, mrn))
+					}
+				}
+				sort.Strings(failingChecks)
+				t.Logf("Failing checks (%d):\n%s", len(failingChecks), strings.Join(failingChecks, "\n"))
+			}
 		})
 	}
 }

@@ -15,8 +15,14 @@ resource "google_storage_bucket" "log_bucket" {
   force_destroy = false
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
 
   retention_policy {
+    is_locked        = true
     retention_period = 2592000 # 30 days in seconds
+  }
+
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.key.id
   }
 }
