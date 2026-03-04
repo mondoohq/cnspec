@@ -7,7 +7,8 @@ resource "google_dns_managed_zone" "example-zone" {
   }
 
   dnssec_config {
-    state = "on"
+    state         = "on"
+    non_existence = "nsec3"
 
     default_key_specs {
       algorithm  = "rsasha256"

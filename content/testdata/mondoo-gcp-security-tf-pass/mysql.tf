@@ -51,6 +51,8 @@ resource "google_sql_database_instance" "mysql_public_instance" {
     }
   }
 
+  encryption_key_name = google_kms_crypto_key.key.id
+
   # Prevent accidental deletion
   deletion_protection = var.deletion_protection
 }
