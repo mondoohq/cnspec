@@ -59,6 +59,9 @@ policies:
         - Amazon Timestream
         - AWS Systems Manager (SSM)
         - Virtual Private Cloud (VPCs)
+        - Amazon Route 53
+        - Amazon AppStream 2.0
+        - AWS Directory Service
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
@@ -150,6 +153,9 @@ policies:
           - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited
           - uid: mondoo-aws-security-ec2-keypair-type
           - uid: mondoo-aws-security-ec2-source-dest-check
+          - uid: mondoo-aws-security-ec2-uefi-boot-mode
+          - uid: mondoo-aws-security-ec2-no-paravirtual-instances
+          - uid: mondoo-aws-security-ec2-hibernation-encrypted-check
       - title: Amazon ECR
         checks:
           - uid: mondoo-aws-security-ecr-image-scan-on-push
@@ -293,6 +299,12 @@ policies:
       - title: Amazon ACM
         checks:
           - uid: mondoo-aws-security-acm-certificate-key-algorithm
+      - title: Amazon Route 53
+        checks:
+          - uid: mondoo-aws-security-route53-dnssec-enabled
+          - uid: mondoo-aws-security-route53-query-logging-enabled
+          - uid: mondoo-aws-security-route53-health-check-not-disabled
+          - uid: mondoo-aws-security-route53-health-check-https
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -19707,3 +19719,436 @@ queries:
   - uid: mondoo-aws-security-ec2-source-dest-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_instance")
     mql: terraform.state.resources.where(type == "aws_instance").all(values.source_dest_check != false)
+  - uid: mondoo-aws-security-ec2-uefi-boot-mode
+    title: Ensure EC2 instances use UEFI boot mode
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-ec2-uefi-boot-mode-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon EC2 instances use UEFI boot mode instead of legacy BIOS. UEFI supports Secure Boot, which validates that boot software is signed and untampered, protecting against boot-level malware such as rootkits and bootkits.
+
+        **Why this matters**
+
+        - Legacy BIOS boot mode lacks Secure Boot capabilities, leaving instances vulnerable to boot-level attacks that execute before the operating system loads.
+        - UEFI Secure Boot ensures that only trusted, signed firmware and bootloaders are executed during startup.
+        - Modern instance types and AMIs support UEFI, and AWS recommends migrating away from legacy BIOS for improved security posture.
+        - Compliance frameworks including NIST 800-53 and CIS Benchmarks recommend firmware integrity protections.
+
+        **Risk mitigation:**
+
+        - **Boot integrity:** Prevents unauthorized modification of boot components.
+        - **Malware protection:** Blocks rootkits and bootkits that tamper with the boot process.
+        - **Modern security:** Aligns with current best practices for instance hardening.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **EC2 Console**.
+            2. When launching new instances, select an AMI that supports UEFI boot mode.
+            3. For existing instances, check the **Boot mode** in instance details.
+            4. To migrate, create a new UEFI-compatible AMI and launch replacement instances.
+            5. Note: Boot mode cannot be changed on a running instance; a new instance must be launched.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check the boot mode of an instance:
+
+            ```bash
+            aws ec2 describe-instances --instance-ids <instance-id> \
+              --query "Reservations[*].Instances[*].[InstanceId,BootMode,CurrentInstanceBootMode]"
+            ```
+
+            Launch a new instance with UEFI boot mode by selecting a UEFI-compatible AMI:
+
+            ```bash
+            aws ec2 describe-images --image-ids <ami-id> \
+              --query "Images[*].[ImageId,BootMode]"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ami-boot.html
+        title: Boot modes for Amazon EC2 instances
+  - uid: mondoo-aws-security-ec2-uefi-boot-mode-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.where(state == "running").all(
+        currentInstanceBootMode == "uefi" || currentInstanceBootMode == "uefi-preferred"
+      )
+  - uid: mondoo-aws-security-ec2-no-paravirtual-instances
+    title: Ensure EC2 instances use HVM virtualization
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-ec2-no-paravirtual-instances-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon EC2 instances use Hardware Virtual Machine (HVM) virtualization instead of paravirtual (PV). PV instances use older virtualization technology with a larger attack surface and are not supported on modern instance types.
+
+        **Why this matters**
+
+        - Paravirtual instances rely on modified guest kernels that interact directly with the hypervisor, increasing the potential attack surface for guest-to-host escape vulnerabilities.
+        - HVM instances run on fully virtualized hardware with hardware-assisted virtualization extensions (Intel VT-x, AMD-V), providing stronger isolation.
+        - AWS has deprecated PV instance types, and no modern instance families support PV virtualization.
+        - PV instances cannot use Enhanced Networking, EBS optimization, or GPU capabilities available to HVM instances.
+
+        **Risk mitigation:**
+
+        - **Stronger isolation:** HVM provides hardware-level isolation between guest and host.
+        - **Reduced attack surface:** Eliminates PV-specific hypervisor call interfaces.
+        - **Modern security features:** HVM supports NitroTPM, Secure Boot, and other advanced security features.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **EC2 Console** and select **Instances**.
+            2. Check the **Virtualization type** column for each instance.
+            3. For any PV instances, plan migration to HVM:
+              - Create an HVM-compatible AMI or select a new HVM AMI.
+              - Launch a replacement HVM instance.
+              - Migrate workloads and terminate the PV instance.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            List instances with their virtualization type:
+
+            ```bash
+            aws ec2 describe-instances \
+              --query "Reservations[*].Instances[*].[InstanceId,VirtualizationType,State.Name]" \
+              --output table
+            ```
+
+            Filter for paravirtual instances:
+
+            ```bash
+            aws ec2 describe-instances --filters "Name=virtualization-type,Values=paravirtual" \
+              --query "Reservations[*].Instances[*].InstanceId"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/virtualization_types.html
+        title: Amazon EC2 virtualization types
+  - uid: mondoo-aws-security-ec2-no-paravirtual-instances-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.where(state == "running").all(
+        virtualizationType == "hvm"
+      )
+  - uid: mondoo-aws-security-ec2-hibernation-encrypted-check
+    title: Ensure EBS encryption by default is enabled when EC2 hibernation is in use
+    impact: 50
+    variants:
+      - uid: mondoo-aws-security-ec2-hibernation-encrypted-check-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that EBS encryption by default is enabled in accounts where EC2 instances use hibernation. When an instance hibernates, the contents of RAM — which may contain credentials, encryption keys, session tokens, and other sensitive data — are written to the root EBS volume. Enabling EBS encryption by default ensures that all newly created volumes, including those used by hibernation-enabled instances, are automatically encrypted.
+
+        **Why this matters**
+
+        - During hibernation, the entire contents of instance memory are persisted to the root EBS volume, including any sensitive data resident in RAM.
+        - Without encryption, this memory dump is stored in plaintext on the underlying storage, where it could be exposed through snapshot sharing, volume detachment, or storage-level compromise.
+        - AWS requires EBS encryption for hibernation. Enabling EBS encryption by default at the account level is the most reliable way to enforce this, as it applies to all new volumes automatically.
+        - Note: This check validates the account-level EBS encryption-by-default setting, not individual volume encryption. Instances launched before this setting was enabled may still have unencrypted volumes.
+
+        **Risk mitigation:**
+
+        - **Account-level enforcement:** Ensures all new EBS volumes are encrypted by default, including those used for hibernation.
+        - **Credential protection:** Prevents exposure of in-memory secrets, tokens, and keys written during hibernation.
+        - **Compliance:** Meets encryption-at-rest requirements for hibernation data.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **EC2 Console** and select **Instances**.
+            2. Identify instances with hibernation enabled (check **Stop - Hibernate behavior** in instance details).
+            3. Verify the root volume is encrypted by checking **Block devices** in the instance details.
+            4. If the root volume is not encrypted:
+              - Create an encrypted snapshot of the root volume.
+              - Create an encrypted AMI from the snapshot.
+              - Launch a new instance from the encrypted AMI with hibernation enabled.
+              - Terminate the original instance.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Find instances with hibernation enabled:
+
+            ```bash
+            aws ec2 describe-instances \
+              --query "Reservations[*].Instances[*].[InstanceId,HibernationOptions.Configured]" \
+              --output table
+            ```
+
+            Check if the root volume is encrypted:
+
+            ```bash
+            aws ec2 describe-volumes --volume-ids <root-volume-id> \
+              --query "Volumes[*].[VolumeId,Encrypted]"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/hibernating-prerequisites.html
+        title: Hibernation prerequisites for Amazon EC2
+  - uid: mondoo-aws-security-ec2-hibernation-encrypted-check-aws
+    filters: asset.platform == "aws"
+    mql: |
+      if (aws.ec2.instances.where(state == "running" && hibernationConfigured == true).length > 0) {
+        aws.ec2.ebsEncryptionByDefault.values.all(_ == true)
+      }
+  - uid: mondoo-aws-security-route53-dnssec-enabled
+    title: Ensure Route 53 public hosted zones have DNSSEC signing enabled
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-route53-dnssec-enabled-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon Route 53 public hosted zones have DNSSEC signing enabled. DNSSEC (Domain Name System Security Extensions) adds cryptographic signatures to DNS records, allowing resolvers to verify that responses have not been tampered with in transit.
+
+        **Why this matters**
+
+        - Without DNSSEC, DNS responses can be spoofed or poisoned by attackers, redirecting users to malicious sites (DNS cache poisoning, man-in-the-middle attacks).
+        - DNSSEC provides authentication of DNS data origin and data integrity verification.
+        - AWS Route 53 supports DNSSEC signing for public hosted zones, with AWS managing the Zone Signing Key (ZSK) and customers managing the Key Signing Key (KSK) via AWS KMS.
+        - Private hosted zones do not support DNSSEC and are excluded from this check.
+
+        **Risk mitigation:**
+
+        - **DNS integrity:** Prevents DNS spoofing and cache poisoning attacks.
+        - **Authentication:** Verifies that DNS responses originate from the authoritative source.
+        - **Trust chain:** Establishes a chain of trust from the root DNS zone to your domain.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Route 53 Console** and select **Hosted zones**.
+            2. Select the public hosted zone to configure.
+            3. Go to the **DNSSEC signing** tab.
+            4. Choose **Enable DNSSEC signing**.
+            5. Create or select a KMS key for the Key Signing Key (KSK).
+            6. After enabling, establish the chain of trust by adding a DS record to the parent zone through your domain registrar.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check DNSSEC status for a hosted zone:
+
+            ```bash
+            aws route53 get-dnssec --hosted-zone-id <zone-id>
+            ```
+
+            Enable DNSSEC signing:
+
+            ```bash
+            aws route53 create-key-signing-key \
+              --hosted-zone-id <zone-id> \
+              --name example-ksk \
+              --key-management-service-arn arn:aws:kms:us-east-1:account-id:key/key-id \
+              --status ACTIVE
+
+            aws route53 enable-hosted-zone-dnssec --hosted-zone-id <zone-id>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-configuring-dnssec.html
+        title: Configuring DNSSEC signing in Amazon Route 53
+  - uid: mondoo-aws-security-route53-dnssec-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.route53.hostedZones.where(isPrivate == false).all(
+        dnssecStatus['serveSignature'] == "SIGNING"
+      )
+  - uid: mondoo-aws-security-route53-query-logging-enabled
+    title: Ensure Route 53 public hosted zones have query logging enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-route53-query-logging-enabled-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon Route 53 public hosted zones have DNS query logging configured. Query logging sends information about DNS queries to Amazon CloudWatch Logs, enabling visibility into DNS traffic patterns and supporting security monitoring.
+
+        **Why this matters**
+
+        - Without query logging, there is no visibility into which DNS queries are being made against your hosted zones, making it difficult to detect reconnaissance, data exfiltration via DNS tunneling, or domain abuse.
+        - DNS query logs provide critical data for incident response, allowing security teams to trace suspicious domain lookups and identify compromised systems.
+        - Query logs can be used to detect shadow IT, unauthorized subdomains, and unusual query patterns that may indicate an attack.
+        - Compliance frameworks recommend logging DNS activity as part of network monitoring requirements.
+
+        **Risk mitigation:**
+
+        - **Threat detection:** Enables detection of DNS-based attacks including tunneling and exfiltration.
+        - **Incident response:** Provides DNS query history for forensic analysis.
+        - **Compliance:** Meets audit logging requirements for DNS infrastructure.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Route 53 Console** and select **Hosted zones**.
+            2. Select the public hosted zone.
+            3. Go to the **Query logging** tab.
+            4. Choose **Configure query logging**.
+            5. Select or create a CloudWatch Logs log group in the **us-east-1** region.
+            6. Configure the appropriate resource policy to allow Route 53 to write to the log group.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a CloudWatch Logs log group (must be in us-east-1):
+
+            ```bash
+            aws logs create-log-group \
+              --log-group-name /aws/route53/example.com \
+              --region us-east-1
+            ```
+
+            Enable query logging:
+
+            ```bash
+            aws route53 create-query-logging-config \
+              --hosted-zone-id <zone-id> \
+              --cloud-watch-logs-log-group-arn arn:aws:logs:us-east-1:account-id:log-group:/aws/route53/example.com
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/query-logs.html
+        title: Logging DNS queries in Amazon Route 53
+  - uid: mondoo-aws-security-route53-query-logging-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.route53.hostedZones.where(isPrivate == false).all(
+        queryLoggingConfig != null
+      )
+  - uid: mondoo-aws-security-route53-health-check-not-disabled
+    title: Ensure Route 53 health checks are not disabled
+    impact: 50
+    variants:
+      - uid: mondoo-aws-security-route53-health-check-not-disabled-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that no Amazon Route 53 health checks are in a disabled state. Disabled health checks do not monitor endpoint availability, which can leave DNS failover routing non-functional and cause traffic to be directed to unhealthy or offline endpoints.
+
+        **Why this matters**
+
+        - Disabled health checks silently break DNS failover configurations, meaning traffic may continue to route to degraded or unreachable endpoints without triggering a failover.
+        - If a health check associated with a failover or weighted routing policy is disabled, Route 53 considers the endpoint healthy by default, defeating the purpose of health-based routing.
+        - Disabled health checks create a false sense of security, as monitoring dashboards may not clearly indicate that checks are not running.
+
+        **Risk mitigation:**
+
+        - **Availability:** Ensures DNS failover routing works correctly by keeping health checks active.
+        - **Visibility:** Maintains accurate health status for all monitored endpoints.
+        - **Reliability:** Prevents routing traffic to unhealthy endpoints due to disabled monitoring.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Route 53 Console** and select **Health checks**.
+            2. Review the list for any health checks with a **Disabled** status.
+            3. Select the disabled health check and choose **Edit**.
+            4. Uncheck the **Disabled** option to re-enable the health check.
+            5. If the health check is no longer needed, delete it rather than leaving it disabled.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            List all health checks and their disabled status:
+
+            ```bash
+            aws route53 list-health-checks \
+              --query "HealthChecks[*].{Id:Id,Disabled:HealthCheckConfig.Disabled,Type:HealthCheckConfig.Type}"
+            ```
+
+            Re-enable a disabled health check:
+
+            ```bash
+            aws route53 update-health-check \
+              --health-check-id <health-check-id> \
+              --no-disabled
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/health-checks-creating.html
+        title: Creating and updating Amazon Route 53 health checks
+  - uid: mondoo-aws-security-route53-health-check-not-disabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.route53.healthChecks.none(disabled == true)
+  - uid: mondoo-aws-security-route53-health-check-https
+    title: Ensure Route 53 endpoint health checks use HTTPS
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-route53-health-check-https-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/icon: "aws"
+    docs:
+      desc: |
+        This check ensures that Amazon Route 53 endpoint health checks use HTTPS rather than HTTP. Health checks using HTTP send requests in plaintext, which can be intercepted and do not validate the identity of the endpoint being checked.
+
+        **Why this matters**
+
+        - HTTP health checks transmit data in plaintext, making them susceptible to interception and man-in-the-middle attacks.
+        - HTTPS health checks verify the endpoint's TLS certificate, ensuring that the health check is actually reaching the intended endpoint and not an impersonator.
+        - If health check traffic is intercepted, an attacker could manipulate responses to keep Route 53 routing traffic to a compromised endpoint.
+        - This check only applies to endpoint-type health checks (HTTP, HTTPS, HTTP_STR_MATCH, HTTPS_STR_MATCH). Calculated and CloudWatch health checks are excluded.
+
+        **Risk mitigation:**
+
+        - **Encryption in transit:** Ensures health check traffic is encrypted.
+        - **Endpoint authentication:** Validates the TLS certificate of monitored endpoints.
+        - **Tamper protection:** Prevents manipulation of health check responses.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Route 53 Console** and select **Health checks**.
+            2. Select the HTTP health check and choose **Edit**.
+            3. Change the **Protocol** from HTTP to HTTPS.
+            4. Set the **Port** to 443 (or the appropriate HTTPS port).
+            5. Enable **SNI** if checking a domain that uses name-based virtual hosting.
+            6. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Update a health check to use HTTPS:
+
+            ```bash
+            aws route53 update-health-check \
+              --health-check-id <health-check-id> \
+              --port 443 \
+              --resource-path /healthcheck \
+              --enable-sni
+            ```
+
+            Note: You cannot change the health check type directly. To switch from HTTP to HTTPS, create a new HTTPS health check and update your DNS records to reference it.
+    refs:
+      - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/health-checks-types.html
+        title: Types of Amazon Route 53 health checks
+  - uid: mondoo-aws-security-route53-health-check-https-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.route53.healthChecks.where(
+        type == "HTTP" || type == "HTTP_STR_MATCH"
+      ).all(
+        protocol == "HTTPS"
+      )
