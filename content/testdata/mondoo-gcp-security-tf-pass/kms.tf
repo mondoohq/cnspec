@@ -1,6 +1,6 @@
 resource "google_kms_key_ring" "keyring" {
   name     = "keyring-example-${random_id.rnd.hex}"
-  location = "global"
+  location = "us-central1"
 }
 
 resource "google_kms_crypto_key" "key" {

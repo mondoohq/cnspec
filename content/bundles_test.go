@@ -180,7 +180,7 @@ func TestBundles(t *testing.T) {
 			bundleFile: "./mondoo-gcp-security.mql.yaml",
 			testDir:    "./testdata/mondoo-gcp-security-tf-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-gcp-security",
-			score:      60,
+			score:      100,
 		},
 		{
 			provider:   "terraform",
