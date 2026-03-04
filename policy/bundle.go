@@ -49,7 +49,7 @@ func NewBundleLoader(resolvers ...BundleResolver) *BundleLoader {
 }
 
 func DefaultBundleLoader() *BundleLoader {
-	return NewBundleLoader(defaultS3BundleResolver(), defaultFileBundleResolver())
+	return NewBundleLoader(defaultS3BundleResolver(), defaultHTTPBundleResolver(), defaultFileBundleResolver())
 }
 
 func (l *BundleLoader) getResolver(path string) (BundleResolver, error) {
