@@ -9,6 +9,13 @@ cnspec assesses your entire infrastructure's security and compliance. It finds v
 
 A powerful policy as code engine, cnspec is built upon Mondoo's security data fabric. It comes configured with default security policies that run right out of the box. It's both fast and simple to use!
 
+### Quick start
+
+```bash
+bash -c "$(curl -sSL https://install.mondoo.com/sh)"
+cnspec scan local
+```
+
 ![cnspec scan example](.github/images/cnspec-scan.gif)
 
 ## Installation
@@ -83,15 +90,15 @@ cnspec scans for vulnerabilities in a wide range of platforms. Vulnerability sca
 
 ![cnspec vulnerability scan example](.github/images/cnspec-vuln.gif)
 
-NOTE: The current version requires you to log into Mondoo Platform. Future versions will let you scan the platforms without logging in.
+NOTE: Vulnerability scanning requires the client to be logged into Mondoo Platform.
 
 ### Examples
 
 ```bash
 # scan container image
-cnspec vuln docker debian:10
+cnspec vuln docker debian:12
 
-# scan aws instance via EC@ instance connect
+# scan aws instance via EC2 instance connect
 cnspec vuln aws ec2 instance-connect root@i-1234567890abcdef0
 
 # scan instance via SSH
@@ -110,7 +117,7 @@ cnspec vuln local
 
 | Platform                 | Versions                       |
 | ------------------------ | ------------------------------ |
-| Alpine                   | 3.10 - 3.20                    |
+| Alpine                   | 3.10 - 3.23                    |
 | AlmaLinux                | 8, 9, 10                       |
 | Amazon Linux             | 1, 2, 2023                     |
 | Arch Linux               | Rolling                        |
@@ -215,7 +222,7 @@ If you're interested in writing your own policies or contributing policies back 
 | AWS EC2 instances             | `ssh`                      | `cnspec scan ssh user@host`                                                                                                                           |
 | Confluence users              | `atlassian`                | `cnspec shell atlassian --host YOUR_HOST_URL --admin-token YOUR_TOKEN`                                                                                |
 | Container images              | `container`, `docker`      | `cnspec scan container ubuntu:latest`                                                                                                                 |
-| Container registries          | `container registry`       | `cnspec scan container registry index.docker.io/library/rockylinux:8 `                                                                                |
+| Container registries          | `container registry`       | `cnspec scan container registry index.docker.io/library/rockylinux:8`                                                                                |
 | DNS records                   | `host`                     | `cnspec scan host mondoo.com`                                                                                                                         |
 | Dockerfiles                   | `docker`                   | `cnspec shell docker file FILENAME`                                                                                                                   |
 | GitHub organizations          | `github org`               | `cnspec scan github org mondoohq`                                                                                                                     |
@@ -227,7 +234,7 @@ If you're interested in writing your own policies or contributing policies back 
 | Jira projects                 | `atlassian`                | `cnspec shell atlassian --host YOUR_HOST_URL --admin-token YOUR_TOKEN`                                                                                |
 | Kubernetes cluster nodes      | `local`, `ssh`             | `cnspec scan ssh user@host`                                                                                                                           |
 | Kubernetes clusters           | `k8s`                      | `cnspec scan k8s`                                                                                                                                     |
-| Kubernetes manifests          | `k8s`                      | `cnspec scan k8s manifest.yaml `                                                                                                                      |
+| Kubernetes manifests          | `k8s`                      | `cnspec scan k8s manifest.yaml`                                                                                                                      |
 | Kubernetes workloads          | `k8s`                      | `cnspec scan k8s --discover pods,deployments`                                                                                                         |
 | Linux hosts                   | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@host`                                                                                            |
 | macOS hosts                   | `local`, `ssh`             | `cnspec scan local` or<br></br>`cnspec scan ssh user@IP_ADDRESS`                                                                                      |
@@ -267,7 +274,7 @@ Our goal is to secure all layers of your infrastructure. If you need support or 
 
 ## Development
 
-See our [development documentation](docs/development.md) for information on building and contributing to cnquery.
+See our [development documentation](docs/development.md) for information on building and contributing to cnspec.
 
 ## Legal
 
