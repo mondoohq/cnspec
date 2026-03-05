@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-best-practices
     name: Mondoo Kubernetes Best Practices
-    version: 1.1.1
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -111,6 +111,11 @@ policies:
           - uid: mondoo-kubernetes-best-practices-pod-readinessProbe
           - uid: mondoo-kubernetes-best-practices-pod-requestcpu
           - uid: mondoo-kubernetes-best-practices-pod-requestmemory
+      - title: Cluster Configuration
+        filters: asset.platform == "k8s-cluster"
+        checks:
+          - uid: mondoo-kubernetes-best-practices-control-plane-taint
+          - uid: mondoo-kubernetes-best-practices-hpa-min-replicas
       - title: Ingress Configuration
         filters: asset.platform == "k8s-ingress"
         checks:
@@ -2662,3 +2667,100 @@ queries:
         title: Kubernetes Ingress TLS
       - url: https://cert-manager.io/docs/
         title: cert-manager Documentation
+  - uid: mondoo-kubernetes-best-practices-control-plane-taint
+    title: Control plane nodes should have a NoSchedule taint
+    impact: 60
+    mql: |
+      k8s.nodes
+        .where(labels["node-role.kubernetes.io/control-plane"] != null)
+        .all(taints.any(effect == "NoSchedule"))
+    docs:
+      desc: |
+        This check verifies that all control plane nodes have a `NoSchedule` taint to prevent regular workloads from being scheduled on them.
+
+        **Why this matters**
+
+        Control plane nodes run critical cluster components such as the API server, etcd, controller manager, and scheduler. Allowing user workloads on these nodes creates several risks:
+
+          - **Resource contention**: User workloads can consume CPU and memory needed by control plane components, destabilizing the entire cluster.
+          - **Blast radius**: A misbehaving or compromised user pod on a control plane node has closer proximity to sensitive components like etcd, which stores all cluster state and secrets.
+          - **Availability risk**: If a user workload causes a control plane node to become unresponsive, cluster management operations (scaling, deployments, self-healing) stop working.
+          - **Security boundary**: Separating control plane from data plane is a fundamental Kubernetes security principle that limits the impact of workload-level compromises.
+          - **Operational clarity**: Taints make scheduling behavior explicit, preventing accidental placement of workloads on control plane nodes.
+
+        Ensure all control plane nodes have at least a `NoSchedule` taint to keep user workloads on dedicated worker nodes.
+      audit: |
+        Check control plane node taints:
+
+        ```bash
+        kubectl get nodes -l node-role.kubernetes.io/control-plane -o json | jq '.items[] | {name: .metadata.name, taints: .spec.taints}'
+        ```
+      remediation: |
+        Add a `NoSchedule` taint to control plane nodes:
+
+        ```bash
+        kubectl taint nodes <control-plane-node> node-role.kubernetes.io/control-plane:NoSchedule
+        ```
+
+        Most Kubernetes distributions (kubeadm, EKS, GKE, AKS) apply this taint by default. If it has been removed, re-apply it and migrate any user workloads to worker nodes.
+    refs:
+      - url: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+        title: Kubernetes Taints and Tolerations
+      - url: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#control-plane-node-isolation
+        title: Kubernetes Control Plane Node Isolation
+  - uid: mondoo-kubernetes-best-practices-hpa-min-replicas
+    title: HorizontalPodAutoscalers should have at least 2 minimum replicas
+    impact: 40
+    mql: |
+      k8s.horizontalPodAutoscalers.all(spec["minReplicas"] != null && spec["minReplicas"] >= 2)
+    docs:
+      desc: |
+        This check ensures that all HorizontalPodAutoscalers (HPAs) are configured with a minimum replica count of at least 2.
+
+        **Why this matters**
+
+        An HPA with `minReplicas: 1` means the autoscaler can scale a workload down to a single replica, eliminating high availability:
+
+          - **Single point of failure**: With one replica, any pod disruption (node failure, OOM kill, deployment rollout) causes complete service downtime.
+          - **Rolling update gaps**: During deployments, the single replica is terminated before or during replacement, causing a brief outage.
+          - **Node maintenance**: Voluntary disruptions like node drains cannot gracefully migrate traffic when only one replica exists.
+          - **Scale-up latency**: Scaling from 1 to 2 replicas takes time (metrics collection, cooldown periods). During this window, the single replica handles all traffic and may become overloaded.
+          - **Pod Disruption Budgets**: PDBs cannot provide meaningful protection with only one replica, since there is no redundancy to preserve.
+
+        Set `minReplicas` to at least 2 for any workload that requires availability, ensuring there is always redundancy even at minimum scale.
+      audit: |
+        Check HPA minimum replica settings:
+
+        ```bash
+        kubectl get hpa -A -o json | jq '.items[] | {namespace: .metadata.namespace, name: .metadata.name, minReplicas: .spec.minReplicas}'
+        ```
+      remediation: |
+        Update the HPA to set `minReplicas` to at least 2:
+
+        ```yaml
+        apiVersion: autoscaling/v2
+        kind: HorizontalPodAutoscaler
+        metadata:
+          name: my-app
+        spec:
+          scaleTargetRef:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: my-app
+          minReplicas: 2
+          maxReplicas: 10
+          metrics:
+            - type: Resource
+              resource:
+                name: cpu
+                target:
+                  type: Utilization
+                  averageUtilization: 70
+        ```
+
+        For workloads that intentionally run as singletons (e.g., leader-elected controllers), consider excluding them from this check or documenting the exception.
+    refs:
+      - url: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
+        title: Kubernetes Horizontal Pod Autoscaling
+      - url: https://kubernetes.io/docs/concepts/workloads/pods/disruptions/
+        title: Kubernetes Pod Disruptions
