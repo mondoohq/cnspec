@@ -63,7 +63,7 @@ var (
 		Short: "Onboard Amazon Web Services",
 		Long: `Use this command to connect your AWS environment into the Mondoo Platform.
 
-		To onboard your AWS account, you need to create an AWS user with read-only access. For more info, see: https://mondoo.com/docs/platform/infra/cloud/aws/hosted/integration-hosted/index.html#create-an-aws-user-and-access-key-for-mondoo.
+		To onboard your AWS account, you need to create an AWS user with read-only access. For more info, see: https://mondoo.com/docs/infra/cloud/aws/hosted/integration-hosted#create-an-aws-user-and-access-key-for-mondoo.
 
 		Then provide the AWS access key and secret key as environment variables:
 			export TF_VAR_aws_access_key=<access_key>
