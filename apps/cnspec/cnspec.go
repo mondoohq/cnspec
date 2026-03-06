@@ -5,7 +5,10 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd"
 	mql "go.mondoo.com/mql/v13"
@@ -19,6 +22,9 @@ import (
 
 func main() {
 	defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
+
+	// Check if running as 'cnquery' and show deprecation warning
+	checkDeprecatedBinaryName()
 
 	// Normalize --auto-update flag to handle both "--auto-update false" and "--auto-update=false" formats
 	// This must happen before any argument parsing (self-update check or cobra)
@@ -51,6 +57,18 @@ func main() {
 
 	go metrics.Start()
 	cmd.Execute()
+}
+
+// checkDeprecatedBinaryName checks if the tool is being run as 'cnquery' (via symlink,
+// hardlink, or renamed binary) and prints a deprecation warning to stderr.
+func checkDeprecatedBinaryName() {
+	binaryName := filepath.Base(os.Args[0])
+	// Remove .exe suffix on Windows
+	binaryName = strings.TrimSuffix(binaryName, ".exe")
+
+	if binaryName == "cnquery" {
+		log.Warn().Msg("'cnquery' has been renamed to 'mql'. Please update your scripts and aliases. For more information, visit: https://github.com/mondoohq/mql")
+	}
 }
 
 // normalizeAutoUpdateFlag converts space-separated --auto-update flags to the = format.
