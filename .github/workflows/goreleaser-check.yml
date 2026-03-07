@@ -1,0 +1,89 @@
+name: GoReleaser Check
+
+on:
+  pull_request:
+    paths:
+      - ".goreleaser.yml"
+      - ".github/**/.goreleaser-*.yml"
+      - ".github/workflows/goreleaser-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Import environment variables from file
+        run: cat ".github/env" >> $GITHUB_ENV
+      - name: Install Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: ">=${{ env.golang-version }}"
+          cache: false
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
+        with:
+          install-only: true
+      - name: Find and check goreleaser configs
+        id: check-configs
+        run: |
+          # Find all goreleaser config files
+          configs=()
+
+          # Always check main config if it exists
+          if [ -f ".goreleaser.yml" ]; then
+            configs+=(".goreleaser.yml")
+          fi
+
+          # Find additional configs in .github directory
+          while IFS= read -r -d '' config; do
+            configs+=("$config")
+          done < <(find .github -name '.goreleaser-*.yml' -print0 2>/dev/null)
+
+          if [ ${#configs[@]} -eq 0 ]; then
+            echo "No goreleaser configs found"
+            exit 1
+          fi
+
+          # Initialize summary
+          echo "## GoReleaser Config Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Config | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          overall_status=0
+          has_warnings=false
+
+          # Check each config
+          for config in "${configs[@]}"; do
+            echo ""
+            echo "Checking ${config}..."
+
+            if goreleaser check -f "$config" 2>&1; then
+              echo "| ${config} | ✅ success |" >> $GITHUB_STEP_SUMMARY
+              echo "✅ ${config} is valid"
+            else
+              exit_code=$?
+              if [ $exit_code -eq 2 ]; then
+                echo "| ${config} | ⚠️ warning |" >> $GITHUB_STEP_SUMMARY
+                echo "⚠️ ${config} has deprecation warnings but is valid"
+                has_warnings=true
+              else
+                echo "| ${config} | ❌ failure |" >> $GITHUB_STEP_SUMMARY
+                echo "❌ ${config} validation failed"
+                overall_status=1
+              fi
+            fi
+          done
+
+          # Add note about warnings if any
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$has_warnings" = true ]; then
+            echo "⚠️ **Note**: Some configs have deprecation warnings. While the configs are valid, consider updating them to use current syntax." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          exit $overall_status
