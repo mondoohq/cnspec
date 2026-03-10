@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-security
     name: Mondoo Kubernetes Cluster and Workload Security
-    version: 1.3.0
+    version: 1.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -74,6 +74,15 @@ policies:
           - uid: mondoo-kubernetes-security-kubelet-tls-certificate
           - uid: mondoo-kubernetes-security-secure-kubelet-cert-authorities
           - uid: mondoo-kubernetes-security-secure-kubelet-config
+      - title: Cluster Storage Security
+        filters: asset.platform == "k8s-cluster"
+        checks:
+          - uid: mondoo-kubernetes-security-no-hostpath-persistent-volumes
+      - title: Cluster Resource Security
+        filters: asset.platform == "k8s-cluster"
+        checks:
+          - uid: mondoo-kubernetes-security-namespaces-have-resourcequotas
+          - uid: mondoo-kubernetes-security-namespaces-have-limitranges
       - title: Kubernetes CronJobs Security
         filters: asset.platform == "k8s-cronjob"
         checks:
@@ -8653,3 +8662,161 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
+  - uid: mondoo-kubernetes-security-no-hostpath-persistent-volumes
+    title: Ensure PersistentVolumes do not use hostPath
+    impact: 80
+    mql: |
+      k8s.persistentVolumes.none(spec["hostPath"] != null)
+    docs:
+      desc: |
+        This check ensures that no PersistentVolumes in the cluster use hostPath as a volume source.
+
+        **Why this matters**
+
+        hostPath PersistentVolumes mount directories from the host node's filesystem directly into pods, creating significant security risks:
+
+        - **Container escape**: Pods with access to the host filesystem can read or modify sensitive host files, including credentials, configuration, and container runtime sockets.
+        - **Cross-pod data access**: Any pod that mounts the same hostPath can access data belonging to other pods or the host, breaking namespace isolation.
+        - **Privilege escalation**: Write access to host paths such as `/etc`, `/var/run`, or `/var/lib/kubelet` can be chained with other vulnerabilities to escalate to host-level root access.
+        - **Node compromise**: A compromised container with hostPath access can modify host binaries, install backdoors, or tamper with kubelet configuration.
+        - **Multi-tenant risk**: In shared clusters, hostPath volumes bypass all namespace-level isolation boundaries.
+
+        Use cloud-native storage provisioners, CSI drivers, or network-attached storage instead of hostPath for persistent data.
+      remediation: |
+        Replace hostPath PersistentVolumes with a proper storage backend:
+
+        ```yaml
+        # Instead of:
+        apiVersion: v1
+        kind: PersistentVolume
+        metadata:
+          name: example-pv
+        spec:
+          hostPath:
+            path: /data/app
+
+        # Use a CSI driver or cloud storage:
+        apiVersion: v1
+        kind: PersistentVolume
+        metadata:
+          name: example-pv
+        spec:
+          csi:
+            driver: ebs.csi.aws.com
+            volumeHandle: vol-0123456789abcdef0
+          capacity:
+            storage: 10Gi
+          accessModes:
+            - ReadWriteOnce
+        ```
+
+        If hostPath is required for development, use Pod Security Admission or OPA/Gatekeeper policies to restrict it to specific namespaces.
+    refs:
+      - url: https://kubernetes.io/docs/concepts/storage/volumes/#hostpath
+        title: Kubernetes Volumes - hostPath
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+        title: Kubernetes Pod Security Standards
+  - uid: mondoo-kubernetes-security-namespaces-have-resourcequotas
+    title: Ensure non-system namespaces have ResourceQuotas
+    impact: 60
+    mql: |
+      k8s.namespaces
+        .where(name != "kube-system" && name != "kube-public" && name != "kube-node-lease" && name != "default")
+        .all(
+          name in k8s.resourceQuotas.map(namespace)
+        )
+    docs:
+      desc: |
+        This check ensures that every non-system namespace in the cluster (excluding `default`) has at least one ResourceQuota defined. The `default` namespace is excluded because it is a system-provided namespace that may not have user workloads; organizations that deploy workloads to `default` should create a separate check for it.
+
+        **Why this matters**
+
+        Without ResourceQuotas, any namespace can consume unlimited cluster resources, enabling resource exhaustion attacks and operational failures:
+
+        - **Denial of service**: A single misbehaving workload or compromised namespace can consume all available CPU, memory, or storage, starving other workloads.
+        - **Noisy neighbor problems**: Without quotas, one team's workloads can monopolize shared cluster resources, impacting other teams.
+        - **Uncontrolled pod creation**: Attackers who gain access to a namespace can create unlimited pods for cryptomining, data exfiltration, or lateral movement.
+        - **Cost overruns**: Unbounded resource consumption in cloud environments leads to unexpected infrastructure costs.
+        - **Cluster instability**: Resource exhaustion at the node level can cause kubelet failures, pod evictions, and cascading outages.
+
+        Define ResourceQuotas for every non-system namespace to set hard limits on CPU, memory, pod count, and other resource types.
+      remediation: |
+        Create a ResourceQuota for each non-system namespace:
+
+        ```yaml
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: default-quota
+          namespace: my-namespace
+        spec:
+          hard:
+            requests.cpu: "4"
+            requests.memory: 8Gi
+            limits.cpu: "8"
+            limits.memory: 16Gi
+            pods: "20"
+        ```
+
+        Adjust the limits based on the namespace's expected workload requirements.
+    refs:
+      - url: https://kubernetes.io/docs/concepts/policy/resource-quotas/
+        title: Kubernetes Resource Quotas
+      - url: https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/quota-memory-cpu-namespace/
+        title: Configure Memory and CPU Quotas for a Namespace
+  - uid: mondoo-kubernetes-security-namespaces-have-limitranges
+    title: Ensure non-system namespaces have LimitRanges
+    impact: 60
+    mql: |
+      k8s.namespaces
+        .where(name != "kube-system" && name != "kube-public" && name != "kube-node-lease" && name != "default")
+        .all(
+          name in k8s.limitRanges.map(namespace)
+        )
+    docs:
+      desc: |
+        This check ensures that every non-system namespace in the cluster has at least one LimitRange defined.
+
+        **Why this matters**
+
+        Without LimitRanges, pods can be created without any resource requests or limits, leading to unpredictable scheduling and resource exhaustion:
+
+        - **Unbounded containers**: Pods without resource limits can consume all available node resources, causing other pods on the same node to be evicted or OOM-killed.
+        - **Scheduling inefficiency**: Without resource requests, the scheduler cannot make informed placement decisions, leading to unbalanced node utilization.
+        - **ResourceQuota bypass**: Even with ResourceQuotas in place, pods without explicit resource requests are not counted against the quota, undermining resource governance.
+        - **Quality of service degradation**: Pods without resource requests are assigned the lowest QoS class (BestEffort) and are the first to be evicted under node pressure.
+        - **Operational unpredictability**: Without default limits, developers must remember to set resource constraints on every pod, and omissions create silent risks.
+
+        LimitRanges provide default resource requests and limits for pods that don't specify them, ensuring every pod has bounded resource consumption.
+      remediation: |
+        Create a LimitRange for each non-system namespace:
+
+        ```yaml
+        apiVersion: v1
+        kind: LimitRange
+        metadata:
+          name: default-limits
+          namespace: my-namespace
+        spec:
+          limits:
+            - type: Container
+              default:
+                cpu: 500m
+                memory: 512Mi
+              defaultRequest:
+                cpu: 100m
+                memory: 128Mi
+              max:
+                cpu: "2"
+                memory: 2Gi
+              min:
+                cpu: 50m
+                memory: 64Mi
+        ```
+
+        Adjust the default values and ranges based on your namespace's workload requirements.
+    refs:
+      - url: https://kubernetes.io/docs/concepts/policy/limit-range/
+        title: Kubernetes Limit Ranges
+      - url: https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/memory-default-namespace/
+        title: Configure Default Memory Requests and Limits for a Namespace
