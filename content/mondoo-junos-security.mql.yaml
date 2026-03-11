@@ -1,0 +1,1164 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-junos-security
+    name: Mondoo Juniper Junos Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: junos,networkdevice
+    require:
+      - provider: junos
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Juniper Junos routers, switches, and firewalls
+    docs:
+      desc: |-
+        The Mondoo Juniper Junos Security policy provides security hardening checks for Juniper devices running Junos OS. This policy validates that your Juniper network infrastructure is hardened against common attack vectors and configured in accordance with security standards.
+
+        This policy covers the following security areas:
+
+        - **SSH Hardening**: Root login restrictions, cryptographic algorithm validation, and brute-force protection
+        - **User Account Security**: Authentication enforcement and privilege restriction
+        - **Insecure Service Elimination**: Disabling Telnet, FTP, finger, and other cleartext protocols
+        - **SNMP Hardening**: Default community string removal, access restrictions, and read-only enforcement
+        - **Logging and Auditing**: Centralized syslog with secure transport for tamper-resistant audit trails
+        - **Security Zone Hardening**: Policy logging, screen profile enforcement, and untrust zone lockdown
+        - **IDS/IPS Screen Profiles**: Protection against SYN floods, land attacks, teardrop, and other network attacks
+        - **License Compliance**: Verification that security feature licenses remain valid
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: SSH Hardening
+        filters: asset.platform == "junos"
+        checks:
+          - uid: mondoo-junos-security-ssh-root-login-disabled
+          - uid: mondoo-junos-security-ssh-no-weak-ciphers
+          - uid: mondoo-junos-security-ssh-no-weak-macs
+          - uid: mondoo-junos-security-ssh-no-weak-key-exchanges
+          - uid: mondoo-junos-security-ssh-tcp-forwarding-disabled
+          - uid: mondoo-junos-security-ssh-connection-limit
+          - uid: mondoo-junos-security-ssh-rate-limit
+      - title: User Account Security
+        filters: asset.platform == "junos"
+        checks:
+          - uid: mondoo-junos-security-all-users-have-credentials
+          - uid: mondoo-junos-security-no-super-user-class-overuse
+      - title: Insecure Service Elimination
+        filters: asset.platform == "junos"
+        checks:
+          - uid: mondoo-junos-security-telnet-disabled
+          - uid: mondoo-junos-security-ftp-disabled
+          - uid: mondoo-junos-security-finger-disabled
+      - title: SNMP Security
+        filters: |
+          asset.platform == "junos"
+          junos.snmpCommunities != empty
+        checks:
+          - uid: mondoo-junos-security-snmp-no-default-communities
+          - uid: mondoo-junos-security-snmp-no-read-write
+          - uid: mondoo-junos-security-snmp-client-lists
+      - title: Logging and Auditing
+        filters: asset.platform == "junos"
+        checks:
+          - uid: mondoo-junos-security-syslog-host-configured
+          - uid: mondoo-junos-security-syslog-secure-transport
+      - title: Security Zone Hardening
+        filters: |
+          asset.platform == "junos"
+          junos.securityPolicies != empty
+        checks:
+          - uid: mondoo-junos-security-policy-logging-enabled
+          - uid: mondoo-junos-security-zones-have-screens
+          - uid: mondoo-junos-security-untrust-zone-minimal-services
+      - title: IDS/IPS Screen Profiles
+        filters: |
+          asset.platform == "junos"
+          junos.screenProfiles != empty
+        checks:
+          - uid: mondoo-junos-security-screen-syn-flood
+          - uid: mondoo-junos-security-screen-icmp-ping-death
+          - uid: mondoo-junos-security-screen-ip-source-route
+          - uid: mondoo-junos-security-screen-tcp-land
+          - uid: mondoo-junos-security-screen-ip-tear-drop
+          - uid: mondoo-junos-security-screen-tcp-winnuke
+      - title: License Compliance
+        filters: |
+          asset.platform == "junos"
+          junos.licenses != empty
+        checks:
+          - uid: mondoo-junos-security-no-expired-licenses
+    scoring_system: average
+queries:
+  # ==========================================
+  # SSH Hardening
+  # ==========================================
+  - uid: mondoo-junos-security-ssh-root-login-disabled
+    title: Ensure root login via SSH is denied
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      junos.sshConfig.rootLogin == "deny" || junos.sshConfig.rootLogin == "deny-password"
+    docs:
+      desc: |
+        This check verifies that root login via SSH is denied on the Junos device.
+
+        ## Rationale
+
+        - **Privilege Escalation**: Direct root access bypasses all role-based access controls
+        - **Audit Trail**: Root logins cannot be attributed to individual administrators
+        - **Brute Force**: The root account is a common target for brute-force attacks
+        - **Least Privilege**: Administrators should authenticate with personal accounts and escalate privileges only when needed
+
+        ## Remediation
+
+        Disable root login via SSH:
+
+        ```
+        set system services ssh root-login deny
+        commit
+        ```
+
+        Or allow key-based root login only:
+
+        ```
+        set system services ssh root-login deny-password
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/root-login-edit-system-services-ssh.html
+        title: Junos SSH Root Login Configuration
+
+  - uid: mondoo-junos-security-ssh-no-weak-ciphers
+    title: Ensure weak SSH ciphers are not configured
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.sshConfig.ciphers.none(
+        _ == "arcfour" ||
+        _ == "arcfour128" ||
+        _ == "arcfour256" ||
+        _ == "3des-cbc" ||
+        _ == "blowfish-cbc" ||
+        _ == "cast128-cbc"
+      )
+    docs:
+      desc: |
+        This check verifies that no weak or deprecated SSH ciphers are configured on the Junos device.
+
+        ## Rationale
+
+        - **RC4 (arcfour)**: Known biases in the keystream make it cryptographically weak
+        - **3DES**: Limited 64-bit block size vulnerable to Sweet32 birthday attacks
+        - **Blowfish/CAST128**: Older algorithms with 64-bit block sizes vulnerable to similar attacks
+        - **Compliance**: Modern security standards require AES-128 or stronger encryption
+
+        ## Remediation
+
+        Configure only strong ciphers:
+
+        ```
+        set system services ssh ciphers aes256-ctr
+        set system services ssh ciphers aes128-ctr
+        set system services ssh ciphers aes256-gcm@openssh.com
+        set system services ssh ciphers aes128-gcm@openssh.com
+        set system services ssh ciphers chacha20-poly1305@openssh.com
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/ciphers-edit-system-services-ssh.html
+        title: Junos SSH Ciphers Configuration
+
+  - uid: mondoo-junos-security-ssh-no-weak-macs
+    title: Ensure weak SSH MACs are not configured
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.sshConfig.macs.none(
+        _ == "hmac-md5" ||
+        _ == "hmac-md5-96" ||
+        _ == "hmac-sha1-96" ||
+        _ == "hmac-md5-etm@openssh.com" ||
+        _ == "hmac-md5-96-etm@openssh.com"
+      )
+    docs:
+      desc: |
+        This check verifies that no weak SSH message authentication codes (MACs) are configured.
+
+        ## Rationale
+
+        - **MD5-based MACs**: MD5 is cryptographically broken and vulnerable to collision attacks
+        - **Truncated MACs (96-bit)**: Provide reduced security compared to full-length variants
+        - **Data Integrity**: Strong MACs ensure SSH session data has not been modified in transit
+        - **Compliance**: NIST and industry standards require SHA-256 or stronger for integrity checks
+
+        ## Remediation
+
+        Configure only strong MACs:
+
+        ```
+        set system services ssh macs hmac-sha2-256
+        set system services ssh macs hmac-sha2-512
+        set system services ssh macs hmac-sha2-256-etm@openssh.com
+        set system services ssh macs hmac-sha2-512-etm@openssh.com
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/macs-edit-system-services-ssh.html
+        title: Junos SSH MACs Configuration
+
+  - uid: mondoo-junos-security-ssh-no-weak-key-exchanges
+    title: Ensure weak SSH key exchange algorithms are not configured
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.sshConfig.keyExchanges.none(
+        _ == "diffie-hellman-group1-sha1" ||
+        _ == "diffie-hellman-group-exchange-sha1"
+      )
+    docs:
+      desc: |
+        This check verifies that weak SSH key exchange algorithms are not configured.
+
+        ## Rationale
+
+        - **DH Group 1 (768-bit)**: Far too small for modern security, easily broken
+        - **SHA-1 based exchanges**: SHA-1 has known collision vulnerabilities
+        - **Forward Secrecy**: Strong key exchange algorithms ensure past sessions remain secure even if long-term keys are compromised
+        - **Logjam Attack**: Small DH groups are vulnerable to precomputation attacks
+
+        ## Remediation
+
+        Configure only strong key exchange algorithms:
+
+        ```
+        set system services ssh key-exchange group-exchange-sha2
+        set system services ssh key-exchange ecdh-sha2-nistp256
+        set system services ssh key-exchange ecdh-sha2-nistp384
+        set system services ssh key-exchange ecdh-sha2-nistp521
+        set system services ssh key-exchange curve25519-sha256
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/key-exchange-edit-system-services-ssh.html
+        title: Junos SSH Key Exchange Configuration
+
+  - uid: mondoo-junos-security-ssh-tcp-forwarding-disabled
+    title: Ensure SSH TCP forwarding is disabled
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.sshConfig.tcpForwarding == false
+    docs:
+      desc: |
+        This check verifies that SSH TCP forwarding (port forwarding) is disabled on the Junos device.
+
+        ## Rationale
+
+        - **Network Bypass**: Allows users to tunnel traffic through the device, bypassing firewall rules
+        - **Data Exfiltration**: Can be used to exfiltrate data through encrypted SSH tunnels
+        - **Lateral Movement**: Enables attackers to pivot through the network device
+
+        ## Remediation
+
+        Disable SSH TCP forwarding:
+
+        ```
+        set system services ssh no-tcp-forwarding
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/no-tcp-forwarding-edit-system-services-ssh.html
+        title: Junos SSH TCP Forwarding Configuration
+
+  - uid: mondoo-junos-security-ssh-connection-limit
+    title: Ensure SSH connection limit is configured
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-10
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-10
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      junos.sshConfig.connectionLimit > 0
+    docs:
+      desc: |
+        This check verifies that a limit is configured for unauthenticated SSH connections, mitigating brute-force and denial-of-service attacks against the SSH service.
+
+        ## Rationale
+
+        - **Brute Force Mitigation**: Limits the number of concurrent unauthenticated sessions
+        - **Resource Protection**: Prevents exhaustion of device resources by connection floods
+        - **Availability**: Ensures legitimate administrators can connect during an attack
+
+        ## Remediation
+
+        Configure an SSH connection limit:
+
+        ```
+        set system services ssh connection-limit 5
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/connection-limit-edit-system-services-ssh.html
+        title: Junos SSH Connection Limit Configuration
+
+  - uid: mondoo-junos-security-ssh-rate-limit
+    title: Ensure SSH rate limit is configured
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-10
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-10
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      junos.sshConfig.rateLimit > 0
+    docs:
+      desc: |
+        This check verifies that a rate limit is configured for SSH authentication attempts, slowing down automated credential guessing attacks.
+
+        ## Rationale
+
+        - **Brute Force Protection**: Limits the rate of authentication attempts per minute
+        - **Automated Attack Defense**: Slows down automated credential guessing tools
+        - **Availability**: Prevents SSH service degradation under attack
+
+        ## Remediation
+
+        Configure an SSH rate limit:
+
+        ```
+        set system services ssh rate-limit 4
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/ref/statement/rate-limit-edit-system-services-ssh.html
+        title: Junos SSH Rate Limit Configuration
+
+  # ==========================================
+  # User Account Security
+  # ==========================================
+  - uid: mondoo-junos-security-all-users-have-credentials
+    title: Ensure all local users have authentication credentials
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      junos.users.all(hasPassword == true || sshKeys.length > 0)
+    docs:
+      desc: |
+        This check verifies that every local user account has either a password or SSH keys configured for authentication. Accounts without credentials can be exploited for unauthorized access.
+
+        ## Rationale
+
+        - **Unauthorized Access**: Accounts without passwords can be accessed without authentication
+        - **Compliance**: All security frameworks require proper authentication for all accounts
+        - **Attack Surface**: Credentialless accounts are trivial targets for unauthorized access
+
+        ## Remediation
+
+        Set a password for user accounts:
+
+        ```
+        set system login user <username> authentication encrypted-password "<hash>"
+        commit
+        ```
+
+        Or configure SSH key authentication:
+
+        ```
+        set system login user <username> authentication ssh-rsa "<public-key>"
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/user-access-authentication.html
+        title: Junos User Authentication Configuration
+
+  - uid: mondoo-junos-security-no-super-user-class-overuse
+    title: Ensure minimal number of users have super-user privileges
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-1
+    mql: |
+      junos.users.where(class == "super-user").length <= 3
+    docs:
+      desc: |
+        This check verifies that no more than three user accounts are assigned the super-user login class. Excessive privileged accounts increase the attack surface.
+
+        ## Rationale
+
+        - **Attack Surface**: Each super-user account is a potential target for credential compromise
+        - **Least Privilege**: Most administrators do not need full super-user access
+        - **Blast Radius**: Limiting privileged accounts reduces damage from compromised credentials
+
+        ## Remediation
+
+        Reassign users to more restrictive login classes:
+
+        ```
+        set system login user <username> class operator
+        commit
+        ```
+
+        Or create a custom login class with targeted permissions:
+
+        ```
+        set system login class limited-admin permissions configure
+        set system login class limited-admin permissions view
+        set system login user <username> class limited-admin
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/user-access-login-classes.html
+        title: Junos Login Classes Configuration
+
+  # ==========================================
+  # Insecure Service Elimination
+  # ==========================================
+  - uid: mondoo-junos-security-telnet-disabled
+    title: Ensure Telnet service is disabled
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.services.none(name == "telnet")
+    docs:
+      desc: |
+        This check verifies that the Telnet service is not enabled. Telnet transmits all data including credentials in clear text.
+
+        ## Rationale
+
+        - **Credential Exposure**: Usernames and passwords are sent unencrypted and can be captured with packet sniffers
+        - **Session Hijacking**: Telnet sessions can be intercepted and manipulated
+        - **No Integrity**: Data transmitted via Telnet has no integrity verification
+
+        ## Remediation
+
+        Disable Telnet:
+
+        ```
+        delete system services telnet
+        set system services ssh
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-software-remote-access-overview.html
+        title: Junos Remote Access Configuration
+
+  - uid: mondoo-junos-security-ftp-disabled
+    title: Ensure FTP service is disabled
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.services.none(name == "ftp")
+    docs:
+      desc: |
+        This check verifies that the FTP service is not enabled. FTP transmits credentials and data in plain text.
+
+        ## Rationale
+
+        - **Clear Text Credentials**: FTP authentication is unencrypted and easily intercepted
+        - **No Encryption**: File transfers can be captured and read by any observer on the network
+        - **Attack Surface**: FTP servers have a history of exploitable vulnerabilities
+
+        ## Remediation
+
+        Disable FTP and use SCP instead:
+
+        ```
+        delete system services ftp
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-software-remote-access-overview.html
+        title: Junos Remote Access Configuration
+
+  - uid: mondoo-junos-security-finger-disabled
+    title: Ensure finger service is disabled
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.services.none(name == "finger")
+    docs:
+      desc: |
+        This check verifies that the finger service is not enabled. The finger protocol exposes user account information that aids attacker reconnaissance.
+
+        ## Rationale
+
+        - **Information Disclosure**: Reveals usernames, login times, and idle times to unauthenticated users
+        - **Reconnaissance**: Attackers use finger to enumerate valid user accounts for brute-force attacks
+        - **No Authentication**: The finger protocol has no security mechanisms
+
+        ## Remediation
+
+        Disable the finger service:
+
+        ```
+        delete system services finger
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-software-remote-access-overview.html
+        title: Junos Remote Access Configuration
+
+  # ==========================================
+  # SNMP Security
+  # ==========================================
+  - uid: mondoo-junos-security-snmp-no-default-communities
+    title: Ensure SNMP default community strings are not used
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      junos.snmpCommunities.none(
+        name == "public" || name == "private"
+      )
+    docs:
+      desc: |
+        This check verifies that default SNMP community strings ("public" and "private") are not configured. These are the first credentials attackers attempt.
+
+        ## Rationale
+
+        - **Unauthorized Access**: "public" and "private" are universally known and the first strings attackers try
+        - **Information Disclosure**: SNMP with default communities exposes device configuration, routing tables, and interface data
+        - **Device Compromise**: A read-write community string allows remote configuration modification
+
+        ## Remediation
+
+        Remove default communities and configure unique strings:
+
+        ```
+        delete snmp community public
+        delete snmp community private
+        set snmp community <unique-string> authorization read-only
+        set snmp community <unique-string> clients <management-network>/24
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/network-mgmt/topics/topic-map/configuring-snmpv3.html
+        title: Junos SNMP Configuration
+
+  - uid: mondoo-junos-security-snmp-no-read-write
+    title: Ensure SNMP communities do not have read-write access
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-1
+    mql: |
+      junos.snmpCommunities.all(authorization == "read-only")
+    docs:
+      desc: |
+        This check verifies that no SNMP community is configured with read-write access. Read-write SNMP allows remote configuration changes via SNMP SET operations.
+
+        ## Rationale
+
+        - **Remote Exploitation**: Attackers can modify device configuration via SNMP SET operations
+        - **Configuration Tampering**: SNMP write access can disable security features or create backdoors
+        - **No Encryption**: SNMPv1/v2c community strings are sent in clear text
+
+        ## Remediation
+
+        Change all SNMP communities to read-only:
+
+        ```
+        set snmp community <community-name> authorization read-only
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/network-mgmt/topics/topic-map/configuring-snmpv3.html
+        title: Junos SNMP Configuration
+
+  - uid: mondoo-junos-security-snmp-client-lists
+    title: Ensure SNMP communities restrict client access
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.snmpCommunities.all(clients.length > 0)
+    docs:
+      desc: |
+        This check verifies that all SNMP communities have client address restrictions configured, limiting which hosts can query the device.
+
+        ## Rationale
+
+        - **Exposure Reduction**: Unrestricted SNMP allows any host to query device information
+        - **Defense in Depth**: Application-level ACLs complement firewall rules
+        - **Brute Force Mitigation**: Limits exposure to community string guessing attacks
+
+        ## Remediation
+
+        Restrict SNMP communities to specific client addresses:
+
+        ```
+        set snmp community <community-name> clients <management-host>/32
+        set snmp community <community-name> clients <management-network>/24
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/network-mgmt/topics/topic-map/configuring-snmpv3.html
+        title: Junos SNMP Configuration
+
+  # ==========================================
+  # Logging and Auditing
+  # ==========================================
+  - uid: mondoo-junos-security-syslog-host-configured
+    title: Ensure remote syslog host is configured
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      junos.syslogHosts.length > 0
+    docs:
+      desc: |
+        This check verifies that at least one remote syslog host is configured. Without remote logging, an attacker who compromises the device can destroy all evidence of the intrusion.
+
+        ## Rationale
+
+        - **Tamper Resistance**: Remote logs cannot be modified by an attacker who compromises the device
+        - **Log Preservation**: Local logs are lost if the device fails or is wiped
+        - **Correlation**: Centralized logs enable cross-device event correlation and threat detection
+        - **SIEM Integration**: Remote syslog enables integration with security monitoring platforms
+
+        ## Remediation
+
+        Configure a remote syslog host:
+
+        ```
+        set system syslog host <syslog-server> any notice
+        set system syslog host <syslog-server> authorization info
+        set system syslog host <syslog-server> interactive-commands info
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/network-mgmt/topics/topic-map/syslog-messages-configuring.html
+        title: Junos Syslog Configuration
+
+  - uid: mondoo-junos-security-syslog-secure-transport
+    title: Ensure syslog uses secure transport
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-1
+    mql: |
+      junos.syslogHosts.all(transport == "tcp" || transport == "tls")
+    docs:
+      desc: |
+        This check verifies that all syslog hosts use TCP or TLS transport instead of UDP. UDP syslog is unreliable and transmits log data in clear text.
+
+        ## Rationale
+
+        - **Message Loss**: UDP provides no delivery guarantee; security-critical logs can be silently dropped
+        - **No Encryption**: UDP syslog exposes sensitive log data to network observers
+        - **Spoofing**: UDP syslog messages can be spoofed to inject false log entries
+        - **TLS**: Provides both encryption and reliable delivery
+
+        ## Remediation
+
+        Configure syslog with TCP or TLS transport:
+
+        ```
+        set system syslog host <syslog-server> transport tcp
+        commit
+        ```
+
+        Or for encrypted syslog:
+
+        ```
+        set system syslog host <syslog-server> transport tls
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/network-mgmt/topics/topic-map/syslog-messages-configuring.html
+        title: Junos Syslog Configuration
+
+  # ==========================================
+  # Security Zone Hardening
+  # ==========================================
+  - uid: mondoo-junos-security-policy-logging-enabled
+    title: Ensure security policies have session logging enabled
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      junos.securityPolicies.all(logInit == true || logClose == true)
+    docs:
+      desc: |
+        This check verifies that all security policies have at least session-init or session-close logging enabled. Without policy logging, there is no visibility into what traffic the firewall permits or denies.
+
+        ## Rationale
+
+        - **Traffic Visibility**: Logs show what traffic is permitted or denied through the firewall
+        - **Threat Detection**: Unusual traffic patterns can be detected through policy logs
+        - **Incident Response**: Policy logs provide evidence of attack attempts and lateral movement
+        - **Forensics**: Session logs help reconstruct attack timelines
+
+        ## Remediation
+
+        Enable logging on security policies:
+
+        ```
+        set security policies from-zone <src> to-zone <dst> policy <name> then log session-init
+        set security policies from-zone <src> to-zone <dst> policy <name> then log session-close
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-policy-logging.html
+        title: Junos Security Policy Logging
+
+  - uid: mondoo-junos-security-zones-have-screens
+    title: Ensure untrust security zones have screen profiles applied
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.securityZones.where(name == "untrust").all(screen != "")
+    docs:
+      desc: |
+        This check verifies that untrust security zones have IDS/IPS screen profiles applied. Screen profiles process packets before security policies and provide efficient attack mitigation.
+
+        ## Rationale
+
+        - **DoS Protection**: Screens detect and mitigate SYN floods, ICMP floods, and other denial-of-service attacks
+        - **Reconnaissance Prevention**: Blocks IP sweeps, port scans, and other reconnaissance techniques
+        - **Protocol Anomaly Detection**: Detects malformed packets and protocol violations
+        - **First Line of Defense**: Screen profiles inspect packets before security policies are evaluated
+
+        ## Remediation
+
+        Create and apply a screen profile to the untrust zone:
+
+        ```
+        set security screen ids-option untrust-screen icmp ping-death
+        set security screen ids-option untrust-screen ip source-route-option
+        set security screen ids-option untrust-screen tcp syn-flood
+        set security screen ids-option untrust-screen tcp land
+        set security zones security-zone untrust screen untrust-screen
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  - uid: mondoo-junos-security-untrust-zone-minimal-services
+    title: Ensure untrust zone does not expose insecure host-inbound services
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.securityZones.where(name == "untrust").all(
+        hostInboundServices.none(
+          _ == "telnet" ||
+          _ == "ftp" ||
+          _ == "finger" ||
+          _ == "http" ||
+          _ == "snmp" ||
+          _ == "all"
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that the untrust zone does not allow insecure or unnecessary host-inbound services. Exposing management services to untrusted networks gives attackers direct access to the device control plane.
+
+        ## Rationale
+
+        - **Attack Surface**: Each enabled service is a potential entry point for attackers from untrusted networks
+        - **Insecure Protocols**: Telnet, FTP, finger, and HTTP should never be exposed to untrusted networks
+        - **SNMP Exposure**: SNMP on untrusted zones allows device reconnaissance and potential configuration changes
+        - **"all" keyword**: Allows every host-inbound service, including insecure ones
+
+        ## Remediation
+
+        Remove unnecessary host-inbound services from the untrust zone:
+
+        ```
+        delete security zones security-zone untrust host-inbound-traffic system-services telnet
+        delete security zones security-zone untrust host-inbound-traffic system-services ftp
+        delete security zones security-zone untrust host-inbound-traffic system-services finger
+        delete security zones security-zone untrust host-inbound-traffic system-services http
+        delete security zones security-zone untrust host-inbound-traffic system-services snmp
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-zone-configuration.html
+        title: Junos Security Zone Configuration
+
+  # ==========================================
+  # IDS/IPS Screen Profiles
+  # ==========================================
+  - uid: mondoo-junos-security-screen-syn-flood
+    title: Ensure screen profiles have TCP SYN flood protection enabled
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.screenProfiles.all(tcpSynFlood == true)
+    docs:
+      desc: |
+        This check verifies that all screen profiles have TCP SYN flood protection enabled. SYN flood attacks exhaust device connection tables with half-open connections.
+
+        ## Rationale
+
+        - **Resource Exhaustion**: SYN floods fill the connection table, blocking legitimate traffic
+        - **Service Disruption**: Critical services become unavailable when connection tables are full
+        - **Prevalent Attack**: SYN floods remain one of the most common denial-of-service techniques
+        - **SYN Proxy**: Junos SYN flood protection validates connections before committing device resources
+
+        ## Remediation
+
+        Enable SYN flood protection:
+
+        ```
+        set security screen ids-option <screen-name> tcp syn-flood alarm-threshold 1024
+        set security screen ids-option <screen-name> tcp syn-flood attack-threshold 200
+        set security screen ids-option <screen-name> tcp syn-flood timeout 20
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  - uid: mondoo-junos-security-screen-icmp-ping-death
+    title: Ensure screen profiles have ICMP ping-of-death protection enabled
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.screenProfiles.all(icmpPingDeath == true)
+    docs:
+      desc: |
+        This check verifies that all screen profiles have ICMP ping-of-death protection enabled. Oversized ICMP packets can cause buffer overflows in vulnerable systems.
+
+        ## Rationale
+
+        - **System Crash**: Oversized ICMP packets can cause buffer overflows and system instability
+        - **Network Disruption**: Can destabilize routers and firewalls in the packet path
+        - **Defense in Depth**: Blocks an entire class of ICMP-based attacks at the perimeter
+
+        ## Remediation
+
+        Enable ping-of-death protection:
+
+        ```
+        set security screen ids-option <screen-name> icmp ping-death
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  - uid: mondoo-junos-security-screen-ip-source-route
+    title: Ensure screen profiles have IP source route option protection enabled
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.screenProfiles.all(ipSourceRoute == true)
+    docs:
+      desc: |
+        This check verifies that all screen profiles block IP packets with the source route option set. Source routing allows attackers to bypass firewall rules and routing policies.
+
+        ## Rationale
+
+        - **Firewall Bypass**: Source-routed packets can circumvent firewall rules and routing policies
+        - **Spoofing**: Enables attackers to make packets appear to originate from trusted networks
+        - **Man-in-the-Middle**: Can redirect traffic through attacker-controlled devices
+        - **No Legitimate Use**: Source routing has no legitimate use in modern networks
+
+        ## Remediation
+
+        Enable source route option protection:
+
+        ```
+        set security screen ids-option <screen-name> ip source-route-option
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  - uid: mondoo-junos-security-screen-tcp-land
+    title: Ensure screen profiles have TCP land attack protection enabled
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.screenProfiles.all(tcpLand == true)
+    docs:
+      desc: |
+        This check verifies that all screen profiles have TCP land attack protection enabled. Land attacks send packets with matching source and destination addresses, causing resource exhaustion.
+
+        ## Rationale
+
+        - **Resource Exhaustion**: Forces the device to continuously process self-addressed packets
+        - **Service Disruption**: Can cause CPU exhaustion and service degradation
+        - **Simple Detection**: Land attacks are well-known and should be blocked at the perimeter
+
+        ## Remediation
+
+        Enable land attack protection:
+
+        ```
+        set security screen ids-option <screen-name> tcp land
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  - uid: mondoo-junos-security-screen-ip-tear-drop
+    title: Ensure screen profiles have IP teardrop protection enabled
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.screenProfiles.all(ipTearDrop == true)
+    docs:
+      desc: |
+        This check verifies that all screen profiles have IP teardrop attack protection enabled. Teardrop attacks use malformed fragmented IP packets with overlapping offsets to crash systems during reassembly.
+
+        ## Rationale
+
+        - **System Crash**: Overlapping fragments can crash operating systems during reassembly
+        - **Kernel Panic**: Some systems experience kernel panics when processing teardrop fragments
+        - **Defense in Depth**: Blocking malformed fragments prevents a class of fragmentation attacks
+
+        ## Remediation
+
+        Enable teardrop protection:
+
+        ```
+        set security screen ids-option <screen-name> ip tear-drop
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  - uid: mondoo-junos-security-screen-tcp-winnuke
+    title: Ensure screen profiles have TCP WinNuke protection enabled
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      junos.screenProfiles.all(tcpWinNuke == true)
+    docs:
+      desc: |
+        This check verifies that all screen profiles have TCP WinNuke attack protection enabled. WinNuke attacks send out-of-band data to TCP port 139 to crash vulnerable systems.
+
+        ## Rationale
+
+        - **System Crash**: Can cause legacy systems to crash via out-of-band TCP data
+        - **Service Disruption**: May affect NetBIOS services on vulnerable systems
+        - **Defense in Depth**: Blocks this entire class of OOB-based attacks at the perimeter
+
+        ## Remediation
+
+        Enable WinNuke protection:
+
+        ```
+        set security screen ids-option <screen-name> tcp winnuke
+        commit
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-screen-ids.html
+        title: Junos Screen IDS Configuration
+
+  # ==========================================
+  # License Compliance
+  # ==========================================
+  - uid: mondoo-junos-security-no-expired-licenses
+    title: Ensure no security feature licenses are expired
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-22
+      compliance/nis-2: nis-2-21-2-a
+      compliance/nist-csf-1: nist-csf-1-id-am-2
+      compliance/nist-csf-2: nist-csf-2-id-am-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc3-1-1
+    mql: |
+      junos.licenses.all(state != "expired")
+    docs:
+      desc: |
+        This check verifies that no installed feature licenses have expired. Expired licenses can silently disable critical security features such as IPS, UTM, and application identification.
+
+        ## Rationale
+
+        - **Feature Loss**: Expired licenses may disable IPS, UTM, application identification, or URL filtering
+        - **Silent Degradation**: The device may fall back to basic forwarding without advanced security capabilities
+        - **Compliance Gap**: Security features required for regulatory compliance may stop functioning
+
+        ## Remediation
+
+        Check license status:
+
+        ```
+        show system license
+        ```
+
+        Install renewed licenses:
+
+        ```
+        request system license add <license-key>
+        ```
+    refs:
+      - url: https://www.juniper.net/documentation/us/en/software/junos/system-mgmt/topics/topic-map/license-management.html
+        title: Junos License Management
