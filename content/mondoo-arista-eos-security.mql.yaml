@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-arista-eos-security
     name: Mondoo Arista EOS Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -30,6 +30,8 @@ policies:
         - Validates comprehensive logging configuration
         - Ensures proper console and remote access controls
         - Validates security banners, timeouts, and system configuration
+        - Ensures BGP peers have proper route filtering and documentation
+        - Validates ACL completeness and logging for denied traffic
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
 
@@ -105,6 +107,22 @@ policies:
           - uid: mondoo-arista-eos-security-hostname-configured
           - uid: mondoo-arista-eos-security-domain-name-configured
           - uid: mondoo-arista-eos-security-service-password-encryption
+      - title: BGP Security
+        filters: |
+          asset.platform == "arista-eos"
+          arista.eos.runningConfig.content.contains("router bgp") == true
+        checks:
+          - uid: mondoo-arista-eos-security-bgp-peers-inbound-route-map
+          - uid: mondoo-arista-eos-security-bgp-peers-outbound-route-map
+          - uid: mondoo-arista-eos-security-bgp-peers-descriptions
+          - uid: mondoo-arista-eos-security-bgp-peers-established
+      - title: ACL Security
+        filters: |
+          asset.platform == "arista-eos"
+          arista.eos.runningConfig.content.contains("ip access-list") == true
+        checks:
+          - uid: mondoo-arista-eos-security-acl-explicit-deny
+          - uid: mondoo-arista-eos-security-acl-deny-logging
     scoring_system: average
 queries:
   - uid: mondoo-arista-eos-security-aaa-accounting-commands
@@ -1756,3 +1774,309 @@ queries:
     refs:
       - url: https://www.arista.com/en/um-eos/eos-vlans
         title: Arista EOS VLAN Configuration Guide
+  - uid: mondoo-arista-eos-security-bgp-peers-inbound-route-map
+    title: Ensure BGP peers have inbound route filtering configured
+    impact: 90
+    filters: arista.eos.runningConfig.content.contains("router bgp") == true
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    mql: |
+      arista.eos.bgp.vrfs.all(
+        peers.all(inboundRouteMap != "")
+      )
+    docs:
+      desc: |
+        This check verifies that all BGP peers have an inbound route map configured. Inbound route filtering controls which prefixes are accepted from each peer, preventing route hijacking and accidental route leaks from affecting the network.
+
+        **Why this matters**
+
+        Without inbound route filtering, a BGP peer can advertise arbitrary prefixes and the router will accept them. If inbound route maps are not configured:
+
+        - A compromised or misconfigured peer can inject false routes, redirecting traffic through attacker-controlled infrastructure.
+        - Accidental route leaks from peers can cause traffic blackholes or suboptimal routing.
+        - The router has no mechanism to enforce prefix ownership or limit the scope of accepted routes.
+        - BGP hijacking attacks become trivial when there is no prefix validation.
+        - Compliance requirements for network boundary protection and information flow control cannot be met.
+
+        Configuring inbound route maps on all BGP peers ensures that only expected, authorized prefixes are accepted, protecting the network from route hijacking and misrouting.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Create a route map and apply it inbound on each BGP peer:
+
+            ```
+            configure
+            route-map INBOUND-FILTER permit 10
+            match ip address prefix-list ALLOWED-PREFIXES
+            !
+            router bgp <asn>
+            neighbor <peer-ip> route-map INBOUND-FILTER in
+            ```
+
+            Define a prefix list that includes only the prefixes expected from each peer.
+    refs:
+      - url: https://www.arista.com/en/um-eos/eos-bgp-configuration
+        title: Arista EOS BGP Configuration Guide
+  - uid: mondoo-arista-eos-security-bgp-peers-outbound-route-map
+    title: Ensure BGP peers have outbound route filtering configured
+    impact: 85
+    filters: arista.eos.runningConfig.content.contains("router bgp") == true
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    mql: |
+      arista.eos.bgp.vrfs.all(
+        peers.all(outboundRouteMap != "")
+      )
+    docs:
+      desc: |
+        This check verifies that all BGP peers have an outbound route map configured. Outbound route filtering controls which prefixes are advertised to each peer, preventing internal routes from being leaked to external networks.
+
+        **Why this matters**
+
+        Without outbound route filtering, the router may advertise internal or sensitive prefixes to external peers. If outbound route maps are not configured:
+
+        - Internal network topology is exposed to external peers, aiding reconnaissance.
+        - Private or infrastructure prefixes may be advertised to the internet, causing routing conflicts.
+        - Accidental route leaks can disrupt traffic for other networks that accept the leaked prefixes.
+        - The organization may become an unwitting participant in route hijacking incidents.
+        - Network boundary protection requirements cannot be satisfied without controlling outbound route advertisements.
+
+        Configuring outbound route maps on all BGP peers ensures that only intended prefixes are advertised, protecting internal network information and preventing route leaks.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Create a route map and apply it outbound on each BGP peer:
+
+            ```
+            configure
+            route-map OUTBOUND-FILTER permit 10
+            match ip address prefix-list ADVERTISED-PREFIXES
+            !
+            router bgp <asn>
+            neighbor <peer-ip> route-map OUTBOUND-FILTER out
+            ```
+
+            Define a prefix list that includes only the prefixes intended for advertisement to each peer.
+    refs:
+      - url: https://www.arista.com/en/um-eos/eos-bgp-configuration
+        title: Arista EOS BGP Configuration Guide
+  - uid: mondoo-arista-eos-security-bgp-peers-descriptions
+    title: Ensure BGP peers have descriptions configured
+    impact: 60
+    filters: arista.eos.runningConfig.content.contains("router bgp") == true
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      arista.eos.bgp.vrfs.all(
+        peers.all(description != "")
+      )
+    docs:
+      desc: |
+        This check verifies that all BGP peers have descriptions configured. Peer descriptions document the purpose, owner, and circuit details of each BGP session, which is essential for security auditing and incident response.
+
+        **Why this matters**
+
+        Without descriptions on BGP peers, the identity and purpose of each peering session is undocumented. If peer descriptions are not configured:
+
+        - It is difficult to determine whether a BGP session is authorized during a security review.
+        - Rogue or unauthorized peering sessions are harder to identify without documented baselines.
+        - Incident response is slowed when operators must research the purpose of each peer.
+        - Configuration audits and change management are less effective without documented intent.
+
+        Adding descriptions to all BGP peers ensures that peering sessions are self-documenting, supporting faster incident response, more effective audits, and easier identification of unauthorized sessions.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure descriptions for all BGP peers:
+
+            ```
+            configure
+            router bgp <asn>
+            neighbor <peer-ip> description <peer-name and circuit details>
+            ```
+
+            Include the peer organization, circuit ID, and purpose in the description.
+    refs:
+      - url: https://www.arista.com/en/um-eos/eos-bgp-configuration
+        title: Arista EOS BGP Configuration Guide
+  - uid: mondoo-arista-eos-security-bgp-peers-established
+    title: Ensure all BGP peers are in Established state
+    impact: 70
+    filters: arista.eos.runningConfig.content.contains("router bgp") == true
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      arista.eos.bgp.vrfs.all(
+        peers.all(state == "Established")
+      )
+    docs:
+      desc: |
+        This check verifies that all configured BGP peers are in the Established state. A peer that is not Established indicates a connectivity failure, authentication mismatch, or potential security issue that requires investigation.
+
+        **Why this matters**
+
+        BGP peers that are not in the Established state may indicate active security or operational issues. If peers are stuck in Idle, Active, or other non-established states:
+
+        - Routing redundancy is reduced, which may cause traffic to take unexpected paths.
+        - Authentication failures could indicate credential compromise or unauthorized peering attempts.
+        - A peer stuck in Active state may signal a man-in-the-middle attack or TCP hijacking attempt.
+        - Network partitioning from failed BGP sessions can create routing blackholes.
+        - Monitoring systems may not have full visibility into network health without established BGP sessions.
+
+        Ensuring all BGP peers are in the Established state confirms that peering sessions are healthy, authenticated, and exchanging routes as expected.
+
+        **Note:** Peers that are intentionally shut down (admin down via `neighbor shutdown`) will also be flagged by this check. During maintenance windows or decommissioning, this is expected and the finding can be acknowledged until the peer is removed from the configuration.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Investigate the state of non-established peers:
+
+            ```
+            show ip bgp summary
+            show ip bgp neighbors <peer-ip>
+            ```
+
+            Common causes include:
+            - Incorrect peer IP or AS number configuration
+            - Authentication key mismatch
+            - Network connectivity issues between peers
+            - Firewall rules blocking TCP port 179
+
+            Correct the underlying issue and verify the peer reaches Established state.
+    refs:
+      - url: https://www.arista.com/en/um-eos/eos-bgp-configuration
+        title: Arista EOS BGP Configuration Guide
+  - uid: mondoo-arista-eos-security-acl-explicit-deny
+    title: Ensure ACLs contain explicit deny entries
+    impact: 85
+    filters: arista.eos.runningConfig.content.contains("ip access-list") == true
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      arista.eos.acls.all(
+        entries.where(action == "deny").length > 0
+      )
+    docs:
+      desc: |
+        This check verifies that all access control lists contain at least one explicit deny entry. While Arista EOS has an implicit deny at the end of each ACL, relying solely on implicit behavior makes the security intent unclear and prevents logging of denied traffic.
+
+        **Why this matters**
+
+        Without explicit deny entries, ACLs rely entirely on the implicit deny, which has significant operational and security drawbacks. If explicit deny rules are not present:
+
+        - Denied traffic is not logged because implicit deny entries cannot trigger logging.
+        - The security intent of the ACL is ambiguous to anyone reviewing the configuration.
+        - It is impossible to distinguish between intentionally denied traffic and traffic denied by default.
+        - Troubleshooting access issues is harder when there is no visible deny rule to confirm blocking behavior.
+        - Compliance frameworks that require deny-by-default with explicit access control documentation cannot be satisfied.
+
+        Adding explicit deny entries to all ACLs makes the security policy visible, auditable, and capable of generating logs for denied traffic.
+
+        **Note:** Some ACLs are legitimately permit-only, such as those used for route-map match clauses or BGP prefix filters. If this check flags such ACLs, verify that they are not used for traffic filtering before adding deny entries.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Add an explicit deny entry at the end of each ACL:
+
+            ```
+            configure
+            ip access-list <acl-name>
+            <high-sequence-number> deny ip any any log
+            ```
+
+            The `log` keyword ensures denied traffic is recorded for security monitoring.
+    refs:
+      - url: https://www.arista.com/en/um-eos/eos-access-control-lists
+        title: Arista EOS Access Control Lists Configuration Guide
+  - uid: mondoo-arista-eos-security-acl-deny-logging
+    title: Ensure ACL deny entries have logging enabled
+    impact: 75
+    filters: arista.eos.runningConfig.content.contains("ip access-list") == true
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      arista.eos.acls.all(
+        entries.where(action == "deny").all(log == true)
+      )
+    docs:
+      desc: |
+        This check verifies that all deny entries in access control lists have logging enabled. Logging denied traffic is essential for detecting attacks, identifying misconfigured clients, and maintaining a complete security audit trail.
+
+        **Why this matters**
+
+        Without logging on deny entries, blocked traffic is silently dropped with no record. If ACL deny logging is not enabled:
+
+        - Blocked attack attempts are not recorded, making threat detection impossible.
+        - There is no visibility into what traffic is being denied and why.
+        - Security incident investigations lack evidence of blocked access attempts.
+        - Trends in denied traffic that could indicate scanning or probing activity go undetected.
+        - Compliance requirements for logging security-relevant events at network boundaries cannot be met.
+
+        Enabling logging on all ACL deny entries ensures that blocked traffic is recorded, supporting real-time threat detection, forensic investigation, and compliance reporting.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Add the `log` keyword to all deny entries in each ACL:
+
+            ```
+            configure
+            ip access-list <acl-name>
+            <sequence-number> deny ip <source> <destination> log
+            ```
+
+            Review existing deny entries and update them to include logging:
+
+            ```
+            show ip access-lists
+            ```
+    refs:
+      - url: https://www.arista.com/en/um-eos/eos-access-control-lists
+        title: Arista EOS Access Control Lists Configuration Guide
