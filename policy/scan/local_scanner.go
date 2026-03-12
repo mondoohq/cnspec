@@ -1219,12 +1219,11 @@ func createProgressBar(discoveredAssets *discovery.DiscoveredAssets, disableProg
 		for i := range discoveredAssets.Assets {
 			asset := discoveredAssets.Assets[i].Asset
 			slices.Sort(asset.PlatformIds)
-			key := strings.Join(asset.PlatformIds, "\x00")
-			if presentAsset, present := progressBarElements[key]; present {
-				return nil, fmt.Errorf("asset %s and %s have the same platform ids", presentAsset, asset.Name)
+			if presentAsset, present := progressBarElements[asset.PlatformIds[0]]; present {
+				return nil, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, asset.Name, asset.PlatformIds[0])
 			}
-			progressBarElements[key] = asset.Name
-			orderedKeys = append(orderedKeys, key)
+			progressBarElements[asset.PlatformIds[0]] = asset.Name
+			orderedKeys = append(orderedKeys, asset.PlatformIds[0])
 		}
 		var err error
 		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys, progress.WithScore())
