@@ -55,15 +55,17 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 		return err
 	}
 
-	ge.Debug()
+	ge.Debug("resolved-policy")
 
 	return ge.Execute()
 }
 
 func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+	log.Debug().Msg("executing filter queries")
 	queryMap := map[string]*policy.Mquery{}
 
 	builder := internal.NewBuilder()
+	builder.WithDumpDatapoints()
 	for _, m := range queries {
 		codeBundle, err := mqlc.Compile(m.Mql, nil, mqlc.NewConfig(runtime.Schema(), mql.DefaultFeatures))
 		// Errors for filter queries are common when they reference resources for
@@ -85,6 +87,11 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout
 				// TODO: s.Completion() is 50 and s.ScoreCompletion is 100
 				// since data collection is part of the reporting job, queries
 				// need to indicate there is no data so the completion is 100
+				log.Debug().Str("qrId", s.QrId).
+					Int("scoreCompletion", int(s.ScoreCompletion)).
+					Int("dataCompletion", int(s.DataCompletion)).
+					Int("value", int(s.Value)).
+					Msg("filter query score received")
 				if s.ScoreCompletion == 100 && s.Value == 100 {
 					passingFilterQueries[s.QrId] = struct{}{}
 				}
@@ -104,6 +111,9 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout
 	if err := ge.Execute(); err != nil {
 		return nil, []error{err}
 	}
+	log.Debug().Msg("finished executing filter queries")
+
+	ge.Debug("filter-queries")
 
 	filteredQueries := []*policy.Mquery{}
 	for id, query := range queryMap {

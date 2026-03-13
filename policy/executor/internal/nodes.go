@@ -203,6 +203,7 @@ type DatapointNodeData struct {
 	expectedType *string
 	isReported   bool
 	invalidated  bool
+	dump         bool
 	res          *llx.RawResult
 }
 
@@ -249,6 +250,9 @@ func (nodeData *DatapointNodeData) recalculate() *envelope {
 
 	nodeData.invalidated = false
 
+	if nodeData.dump {
+		log.Debug().Str("codeId", nodeData.res.CodeID).Interface("data", nodeData.res.Data).Msg("datapoint collected")
+	}
 	return &envelope{
 		res: nodeData.res,
 	}

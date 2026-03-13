@@ -84,7 +84,7 @@ cnspec/build:
 
 .PHONY: cnspec/build/linux
 cnspec/build/linux:
-	GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/build/linux/arm
 cnspec/build/linux/arm:

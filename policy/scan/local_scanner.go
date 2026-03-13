@@ -1091,6 +1091,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> shell update filters")
 	logger.DebugJSON(filters)
+	logger.DebugDumpYAML("assetFilters", filters)
 
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     s.job.Asset.Mrn,
