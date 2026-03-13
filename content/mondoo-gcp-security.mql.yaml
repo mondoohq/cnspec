@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 6.0.0
+    version: 6.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -34,9 +34,10 @@ policies:
         - Cloud Logging
         - Cloud NAT
         - Cloud Run
+        - Cloud VPN
         - Cloud SQL
         - Cloud Storage
-        - Compute Engine instances, firewalls, networks, and subnetworks
+        - Compute Engine instances, firewalls, networks, subnetworks, and VPNs
         - Dataproc
         - Firestore
         - Google Kubernetes Engine (GKE)
@@ -128,6 +129,8 @@ policies:
           - uid: mondoo-gcp-security-gke-release-channel-configured
           - uid: mondoo-gcp-security-gke-database-encryption-enabled
           - uid: mondoo-gcp-security-gke-node-pool-secure-boot-enabled
+          - uid: mondoo-gcp-security-gke-security-posture-enabled
+          - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured
       - title: Cloud SQL
         checks:
           - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
@@ -144,6 +147,7 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-no-overly-permissive-authorized-networks
           - uid: mondoo-gcp-security-cloud-sql-password-policy-enabled
           - uid: mondoo-gcp-security-cloud-sql-cmek-encryption
+          - uid: mondoo-gcp-security-cloud-sql-connector-enforcement
       - title: Memorystore for Redis / Redis Cluster
         checks:
           - uid: mondoo-gcp-security-cloud-redis-auth-enabled
@@ -218,6 +222,9 @@ policies:
       - title: Cloud NAT
         checks:
           - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping
+      - title: Cloud VPN
+        checks:
+          - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2
       - title: Audit Logging
         checks:
           - uid: mondoo-gcp-security-audit-logging-enabled-all-services
@@ -16334,4 +16341,549 @@ queries:
       terraform.state.resources.where(type == 'google_alloydb_instance').all(
         values['network_config'] == empty ||
         values['network_config'].all(_['enable_public_ip'] != true)
+      )
+  - uid: mondoo-gcp-security-gke-security-posture-enabled
+    title: Ensure GKE clusters have Security Posture enabled
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/soc2-2017: soc2-control-cc7-1-1
+    variants:
+      - uid: mondoo-gcp-security-gke-security-posture-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP GKE Cluster
+          mondoo.com/icon: gcp
+      - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that GKE clusters have Security Posture enabled with vulnerability scanning. GKE Security Posture provides automated security health analysis of your clusters, including vulnerability scanning of container workloads to detect known vulnerabilities in your container images.
+
+        **Why this matters**
+
+        - Without Security Posture enabled, known CVEs in container images running in your cluster go undetected until manually scanned, leaving a window for exploitation.
+        - Vulnerability scanning detects known CVEs in container images, enabling proactive remediation before attackers can exploit them.
+        - Security Posture provides actionable recommendations aligned with industry best practices and GKE hardening guidelines.
+        - Delayed incident response due to lack of automated security monitoring increases the blast radius of attacks.
+        - Most security frameworks require continuous vulnerability management, and disabling Security Posture creates a compliance gap.
+        - ENTERPRISE mode provides the most comprehensive scanning, including OS and language package vulnerabilities, and should be considered for production clusters.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Enable Security Posture with vulnerability scanning:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              security_posture_config {
+                mode               = "BASIC"
+                vulnerability_mode = "VULNERABILITY_BASIC"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster you want to configure.
+            3. Click **Edit**.
+            4. Under **Security**, find **Security posture**.
+            5. Set the mode to **Basic** or **Enterprise**.
+            6. Enable **Workload vulnerability scanning**.
+            7. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Enable Security Posture on an existing cluster:
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --location=LOCATION \
+              --security-posture=standard \
+              --workload-vulnerability-scanning=standard
+            ```
+    refs:
+      - url: https://cloud.google.com/kubernetes-engine/docs/concepts/about-security-posture-dashboard
+        title: GKE Security Posture overview
+      - url: https://cloud.google.com/kubernetes-engine/docs/how-to/protect-workload-configuration
+        title: Protect workload configuration
+  - uid: mondoo-gcp-security-gke-security-posture-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.securityPostureConfig.mode != "DISABLED"
+      gcp.project.gkeService.cluster.securityPostureConfig.vulnerabilityMode != "VULNERABILITY_DISABLED"
+  - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'security_posture_config') != empty &&
+        blocks.where(type == 'security_posture_config').all(
+          arguments.mode != "DISABLED" &&
+          arguments.vulnerability_mode != "VULNERABILITY_DISABLED"
+        )
+      )
+  - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['security_posture_config'] != empty &&
+        change.after['security_posture_config'].any(
+          _['mode'] != "DISABLED" &&
+          _['vulnerability_mode'] != "VULNERABILITY_DISABLED"
+        )
+      )
+  - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['security_posture_config'] != empty &&
+        values['security_posture_config'].any(
+          _['mode'] != "DISABLED" &&
+          _['vulnerability_mode'] != "VULNERABILITY_DISABLED"
+        )
+      )
+  - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2
+    title: Ensure VPN tunnels use IKE version 2
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-gcp
+        tags:
+          mondoo.com/filter-title: GCP VPN Tunnel
+          mondoo.com/icon: gcp
+      - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that Cloud VPN tunnels use IKE (Internet Key Exchange) version 2 instead of version 1. IKEv2 provides significant security and reliability improvements over IKEv1, including stronger cryptographic negotiation, built-in NAT traversal, and improved resilience against denial-of-service attacks.
+
+        **Why this matters**
+
+        - IKEv1 uses more round trips for tunnel establishment, increasing exposure to man-in-the-middle attacks during negotiation.
+        - IKEv2 supports EAP (Extensible Authentication Protocol) for more flexible and stronger authentication methods.
+        - IKEv2 has built-in NAT traversal support, eliminating the need for workarounds that can introduce security gaps.
+        - IKEv2 includes built-in dead peer detection, ensuring failed tunnels are quickly identified and re-established.
+        - Weaker cryptographic negotiation in IKEv1 may be vulnerable to downgrade attacks.
+        - IKE version cannot be changed on existing tunnels; they must be recreated during a maintenance window.
+        - Google Cloud recommends IKEv2 for all new VPN tunnels.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Set the IKE version to 2 on VPN tunnels:
+
+            ```hcl
+            resource "google_compute_vpn_tunnel" "example" {
+              name          = "example-tunnel"
+              peer_ip       = "203.0.113.1"
+              shared_secret = var.vpn_shared_secret
+              ike_version   = 2
+
+              target_vpn_gateway = google_compute_vpn_gateway.example.id
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            IKE version cannot be changed on an existing VPN tunnel. To use IKEv2:
+
+            1. Go to the **Network Connectivity > VPN** page in the Google Cloud Console.
+            2. Click **Create VPN tunnel** or recreate the existing tunnel.
+            3. Under **IKE version**, select **IKEv2**.
+            4. Complete the tunnel configuration and click **Create**.
+            5. Delete the old IKEv1 tunnel after verifying the new tunnel is operational.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Create a VPN tunnel with IKEv2:
+
+            ```bash
+            gcloud compute vpn-tunnels create TUNNEL_NAME \
+              --region=REGION \
+              --peer-address=PEER_IP \
+              --shared-secret=SHARED_SECRET \
+              --ike-version=2 \
+              --target-vpn-gateway=VPN_GATEWAY_NAME
+            ```
+
+            Note: IKE version cannot be updated on existing tunnels. You must delete and recreate the tunnel.
+    refs:
+      - url: https://cloud.google.com/network-connectivity/docs/vpn/concepts/overview
+        title: Cloud VPN overview
+      - url: https://cloud.google.com/network-connectivity/docs/vpn/how-to/creating-vpn-dynamic-routes
+        title: Creating VPN tunnels
+  - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.vpnTunnels.all(
+        ikeVersion == 2
+      )
+  - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_vpn_tunnel')
+    mql: |
+      terraform.resources('google_compute_vpn_tunnel').all(
+        arguments.ike_version == 2
+      )
+  - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_vpn_tunnel')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_vpn_tunnel').all(
+        change.after['ike_version'] == 2
+      )
+  - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_vpn_tunnel')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_vpn_tunnel').all(
+        values['ike_version'] == 2
+      )
+  - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured
+    title: Ensure GKE node pools have an upgrade strategy configured
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc8-1-1
+    variants:
+      - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-gcp
+        tags:
+          mondoo.com/filter-title: GCP GKE Cluster
+          mondoo.com/icon: gcp
+      - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that GKE cluster node pools have an upgrade strategy explicitly configured. An upgrade strategy (such as SURGE or BLUE_GREEN) controls how node pool upgrades are performed, ensuring that workloads remain available during the upgrade process and that security patches are applied safely.
+
+        **Why this matters**
+
+        - Without a configured upgrade strategy, node pools use default upgrade behavior which may not provide adequate availability guarantees for production workloads.
+        - Teams that lack confidence in the upgrade process tend to defer upgrades, leaving nodes running with known vulnerabilities for longer than necessary.
+        - The SURGE strategy allows you to control how many additional nodes are created during upgrades, balancing speed against resource cost.
+        - The BLUE_GREEN strategy creates a complete replacement node pool before draining the old one, providing zero-downtime upgrades for critical workloads.
+        - Unexpected workload disruption during uncontrolled upgrade processes further discourages regular patching.
+        - Inconsistent upgrade behavior across different node pools in the same cluster makes outcomes unpredictable.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a surge upgrade strategy for node pools:
+
+            ```hcl
+            resource "google_container_node_pool" "example" {
+              name    = "example-pool"
+              cluster = google_container_cluster.example.name
+
+              upgrade_settings {
+                strategy        = "SURGE"
+                max_surge       = 1
+                max_unavailable = 0
+              }
+            }
+            ```
+
+            For blue-green upgrades:
+
+            ```hcl
+            resource "google_container_node_pool" "example" {
+              name    = "example-pool"
+              cluster = google_container_cluster.example.name
+
+              upgrade_settings {
+                strategy = "BLUE_GREEN"
+
+                blue_green_settings {
+                  node_pool_soak_duration = "3600s"
+
+                  standard_rollout_policy {
+                    batch_percentage    = 0.5
+                    batch_soak_duration = "60s"
+                  }
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
+            2. Select the cluster containing the node pool.
+            3. Click the **Nodes** tab.
+            4. Select the node pool to configure.
+            5. Click **Edit**.
+            6. Under **Upgrade strategy**, select **Surge upgrade** or **Blue-green upgrade**.
+            7. Configure the strategy parameters (max surge, max unavailable, or batch settings).
+            8. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Configure a surge upgrade strategy:
+
+            ```bash
+            gcloud container node-pools update NODE_POOL_NAME \
+              --cluster=CLUSTER_NAME \
+              --location=LOCATION \
+              --max-surge-upgrade=1 \
+              --max-unavailable-upgrade=0
+            ```
+
+            Configure a blue-green upgrade strategy:
+
+            ```bash
+            gcloud container node-pools update NODE_POOL_NAME \
+              --cluster=CLUSTER_NAME \
+              --location=LOCATION \
+              --enable-blue-green-upgrade \
+              --node-pool-soak-duration=3600s
+            ```
+    refs:
+      - url: https://cloud.google.com/kubernetes-engine/docs/concepts/node-pool-upgrade-strategies
+        title: Node pool upgrade strategies
+      - url: https://cloud.google.com/kubernetes-engine/docs/how-to/upgrading-a-cluster
+        title: Upgrading a cluster
+  - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.nodePools.all(
+        upgradeSettings.strategy != ""
+      )
+  - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'node_pool').all(
+          blocks.where(type == 'upgrade_settings') != empty &&
+          blocks.where(type == 'upgrade_settings').all(
+            arguments.strategy != empty
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['node_pool'] == empty ||
+        change.after['node_pool'].all(
+          _['upgrade_settings'] != empty &&
+          _['upgrade_settings'].any(_['strategy'] != empty)
+        )
+      )
+  - uid: mondoo-gcp-security-gke-node-pool-upgrade-strategy-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['node_pool'] == empty ||
+        values['node_pool'].all(
+          _['upgrade_settings'] != empty &&
+          _['upgrade_settings'].any(_['strategy'] != empty)
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement
+    title: Ensure Cloud SQL instances require Cloud SQL connectors for all connections
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-gcp-mysql
+        tags:
+          mondoo.com/filter-title: GCP Cloud SQL for MySQL
+          mondoo.com/icon: gcp
+      - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-gcp-postgresql
+        tags:
+          mondoo.com/filter-title: GCP Cloud SQL for PostgreSQL
+          mondoo.com/icon: gcp
+      - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-gcp-sqlserver
+        tags:
+          mondoo.com/filter-title: GCP Cloud SQL for SQL Server
+          mondoo.com/icon: gcp
+      - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that Cloud SQL instances have connector enforcement set to REQUIRED, forcing all connections to use the Cloud SQL Auth Proxy, Cloud SQL Language Connectors, or equivalent secure connection methods. When connector enforcement is enabled, direct IP-based connections are rejected, ensuring all database connections are authenticated and encrypted through Google's managed infrastructure.
+
+        **Why this matters**
+
+        - Without connector enforcement, clients can bypass IAM-based authentication and connect directly using database passwords, which may be weak or shared.
+        - The Cloud SQL Auth Proxy and Language Connectors automatically encrypt all traffic using TLS with certificates managed by Google, removing the risk of misconfigured or expired certificates.
+        - Direct IP connections require managing authorized networks, which can become overly permissive over time as IP ranges are added but never removed.
+        - Connections that bypass connectors lack the IAM identity context, making it harder to audit who accessed the database during investigations.
+        - If SSL/TLS is not separately enforced on the instance, direct IP connections may transmit data in plaintext.
+        - Ensure all applications are migrated to use Cloud SQL connectors before enabling enforcement, as direct IP connections will be rejected immediately.
+      remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Set connector enforcement to REQUIRED:
+
+            ```hcl
+            resource "google_sql_database_instance" "example" {
+              name             = "example-instance"
+              database_version = "POSTGRES_15"
+              region           = "us-central1"
+
+              settings {
+                tier = "db-custom-2-8192"
+                ip_configuration {
+                  connector_enforcement = "REQUIRED"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **SQL** page in the Google Cloud Console.
+            2. Select the instance you want to configure.
+            3. Click **Edit**.
+            4. Under **Connections**, find **Cloud SQL connector enforcement**.
+            5. Select **Required** to enforce connector use for all connections.
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Enable connector enforcement on an existing instance:
+
+            ```bash
+            gcloud sql instances patch INSTANCE_NAME \
+              --connector-enforcement=REQUIRED
+            ```
+
+            Note: Ensure all applications are using Cloud SQL connectors before enabling enforcement, as direct IP connections will be rejected.
+    refs:
+      - url: https://cloud.google.com/sql/docs/mysql/connect-auth-proxy
+        title: Connect using the Cloud SQL Auth Proxy
+      - url: https://cloud.google.com/sql/docs/mysql/connect-connectors
+        title: Connect using Cloud SQL Language Connectors
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-gcp-mysql
+    filters: asset.platform == 'gcp-sql-mysql'
+    mql: |
+      gcp.sql.instance.settings.connectorEnforcement == "REQUIRED"
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-gcp-postgresql
+    filters: asset.platform == 'gcp-sql-postgresql'
+    mql: |
+      gcp.sql.instance.settings.connectorEnforcement == "REQUIRED"
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-gcp-sqlserver
+    filters: asset.platform == 'gcp-sql-sqlserver'
+    mql: |
+      gcp.sql.instance.settings.connectorEnforcement == "REQUIRED"
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance')
+    mql: |
+      terraform.resources('google_sql_database_instance').all(
+        blocks.where(type == 'settings') != empty &&
+        blocks.where(type == 'settings').all(
+          blocks.where(type == 'ip_configuration') != empty &&
+          blocks.where(type == 'ip_configuration').all(
+            arguments.connector_enforcement == "REQUIRED"
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_sql_database_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_sql_database_instance').all(
+        change.after['settings'].all(
+          _['ip_configuration'].all(
+            _['connector_enforcement'] == "REQUIRED"
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-sql-connector-enforcement-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_sql_database_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_sql_database_instance').all(
+        values['settings'].all(
+          _['ip_configuration'].all(
+            _['connector_enforcement'] == "REQUIRED"
+          )
+        )
       )

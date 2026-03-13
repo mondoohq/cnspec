@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-security
     name: Mondoo Dockerfile Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -48,6 +48,11 @@ policies:
           - uid: mondoo-docker-security-no-sudo-commands
           - uid: mondoo-docker-security-non-root-user
           - uid: mondoo-docker-security-non-root-uid
+      - title: Volume Security
+        filters: |
+          asset.platform == "dockerfile"
+        checks:
+          - uid: mondoo-docker-security-no-sensitive-volume-mounts
       - title: Build Security
         filters: |
           asset.platform == "dockerfile"
@@ -428,3 +433,49 @@ queries:
         title: Dockerfile Best Practices - Secret Mounts
       - url: https://docs.docker.com/reference/dockerfile/#run---mounttypesecret
         title: Dockerfile Reference - RUN --mount=type=secret
+  - uid: mondoo-docker-security-no-sensitive-volume-mounts
+    title: Don't mount sensitive host directories as volumes
+    impact: 100
+    mql: |
+      docker.file.stages.all(volumes.none(path == "/"))
+      docker.file.stages.all(volumes.none(path == "/etc"))
+      docker.file.stages.all(volumes.none(path == "/proc"))
+      docker.file.stages.all(volumes.none(path == "/sys"))
+      docker.file.stages.all(volumes.none(path == "/dev"))
+      docker.file.stages.all(volumes.none(path == "/boot"))
+      docker.file.stages.all(volumes.none(path == "/root"))
+    docs:
+      desc: |
+        This check ensures that Dockerfiles do not declare VOLUME instructions for sensitive host directories such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`.
+
+        **Why this matters**
+
+        The Dockerfile `VOLUME` instruction declares a mount point within the container image. It does not directly mount host directories -- actual host bind mounts are configured at runtime (e.g., via `docker run -v`). However, declaring sensitive paths as volumes in a Dockerfile creates a persistent risk: when containers are launched with host mount configurations, these declared volumes can expose critical host data and system interfaces to the container.
+
+        - **Host filesystem exposure**: If `/` or `/etc` is declared as a volume and later bound to the host, it can expose host configuration files, credentials, and system secrets to the container.
+        - **Kernel interface access**: Declaring `/proc` or `/sys` as volumes creates mount points that, when bound at runtime, provide access to kernel parameters and system information that can be used for container escapes.
+        - **Device access**: A `/dev` volume declaration, when combined with host bind mounts, can expose host devices and enable direct hardware access from within the container.
+        - **Privilege escalation**: Sensitive directory mount points can be chained with other vulnerabilities and runtime configurations to escalate privileges and escape the container.
+        - **Data integrity**: Write access to host system directories through runtime-bound volumes can corrupt the host operating system.
+
+        Only declare volumes for application-specific data directories that need to persist beyond the container lifecycle.
+      remediation: |
+        Review your Dockerfile and remove any VOLUME instructions that reference sensitive directories:
+
+        ```dockerfile
+        # Don't do this:
+        VOLUME /etc
+        VOLUME /proc
+        VOLUME /
+
+        # Instead, only mount application data directories:
+        VOLUME /app/data
+        VOLUME /var/lib/myapp
+        ```
+
+        If your application needs access to host system information, use read-only bind mounts at runtime instead of declaring volumes in the Dockerfile.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#volume
+        title: Dockerfile Reference - VOLUME
+      - url: https://docs.docker.com/build/building/best-practices/
+        title: Dockerfile Best Practices

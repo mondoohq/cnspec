@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-security
     name: Mondoo Kubernetes Cluster and Workload Security
-    version: 1.3.0
+    version: 1.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -74,6 +74,10 @@ policies:
           - uid: mondoo-kubernetes-security-kubelet-tls-certificate
           - uid: mondoo-kubernetes-security-secure-kubelet-cert-authorities
           - uid: mondoo-kubernetes-security-secure-kubelet-config
+      - title: Cluster Storage Security
+        filters: asset.platform == "k8s-cluster"
+        checks:
+          - uid: mondoo-kubernetes-security-no-hostpath-persistent-volumes
       - title: Kubernetes CronJobs Security
         filters: asset.platform == "k8s-cronjob"
         checks:
@@ -8653,3 +8657,57 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
+  - uid: mondoo-kubernetes-security-no-hostpath-persistent-volumes
+    title: Ensure PersistentVolumes do not use hostPath
+    impact: 80
+    mql: |
+      k8s.persistentVolumes.none(spec["hostPath"] != null)
+    docs:
+      desc: |
+        This check ensures that no PersistentVolumes in the cluster use hostPath as a volume source.
+
+        **Why this matters**
+
+        hostPath PersistentVolumes mount directories from the host node's filesystem directly into pods, creating significant security risks:
+
+        - **Container escape**: Pods with access to the host filesystem can read or modify sensitive host files, including credentials, configuration, and container runtime sockets.
+        - **Cross-pod data access**: Any pod that mounts the same hostPath can access data belonging to other pods or the host, breaking namespace isolation.
+        - **Privilege escalation**: Write access to host paths such as `/etc`, `/var/run`, or `/var/lib/kubelet` can be chained with other vulnerabilities to escalate to host-level root access.
+        - **Node compromise**: A compromised container with hostPath access can modify host binaries, install backdoors, or tamper with kubelet configuration.
+        - **Multi-tenant risk**: In shared clusters, hostPath volumes bypass all namespace-level isolation boundaries.
+
+        Use cloud-native storage provisioners, CSI drivers, or network-attached storage instead of hostPath for persistent data.
+      remediation: |
+        Replace hostPath PersistentVolumes with a proper storage backend:
+
+        ```yaml
+        # Instead of:
+        apiVersion: v1
+        kind: PersistentVolume
+        metadata:
+          name: example-pv
+        spec:
+          hostPath:
+            path: /data/app
+
+        # Use a CSI driver or cloud storage:
+        apiVersion: v1
+        kind: PersistentVolume
+        metadata:
+          name: example-pv
+        spec:
+          csi:
+            driver: ebs.csi.aws.com
+            volumeHandle: vol-0123456789abcdef0
+          capacity:
+            storage: 10Gi
+          accessModes:
+            - ReadWriteOnce
+        ```
+
+        If hostPath is required for development, use Pod Security Admission or OPA/Gatekeeper policies to restrict it to specific namespaces.
+    refs:
+      - url: https://kubernetes.io/docs/concepts/storage/volumes/#hostpath
+        title: Kubernetes Volumes - hostPath
+      - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+        title: Kubernetes Pod Security Standards

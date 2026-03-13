@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-best-practices
     name: Mondoo Dockerfile Best Practices
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -41,6 +41,14 @@ policies:
           - uid: mondoo-docker-best-practice-yarn-clean-cache
           - uid: mondoo-docker-best-practice-npm-clean-cache
           - uid: mondoo-docker-best-practice-apt-no-install-recommends
+      - title: Health & Runtime
+        filters: |
+          asset.platform == "dockerfile"
+        checks:
+          - uid: mondoo-docker-best-practice-healthcheck-defined
+          - uid: mondoo-docker-best-practice-no-healthcheck-none
+          - uid: mondoo-docker-best-practice-workdir-absolute-path
+          - uid: mondoo-docker-best-practice-use-workdir-not-cd
       - title: Build Reliability
         filters: |
           asset.platform == "dockerfile"
@@ -534,3 +542,157 @@ queries:
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
+  - uid: mondoo-docker-best-practice-healthcheck-defined
+    title: Ensure a HEALTHCHECK instruction is defined
+    impact: 60
+    mql: |
+      docker.file.stages.last.healthcheck != null
+    docs:
+      desc: |
+        This check ensures that the final stage of a Dockerfile includes a HEALTHCHECK instruction.
+
+        **Why this matters**
+
+        Without a HEALTHCHECK, container orchestrators have no way to determine whether the application inside the container is actually working:
+
+        - **Silent failures**: A container can remain in a "running" state even when the application has crashed, deadlocked, or become unresponsive.
+        - **Traffic to broken containers**: Load balancers and orchestrators continue routing traffic to unhealthy containers, causing user-facing errors.
+        - **Delayed recovery**: Without health information, orchestrators cannot automatically restart or replace failed containers, increasing downtime.
+        - **Monitoring blind spots**: Container health status provides a basic monitoring signal that integrates with orchestrator dashboards and alerting.
+
+        Define a HEALTHCHECK that verifies the application is responding correctly, not just that the process is running.
+      remediation: |
+        Add a HEALTHCHECK instruction to your Dockerfile:
+
+        ```dockerfile
+        # For a web application:
+        HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+          CMD curl -f http://localhost:8080/health || exit 1
+
+        # For a non-HTTP service:
+        HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+          CMD pg_isready -U postgres || exit 1
+        ```
+
+        Choose a health check command that verifies the application is functioning, not just that the process exists.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#healthcheck
+        title: Dockerfile Reference - HEALTHCHECK
+      - url: https://docs.docker.com/build/building/best-practices/
+        title: Dockerfile Best Practices
+  - uid: mondoo-docker-best-practice-no-healthcheck-none
+    title: Don't explicitly disable HEALTHCHECK
+    impact: 60
+    mql: |
+      docker.file.stages.all(healthcheck == null || healthcheck.none == false)
+    docs:
+      desc: |
+        This check ensures that no Dockerfile stage uses `HEALTHCHECK NONE` to explicitly disable health checking.
+
+        **Why this matters**
+
+        `HEALTHCHECK NONE` is worse than simply omitting a HEALTHCHECK because it actively overrides any health check inherited from a base image:
+
+        - **Overrides base image checks**: Many well-maintained base images include appropriate HEALTHCHECK instructions. `HEALTHCHECK NONE` discards these intentionally configured checks.
+        - **Intentional degradation**: While a missing HEALTHCHECK might be an oversight, `HEALTHCHECK NONE` is a deliberate decision to remove health monitoring.
+        - **Orchestrator impact**: Containers without health checks cannot benefit from automatic restart policies or health-aware load balancing.
+        - **Debugging difficulty**: When a container becomes unresponsive, the lack of health check history makes it harder to determine when the problem started.
+
+        If the base image's health check is not appropriate, replace it with a correct one rather than disabling it entirely.
+      remediation: |
+        Remove the `HEALTHCHECK NONE` instruction and replace it with an appropriate health check:
+
+        ```dockerfile
+        # Instead of:
+        HEALTHCHECK NONE
+
+        # Define a proper health check:
+        HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+          CMD curl -f http://localhost:8080/health || exit 1
+        ```
+
+        If the base image's health check does not suit your application, override it with a correct one rather than disabling it.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#healthcheck
+        title: Dockerfile Reference - HEALTHCHECK
+      - url: https://docs.docker.com/build/building/best-practices/
+        title: Dockerfile Best Practices
+  - uid: mondoo-docker-best-practice-workdir-absolute-path
+    title: Use absolute paths in WORKDIR instructions
+    impact: 60
+    mql: |
+      docker.file.stages.all(workdir.all(path == /^\//))
+    docs:
+      desc: |
+        This check ensures that all WORKDIR instructions in the Dockerfile use absolute paths rather than relative paths.
+
+        **Why this matters**
+
+        Relative paths in WORKDIR create unpredictable behavior that varies depending on prior instructions:
+
+        - **Context dependence**: A relative WORKDIR is resolved against the current working directory, which may differ depending on the base image or preceding WORKDIR instructions.
+        - **Build fragility**: Changing the base image or reordering instructions can silently change where files are copied and commands are executed.
+        - **Harder to audit**: With relative paths, determining the actual working directory at any point in the Dockerfile requires tracing through all preceding instructions.
+        - **Unexpected file placement**: Files added with COPY or ADD may end up in unintended locations when the working directory is ambiguous.
+
+        Always use absolute paths in WORKDIR to make the Dockerfile explicit and self-documenting.
+      remediation: |
+        Replace relative WORKDIR paths with absolute paths:
+
+        ```dockerfile
+        # Instead of:
+        WORKDIR src
+        WORKDIR ../app
+
+        # Use:
+        WORKDIR /app/src
+        WORKDIR /app
+        ```
+
+        Absolute paths make it clear where each instruction operates, regardless of the base image or prior instructions.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#workdir
+        title: Dockerfile Reference - WORKDIR
+      - url: https://docs.docker.com/build/building/best-practices/#workdir
+        title: Dockerfile Best Practices - WORKDIR
+  - uid: mondoo-docker-best-practice-use-workdir-not-cd
+    title: Use WORKDIR instead of `cd` in RUN instructions
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.none(script == /\bcd\s/))
+    docs:
+      desc: |
+        This check ensures that Dockerfile `RUN` instructions do not use `cd` to change directories, and instead use the WORKDIR instruction.
+
+        **Why this matters**
+
+        Using `cd` in a RUN instruction only changes the directory for that single RUN command. The working directory resets for the next instruction:
+
+        - **Non-persistent**: `cd` in a RUN instruction does not affect subsequent RUN, COPY, or ADD instructions, leading to confusion about the current directory.
+        - **Error-prone**: Developers may expect `cd` to persist across instructions, leading to files being placed in the wrong location or commands failing.
+        - **Readability**: WORKDIR makes the current directory explicit and visible in the Dockerfile, while `cd` buried in a RUN command is easy to miss.
+        - **Docker best practice**: The WORKDIR instruction is specifically designed for setting the working directory and is the idiomatic approach in Dockerfiles.
+
+        **Note**: This check flags any RUN instruction containing `cd`. Using `cd` within a compound command (e.g., `cd /tmp && make && cd /app && make install`) is acceptable practice to avoid extra layers but will still trigger this check. Consider using WORKDIR before the RUN instruction where possible.
+      remediation: |
+        Replace `cd` commands in RUN instructions with WORKDIR:
+
+        ```dockerfile
+        # Instead of:
+        RUN cd /app && npm install
+
+        # Use:
+        WORKDIR /app
+        RUN npm install
+        ```
+
+        If you need to run a command in a specific directory without changing the persistent working directory, use a subshell:
+
+        ```dockerfile
+        RUN (cd /tmp/build && make install)
+        ```
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#workdir
+        title: Dockerfile Reference - WORKDIR
+      - url: https://docs.docker.com/build/building/best-practices/#workdir
+        title: Dockerfile Best Practices - WORKDIR
