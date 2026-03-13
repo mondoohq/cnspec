@@ -203,6 +203,7 @@ type DatapointNodeData struct {
 	expectedType *string
 	isReported   bool
 	invalidated  bool
+	dump         bool
 	res          *llx.RawResult
 }
 
@@ -214,14 +215,20 @@ func (nodeData *DatapointNodeData) initialize() {
 
 // consume saves the result of the datapoint.
 func (nodeData *DatapointNodeData) consume(from NodeID, data *envelope) {
-	if nodeData.isReported {
-		// No change detection happens. If a datapoint is reported once, that is the value
-		// we will use.
-		return
-	}
 	if data == nil || data.res == nil {
 		// This can be triggered with no data by the execution query nodes. These
 		// messages are not the ones we care about
+		return
+	}
+	if nodeData.isReported {
+		// Allow a real result to override a nil one. This handles the case
+		// where short-circuit evaluation (e.g. &&) reports nil for an
+		// unevaluated branch, and a later query reports the actual value.
+		if nodeData.res != nil && nodeData.res.Data != nil &&
+			nodeData.res.Data.Value == nil && nodeData.res.Data.Error == nil &&
+			data.res.Data != nil && (data.res.Data.Value != nil || data.res.Data.Error != nil) {
+			nodeData.set(data.res)
+		}
 		return
 	}
 
@@ -249,6 +256,9 @@ func (nodeData *DatapointNodeData) recalculate() *envelope {
 
 	nodeData.invalidated = false
 
+	if nodeData.dump {
+		log.Debug().Str("codeId", nodeData.res.CodeID).Interface("data", nodeData.res.Data).Msg("datapoint collected")
+	}
 	return &envelope{
 		res: nodeData.res,
 	}
@@ -278,6 +288,14 @@ func (nodeData *ReportingQueryNodeData) consume(from NodeID, data *envelope) {
 		return
 	}
 	if dr.resolved {
+		// Allow a real result to override a nil one (short-circuit case)
+		if dr.value != nil && dr.value.Data != nil &&
+			dr.value.Data.Value == nil && dr.value.Data.Error == nil &&
+			data.res != nil && data.res.Data != nil &&
+			(data.res.Data.Value != nil || data.res.Data.Error != nil) {
+			dr.value = data.res
+			nodeData.invalidated = true
+		}
 		return
 	}
 
@@ -464,6 +482,14 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 		dp, ok := nodeData.datapoints[from]
 		if !ok {
 			panic("invalid datapoint report")
+		}
+		// If the previously-reported result was nil (from short-circuit) and
+		// we're now getting real data, reset completed so the score can be
+		// recalculated with the actual data.
+		if nodeData.completed && dp.res != nil && dp.res.Data != nil &&
+			dp.res.Data.Value == nil && dp.res.Data.Error == nil &&
+			data.res.Data != nil && (data.res.Data.Value != nil || data.res.Data.Error != nil) {
+			nodeData.completed = false
 		}
 		dp.res = data.res
 		nodeData.invalidated = true

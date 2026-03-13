@@ -213,6 +213,222 @@ func TestDatapointNode(t *testing.T) {
 	})
 }
 
+func TestDatapointNode_NilOverride(t *testing.T) {
+	t.Run("allows real result to override nil", func(t *testing.T) {
+		nodeData := &DatapointNodeData{}
+		nodeData.initialize()
+		nodeData.recalculate()
+
+		// First report: nil value (from short-circuit evaluation)
+		nodeData.consume(NodeID("__executor__"), &envelope{
+			res: &llx.RawResult{
+				CodeID: "checksum",
+				Data:   &llx.RawData{Type: types.Bool, Value: nil},
+			},
+		})
+		data := nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.Nil(t, data.res.Data.Value)
+
+		// Second report: real value (from another query)
+		nodeData.consume(NodeID("__executor__"), &envelope{
+			res: &llx.RawResult{
+				CodeID: "checksum",
+				Data:   llx.BoolTrue,
+			},
+		})
+		data = nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.Equal(t, llx.BoolTrue, data.res.Data)
+	})
+
+	t.Run("does not allow real result to override another real result", func(t *testing.T) {
+		nodeData := &DatapointNodeData{}
+		nodeData.initialize()
+		nodeData.recalculate()
+
+		// First report: real value
+		nodeData.consume(NodeID("__executor__"), &envelope{
+			res: &llx.RawResult{
+				CodeID: "checksum",
+				Data:   llx.BoolTrue,
+			},
+		})
+		data := nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.Equal(t, llx.BoolTrue, data.res.Data)
+
+		// Second report: different real value — should be ignored
+		nodeData.consume(NodeID("__executor__"), &envelope{
+			res: &llx.RawResult{
+				CodeID: "checksum",
+				Data:   llx.BoolFalse,
+			},
+		})
+		data = nodeData.recalculate()
+		assert.Nil(t, data)
+	})
+
+	t.Run("allows error result to override nil", func(t *testing.T) {
+		nodeData := &DatapointNodeData{}
+		nodeData.initialize()
+		nodeData.recalculate()
+
+		// First report: nil value
+		nodeData.consume(NodeID("__executor__"), &envelope{
+			res: &llx.RawResult{
+				CodeID: "checksum",
+				Data:   &llx.RawData{Type: types.Bool, Value: nil},
+			},
+		})
+		nodeData.recalculate()
+
+		// Second report: error result
+		nodeData.consume(NodeID("__executor__"), &envelope{
+			res: &llx.RawResult{
+				CodeID: "checksum",
+				Data:   &llx.RawData{Error: errors.New("some error")},
+			},
+		})
+		data := nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.Error(t, data.res.Data.Error)
+	})
+}
+
+func TestReportingQueryNode_NilOverride(t *testing.T) {
+	t.Run("allows real result to override nil and recalculates score", func(t *testing.T) {
+		nodeData := &ReportingQueryNodeData{
+			queryID: "testquery",
+			results: map[string]*DataResult{
+				"ep1": {checksum: "ep1"},
+			},
+		}
+		nodeData.initialize()
+		nodeData.recalculate()
+
+		// First: resolve with nil value (short-circuit)
+		nodeData.consume("ep1", &envelope{
+			res: &llx.RawResult{
+				CodeID: "ep1",
+				Data:   &llx.RawData{Type: types.Bool, Value: nil},
+			},
+		})
+		data := nodeData.recalculate()
+		require.NotNil(t, data)
+		require.NotNil(t, data.score)
+		// nil value → skip
+		assert.Equal(t, policy.ScoreType_Skip, data.score.Type)
+
+		// Second: override with real value
+		nodeData.consume("ep1", &envelope{
+			res: &llx.RawResult{
+				CodeID: "ep1",
+				Data:   llx.BoolTrue,
+			},
+		})
+		data = nodeData.recalculate()
+		require.NotNil(t, data)
+		require.NotNil(t, data.score)
+		assert.Equal(t, policy.ScoreType_Result, data.score.Type)
+		assert.Equal(t, uint32(100), data.score.Value)
+	})
+
+	t.Run("does not allow real result to override another real result", func(t *testing.T) {
+		nodeData := &ReportingQueryNodeData{
+			queryID: "testquery",
+			results: map[string]*DataResult{
+				"ep1": {checksum: "ep1"},
+			},
+		}
+		nodeData.initialize()
+		nodeData.recalculate()
+
+		// First: resolve with real value
+		nodeData.consume("ep1", &envelope{
+			res: &llx.RawResult{
+				CodeID: "ep1",
+				Data:   llx.BoolTrue,
+			},
+		})
+		data := nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.Equal(t, uint32(100), data.score.Value)
+
+		// Second: try to override with false — should be ignored
+		nodeData.consume("ep1", &envelope{
+			res: &llx.RawResult{
+				CodeID: "ep1",
+				Data:   llx.BoolFalse,
+			},
+		})
+		data = nodeData.recalculate()
+		assert.Nil(t, data) // no recalculation
+	})
+}
+
+func TestReportingJobNode_NilDatapointOverride(t *testing.T) {
+	t.Run("resets completed when nil datapoint gets real data", func(t *testing.T) {
+		nodeData := &ReportingJobNodeData{
+			queryID:      "testquery",
+			forwardScore: true,
+			rjType:       policy.ReportingJob_CHECK,
+			childScores: map[NodeID]*reportingJobResult{
+				"rq1": {},
+			},
+			datapoints: map[NodeID]*reportingJobDatapoint{
+				"dp1": {},
+			},
+		}
+		nodeData.initialize()
+		nodeData.recalculate()
+
+		// Report nil datapoint
+		nodeData.consume("dp1", &envelope{
+			res: &llx.RawResult{
+				CodeID: "dp1",
+				Data:   &llx.RawData{Type: types.Bool, Value: nil},
+			},
+		})
+		// Report score
+		nodeData.consume("rq1", &envelope{
+			score: &policy.Score{
+				QrId:            "testquery",
+				Type:            policy.ScoreType_Skip,
+				ScoreCompletion: 100,
+				Weight:          1,
+			},
+		})
+		data := nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.True(t, nodeData.completed)
+
+		// Now report real datapoint — should reset completed
+		nodeData.consume("dp1", &envelope{
+			res: &llx.RawResult{
+				CodeID: "dp1",
+				Data:   llx.BoolTrue,
+			},
+		})
+		assert.False(t, nodeData.completed)
+
+		// Report updated score
+		nodeData.consume("rq1", &envelope{
+			score: &policy.Score{
+				QrId:            "testquery",
+				Type:            policy.ScoreType_Result,
+				Value:           100,
+				ScoreCompletion: 100,
+				Weight:          1,
+			},
+		})
+		data = nodeData.recalculate()
+		require.NotNil(t, data)
+		assert.Equal(t, policy.ScoreType_Result, data.score.Type)
+		assert.Equal(t, uint32(100), data.score.Value)
+	})
+}
+
 func TestExecutionQueryNode(t *testing.T) {
 	newNodeData := func() (*ExecutionQueryNodeData, chan runQueueItem) {
 		q := make(chan runQueueItem, 1)

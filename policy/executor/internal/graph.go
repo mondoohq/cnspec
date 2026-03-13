@@ -64,6 +64,7 @@ type GraphExecutor struct {
 	doneChan         chan struct{}
 
 	featureFlagFailErrors bool
+	dumpDatapoints        bool
 }
 
 // Execute executes the graph
@@ -185,13 +186,13 @@ OUTER:
 	return err
 }
 
-func (ge *GraphExecutor) Debug() {
+func (ge *GraphExecutor) Debug(name string) {
 	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
 	} else if val, ok := os.LookupEnv("TRACE"); ok && (val == "1" || val == "true") {
 	} else {
 		return
 	}
-	f, err := os.Create("mondoo-debug-resolved-policy.dot")
+	f, err := os.Create(fmt.Sprintf("mondoo-debug-%s.dot", name))
 	if err != nil {
 		log.Error().Err(err).Msg("failed to write debug graph")
 		return
