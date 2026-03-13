@@ -1019,11 +1019,21 @@ func (s *localAssetScanner) mapPropOverrides() (*policy.PropsReq, error) {
 	return &propsReq, nil
 }
 
-var assetDetectBundle = mustCompile("asset { kind platform runtime version family }")
+var (
+	assetDetectBundle     *llx.CodeBundle
+	assetDetectBundleOnce sync.Once
+)
+
+func getAssetDetectBundle() *llx.CodeBundle {
+	assetDetectBundleOnce.Do(func() {
+		assetDetectBundle = mustCompile("asset { kind platform runtime version family }")
+	})
+	return assetDetectBundle
+}
 
 func (s *localAssetScanner) fetchPublicRegistryBundle() error {
 	features := mql.GetFeatures(s.job.Ctx)
-	_, res, err := executor.ExecuteQuery(s.Runtime, assetDetectBundle, nil, features)
+	_, res, err := executor.ExecuteQuery(s.Runtime, getAssetDetectBundle(), nil, features)
 	if err != nil {
 		return errors.Wrap(err, "failed to run asset detection query")
 	}

@@ -521,6 +521,12 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	}
 }
 
+func TestGetAssetDetectBundle(t *testing.T) {
+	bundle := getAssetDetectBundle()
+	require.NotNil(t, bundle)
+	require.NotEmpty(t, bundle.CodeV2.Id)
+}
+
 func TestLocalScannerSuite(t *testing.T) {
 	suite.Run(t, new(LocalScannerSuite))
 }
