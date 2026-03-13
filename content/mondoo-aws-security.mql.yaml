@@ -219,6 +219,8 @@ policies:
         checks:
           - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
           - uid: mondoo-aws-security-kms-grants-no-create-grant
+          - uid: mondoo-aws-security-kms-no-wildcard-grant-principals
+          - uid: mondoo-aws-security-kms-key-origin-aws-kms
       - title: Amazon SageMaker Notebook Instance
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
@@ -17751,6 +17753,164 @@ queries:
   - uid: mondoo-aws-security-kms-grants-no-create-grant-aws
     filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
     mql: aws.kms.key.grants.none(operations.contains("CreateGrant"))
+  - uid: mondoo-aws-security-kms-no-wildcard-grant-principals
+    title: Ensure KMS key grants do not use wildcard principals
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+    variants:
+      - uid: mondoo-aws-security-kms-no-wildcard-grant-principals-aws
+        tags:
+          mondoo.com/filter-title: AWS KMS Key
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS KMS key grants do not use wildcard (`*`) grantee principals. A wildcard principal in a KMS grant allows any AWS principal to use the granted operations on the key, effectively making the key publicly accessible for those operations.
+
+        **Why this matters**
+
+        - A wildcard grantee principal grants KMS key permissions to every AWS principal, including those in other AWS accounts.
+        - This violates the principle of least privilege and can lead to unauthorized access to encrypted data.
+        - An attacker with any valid AWS credentials could use the key to decrypt data, generate data keys, or perform other granted operations.
+        - Wildcard grants are difficult to audit and may go unnoticed, creating persistent security exposure.
+
+        **Risk mitigation:**
+
+        - **Prevent unauthorized access:** Ensure only specific, named principals have access to KMS key operations.
+        - **Enforce least privilege:** Grant permissions only to the principals that require them.
+        - **Improve auditability:** Named principals make it straightforward to trace who has access to each key.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the AWS KMS Console.
+            2. Select Customer managed keys.
+            3. Select a key and go to the Key policy tab.
+            4. Review the Grants section for any grants with a wildcard (`*`) grantee principal.
+            5. Revoke the wildcard grant and recreate it with a specific principal ARN.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            List all grants for a KMS key and check for wildcard principals:
+
+            ```bash
+            aws kms list-grants --key-id <key-id> \
+              --query "Grants[?GranteePrincipal=='*'].{GrantId:GrantId,Grantee:GranteePrincipal,Operations:Operations}"
+            ```
+
+            Revoke a grant with a wildcard principal:
+
+            ```bash
+            aws kms revoke-grant --key-id <key-id> --grant-id <grant-id>
+            ```
+
+            Create a replacement grant with a specific principal:
+
+            ```bash
+            aws kms create-grant \
+              --key-id <key-id> \
+              --grantee-principal <specific-principal-arn> \
+              --operations "Decrypt" "Encrypt" "GenerateDataKey"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/grants.html
+        title: AWS Documentation - Grants in AWS KMS
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/grant-manage.html
+        title: AWS Documentation - Managing grants
+  - uid: mondoo-aws-security-kms-no-wildcard-grant-principals-aws
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
+    mql: aws.kms.key.grants.none(granteePrincipal == "*")
+  - uid: mondoo-aws-security-kms-key-origin-aws-kms
+    title: Ensure customer-managed KMS keys use AWS_KMS origin
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/soc2-2017: soc2-control-cc6-1-11
+    variants:
+      - uid: mondoo-aws-security-kms-key-origin-aws-kms-aws
+        tags:
+          mondoo.com/filter-title: AWS KMS Key
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that customer-managed AWS KMS keys use `AWS_KMS` as their key material origin rather than `EXTERNAL` (imported key material) or `AWS_CLOUDHSM`. When the origin is `AWS_KMS`, AWS generates and manages the key material within its hardened infrastructure, providing automatic security guarantees.
+
+        **Why this matters**
+
+        - Keys with `EXTERNAL` origin require manual key material import and management. If the imported key material is lost or deleted, all data encrypted with the key becomes permanently unrecoverable.
+        - Externally imported keys do not support automatic key rotation. You must manually rotate by creating new keys and re-encrypting data, which increases operational risk.
+        - The security of externally imported key material depends entirely on the customer's key management practices, including secure generation, transport, and storage of the key material outside of AWS.
+        - Keys with `AWS_CLOUDHSM` origin require a functioning AWS CloudHSM cluster. If the cluster becomes unavailable, the KMS key cannot be used.
+
+        **Risk mitigation:**
+
+        - **Automatic key rotation:** AWS_KMS origin keys support automatic annual rotation, reducing cryptographic risk without operational overhead.
+        - **Durability:** AWS manages key material availability and durability, eliminating the risk of key material loss.
+        - **Simplified operations:** No need to manage key material lifecycle, transport, or external storage.
+        - **Consistent security posture:** AWS_KMS origin ensures all keys benefit from the same hardened infrastructure and security controls.
+
+        **Important caveats:**
+
+        - Some organizations have regulatory requirements to use externally generated key material (e.g., BYOK mandates). In those cases, `EXTERNAL` origin is intentional and this check can be excluded for those keys.
+        - `AWS_CLOUDHSM` origin may be required for specific compliance scenarios that mandate single-tenant HSM hardware. Evaluate flagged keys against your compliance requirements.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            KMS key origin cannot be changed after creation. To migrate to an `AWS_KMS` origin key:
+
+            1. Navigate to the AWS KMS Console.
+            2. Create a new customer-managed key with Origin set to KMS (the default).
+            3. Update all services and applications that reference the old key to use the new key ARN.
+            4. Re-encrypt any data encrypted with the old key using the new key.
+            5. Schedule deletion of the old key after confirming all references have been updated.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check the origin of a KMS key:
+
+            ```bash
+            aws kms describe-key --key-id <key-id> \
+              --query "KeyMetadata.Origin"
+            ```
+
+            Create a new key with AWS_KMS origin (default):
+
+            ```bash
+            aws kms create-key \
+              --description "Customer-managed key with AWS_KMS origin" \
+              --key-usage ENCRYPT_DECRYPT \
+              --origin AWS_KMS
+            ```
+
+            Schedule deletion of the old externally-imported key after migration:
+
+            ```bash
+            aws kms schedule-key-deletion --key-id <old-key-id> --pending-window-in-days 30
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-origin
+        title: AWS Documentation - Key material origin
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/importing-keys.html
+        title: AWS Documentation - Importing key material
+  - uid: mondoo-aws-security-kms-key-origin-aws-kms-aws
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
+    mql: aws.kms.key.metadata.Origin == "AWS_KMS"
   - uid: mondoo-aws-security-codebuild-source-ssl-verification
     title: Ensure CodeBuild projects have SSL verification enabled for source fetches
     impact: 80
