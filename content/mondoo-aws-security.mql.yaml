@@ -221,6 +221,17 @@ policies:
           - uid: mondoo-aws-security-kms-grants-no-create-grant
           - uid: mondoo-aws-security-kms-no-wildcard-grant-principals
           - uid: mondoo-aws-security-kms-key-origin-aws-kms
+      - title: Amazon SageMaker
+        checks:
+          - uid: mondoo-aws-security-sagemaker-model-network-isolation
+          - uid: mondoo-aws-security-sagemaker-model-vpc-configured
+          - uid: mondoo-aws-security-sagemaker-training-job-network-isolation
+          - uid: mondoo-aws-security-sagemaker-training-job-encryption
+          - uid: mondoo-aws-security-sagemaker-training-job-vpc-configured
+          - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation
+          - uid: mondoo-aws-security-sagemaker-processing-job-encryption
+          - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured
+          - uid: mondoo-aws-security-sagemaker-domain-kms-encryption
       - title: Amazon SageMaker Notebook Instance
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
@@ -25187,3 +25198,785 @@ queries:
       terraform.state.resources.where(type == "aws_sns_topic_subscription").all(
         values.protocol != "http"
       )
+  - uid: mondoo-aws-security-sagemaker-model-network-isolation
+    title: Ensure SageMaker models have network isolation enabled
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-aws-security-sagemaker-model-network-isolation-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker models have network isolation enabled. When network isolation is enabled, the container cannot make any outbound network calls, even to other AWS services. This prevents potential data exfiltration from ML models.
+
+        **Why this matters**
+
+        Without network isolation, SageMaker model containers have outbound network access, which could be exploited to:
+
+        - Exfiltrate sensitive training data or model artifacts to external endpoints.
+        - Communicate with unauthorized services or command-and-control infrastructure.
+        - Access unintended AWS resources beyond what the execution role permits at the network level.
+
+        Enabling network isolation ensures that model containers operate in a fully sandboxed environment where no outbound network traffic is permitted.
+
+        **Risk mitigation:**
+
+        - Prevents data exfiltration from ML model containers.
+        - Reduces the blast radius if a model container is compromised.
+        - Supports defense-in-depth by enforcing network-level restrictions alongside IAM policies.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon SageMaker Console.
+            2. Select **Models** in the left panel under **Inference**.
+            3. Review each model's configuration.
+            4. When creating new models, enable the **Network isolation** option.
+            5. Note: Existing models cannot be modified. Create a new model with network isolation enabled and update your endpoints to use the new model.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a new SageMaker model with network isolation enabled:
+
+            ```bash
+            aws sagemaker create-model \
+              --model-name "isolated-model" \
+              --primary-container Image=<image-uri>,ModelDataUrl=<s3-path> \
+              --execution-role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --enable-network-isolation
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker models have network isolation enabled:
+
+            ```hcl
+            resource "aws_sagemaker_model" "example" {
+              name               = "isolated-model"
+              execution_role_arn = aws_iam_role.sagemaker.arn
+              enable_network_isolation = true
+
+              primary_container {
+                image = "<image-uri>"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/mkt-algo-model-internet-free.html
+        title: Amazon SageMaker - Network Isolation
+  - uid: mondoo-aws-security-sagemaker-model-network-isolation-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.models.all(enableNetworkIsolation == true)
+  - uid: mondoo-aws-security-sagemaker-model-vpc-configured
+    title: Ensure SageMaker models are deployed within a VPC
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-aws-security-sagemaker-model-vpc-configured-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker models are deployed within a VPC. Deploying models in a VPC allows you to control network traffic using security groups and network ACLs, and ensures that data does not traverse the public internet.
+
+        **Why this matters**
+
+        Without VPC configuration, SageMaker model containers communicate over the public internet, which increases exposure to:
+
+        - Man-in-the-middle attacks during data transfer.
+        - Unauthorized network access to model endpoints.
+        - Inability to apply network-level access controls such as security groups and NACLs.
+
+        Deploying models within a VPC provides network-level isolation and enables you to restrict access to model containers using standard AWS networking controls.
+
+        **Risk mitigation:**
+
+        - Restricts network access to model containers using security groups and NACLs.
+        - Keeps data transfer within the AWS private network.
+        - Enables integration with VPC endpoints for secure access to AWS services.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon SageMaker Console.
+            2. Select **Models** in the left panel under **Inference**.
+            3. When creating a new model, expand the **VPC** section.
+            4. Select a VPC, subnets, and security groups.
+            5. Note: Existing models cannot be modified. Create a new model with VPC configuration and update your endpoints.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a SageMaker model with VPC configuration:
+
+            ```bash
+            aws sagemaker create-model \
+              --model-name "vpc-model" \
+              --primary-container Image=<image-uri>,ModelDataUrl=<s3-path> \
+              --execution-role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --vpc-config SecurityGroupIds=sg-12345678,Subnets=subnet-12345678,subnet-87654321
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker models are deployed within a VPC:
+
+            ```hcl
+            resource "aws_sagemaker_model" "example" {
+              name               = "vpc-model"
+              execution_role_arn = aws_iam_role.sagemaker.arn
+
+              primary_container {
+                image = "<image-uri>"
+              }
+
+              vpc_config {
+                security_group_ids = [aws_security_group.sagemaker.id]
+                subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/host-vpc.html
+        title: Amazon SageMaker - Give SageMaker Hosted Endpoints Access to Resources in Your VPC
+  - uid: mondoo-aws-security-sagemaker-model-vpc-configured-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.models.all(vpcConfig != empty)
+  - uid: mondoo-aws-security-sagemaker-training-job-network-isolation
+    title: Ensure SageMaker training jobs have network isolation enabled
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-aws-security-sagemaker-training-job-network-isolation-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker training jobs have network isolation enabled. When network isolation is enabled, training containers cannot make outbound network calls, preventing potential data exfiltration of training data and model artifacts.
+
+        **Why this matters**
+
+        Training jobs process potentially sensitive datasets and produce valuable model artifacts. Without network isolation:
+
+        - Training data could be exfiltrated to external endpoints by compromised or malicious training code.
+        - Model artifacts and hyperparameters could be leaked.
+        - The training container could be used as a pivot point for lateral movement within the network.
+
+        Enabling network isolation ensures training containers operate in a fully sandboxed environment.
+
+        **Risk mitigation:**
+
+        - Prevents exfiltration of sensitive training data and model artifacts.
+        - Reduces risk from untrusted or third-party training algorithms.
+        - Enforces a zero-trust network posture for ML training workloads.
+      remediation:
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a training job with network isolation enabled:
+
+            ```bash
+            aws sagemaker create-training-job \
+              --training-job-name "isolated-training-job" \
+              --algorithm-specification TrainingImage=<image-uri>,TrainingInputMode=File \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3Uri":"s3://bucket/data"}}}]' \
+              --output-data-config S3OutputPath=s3://bucket/output \
+              --resource-config InstanceType=ml.m5.large,InstanceCount=1,VolumeSizeInGB=50 \
+              --stopping-condition MaxRuntimeInSeconds=3600 \
+              --enable-network-isolation
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker training jobs have network isolation enabled:
+
+            ```hcl
+            resource "aws_sagemaker_training_job" "example" {
+              training_job_name = "isolated-training-job"
+              role_arn          = aws_iam_role.sagemaker.arn
+              enable_network_isolation = true
+
+              algorithm_specification {
+                training_image     = "<image-uri>"
+                training_input_mode = "File"
+              }
+
+              resource_config {
+                instance_type  = "ml.m5.large"
+                instance_count = 1
+                volume_size    = 50
+              }
+
+              stopping_condition {
+                max_runtime_in_seconds = 3600
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/mkt-algo-model-internet-free.html
+        title: Amazon SageMaker - Network Isolation
+  - uid: mondoo-aws-security-sagemaker-training-job-network-isolation-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.trainingJobs.all(enableNetworkIsolation == true)
+  - uid: mondoo-aws-security-sagemaker-training-job-encryption
+    title: Ensure SageMaker training jobs encrypt inter-container traffic
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-aws-security-sagemaker-training-job-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker training jobs have inter-container traffic encryption enabled. When enabled, traffic between training containers in distributed training is encrypted using TLS 1.2.
+
+        **Why this matters**
+
+        Distributed training jobs use multiple instances that exchange data such as gradients, model parameters, and intermediate results. Without inter-container traffic encryption:
+
+        - Sensitive training data transmitted between containers could be intercepted.
+        - Model parameters and gradients could be captured, potentially enabling model reconstruction.
+        - Compliance requirements for encryption in transit may not be met.
+
+        Enabling inter-container traffic encryption ensures all communication between training instances is protected with TLS 1.2.
+
+        **Risk mitigation:**
+
+        - Protects sensitive data exchanged between distributed training instances.
+        - Ensures compliance with encryption-in-transit requirements.
+        - Prevents interception of model parameters during distributed training.
+      remediation:
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a training job with inter-container traffic encryption enabled:
+
+            ```bash
+            aws sagemaker create-training-job \
+              --training-job-name "encrypted-training-job" \
+              --algorithm-specification TrainingImage=<image-uri>,TrainingInputMode=File \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3Uri":"s3://bucket/data"}}}]' \
+              --output-data-config S3OutputPath=s3://bucket/output \
+              --resource-config InstanceType=ml.m5.large,InstanceCount=2,VolumeSizeInGB=50 \
+              --stopping-condition MaxRuntimeInSeconds=3600 \
+              --enable-inter-container-traffic-encryption
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker training jobs have inter-container traffic encryption:
+
+            ```hcl
+            resource "aws_sagemaker_training_job" "example" {
+              training_job_name = "encrypted-training-job"
+              role_arn          = aws_iam_role.sagemaker.arn
+              enable_inter_container_traffic_encryption = true
+
+              algorithm_specification {
+                training_image     = "<image-uri>"
+                training_input_mode = "File"
+              }
+
+              resource_config {
+                instance_type  = "ml.m5.large"
+                instance_count = 2
+                volume_size    = 50
+              }
+
+              stopping_condition {
+                max_runtime_in_seconds = 3600
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/train-encrypt.html
+        title: Amazon SageMaker - Protect Communications Between ML Compute Instances
+  - uid: mondoo-aws-security-sagemaker-training-job-encryption-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.trainingJobs.all(enableInterContainerTrafficEncryption == true)
+  - uid: mondoo-aws-security-sagemaker-training-job-vpc-configured
+    title: Ensure SageMaker training jobs are deployed within a VPC
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-aws-security-sagemaker-training-job-vpc-configured-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker training jobs are deployed within a VPC. Running training jobs in a VPC enables network-level access controls and keeps data transfer within the AWS private network.
+
+        **Why this matters**
+
+        Without VPC configuration, training containers communicate over the public internet, which:
+
+        - Increases exposure to network-based attacks during data transfer.
+        - Prevents the use of security groups and NACLs to control network access.
+        - May not meet organizational requirements for network isolation of sensitive workloads.
+
+        Deploying training jobs within a VPC ensures that all network traffic stays within your controlled network environment.
+
+        **Risk mitigation:**
+
+        - Restricts network access using security groups and NACLs.
+        - Enables private connectivity to S3, ECR, and other AWS services via VPC endpoints.
+        - Keeps training data transfer within the AWS private network.
+      remediation:
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a training job within a VPC:
+
+            ```bash
+            aws sagemaker create-training-job \
+              --training-job-name "vpc-training-job" \
+              --algorithm-specification TrainingImage=<image-uri>,TrainingInputMode=File \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3Uri":"s3://bucket/data"}}}]' \
+              --output-data-config S3OutputPath=s3://bucket/output \
+              --resource-config InstanceType=ml.m5.large,InstanceCount=1,VolumeSizeInGB=50 \
+              --stopping-condition MaxRuntimeInSeconds=3600 \
+              --vpc-config SecurityGroupIds=sg-12345678,Subnets=subnet-12345678,subnet-87654321
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker training jobs are deployed within a VPC:
+
+            ```hcl
+            resource "aws_sagemaker_training_job" "example" {
+              training_job_name = "vpc-training-job"
+              role_arn          = aws_iam_role.sagemaker.arn
+
+              vpc_config {
+                security_group_ids = [aws_security_group.sagemaker.id]
+                subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+              }
+
+              algorithm_specification {
+                training_image     = "<image-uri>"
+                training_input_mode = "File"
+              }
+
+              resource_config {
+                instance_type  = "ml.m5.large"
+                instance_count = 1
+                volume_size    = 50
+              }
+
+              stopping_condition {
+                max_runtime_in_seconds = 3600
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/train-vpc.html
+        title: Amazon SageMaker - Give SageMaker Training Jobs Access to Resources in Your VPC
+  - uid: mondoo-aws-security-sagemaker-training-job-vpc-configured-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.trainingJobs.all(vpcConfig != empty)
+  - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation
+    title: Ensure SageMaker processing jobs have network isolation enabled
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker processing jobs have network isolation enabled. Processing jobs handle data transformation, feature engineering, and model evaluation. When network isolation is enabled, containers cannot make outbound network calls.
+
+        **Why this matters**
+
+        Processing jobs often handle raw, unprocessed data that may contain sensitive information such as PII, financial records, or healthcare data. Without network isolation:
+
+        - Sensitive data processed during feature engineering could be exfiltrated.
+        - Processing containers could be exploited to access unauthorized resources.
+        - Third-party processing code could transmit data to external endpoints.
+
+        Enabling network isolation prevents all outbound traffic from processing containers.
+
+        **Risk mitigation:**
+
+        - Prevents exfiltration of sensitive data during processing.
+        - Reduces risk from third-party or untrusted processing code.
+        - Enforces defense-in-depth alongside IAM and VPC controls.
+      remediation:
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a processing job with network isolation enabled:
+
+            ```bash
+            aws sagemaker create-processing-job \
+              --processing-job-name "isolated-processing-job" \
+              --app-specification ImageUri=<image-uri> \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --processing-resources '{"ClusterConfig":{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":50}}' \
+              --network-config EnableNetworkIsolation=true
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker processing jobs have network isolation enabled:
+
+            ```hcl
+            resource "aws_sagemaker_processing_job" "example" {
+              processing_job_name = "isolated-processing-job"
+              role_arn            = aws_iam_role.sagemaker.arn
+
+              network_config {
+                enable_network_isolation = true
+              }
+
+              app_specification {
+                image_uri = "<image-uri>"
+              }
+
+              processing_resources {
+                cluster_config {
+                  instance_type  = "ml.m5.large"
+                  instance_count = 1
+                  volume_size    = 50
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/mkt-algo-model-internet-free.html
+        title: Amazon SageMaker - Network Isolation
+  - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.processingJobs.all(enableNetworkIsolation == true)
+  - uid: mondoo-aws-security-sagemaker-processing-job-encryption
+    title: Ensure SageMaker processing jobs encrypt inter-container traffic
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-aws-security-sagemaker-processing-job-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker processing jobs have inter-container traffic encryption enabled. When enabled, traffic between processing containers in distributed processing is encrypted using TLS 1.2.
+
+        **Why this matters**
+
+        Distributed processing jobs run across multiple instances that exchange intermediate data. Without inter-container traffic encryption:
+
+        - Sensitive data transmitted between processing containers could be intercepted.
+        - Intermediate processing results containing PII or confidential data may be exposed.
+        - Compliance requirements for encryption in transit may not be met.
+
+        Enabling inter-container traffic encryption ensures all communication between processing instances is protected.
+
+        **Risk mitigation:**
+
+        - Protects sensitive data exchanged between distributed processing instances.
+        - Ensures compliance with encryption-in-transit requirements.
+        - Prevents interception of intermediate processing data.
+      remediation:
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a processing job with inter-container traffic encryption:
+
+            ```bash
+            aws sagemaker create-processing-job \
+              --processing-job-name "encrypted-processing-job" \
+              --app-specification ImageUri=<image-uri> \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --processing-resources '{"ClusterConfig":{"InstanceType":"ml.m5.large","InstanceCount":2,"VolumeSizeInGB":50}}' \
+              --network-config EnableInterContainerTrafficEncryption=true
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker processing jobs have inter-container traffic encryption:
+
+            ```hcl
+            resource "aws_sagemaker_processing_job" "example" {
+              processing_job_name = "encrypted-processing-job"
+              role_arn            = aws_iam_role.sagemaker.arn
+
+              network_config {
+                enable_inter_container_traffic_encryption = true
+              }
+
+              app_specification {
+                image_uri = "<image-uri>"
+              }
+
+              processing_resources {
+                cluster_config {
+                  instance_type  = "ml.m5.large"
+                  instance_count = 2
+                  volume_size    = 50
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/train-encrypt.html
+        title: Amazon SageMaker - Protect Communications Between ML Compute Instances
+  - uid: mondoo-aws-security-sagemaker-processing-job-encryption-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.processingJobs.all(enableInterContainerTrafficEncryption == true)
+  - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured
+    title: Ensure SageMaker processing jobs are deployed within a VPC
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker processing jobs are deployed within a VPC. Running processing jobs in a VPC provides network-level access controls and keeps data transfer within the AWS private network.
+
+        **Why this matters**
+
+        Without VPC configuration, processing containers communicate over the public internet, which:
+
+        - Increases exposure to network-based attacks during data transfer.
+        - Prevents the use of security groups and NACLs to restrict access.
+        - May not meet organizational requirements for network isolation of data processing workloads.
+
+        Deploying processing jobs within a VPC ensures that all network traffic stays within your controlled network environment.
+
+        **Risk mitigation:**
+
+        - Restricts network access using security groups and NACLs.
+        - Enables private connectivity to S3 and other AWS services via VPC endpoints.
+        - Keeps data transfer within the AWS private network.
+      remediation:
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a processing job within a VPC:
+
+            ```bash
+            aws sagemaker create-processing-job \
+              --processing-job-name "vpc-processing-job" \
+              --app-specification ImageUri=<image-uri> \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --processing-resources '{"ClusterConfig":{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":50}}' \
+              --network-config VpcConfig='{SecurityGroupIds=["sg-12345678"],Subnets=["subnet-12345678","subnet-87654321"]}'
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker processing jobs are deployed within a VPC:
+
+            ```hcl
+            resource "aws_sagemaker_processing_job" "example" {
+              processing_job_name = "vpc-processing-job"
+              role_arn            = aws_iam_role.sagemaker.arn
+
+              network_config {
+                vpc_config {
+                  security_group_ids = [aws_security_group.sagemaker.id]
+                  subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                }
+              }
+
+              app_specification {
+                image_uri = "<image-uri>"
+              }
+
+              processing_resources {
+                cluster_config {
+                  instance_type  = "ml.m5.large"
+                  instance_count = 1
+                  volume_size    = 50
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/process-vpc.html
+        title: Amazon SageMaker - Give SageMaker Processing Jobs Access to Resources in Your VPC
+  - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.processingJobs.all(vpcConfig != empty)
+  - uid: mondoo-aws-security-sagemaker-domain-kms-encryption
+    title: Ensure SageMaker domains are encrypted with a KMS key
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-aws-security-sagemaker-domain-kms-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker domains are configured with a KMS key for encrypting the EFS volume that stores user data. SageMaker domains use an EFS file system to store notebooks, data, and artifacts for all users in the domain.
+
+        **Why this matters**
+
+        SageMaker domains store sensitive data including notebooks, training scripts, datasets, and model artifacts in an Amazon EFS file system. Without KMS encryption:
+
+        - Sensitive ML data is stored without customer-controlled encryption.
+        - No centralized key management or auditing of encryption key usage.
+        - Compliance requirements for encryption at rest may not be met.
+        - Inability to control access to encrypted data through KMS key policies.
+
+        Configuring a KMS key for the domain ensures that all data in the EFS volume is encrypted with a customer-managed key.
+
+        **Risk mitigation:**
+
+        - Protects sensitive ML data at rest with customer-managed encryption.
+        - Enables centralized key management and rotation through AWS KMS.
+        - Provides audit trail of encryption key usage via CloudTrail.
+        - Supports compliance with frameworks requiring encryption at rest.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon SageMaker Console.
+            2. Select **Domains** in the left panel.
+            3. Note: KMS encryption must be configured at domain creation time and cannot be changed after creation.
+            4. To remediate, create a new domain with KMS encryption:
+               - Select **Create domain**.
+               - In the **Encryption** section, select a KMS key.
+               - Configure other domain settings as needed.
+               - Migrate users and data to the new domain.
+            5. Delete the unencrypted domain once migration is complete.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a SageMaker domain with KMS encryption:
+
+            ```bash
+            aws sagemaker create-domain \
+              --domain-name "encrypted-domain" \
+              --auth-mode "IAM" \
+              --default-user-settings ExecutionRole=arn:aws:iam::<account-id>:role/SageMakerRole \
+              --subnet-ids subnet-12345678 subnet-87654321 \
+              --vpc-id vpc-12345678 \
+              --kms-key-id "arn:aws:kms:<region>:<account-id>:key/<key-id>"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Ensure SageMaker domains are encrypted with a KMS key:
+
+            ```hcl
+            resource "aws_kms_key" "sagemaker_domain" {
+              description         = "KMS key for SageMaker domain EFS encryption"
+              enable_key_rotation = true
+            }
+
+            resource "aws_sagemaker_domain" "example" {
+              domain_name = "encrypted-domain"
+              auth_mode   = "IAM"
+              vpc_id      = aws_vpc.main.id
+              subnet_ids  = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+              kms_key_id  = aws_kms_key.sagemaker_domain.arn
+
+              default_user_settings {
+                execution_role = aws_iam_role.sagemaker.arn
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/encryption-at-rest.html
+        title: Amazon SageMaker - Encryption at Rest
+  - uid: mondoo-aws-security-sagemaker-domain-kms-encryption-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.domains.all(kmsKey != empty)
