@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-panos-security
     name: Mondoo Palo Alto Networks PAN-OS Security
-    version: 1.1.0
+    version: 2.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -22,6 +22,12 @@ policies:
 
         - **License Management**: Verifies critical security subscriptions are active and not expired
         - **System Configuration**: Validates operational mode and system parameters
+        - **Zone Security**: Ensures zones have protection profiles, packet buffer protection, and logging
+        - **Security Rule Hygiene**: Validates security rules use App-ID, threat profiles, and logging
+        - **Network Interface Hardening**: Checks interface zone assignment, management profiles, and addressing
+        - **VPN/IPsec Security**: Verifies IKE and IPsec tunnel configurations follow best practices
+        - **Decryption Policy**: Ensures decryption rules have proper profiles and logging
+        - **Routing Security**: Validates virtual router and static route configurations
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
 
@@ -45,6 +51,46 @@ policies:
           - uid: mondoo-panos-security-wildfire-license
           - uid: mondoo-panos-security-url-filtering-license
           - uid: mondoo-panos-security-dns-security-license
+      - title: Zone Security
+        filters: asset.platform == "pan-os"
+        checks:
+          - uid: mondoo-panos-security-zone-protection-profile
+          - uid: mondoo-panos-security-zone-packet-buffer-protection
+          - uid: mondoo-panos-security-zone-log-forwarding
+      - title: Security Rule Hygiene
+        filters: asset.platform == "pan-os"
+        checks:
+          - uid: mondoo-panos-security-no-allow-any-rules
+          - uid: mondoo-panos-security-rules-use-app-id
+          - uid: mondoo-panos-security-rules-have-security-profiles
+          - uid: mondoo-panos-security-rules-url-filtering
+          - uid: mondoo-panos-security-rules-logging-enabled
+          - uid: mondoo-panos-security-no-disabled-rules
+          - uid: mondoo-panos-security-rules-wildfire-profile
+      - title: Network Interface Hardening
+        filters: asset.platform == "pan-os"
+        checks:
+          - uid: mondoo-panos-security-interface-management-profile
+          - uid: mondoo-panos-security-no-dhcp-interfaces
+          - uid: mondoo-panos-security-interfaces-assigned-to-zone
+      - title: VPN/IPsec Security
+        filters: asset.platform == "pan-os"
+        checks:
+          - uid: mondoo-panos-security-ike-version-v2
+          - uid: mondoo-panos-security-ike-certificate-auth
+          - uid: mondoo-panos-security-ike-dead-peer-detection
+          - uid: mondoo-panos-security-ike-no-aggressive-mode
+          - uid: mondoo-panos-security-ipsec-anti-replay
+          - uid: mondoo-panos-security-ipsec-tunnel-monitoring
+      - title: Decryption Policy
+        filters: asset.platform == "pan-os"
+        checks:
+          - uid: mondoo-panos-security-decryption-profile
+          - uid: mondoo-panos-security-decryption-log-failures
+      - title: Routing Security
+        filters: asset.platform == "pan-os"
+        checks:
+          - uid: mondoo-panos-security-default-route-exists
 queries:
   - uid: mondoo-panos-security-antivirus-content-installed
     title: Ensure antivirus content version is installed
@@ -633,3 +679,1283 @@ queries:
     refs:
       - url: https://docs.paloaltonetworks.com/best-practices
         title: Palo Alto Networks Best Practices
+  # ============================================================
+  # Zone Security
+  # ============================================================
+  - uid: mondoo-panos-security-zone-protection-profile
+    title: Ensure all zones have a zone protection profile
+    impact: 90
+    filters: panos.zones != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: panos.zones.all(zoneProfile != "")
+    docs:
+      desc: |
+        This check verifies that every security zone has a zone protection profile assigned. Zone protection profiles defend against flood attacks, reconnaissance attempts, and packet-based attacks at the zone level.
+
+        **Why this matters**
+
+        Without a zone protection profile, a zone has no protection against network-layer attacks targeting the firewall or traversing through it. If zone protection profiles are missing:
+
+        - SYN, UDP, ICMP, and other flood attacks can overwhelm the firewall or downstream systems.
+        - Reconnaissance techniques such as port scans and host sweeps go undetected.
+        - Malformed packets and packet-based attacks (IP spoofing, fragmented packets) are not dropped.
+        - The firewall cannot enforce rate limiting or connection thresholds for the zone.
+
+        Assigning a zone protection profile to every zone ensures a baseline level of network-layer defense across the entire firewall.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Network Profiles → Zone Protection**
+            2. Click **Add** to create a new zone protection profile (or select an existing one to review)
+            3. Configure flood protection thresholds (SYN, UDP, ICMP, ICMPv6, Other) under the **Flood Protection** tab
+            4. Enable reconnaissance protection (port scan, host sweep) under the **Reconnaissance Protection** tab
+            5. Configure packet-based attack protection under the **Packet Based Attack Protection** tab
+            6. Click **OK** to save the profile
+            7. Navigate to **Network → Zones** and select each zone
+            8. In the **Zone Protection Profile** dropdown, select the appropriate profile
+            9. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Create a zone protection profile and apply it to a zone:
+
+            ```
+            set network profiles zone-protection-profile <profile-name> flood tcp-syn enable yes
+            set network profiles zone-protection-profile <profile-name> scan port-scan action block-ip
+            set zone <zone-name> network zone-protection-profile <profile-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices/10-1/internet-gateway-best-practices/best-practice-internet-gateway-security-policy/zone-protection-for-the-internet-gateway
+        title: Zone Protection Best Practices
+  - uid: mondoo-panos-security-zone-packet-buffer-protection
+    title: Ensure all zones have packet buffer protection enabled
+    impact: 80
+    filters: panos.zones != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: panos.zones.all(enablePacketBufferProtection == true)
+    docs:
+      desc: |
+        This check verifies that packet buffer protection is enabled on all security zones. Packet buffer protection prevents a single session or source from consuming an excessive share of the firewall's packet buffer resources.
+
+        **Why this matters**
+
+        Without packet buffer protection, a single abusive session can exhaust the firewall's packet buffers, causing traffic drops across all zones and effectively creating a denial-of-service condition. If packet buffer protection is disabled:
+
+        - A single high-volume session can monopolize packet buffer resources, starving other traffic.
+        - Denial-of-service attacks targeting one zone can degrade performance across the entire firewall.
+        - Legitimate traffic in other zones may be dropped due to buffer exhaustion from an unrelated attack.
+        - The firewall has no mechanism to isolate resource consumption by zone or session.
+
+        Enabling packet buffer protection ensures fair resource allocation and prevents localized attacks from impacting the entire firewall.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Zones**
+            2. Select each zone
+            3. Check the **Packet Buffer Protection** checkbox to enable it
+            4. Click **OK** and commit the configuration
+
+            Additionally, enable global packet buffer protection:
+
+            1. Navigate to **Device → Setup → Session**
+            2. Click the gear icon next to **Session Settings**
+            3. Enable **Packet Buffer Protection** and configure the alert and activation thresholds
+            4. Click **OK** and commit
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable packet buffer protection on a zone:
+
+            ```
+            set zone <zone-name> enable-packet-buffer-protection yes
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/zone-protection-and-dos-protection/configure-packet-buffer-protection
+        title: Configure Packet Buffer Protection
+  - uid: mondoo-panos-security-zone-log-forwarding
+    title: Ensure all zones have log forwarding configured
+    impact: 70
+    filters: panos.zones != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-ae-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: panos.zones.all(logSetting != "")
+    docs:
+      desc: |
+        This check verifies that all security zones have a log forwarding setting configured. Log forwarding ensures zone-level events are sent to external logging infrastructure for analysis and retention.
+
+        **Why this matters**
+
+        Without log forwarding configured on zones, zone protection events are only stored locally and may be lost during high-volume events or device failures. If log forwarding is missing:
+
+        - Zone protection events (floods, scans, packet-based attacks) are not forwarded to SIEM or log management systems.
+        - Security teams lose visibility into network-layer attacks targeting specific zones.
+        - Incident response is hindered because historical zone event data may not be available.
+        - Compliance requirements for log retention and centralized monitoring cannot be met.
+
+        Configuring log forwarding on all zones ensures that security events are captured, correlated, and available for investigation.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Objects → Log Forwarding** and create or verify a log forwarding profile that sends logs to your SIEM or log management system
+            2. Navigate to **Network → Zones** and select each zone
+            3. In the **Log Setting** dropdown, select the appropriate log forwarding profile
+            4. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure log forwarding on a zone:
+
+            ```
+            set zone <zone-name> log-setting <log-forwarding-profile>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/monitoring/configure-log-forwarding
+        title: Configure Log Forwarding
+  # ============================================================
+  # Security Rule Hygiene
+  # ============================================================
+  - uid: mondoo-panos-security-no-allow-any-rules
+    title: Ensure no overly permissive allow-any rules exist
+    impact: 95
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      panos.securityRules.none(
+        action == "allow" &&
+        disabled == false &&
+        applications.any(_ == "any") &&
+        services.any(_ == "any") &&
+        sourceAddresses.any(_ == "any") &&
+        destinationAddresses.any(_ == "any")
+      )
+    docs:
+      desc: |
+        This check verifies that no security rules allow all applications, services, sources, and destinations — commonly known as "allow any/any" rules. These rules effectively bypass the firewall's security controls.
+
+        **Why this matters**
+
+        An allow-any rule permits all traffic through the firewall without restriction, defeating the purpose of having a next-generation firewall. If allow-any rules exist:
+
+        - All traffic passes through without application identification, threat inspection, or access control.
+        - Attackers can use any protocol, port, or application to communicate through the firewall.
+        - Lateral movement within the network is unrestricted.
+        - The firewall provides no security value for traffic matching these rules.
+        - Compliance frameworks universally require least-privilege access controls.
+
+        Security rules should follow the principle of least privilege, explicitly defining allowed applications, services, and address ranges.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Policies → Security**
+            2. Identify rules where Source, Destination, Application, and Service are all set to **Any**
+            3. For each overly permissive rule:
+               - Define specific source and destination zones and addresses
+               - Specify the applications that need to be allowed using App-ID
+               - Set the service to **application-default** or specific service objects
+               - Attach appropriate security profiles (Antivirus, Anti-Spyware, Vulnerability Protection, URL Filtering, WildFire)
+            4. If the rule was a temporary placeholder, replace it with specific rules for each required traffic flow
+            5. Commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Review and modify overly permissive rules:
+
+            ```
+            show running security-policy
+            set rulebase security rules <rule-name> application <specific-app>
+            set rulebase security rules <rule-name> service application-default
+            set rulebase security rules <rule-name> source <specific-address>
+            set rulebase security rules <rule-name> destination <specific-address>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices/10-1/internet-gateway-best-practices/best-practice-internet-gateway-security-policy/build-your-internet-gateway-best-practice-security-policy
+        title: Security Policy Best Practices
+  - uid: mondoo-panos-security-rules-use-app-id
+    title: Ensure security rules use App-ID instead of any application
+    impact: 85
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      panos.securityRules.
+        where(action == "allow" && disabled == false).
+        all(applications.none(_ == "any"))
+    docs:
+      desc: |
+        This check verifies that all enabled allow rules use specific App-ID applications rather than "any". App-ID is a core capability of Palo Alto Networks next-generation firewalls that identifies applications regardless of port, protocol, or encryption.
+
+        **Why this matters**
+
+        Rules with the application set to "any" fall back to port-based matching, which provides significantly weaker security. If rules do not use App-ID:
+
+        - Applications using non-standard ports or tunneling through allowed ports bypass security controls.
+        - The firewall cannot distinguish between legitimate and malicious applications on the same port.
+        - Evasive applications that hop between ports cannot be identified or controlled.
+        - Visibility into actual application usage on the network is lost.
+        - The primary differentiating capability of a next-generation firewall goes unused.
+
+        Specifying applications by App-ID ensures the firewall identifies and controls traffic based on the actual application, not just the port number.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Policies → Security**
+            2. Identify rules where the **Application** column shows **Any**
+            3. Use **Monitor → App Scope → Summary** or **ACC** to identify which applications are actually being used by each rule
+            4. Replace **Any** with the specific applications observed in traffic
+            5. Set the **Service** to **application-default** to allow each application's default ports
+            6. Commit and monitor for any blocked traffic that indicates a missing application
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Update rules to use specific applications:
+
+            ```
+            set rulebase security rules <rule-name> application <app1> <app2>
+            set rulebase security rules <rule-name> service application-default
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices/10-1/internet-gateway-best-practices/best-practice-internet-gateway-security-policy/build-your-internet-gateway-best-practice-security-policy
+        title: Security Policy Best Practices
+  - uid: mondoo-panos-security-rules-have-security-profiles
+    title: Ensure allow rules have security profiles or profile groups attached
+    impact: 90
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/soc2-2017: soc2-control-cc7-1-2
+    mql: |
+      panos.securityRules.
+        where(action == "allow" && disabled == false).
+        all(
+          profileGroup != "" ||
+          virusProfile != "" ||
+          spywareProfile != "" ||
+          vulnerabilityProfile != ""
+        )
+    docs:
+      desc: |
+        This check verifies that all enabled allow rules have at least one security profile or a security profile group attached. Security profiles enable threat inspection on allowed traffic.
+
+        **Why this matters**
+
+        An allow rule without security profiles permits traffic through without any threat inspection. If security profiles are missing from allow rules:
+
+        - Malware, exploits, and command-and-control traffic pass through the firewall uninspected.
+        - The firewall functions as a simple stateful firewall rather than a next-generation firewall.
+        - Known vulnerabilities cannot be detected or blocked in allowed traffic.
+        - Spyware and botnet communications are not identified.
+
+        Attaching security profiles (Antivirus, Anti-Spyware, Vulnerability Protection) or a security profile group to every allow rule ensures that all permitted traffic is inspected for threats.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Policies → Security**
+            2. Identify allow rules without security profiles (the **Profile** column will be empty)
+            3. Select each rule and go to the **Actions** tab
+            4. Under **Profile Setting**, select either:
+               - **Group**: Choose a security profile group (recommended for consistency)
+               - **Profiles**: Select individual profiles for Antivirus, Anti-Spyware, Vulnerability Protection, URL Filtering, File Blocking, and WildFire Analysis
+            5. Click **OK** and commit the configuration
+
+            Best practice is to create a security profile group with all recommended profiles and apply it consistently across rules.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Attach a security profile group to a rule:
+
+            ```
+            set rulebase security rules <rule-name> profile-setting group <profile-group-name>
+            commit
+            ```
+
+            Or attach individual profiles:
+
+            ```
+            set rulebase security rules <rule-name> profile-setting profiles virus <av-profile>
+            set rulebase security rules <rule-name> profile-setting profiles spyware <as-profile>
+            set rulebase security rules <rule-name> profile-setting profiles vulnerability <vp-profile>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices/10-1/internet-gateway-best-practices/best-practice-internet-gateway-security-policy/apply-security-profiles-and-profile-groups-to-policy-rules
+        title: Security Profile Best Practices
+  - uid: mondoo-panos-security-rules-url-filtering
+    title: Ensure allow rules have URL filtering applied
+    impact: 80
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-23
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      panos.securityRules.
+        where(action == "allow" && disabled == false).
+        all(urlFilteringProfile != "" || profileGroup != "")
+    docs:
+      desc: |
+        This check verifies that all enabled allow rules have a URL filtering profile or security profile group attached. URL filtering inspects web traffic to block access to malicious, phishing, and inappropriate websites.
+
+        **Why this matters**
+
+        Without URL filtering on allow rules, users and systems can access known malicious websites through the firewall without any inspection or control. If URL filtering is missing:
+
+        - Users can reach phishing sites designed to steal credentials.
+        - Drive-by download sites that distribute malware are not blocked.
+        - Command-and-control traffic using HTTP/HTTPS to known malicious URLs passes through.
+        - Acceptable use policies cannot be enforced at the firewall level.
+        - Credential phishing protection, which detects corporate credentials submitted to untrusted sites, is unavailable.
+
+        Applying URL filtering to allow rules provides critical protection against web-based threats and enforces organizational web access policies.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Objects → Security Profiles → URL Filtering** and create or verify a URL Filtering profile
+            2. Navigate to **Policies → Security**
+            3. Select each allow rule and go to the **Actions** tab
+            4. Under **Profile Setting**, either:
+               - Select a **Group** that includes URL Filtering
+               - Under **Profiles**, select a URL Filtering profile
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Attach a URL filtering profile to a rule:
+
+            ```
+            set rulebase security rules <rule-name> profile-setting profiles url-filtering <url-profile>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices/10-1/internet-gateway-best-practices/best-practice-internet-gateway-security-policy/apply-security-profiles-and-profile-groups-to-policy-rules
+        title: Security Profile Best Practices
+  - uid: mondoo-panos-security-rules-logging-enabled
+    title: Ensure security rules have session-end logging enabled
+    impact: 75
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-ae-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      panos.securityRules.
+        where(disabled == false).
+        all(logEnd == true)
+    docs:
+      desc: |
+        This check verifies that all enabled security rules have session-end logging turned on. Session-end logs capture the complete picture of each network session including bytes transferred, duration, and threat verdicts.
+
+        **Why this matters**
+
+        Without session-end logging, the firewall processes traffic but does not record what happened. If logging is disabled:
+
+        - Security teams have no record of network sessions for forensic analysis.
+        - Threat detection and incident response are severely hampered by lack of traffic data.
+        - Compliance requirements for audit logging cannot be met.
+        - Anomaly detection systems that rely on traffic logs cannot function.
+        - There is no way to verify whether security policies are being applied correctly.
+
+        Session-end logging is the primary source of traffic visibility and should be enabled on every security rule.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Policies → Security**
+            2. Select each rule and go to the **Actions** tab
+            3. Check **Log at Session End** (this is the default for new rules, but may have been disabled)
+            4. Optionally, select a **Log Forwarding** profile to send logs to an external SIEM
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable session-end logging on a rule:
+
+            ```
+            set rulebase security rules <rule-name> log-end yes
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/monitoring/configure-log-forwarding
+        title: Configure Log Forwarding
+  - uid: mondoo-panos-security-no-disabled-rules
+    title: Ensure no disabled security rules remain in the rulebase
+    impact: 60
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc8-1-1
+    mql: panos.securityRules.none(disabled == true)
+    docs:
+      desc: |
+        This check verifies that no disabled security rules remain in the rulebase. Disabled rules add complexity to the configuration without providing any security function.
+
+        **Why this matters**
+
+        Disabled rules in the rulebase indicate stale configuration that has not been properly cleaned up. If disabled rules remain:
+
+        - The rulebase becomes harder to audit and review, increasing the chance of misconfiguration.
+        - Disabled rules may be accidentally re-enabled, potentially creating security gaps.
+        - Compliance auditors may flag disabled rules as evidence of poor configuration management.
+        - Rule order and intent become unclear when disabled rules are interspersed with active rules.
+
+        Disabled rules should be removed from the configuration or documented with a clear justification for temporary retention.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Policies → Security**
+            2. Identify disabled rules (they appear grayed out or have a disabled icon)
+            3. For each disabled rule, determine if it is still needed:
+               - If no longer needed, select the rule and click **Delete**
+               - If temporarily disabled, document the reason and set a review date
+            4. Commit the configuration after removing unnecessary rules
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Review and remove disabled rules:
+
+            ```
+            show running security-policy
+            delete rulebase security rules <disabled-rule-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices
+        title: Palo Alto Networks Best Practices
+  - uid: mondoo-panos-security-rules-wildfire-profile
+    title: Ensure allow rules have WildFire analysis profile attached
+    impact: 80
+    filters: panos.securityRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/soc2-2017: soc2-control-cc7-1-2
+    mql: |
+      panos.securityRules.
+        where(action == "allow" && disabled == false).
+        all(wildFireAnalysisProfile != "" || profileGroup != "")
+    docs:
+      desc: |
+        This check verifies that all enabled allow rules have a WildFire Analysis profile or security profile group attached. WildFire provides cloud-based sandbox analysis to detect zero-day malware and advanced persistent threats.
+
+        **Why this matters**
+
+        Without a WildFire Analysis profile on allow rules, unknown files pass through the firewall without being submitted for cloud-based analysis. If WildFire analysis is not applied:
+
+        - Zero-day malware and previously unknown threats are not detected.
+        - Files are not submitted to the WildFire cloud for sandbox detonation and behavioral analysis.
+        - The firewall cannot benefit from machine learning-based threat classification.
+        - Newly discovered threats from the global WildFire network cannot generate signatures for local enforcement.
+
+        Applying a WildFire Analysis profile to all allow rules ensures that unknown files are analyzed in the cloud and threats are identified even when no signature exists.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Objects → Security Profiles → WildFire Analysis** and create or verify a WildFire Analysis profile
+            2. Navigate to **Policies → Security**
+            3. Select each allow rule and go to the **Actions** tab
+            4. Under **Profile Setting**, either:
+               - Select a **Group** that includes WildFire Analysis
+               - Under **Profiles**, select a WildFire Analysis profile
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Attach a WildFire Analysis profile to a rule:
+
+            ```
+            set rulebase security rules <rule-name> profile-setting profiles wildfire-analysis <wf-profile>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices
+        title: Palo Alto Networks Best Practices
+  # ============================================================
+  # Network Interface Hardening
+  # ============================================================
+  - uid: mondoo-panos-security-interface-management-profile
+    title: Ensure active Layer 3 interfaces have a management profile configured
+    impact: 85
+    filters: panos.ethernetInterfaces != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      panos.ethernetInterfaces.
+        where(mode == "layer3" && status == "up").
+        all(managementProfile != "")
+    docs:
+      desc: |
+        This check verifies that all active Layer 3 ethernet interfaces have an interface management profile configured. Management profiles control which management services (HTTP, HTTPS, SSH, SNMP, ping) are accessible on each interface.
+
+        **Why this matters**
+
+        Without a management profile, the default behavior for management service access on an interface may expose services unintentionally. If management profiles are not configured:
+
+        - Management services such as HTTP, SSH, or SNMP may be accessible from untrusted networks.
+        - Attackers on connected networks can attempt to access the firewall's management plane.
+        - There is no explicit control over which management protocols are allowed on each interface.
+        - The attack surface of the firewall is unnecessarily expanded.
+
+        Configuring a management profile on every active Layer 3 interface ensures explicit control over which management services are permitted, following the principle of least privilege.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Network Profiles → Interface Mgmt** and create management profiles:
+               - Create a restrictive profile for untrusted interfaces (disable all or allow only ping)
+               - Create appropriate profiles for trusted interfaces (enable only required services)
+            2. Navigate to **Network → Interfaces → Ethernet**
+            3. Select each Layer 3 interface
+            4. In the **Advanced** tab, select the appropriate **Management Profile**
+            5. Click **OK** and commit the configuration
+
+            Best practice: Create a "deny-all" management profile with no services enabled and apply it to all untrusted interfaces.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Create and assign a management profile:
+
+            ```
+            set network profiles interface-management-profile <profile-name> permitted-ip <trusted-subnet>
+            set network profiles interface-management-profile <profile-name> https yes
+            set network profiles interface-management-profile <profile-name> ssh yes
+            set network interface ethernet <interface> layer3 interface-management-profile <profile-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices
+        title: Palo Alto Networks Best Practices
+  - uid: mondoo-panos-security-no-dhcp-interfaces
+    title: Ensure no Layer 3 interfaces use DHCP addressing
+    impact: 65
+    filters: panos.ethernetInterfaces != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc8-1-1
+    mql: |
+      panos.ethernetInterfaces.
+        where(mode == "layer3").
+        none(enableDhcp == true)
+    docs:
+      desc: |
+        This check verifies that no Layer 3 ethernet interfaces are configured to obtain their IP address via DHCP. Firewalls should use static addressing for predictability and to prevent DHCP-based attacks.
+
+        **Why this matters**
+
+        DHCP-assigned addresses on a firewall introduce unpredictability and potential security risks. If interfaces use DHCP:
+
+        - A rogue DHCP server could assign incorrect addresses, redirecting or intercepting traffic.
+        - IP address changes could break routing, VPN tunnels, and NAT policies that reference specific addresses.
+        - DNS and management systems may lose connectivity to the firewall if its address changes.
+        - DHCP lease expiration during operation could cause a brief service interruption.
+        - Security policies referencing interface addresses may become invalid after an address change.
+
+        Static addressing ensures predictable, reliable firewall operation and eliminates DHCP-related attack vectors.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Interfaces → Ethernet**
+            2. Select the interface currently using DHCP
+            3. In the **IPv4** tab, change the **Type** from **DHCP Client** to **Static**
+            4. Add the appropriate static IP address and subnet mask
+            5. Update any routing, NAT, or VPN configurations that reference this interface
+            6. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Replace DHCP with a static address:
+
+            ```
+            set network interface ethernet <interface> layer3 ip <address/mask>
+            delete network interface ethernet <interface> layer3 dhcp-client
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices
+        title: Palo Alto Networks Best Practices
+  - uid: mondoo-panos-security-interfaces-assigned-to-zone
+    title: Ensure all active Layer 3 interfaces are assigned to a security zone
+    impact: 90
+    filters: panos.ethernetInterfaces != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      panos.ethernetInterfaces.
+        where(mode == "layer3" && status == "up").
+        all(zone != "")
+    docs:
+      desc: |
+        This check verifies that all active Layer 3 ethernet interfaces are assigned to a security zone. Interfaces not assigned to a zone cannot have security policies applied to their traffic.
+
+        **Why this matters**
+
+        An interface without a zone assignment operates outside the firewall's security policy framework. If interfaces are not assigned to zones:
+
+        - Traffic on those interfaces cannot be matched by any security policy rule.
+        - No threat inspection, access control, or logging applies to traffic on unzoned interfaces.
+        - The interface effectively creates a gap in the firewall's security perimeter.
+        - Zone-based protections (zone protection profiles, DoS protection) do not apply.
+
+        Every active Layer 3 interface must be assigned to a security zone to ensure all traffic is subject to the firewall's security policies.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Zones**
+            2. Select the appropriate zone (or create a new one) for the unzoned interface
+            3. In the zone configuration, add the interface to the **Interfaces** list
+            4. Alternatively, navigate to **Network → Interfaces → Ethernet**, select the interface, and set the **Security Zone** in the **Config** tab
+            5. Create security policy rules for traffic entering and leaving this zone
+            6. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Assign an interface to a zone:
+
+            ```
+            set zone <zone-name> network layer3 <interface-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/best-practices
+        title: Palo Alto Networks Best Practices
+  # ============================================================
+  # VPN/IPsec Security
+  # ============================================================
+  - uid: mondoo-panos-security-ike-version-v2
+    title: Ensure IKE gateways use IKEv2
+    impact: 80
+    filters: panos.ikeGateways != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      panos.ikeGateways.
+        where(disabled == false).
+        all(version == "ikev2" || version == "ikev2-preferred")
+    docs:
+      desc: |
+        This check verifies that all enabled IKE gateways use IKEv2 or IKEv2-preferred mode. IKEv2 provides significant security and performance improvements over IKEv1.
+
+        **Why this matters**
+
+        IKEv1 has known security weaknesses and is considered a legacy protocol. If IKE gateways use IKEv1:
+
+        - The key exchange is vulnerable to known attacks against IKEv1's design, including offline dictionary attacks in aggressive mode.
+        - IKEv1 lacks built-in NAT traversal, requiring additional configuration.
+        - Dead peer detection and error handling are less robust than in IKEv2.
+        - IKEv2 supports stronger authentication methods including EAP and asymmetric authentication.
+        - IKEv1 requires more round trips to establish a security association, increasing latency.
+
+        Migrating to IKEv2 improves both security and tunnel establishment performance.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Network Profiles → IKE Gateways**
+            2. Select each IKE gateway
+            3. In the **General** tab, change the **IKE Version** to **IKEv2 only** or **IKEv2 preferred mode**
+            4. Ensure the remote peer also supports IKEv2 (coordinate with the remote administrator)
+            5. Click **OK** and commit the configuration
+
+            Note: If the remote peer only supports IKEv1, use **IKEv2 preferred mode** to allow fallback during migration.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Update an IKE gateway to use IKEv2:
+
+            ```
+            set network ike gateway <gateway-name> protocol ikev2
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/vpn/site-to-site-vpn-concepts
+        title: Site-to-Site VPN Concepts
+  - uid: mondoo-panos-security-ike-certificate-auth
+    title: Ensure IKE gateways use certificate-based authentication
+    impact: 85
+    filters: panos.ikeGateways != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      panos.ikeGateways.
+        where(disabled == false).
+        all(authType == "certificate")
+    docs:
+      desc: |
+        This check verifies that all enabled IKE gateways use certificate-based authentication rather than pre-shared keys. Certificate authentication provides stronger identity verification and better key management.
+
+        **Why this matters**
+
+        Pre-shared keys (PSKs) are a weaker form of authentication that introduce operational and security risks. If IKE gateways use pre-shared keys:
+
+        - PSKs are often weak, reused across multiple tunnels, or shared insecurely between administrators.
+        - Rotating pre-shared keys requires coordinated changes on both ends of every tunnel.
+        - Compromised pre-shared keys allow an attacker to establish unauthorized VPN tunnels.
+        - IKEv1 aggressive mode with PSKs is vulnerable to offline brute-force attacks against the key.
+        - There is no revocation mechanism for compromised pre-shared keys — every tunnel using the key must be reconfigured.
+
+        Certificate-based authentication leverages PKI infrastructure for stronger identity verification, automated rotation, and centralized revocation.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Ensure you have a certificate infrastructure in place (internal CA or third-party CA)
+            2. Navigate to **Device → Certificate Management → Certificates** and import or generate the required certificates
+            3. Navigate to **Device → Certificate Management → Certificate Profile** and create a certificate profile
+            4. Navigate to **Network → Network Profiles → IKE Gateways**
+            5. Select each IKE gateway
+            6. In the **Authentication** tab, change the type to **Certificate**
+            7. Select the **Local Certificate** and **Certificate Profile**
+            8. Coordinate with the remote peer to also configure certificate authentication
+            9. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure certificate authentication on an IKE gateway:
+
+            ```
+            set network ike gateway <gateway-name> authentication certificate local-certificate <cert-name> certificate-profile <profile-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/vpn/site-to-site-vpn-concepts
+        title: Site-to-Site VPN Concepts
+  - uid: mondoo-panos-security-ike-dead-peer-detection
+    title: Ensure IKE gateways have dead peer detection enabled
+    impact: 70
+    filters: panos.ikeGateways != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      panos.ikeGateways.
+        where(disabled == false).
+        all(enableDeadPeerDetection == true)
+    docs:
+      desc: |
+        This check verifies that all enabled IKE gateways have dead peer detection (DPD) enabled. DPD detects when a VPN peer becomes unreachable and cleans up the associated security associations.
+
+        **Why this matters**
+
+        Without dead peer detection, the firewall cannot detect when a VPN peer has become unreachable. If DPD is disabled:
+
+        - Stale IKE and IPsec security associations persist, consuming system resources.
+        - Traffic continues to be sent into a dead tunnel, resulting in packet loss.
+        - Failover to backup tunnels or paths does not occur because the primary tunnel appears active.
+        - The firewall cannot distinguish between a temporary network interruption and a permanent peer failure.
+
+        Enabling DPD ensures timely detection of failed peers and allows the firewall to clean up stale tunnels and trigger failover mechanisms.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Network Profiles → IKE Gateways**
+            2. Select each IKE gateway
+            3. In the **Advanced Options** section, check **Enable Dead Peer Detection**
+            4. Configure the **Interval** (default 5 seconds) and **Retry** count (default 5)
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable dead peer detection on an IKE gateway:
+
+            ```
+            set network ike gateway <gateway-name> protocol-common dpd enable yes interval 5 retry 5
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/vpn/site-to-site-vpn-concepts
+        title: Site-to-Site VPN Concepts
+  - uid: mondoo-panos-security-ike-no-aggressive-mode
+    title: Ensure IKEv1 gateways do not use aggressive mode
+    impact: 80
+    filters: panos.ikeGateways != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      panos.ikeGateways.
+        where(disabled == false && version == "ikev1").
+        none(ikev1ExchangeMode == "aggressive")
+    docs:
+      desc: |
+        This check verifies that no IKEv1 gateways use aggressive mode for key exchange. Aggressive mode transmits identity information in cleartext and is vulnerable to offline attacks.
+
+        **Why this matters**
+
+        IKEv1 aggressive mode reduces the number of exchanges needed to establish a security association but does so at the cost of security. If aggressive mode is used:
+
+        - The initiator's identity (ID payload) is sent in cleartext in the first message, exposing it to eavesdroppers.
+        - Pre-shared key hashes are transmitted in a way that enables offline brute-force attacks.
+        - An attacker who captures the aggressive mode exchange can mount an offline dictionary attack against the pre-shared key.
+        - The reduced number of round trips means fewer opportunities for the peers to verify each other's identity.
+
+        IKEv1 gateways should use main mode, which protects identity information through encryption. Better yet, migrate to IKEv2 which does not have this vulnerability.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Network Profiles → IKE Gateways**
+            2. Select each IKEv1 gateway
+            3. In the **Advanced Options** section, change the **Exchange Mode** from **Aggressive** to **Main** or **Auto**
+            4. Coordinate with the remote peer to also use main mode
+            5. Click **OK** and commit the configuration
+
+            Note: The preferred long-term solution is to migrate to IKEv2, which eliminates this vulnerability entirely.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Change the IKEv1 exchange mode:
+
+            ```
+            set network ike gateway <gateway-name> protocol ikev1 exchange-mode main
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/vpn/site-to-site-vpn-concepts
+        title: Site-to-Site VPN Concepts
+  - uid: mondoo-panos-security-ipsec-anti-replay
+    title: Ensure IPsec tunnels have anti-replay protection enabled
+    impact: 75
+    filters: panos.ipsecTunnels != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      panos.ipsecTunnels.
+        where(disabled == false).
+        all(antiReplay == true)
+    docs:
+      desc: |
+        This check verifies that all enabled IPsec tunnels have anti-replay protection enabled. Anti-replay protection prevents attackers from capturing and re-injecting encrypted packets into a VPN tunnel.
+
+        **Why this matters**
+
+        Without anti-replay protection, an attacker who can capture packets on the wire can replay them into the tunnel. If anti-replay is disabled:
+
+        - An attacker can capture encrypted VPN packets and retransmit them to trigger duplicate actions on the remote system.
+        - Replay attacks can be used to manipulate stateful applications by re-submitting previously valid transactions.
+        - Denial-of-service conditions can be created by replaying large volumes of captured traffic.
+        - The integrity guarantee of the IPsec tunnel is weakened because packets can be injected without detection.
+
+        Anti-replay uses a sliding window of sequence numbers to detect and discard replayed packets, maintaining the integrity of the tunnel.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → IPSec Tunnels**
+            2. Select each IPsec tunnel
+            3. Check **Enable Replay Protection** (also labeled **Anti Replay**)
+            4. Click **OK** and commit the configuration
+
+            Anti-replay is enabled by default on new tunnels. This check identifies tunnels where it has been explicitly disabled.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable anti-replay on an IPsec tunnel:
+
+            ```
+            set network tunnel ipsec <tunnel-name> anti-replay yes
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/vpn/site-to-site-vpn-concepts
+        title: Site-to-Site VPN Concepts
+  - uid: mondoo-panos-security-ipsec-tunnel-monitoring
+    title: Ensure IPsec tunnels have tunnel monitoring enabled
+    impact: 65
+    filters: panos.ipsecTunnels != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      panos.ipsecTunnels.
+        where(disabled == false).
+        all(enableTunnelMonitor == true)
+    docs:
+      desc: |
+        This check verifies that all enabled IPsec tunnels have tunnel monitoring configured. Tunnel monitoring probes the remote end of the tunnel and triggers failover when connectivity is lost.
+
+        **Why this matters**
+
+        Without tunnel monitoring, the firewall cannot detect when an IPsec tunnel has silently failed. If tunnel monitoring is disabled:
+
+        - Traffic continues to be routed into a failed tunnel, resulting in packet loss.
+        - Failover to backup tunnels or alternate paths does not occur automatically.
+        - Network outages persist until the tunnel failure is manually detected and addressed.
+        - Service-level agreements may be violated due to extended undetected tunnel downtime.
+
+        Tunnel monitoring continuously verifies tunnel reachability and can automatically trigger failover actions, ensuring high availability of VPN connectivity.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → IPSec Tunnels**
+            2. Select each IPsec tunnel
+            3. In the **Tunnel Monitor** section:
+               - Check **Enable**
+               - Set the **Destination IP** to an IP address reachable through the tunnel
+               - Optionally select a **Tunnel Monitor Profile** for custom failover behavior
+            4. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable tunnel monitoring:
+
+            ```
+            set network tunnel ipsec <tunnel-name> tunnel-monitor enable yes destination-ip <remote-ip>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/vpn/set-up-tunnel-monitoring
+        title: Set Up Tunnel Monitoring
+  # ============================================================
+  # Decryption Policy
+  # ============================================================
+  - uid: mondoo-panos-security-decryption-profile
+    title: Ensure decryption rules have a decryption profile attached
+    impact: 85
+    filters: panos.decryptionRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      panos.decryptionRules.
+        where(action == "decrypt" && disabled == false).
+        all(decryptionProfile != "")
+    docs:
+      desc: |
+        This check verifies that all enabled decryption rules with a decrypt action have a decryption profile attached. Decryption profiles enforce TLS protocol standards and certificate validation requirements on decrypted sessions.
+
+        **Why this matters**
+
+        Without a decryption profile, decrypted traffic is not validated against TLS security best practices. If decryption profiles are missing:
+
+        - Sessions using weak or deprecated TLS versions (SSLv3, TLS 1.0) are not blocked.
+        - Connections with untrusted or expired certificates are permitted.
+        - Weak cipher suites that provide inadequate encryption are allowed.
+        - Certificate chain validation failures are not enforced, enabling man-in-the-middle attacks.
+        - The firewall decrypts traffic without enforcing any standards on the TLS session itself.
+
+        A decryption profile ensures that decrypted sessions meet minimum security standards for TLS version, cipher strength, and certificate validity.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Objects → Decryption → Decryption Profile** and create or verify a profile
+            2. Configure the profile to:
+               - Block sessions with expired or untrusted certificates
+               - Enforce minimum TLS version (TLS 1.2 or higher recommended)
+               - Block weak cipher suites and algorithms
+            3. Navigate to **Policies → Decryption**
+            4. Select each decrypt rule and attach the decryption profile in the **Options** tab
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Attach a decryption profile to a decryption rule:
+
+            ```
+            set rulebase decryption rules <rule-name> profile <decryption-profile>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/decryption/decryption-best-practices
+        title: Decryption Best Practices
+  - uid: mondoo-panos-security-decryption-log-failures
+    title: Ensure decryption rules log TLS handshake failures
+    impact: 70
+    filters: panos.decryptionRules != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-ae-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      panos.decryptionRules.
+        where(disabled == false).
+        all(logFailedTlsHandshakes == true)
+    docs:
+      desc: |
+        This check verifies that all enabled decryption rules log failed TLS handshakes. Failed TLS handshakes can indicate attacks, misconfigurations, or applications that do not properly support decryption.
+
+        **Why this matters**
+
+        Without logging failed TLS handshakes, administrators have no visibility into decryption failures. If TLS failure logging is disabled:
+
+        - Man-in-the-middle or downgrade attacks that cause handshake failures go undetected.
+        - Applications or clients that do not support decryption are not identified for troubleshooting.
+        - Certificate pinning failures that indicate potential security issues are not logged.
+        - Trends in TLS failures that could indicate a broader attack or misconfiguration are invisible.
+        - Compliance requirements for monitoring encrypted traffic cannot be met.
+
+        Logging failed TLS handshakes provides essential visibility for troubleshooting decryption issues and detecting potential attacks.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Policies → Decryption**
+            2. Select each decryption rule
+            3. In the **Options** tab, enable **Log Failed TLS Handshakes**
+            4. Ensure a **Log Forwarding** profile is configured to send these logs to your SIEM
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable TLS failure logging on a decryption rule:
+
+            ```
+            set rulebase decryption rules <rule-name> log-fail yes
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/decryption/decryption-best-practices
+        title: Decryption Best Practices
+  # ============================================================
+  # Routing Security
+  # ============================================================
+  - uid: mondoo-panos-security-default-route-exists
+    title: Ensure virtual routers have a default route configured
+    impact: 70
+    filters: panos.virtualRouters != empty
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc8-1-1
+    mql: |
+      panos.virtualRouters.
+        all(staticRoutes.any(destination == "0.0.0.0/0"))
+    docs:
+      desc: |
+        This check verifies that all virtual routers have a default route (0.0.0.0/0) configured. A missing default route typically indicates a routing misconfiguration that can cause traffic to be silently dropped.
+
+        **Why this matters**
+
+        Without a default route, the virtual router has no path for traffic destined to networks not explicitly listed in the routing table. If a default route is missing:
+
+        - Traffic to unknown destinations is silently dropped rather than forwarded to a gateway.
+        - Internet-bound traffic fails if no specific route covers the destination.
+        - VPN or inter-zone traffic may fail for destinations not covered by specific routes.
+        - Routing failures can be difficult to diagnose when there is no default path.
+
+        A properly configured default route ensures that all traffic has a forwarding path, preventing silent routing failures. In environments using dynamic routing protocols, the default route may be learned dynamically — in that case, verify the dynamic routing configuration is correct.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Virtual Routers**
+            2. Select the virtual router
+            3. Go to the **Static Routes** tab
+            4. Click **Add** to create a new static route:
+               - **Name**: default-route
+               - **Destination**: 0.0.0.0/0
+               - **Interface**: Select the egress interface (typically the untrust/internet-facing interface)
+               - **Next Hop**: Enter the upstream gateway IP address
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Add a default route to a virtual router:
+
+            ```
+            set network virtual-router <vr-name> routing-table ip static-route default-route destination 0.0.0.0/0 nexthop ip-address <gateway-ip> interface <egress-interface>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/networking/static-routes
+        title: Static Routes
