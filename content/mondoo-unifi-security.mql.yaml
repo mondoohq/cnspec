@@ -1,0 +1,716 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-unifi-security
+    name: Mondoo Ubiquiti UniFi Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: unifi,network
+    require:
+      - provider: unifi
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Ubiquiti UniFi controller and network settings
+    docs:
+      desc: |
+        The Mondoo Ubiquiti UniFi Security policy identifies misconfigurations in UniFi controllers that could weaken your network security posture. This policy covers wireless security, firewall settings, threat management, device hardening, and controller backup and management settings.
+
+        ## Authentication
+
+        Scanning a UniFi controller requires API credentials.
+
+        ### Using an API key
+
+        ```bash
+        cnspec scan unifi --host https://192.168.1.1 --api-key YOUR_API_KEY
+        ```
+
+        ### Using username and password
+
+        ```bash
+        cnspec scan unifi --host https://192.168.1.1 --user admin --password YOUR_PASSWORD
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Wireless Security
+        checks:
+          - uid: mondoo-unifi-security-no-open-wlans
+          - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3
+          - uid: mondoo-unifi-security-wlans-wpa3-enabled
+          - uid: mondoo-unifi-security-wlans-pmf-enabled
+          - uid: mondoo-unifi-security-guest-wlans-isolated
+      - title: Threat Management
+        checks:
+          - uid: mondoo-unifi-security-ips-enabled
+          - uid: mondoo-unifi-security-dns-filtering-enabled
+          - uid: mondoo-unifi-security-honeypot-enabled
+      - title: Gateway Security
+        checks:
+          - uid: mondoo-unifi-security-upnp-disabled
+          - uid: mondoo-unifi-security-broadcast-ping-disabled
+          - uid: mondoo-unifi-security-icmp-redirects-disabled
+          - uid: mondoo-unifi-security-syn-cookies-enabled
+      - title: Switch Security
+        checks:
+          - uid: mondoo-unifi-security-dhcp-snooping-enabled
+          - uid: mondoo-unifi-security-stp-enabled
+      - title: Management & Controller
+        checks:
+          - uid: mondoo-unifi-security-ssh-disabled
+          - uid: mondoo-unifi-security-ssh-password-auth-disabled
+          - uid: mondoo-unifi-security-debug-tools-disabled
+          - uid: mondoo-unifi-security-autobackup-enabled
+          - uid: mondoo-unifi-security-auto-upgrade-enabled
+          - uid: mondoo-unifi-security-analytics-disabled
+          - uid: mondoo-unifi-security-remote-syslog-enabled
+      - title: Network Segmentation
+        checks:
+          - uid: mondoo-unifi-security-no-port-forwards-to-mgmt
+          - uid: mondoo-unifi-security-dns-over-https-enabled
+    scoring_system: highest impact
+queries:
+  # ─── Wireless Security ───────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-no-open-wlans
+    title: Ensure no wireless networks use open authentication
+    impact: 100
+    mql: |
+      unifi.wlans.where(enabled == true).all(security != "open")
+    docs:
+      desc: |
+        This check ensures that no enabled wireless networks on the UniFi controller use open (no encryption) authentication.
+
+        **Why this matters**
+
+        Open wireless networks transmit all traffic in plaintext, allowing anyone within radio range to intercept sensitive data:
+          - Credentials, session tokens, and personal data can be captured with basic tools.
+          - Attackers can perform man-in-the-middle attacks without any authentication barrier.
+          - Open networks provide no protection against rogue clients joining the network.
+          - Even guest networks should use WPA with a shared key or captive portal authentication.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select the open wireless network.
+        3. Change the **Security** setting to **WPA2** or **WPA3**.
+        4. Set a strong passphrase or configure enterprise (802.1X) authentication.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3
+    title: Ensure wireless networks use WPA2 or WPA3 encryption
+    impact: 90
+    mql: |
+      unifi.wlans.where(enabled == true).all(security == "wpapsk" || security == "wpaeap")
+    docs:
+      desc: |
+        This check ensures that all enabled wireless networks use WPA-PSK or WPA-Enterprise security modes, which provide WPA2 or WPA3 encryption.
+
+        **Why this matters**
+
+        Older security protocols like WEP have well-known vulnerabilities that allow attackers to crack encryption keys in minutes:
+          - WEP uses RC4 encryption with known statistical weaknesses.
+          - WPA1 (TKIP) has been deprecated due to practical attacks.
+          - Only WPA2 (AES-CCMP) and WPA3 (SAE) provide adequate wireless security.
+
+        Using strong wireless encryption ensures:
+          - Data confidentiality for all wireless traffic.
+          - Protection against eavesdropping and session hijacking.
+          - Compliance with modern security standards and best practices.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select each wireless network.
+        3. Set **Security** to **WPA Personal** or **WPA Enterprise**.
+        4. Ensure WPA mode is set to **WPA2** or higher.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-wlans-wpa3-enabled
+    title: Ensure WPA3 support is enabled on wireless networks
+    impact: 50
+    mql: |
+      unifi.wlans.where(enabled == true && security != "open").all(wpa3Support == true || wpa3Transition == true)
+    docs:
+      desc: |
+        This check ensures that WPA3 support or WPA3 transition mode is enabled on all secured wireless networks.
+
+        **Why this matters**
+
+        WPA3 provides significant security improvements over WPA2:
+          - Simultaneous Authentication of Equals (SAE) replaces the PSK 4-way handshake, preventing offline dictionary attacks.
+          - Forward secrecy ensures that captured traffic cannot be decrypted even if the passphrase is later compromised.
+          - Protected Management Frames (PMF) are mandatory, preventing deauthentication attacks.
+
+        WPA3 transition mode allows WPA2 clients to connect while still offering WPA3 to capable devices.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select each wireless network.
+        3. Enable **WPA3** or **WPA2/WPA3 Transition** mode.
+        4. Verify that all critical client devices support WPA3 or transition mode before disabling WPA2 entirely.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-wlans-pmf-enabled
+    title: Ensure Protected Management Frames are enabled
+    impact: 60
+    mql: |
+      unifi.wlans.where(enabled == true && security != "open").all(pmfMode == "required" || pmfMode == "optional")
+    docs:
+      desc: |
+        This check ensures that Protected Management Frames (PMF / IEEE 802.11w) are enabled on all secured wireless networks.
+
+        **Why this matters**
+
+        Without PMF, management frames such as deauthentication and disassociation are sent unprotected:
+          - Attackers can forge deauthentication frames to disconnect clients (deauth attacks).
+          - Deauth attacks are a prerequisite for WPA2 handshake capture and offline cracking.
+          - Rogue AP attacks become easier when clients can be forcibly disconnected from legitimate APs.
+
+        Enabling PMF (optional or required) protects against:
+          - Deauthentication and disassociation flooding attacks.
+          - Forced roaming to rogue access points.
+          - Denial-of-service attacks targeting wireless clients.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select each wireless network.
+        3. Under advanced settings, set **PMF** to **Optional** or **Required**.
+        4. Note: Setting PMF to **Required** may cause connectivity issues with older clients that do not support 802.11w.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-guest-wlans-isolated
+    title: Ensure guest wireless networks use guest mode
+    impact: 70
+    mql: |
+      unifi.wlans.where(enabled == true && name == /guest/i).all(isGuest == true)
+    docs:
+      desc: |
+        This check ensures that wireless networks with "guest" in the name are configured with guest mode enabled, which provides client isolation.
+
+        **Why this matters**
+
+        Guest networks without proper isolation allow guest clients to communicate with each other and potentially access internal network resources:
+          - Guest devices can scan and attack other devices on the same network.
+          - Lateral movement from a compromised guest device to internal resources is possible.
+          - Guest traffic should be isolated from corporate network segments.
+
+        Guest mode in UniFi provides:
+          - Client-to-client isolation, preventing guests from communicating with each other.
+          - Separation from the management network and other VLANs.
+          - Optional captive portal authentication for access control.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select the guest wireless network.
+        3. Enable the **Guest** toggle to activate guest policies.
+        4. Optionally configure a captive portal under **Settings > Hotspot**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115000166827
+        title: UniFi guest network configuration
+
+  # ─── Threat Management ───────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-ips-enabled
+    title: Ensure Intrusion Prevention System is enabled
+    impact: 80
+    mql: |
+      unifi.siteSettings.threatManagement.enabled == true
+      unifi.siteSettings.threatManagement.ipsMode == "ips"
+    docs:
+      desc: |
+        This check ensures that the UniFi Threat Management system is enabled and running in IPS (Intrusion Prevention System) mode rather than IDS (detection-only) mode.
+
+        **Why this matters**
+
+        IDS mode only detects and logs threats without blocking them, leaving the network vulnerable:
+          - Known attack signatures are detected but traffic is not blocked.
+          - Active exploitation attempts continue unimpeded in IDS mode.
+          - IPS mode actively blocks malicious traffic in real time.
+
+        Running in IPS mode provides:
+          - Automatic blocking of known attack patterns and exploits.
+          - Protection against network-based attacks, malware communication, and data exfiltration.
+          - Real-time threat mitigation without manual intervention.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Threat Management**.
+        2. Enable **Threat Management**.
+        3. Set the mode to **IPS** (Intrusion Prevention System).
+        4. Review and enable appropriate threat categories for your environment.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360006893234
+        title: UniFi Threat Management
+
+  - uid: mondoo-unifi-security-dns-filtering-enabled
+    title: Ensure DNS filtering is enabled
+    impact: 60
+    mql: |
+      unifi.siteSettings.threatManagement.dnsFiltering == true
+    docs:
+      desc: |
+        This check ensures that DNS filtering is enabled on the UniFi controller to block access to known malicious domains.
+
+        **Why this matters**
+
+        DNS filtering provides a network-wide layer of protection against malicious domains:
+          - Blocks access to known phishing, malware distribution, and command-and-control domains.
+          - Prevents DNS-based data exfiltration.
+          - Protects all devices on the network regardless of their individual security software.
+
+        DNS filtering works as a first line of defense before traffic reaches the target host.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Threat Management**.
+        2. Enable **DNS Filtering**.
+        3. Select the appropriate filtering level for your environment.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360006893234
+        title: UniFi Threat Management
+
+  - uid: mondoo-unifi-security-honeypot-enabled
+    title: Ensure the internal honeypot is enabled
+    impact: 40
+    mql: |
+      unifi.siteSettings.threatManagement.honeypotEnabled == true
+    docs:
+      desc: |
+        This check ensures that the UniFi internal honeypot is enabled to detect lateral movement and internal threat activity.
+
+        **Why this matters**
+
+        An internal honeypot creates a decoy service that legitimate users and devices should never access:
+          - Any connection to the honeypot is a strong indicator of malicious activity or compromise.
+          - Detects lateral movement from compromised devices scanning the network.
+          - Provides early warning of internal threats before they reach critical assets.
+          - Low false-positive rate since legitimate traffic should never reach the honeypot.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Threat Management**.
+        2. Enable **Internal Honeypot**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360006893234
+        title: UniFi Threat Management
+
+  # ─── Gateway Security ────────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-upnp-disabled
+    title: Ensure UPnP is disabled on the gateway
+    impact: 80
+    mql: |
+      unifi.siteSettings.gateway.upnpEnabled == false
+    docs:
+      desc: |
+        This check ensures that Universal Plug and Play (UPnP) is disabled on the UniFi gateway.
+
+        **Why this matters**
+
+        UPnP allows devices on the network to automatically create port forwarding rules without authentication:
+          - Malware can use UPnP to open ports and expose internal services to the internet.
+          - Compromised IoT devices can use UPnP to establish reverse tunnels.
+          - UPnP bypasses firewall rules by allowing any device to modify the gateway's NAT table.
+          - Multiple CVEs have been published for UPnP implementations across various devices.
+
+        Disabling UPnP ensures:
+          - Only explicitly configured port forwards are active.
+          - The firewall maintains full control over inbound traffic.
+          - Internal devices cannot modify the gateway's NAT configuration.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Gateway**.
+        2. Disable **UPnP**.
+        3. Manually configure any required port forwarding rules under **Settings > Routing > Port Forwarding**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi gateway settings
+
+  - uid: mondoo-unifi-security-broadcast-ping-disabled
+    title: Ensure broadcast ping response is disabled
+    impact: 50
+    mql: |
+      unifi.siteSettings.gateway.broadcastPing == false
+    docs:
+      desc: |
+        This check ensures that the gateway does not respond to broadcast ICMP ping requests.
+
+        **Why this matters**
+
+        Responding to broadcast pings can be exploited for network reconnaissance and amplification attacks:
+          - Smurf attacks use broadcast ping responses to amplify denial-of-service traffic.
+          - Broadcast ping responses reveal the presence and IP address of the gateway.
+          - Network mapping tools use broadcast pings to discover hosts on a subnet.
+
+        Disabling broadcast ping responses reduces the gateway's attack surface.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Gateway**.
+        2. Disable **Broadcast Ping**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi gateway settings
+
+  - uid: mondoo-unifi-security-icmp-redirects-disabled
+    title: Ensure ICMP redirects are disabled
+    impact: 60
+    mql: |
+      unifi.siteSettings.gateway.receiveRedirects == false
+    docs:
+      desc: |
+        This check ensures that the gateway does not accept ICMP redirect messages.
+
+        **Why this matters**
+
+        ICMP redirects can be used to manipulate routing tables on the gateway:
+          - An attacker can send forged ICMP redirect messages to reroute traffic through a malicious host.
+          - Man-in-the-middle attacks become possible by redirecting traffic flows.
+          - Accepting redirects allows external hosts to influence the gateway's routing decisions.
+
+        Disabling ICMP redirect acceptance ensures that only statically configured or protocol-learned routes are used.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Gateway**.
+        2. Disable **Receive Redirects** under the ICMP settings.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi gateway settings
+
+  - uid: mondoo-unifi-security-syn-cookies-enabled
+    title: Ensure SYN cookies are enabled
+    impact: 60
+    mql: |
+      unifi.siteSettings.gateway.synCookies == true
+    docs:
+      desc: |
+        This check ensures that SYN cookies are enabled on the UniFi gateway to protect against SYN flood denial-of-service attacks.
+
+        **Why this matters**
+
+        SYN flood attacks exhaust the gateway's connection tracking table by sending large volumes of SYN packets without completing the TCP handshake:
+          - Without SYN cookies, the gateway allocates resources for each half-open connection.
+          - A SYN flood can consume all available connection slots, denying service to legitimate users.
+          - SYN cookies allow the gateway to validate connections without maintaining state for half-open connections.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > Gateway**.
+        2. Enable **SYN Cookies**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi gateway settings
+
+  # ─── Switch Security ─────────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-dhcp-snooping-enabled
+    title: Ensure DHCP snooping is enabled
+    impact: 60
+    mql: |
+      unifi.siteSettings.globalSwitch.dhcpSnoop == true
+    docs:
+      desc: |
+        This check ensures that DHCP snooping is enabled on UniFi switches to prevent rogue DHCP server attacks.
+
+        **Why this matters**
+
+        Without DHCP snooping, any device on the network can act as a DHCP server:
+          - Rogue DHCP servers can assign malicious DNS servers and default gateways to clients.
+          - Attackers can intercept all network traffic by becoming the default gateway via DHCP.
+          - DHCP starvation attacks can exhaust the legitimate DHCP pool.
+
+        DHCP snooping validates DHCP messages and builds a binding table that:
+          - Only allows DHCP responses from trusted ports.
+          - Prevents rogue DHCP servers from operating on the network.
+          - Provides a foundation for dynamic ARP inspection and IP source guard.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Networks > Global Switch Settings**.
+        2. Enable **DHCP Snooping**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360042281174
+        title: UniFi switch configuration
+
+  - uid: mondoo-unifi-security-stp-enabled
+    title: Ensure Spanning Tree Protocol is using RSTP
+    impact: 50
+    mql: |
+      unifi.siteSettings.globalSwitch.stpVersion == "rstp"
+    docs:
+      desc: |
+        This check ensures that Rapid Spanning Tree Protocol (RSTP) is enabled on UniFi switches.
+
+        **Why this matters**
+
+        Spanning Tree Protocol prevents network loops that can cause broadcast storms and network outages:
+          - Network loops can bring down an entire network segment within seconds.
+          - RSTP provides faster convergence than legacy STP, reducing downtime during topology changes.
+          - Without STP, connecting a cable between two switch ports can cause a catastrophic broadcast storm.
+
+        RSTP provides:
+          - Loop prevention with rapid convergence (seconds vs. 30-50 seconds for legacy STP).
+          - Backward compatibility with legacy STP devices.
+          - Protection against accidental or malicious loop creation.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Networks > Global Switch Settings**.
+        2. Set **STP Version** to **RSTP**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360042281174
+        title: UniFi switch configuration
+
+  # ─── Management & Controller ─────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-ssh-disabled
+    title: Ensure SSH access to devices is disabled
+    impact: 80
+    mql: |
+      unifi.siteSettings.mgmt.sshEnabled == false
+    docs:
+      desc: |
+        This check ensures that SSH access to UniFi devices is disabled when not actively needed for troubleshooting.
+
+        **Why this matters**
+
+        SSH access to network devices increases the attack surface:
+          - SSH brute-force attacks can target device credentials.
+          - A compromised SSH session provides full shell access to the network device.
+          - Network devices should be managed through the controller, not via direct SSH.
+          - Leaving SSH enabled when not needed violates the principle of least privilege.
+
+        Disabling SSH ensures:
+          - Devices are managed exclusively through the UniFi controller.
+          - No direct shell access is available to potential attackers.
+          - Credential-based attacks against device SSH are not possible.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System > Advanced**.
+        2. Disable **SSH**.
+        3. If SSH is required for troubleshooting, enable it temporarily and disable it when done.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204909374
+        title: UniFi device SSH access
+
+  - uid: mondoo-unifi-security-ssh-password-auth-disabled
+    title: Ensure SSH password authentication is disabled
+    impact: 70
+    mql: |
+      if (unifi.siteSettings.mgmt.sshEnabled == true) {
+        unifi.siteSettings.mgmt.sshPasswordAuthEnabled == false
+      }
+    docs:
+      desc: |
+        This check ensures that if SSH is enabled on UniFi devices, password authentication is disabled in favor of key-based authentication.
+
+        **Why this matters**
+
+        SSH password authentication is vulnerable to brute-force and credential stuffing attacks:
+          - Automated tools can attempt thousands of password combinations per minute.
+          - Default or weak passwords on network devices are a common attack vector.
+          - Key-based authentication provides stronger security and is not susceptible to brute-force attacks.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System > Advanced**.
+        2. If SSH must remain enabled, disable **SSH Password Authentication**.
+        3. Configure SSH key-based authentication instead.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204909374
+        title: UniFi device SSH access
+
+  - uid: mondoo-unifi-security-debug-tools-disabled
+    title: Ensure debug tools are disabled
+    impact: 60
+    mql: |
+      unifi.siteSettings.mgmt.debugToolsEnabled == false
+    docs:
+      desc: |
+        This check ensures that debug tools are disabled on the UniFi controller.
+
+        **Why this matters**
+
+        Debug tools provide low-level diagnostic capabilities that should not be enabled in production:
+          - Debug tools may expose sensitive internal state and configuration details.
+          - They can be used to gather information useful for further attacks.
+          - Debug interfaces may bypass normal access controls.
+          - Production environments should only run with production-grade interfaces enabled.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System > Advanced**.
+        2. Disable **Debug Tools**.
+
+  - uid: mondoo-unifi-security-autobackup-enabled
+    title: Ensure automatic backups are enabled
+    impact: 70
+    mql: |
+      unifi.controllerSettings.autobackupEnabled == true
+    docs:
+      desc: |
+        This check ensures that automatic backups of the UniFi controller configuration are enabled.
+
+        **Why this matters**
+
+        Without automatic backups, a controller failure or misconfiguration can result in complete loss of network configuration:
+          - All site settings, firewall rules, network configurations, and device adoption records could be lost.
+          - Recovery without a backup requires manual reconfiguration of every setting and re-adoption of all devices.
+          - Regular backups enable rapid recovery from ransomware, hardware failure, or accidental misconfiguration.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System > Backups**.
+        2. Enable **Auto Backup**.
+        3. Configure the backup schedule and retention period.
+        4. Consider also enabling **Backup to Cloud** for off-site protection.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/226218448
+        title: UniFi backup and restore
+
+  - uid: mondoo-unifi-security-auto-upgrade-enabled
+    title: Ensure automatic firmware upgrades are enabled
+    impact: 60
+    mql: |
+      unifi.siteSettings.mgmt.autoUpgrade == true
+    docs:
+      desc: |
+        This check ensures that automatic firmware upgrades are enabled for UniFi devices.
+
+        **Why this matters**
+
+        Running outdated firmware exposes network devices to known vulnerabilities:
+          - UniFi devices receive regular security patches and bug fixes.
+          - Manually managing firmware across many devices is error-prone and often delayed.
+          - Known vulnerabilities in network equipment can be exploited remotely.
+
+        Automatic upgrades ensure:
+          - Security patches are applied promptly across all devices.
+          - The firmware fleet remains consistent and up to date.
+          - Reduced operational burden for network administrators.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System > Firmware**.
+        2. Enable **Auto Update**.
+        3. Configure the update window to a low-traffic period.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204911424
+        title: UniFi firmware management
+
+  - uid: mondoo-unifi-security-analytics-disabled
+    title: Ensure analytics data collection is disabled
+    impact: 30
+    mql: |
+      unifi.controllerSettings.enableAnalytics == false
+    docs:
+      desc: |
+        This check ensures that analytics data collection is disabled on the UniFi controller.
+
+        **Why this matters**
+
+        Analytics data collection sends usage telemetry to Ubiquiti:
+          - Telemetry may include network topology and usage patterns.
+          - Organizations with strict data governance policies may need to disable external data sharing.
+          - Reducing unnecessary outbound data flows limits potential information leakage.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System**.
+        2. Disable **Send Analytics and Improvement Data**.
+
+  - uid: mondoo-unifi-security-remote-syslog-enabled
+    title: Ensure remote syslog is configured
+    impact: 50
+    mql: |
+      unifi.siteSettings.remoteSyslog.enabled == true
+    docs:
+      desc: |
+        This check ensures that remote syslog is enabled to forward logs to a central log management system.
+
+        **Why this matters**
+
+        Without centralized logging, security events may be lost or tampered with:
+          - Local logs on the controller can be overwritten or deleted by an attacker.
+          - Centralized logging enables correlation of events across multiple systems.
+          - Log retention on the controller is limited by storage capacity.
+          - Incident response and forensic analysis require comprehensive log data.
+
+        Remote syslog ensures:
+          - Logs are preserved independently of the controller.
+          - Security events can be monitored and alerted on in real time.
+          - Compliance requirements for log retention and integrity are met.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > System > Remote Logging**.
+        2. Enable **Remote Syslog**.
+        3. Configure the syslog server IP address and port.
+        4. Enable **Log All Contents** for comprehensive logging.
+
+  # ─── Network Segmentation ────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-no-port-forwards-to-mgmt
+    title: Ensure no port forwards expose management interfaces
+    impact: 90
+    mql: |
+      unifi.portForwards.where(enabled == true).none(fwdPort == "22" || fwdPort == "443" || fwdPort == "8443" || fwdPort == "8080")
+    docs:
+      desc: |
+        This check ensures that no enabled port forwarding rules expose common management ports (SSH, HTTPS, UniFi controller) to the internet.
+
+        **Why this matters**
+
+        Port forwarding management interfaces to the internet is one of the most critical misconfigurations:
+          - Exposes the UniFi controller login page or device SSH to the public internet.
+          - Brute-force attacks against exposed management interfaces are common.
+          - Known vulnerabilities in management interfaces can be exploited remotely.
+          - Management interfaces should only be accessible from trusted internal networks or through a VPN.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Routing > Port Forwarding**.
+        2. Review all enabled port forwarding rules.
+        3. Remove or disable any rules forwarding ports 22, 443, 8443, or 8080.
+        4. Use a VPN to access management interfaces remotely instead of port forwarding.
+
+  - uid: mondoo-unifi-security-dns-over-https-enabled
+    title: Ensure DNS over HTTPS is enabled
+    impact: 40
+    mql: |
+      unifi.siteSettings.doh.state == "auto"
+    docs:
+      desc: |
+        This check ensures that DNS over HTTPS (DoH) is enabled on the UniFi controller.
+
+        **Why this matters**
+
+        Standard DNS queries are transmitted in plaintext and can be intercepted or manipulated:
+          - DNS queries reveal browsing patterns and can be used for surveillance.
+          - DNS spoofing attacks can redirect users to malicious sites.
+          - ISPs and network intermediaries can monitor and modify DNS responses.
+
+        DNS over HTTPS provides:
+          - Encryption of DNS queries, preventing eavesdropping and tampering.
+          - Protection against DNS spoofing and man-in-the-middle attacks.
+          - Privacy for network users' browsing activity.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Security > DNS Shield** or **Settings > Internet**.
+        2. Enable **DNS over HTTPS** (set to **Auto**).
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360052224054
+        title: UniFi DNS settings
