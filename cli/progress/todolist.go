@@ -293,43 +293,43 @@ func (m *modelTodoList) View() string {
 		}
 	}
 
-	// Layout (top to bottom): overflow → pending → finished → in-progress.
-	// The in-progress task anchors at the bottom where the eye naturally rests.
-	const maxFinished = 2
-	const maxPending = 2
+	// Layout: completed (top) → in-progress → pending (bottom).
+	// Always show exactly 5 visible lines (when enough tasks exist).
+	// Completed: last 2 (drop oldest as new ones finish).
+	// Pending: fill remaining slots to reach 5 total.
+	const visibleSlots = 5
 
-	// Overflow indicator at the top for unseen pending tasks.
-	shownPending := maxPending
-	if shownPending > len(pending) {
-		shownPending = len(pending)
+	inProgressCount := len(inProgress)
+	// Start with base 2 finished slots, then fill remaining with pending.
+	// If pending can't fill its slots, give them back to finished.
+	showFinished := min(len(finished), 2)
+	showPending := min(len(pending), visibleSlots-showFinished-inProgressCount)
+	if showPending < 0 {
+		showPending = 0
 	}
-	remaining := len(pending) - shownPending
-	if remaining > 0 {
-		label := "asset"
-		if remaining > 1 {
-			label = "assets"
-		}
-		b.WriteString(styleDim.Render(fmt.Sprintf("  ... %d more %s ...", remaining, label)))
-		b.WriteString("\n")
+	// Expand finished into any unused slots so the list stays at 5.
+	showFinished = min(len(finished), visibleSlots-showPending-inProgressCount)
+
+	// Finished tasks on top (most recent 2)
+	for _, t := range finished[len(finished)-showFinished:] {
+		b.WriteString(m.renderTask(t))
 	}
 
-	// Next pending tasks (closest-to-scan at bottom, so render in reverse)
-	for i := shownPending - 1; i >= 0; i-- {
+	// In-progress task in the middle
+	for _, t := range inProgress {
+		b.WriteString(m.renderTask(t))
+	}
+
+	// Pending tasks at the bottom (next-to-scan first)
+	for i := range showPending {
 		b.WriteString(m.renderTask(pending[i]))
 	}
 
-	// Most recently finished tasks (oldest on top, newest closest to in-progress)
-	start := len(finished) - maxFinished
-	if start < 0 {
-		start = 0
-	}
-	for _, t := range finished[start:] {
-		b.WriteString(m.renderTask(t))
-	}
-
-	// In-progress task at the bottom
-	for _, t := range inProgress {
-		b.WriteString(m.renderTask(t))
+	// Remaining: pending tasks not currently visible (excludes in-progress)
+	remaining := len(pending) - showPending
+	if remaining > 0 {
+		b.WriteString(styleDim.Render(fmt.Sprintf("  +%d more...", remaining)))
+		b.WriteString("\n")
 	}
 
 	// Footer: completion stats with elapsed time.

@@ -235,6 +235,6 @@ func TestTodoListMoreAssetsOverflow(t *testing.T) {
 	require.NoError(t, err)
 
 	output := buf.String()
-	// 1 finished + 2 pending shown, 7 remaining
-	assert.Contains(t, output, "more assets")
+	// 1 finished + 4 pending shown, 5 remaining
+	assert.Contains(t, output, "+5 more...")
 }
