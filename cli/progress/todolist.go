@@ -129,7 +129,6 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgAddTask:
 		m.lock.Lock()
-		added := false
 		if _, exists := m.taskIndex[msg.key]; !exists {
 			name := ""
 			platform := ""
@@ -142,13 +141,8 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			t := &task{key: msg.key, name: name, platform: platform, state: taskStatePending}
 			m.tasks = append(m.tasks, t)
 			m.taskIndex[msg.key] = t
-			added = true
 		}
 		m.lock.Unlock()
-		if added {
-			// Force a full redraw since the view height changed.
-			return m, tea.ClearScreen
-		}
 		return m, nil
 
 	case msgProgress:
@@ -379,7 +373,7 @@ func (m *modelTodoList) renderTask(t *task) string {
 		nameStr = styleError.Render(t.name)
 	case taskStateNotApplicable:
 		icon = styleDim.Render("–")
-		nameStr = styleDim.Render(t.name)
+		nameStr = t.name
 	}
 
 	line := fmt.Sprintf("  %s %s", icon, nameStr)
