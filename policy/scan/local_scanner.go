@@ -25,7 +25,7 @@ import (
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
-	"go.mondoo.com/mql/v13/cli/progress"
+	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/logger"
@@ -354,7 +354,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return reporter.Reports(), nil
 	}
 
-	multiprogress, err := createProgressBar(discoveredAssets, s.disableProgressBar)
+	multiprogress, err := createProgressBar(s.disableProgressBar)
 	if err != nil {
 		return nil, err
 	}
@@ -524,6 +524,15 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 				log.Info().Msg("reported panic to Mondoo Platform")
 			})
 
+			// Register all tasks in the batch before scanning so the TODO list
+			// knows the full set and does not quit after the first completion.
+			for i := range batch {
+				a := batch[i].Asset
+				if len(a.PlatformIds) > 0 {
+					multiprogress.AddTask(a.PlatformIds[0], a)
+				}
+			}
+
 			for i := range batch {
 				asset := batch[i].Asset
 				runtime := batch[i].Runtime
@@ -553,6 +562,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 						continue
 					}
 					asset = discoveredAsset
+					// Re-register with the discovered asset's platform ID if it changed
+					multiprogress.AddTask(asset.PlatformIds[0], asset)
 				}
 
 				p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: multiprogress}
@@ -1221,27 +1232,9 @@ func mustCompile(code string) *llx.CodeBundle {
 	return codeBundle
 }
 
-func createProgressBar(discoveredAssets *discovery.DiscoveredAssets, disableProgressBar bool) (progress.MultiProgress, error) {
-	var multiprogress progress.MultiProgress
+func createProgressBar(disableProgressBar bool) (progress.MultiProgress, error) {
 	if isatty.IsTerminal(os.Stdout.Fd()) && !disableProgressBar && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
-		progressBarElements := map[string]string{}
-		orderedKeys := []string{}
-		for i := range discoveredAssets.Assets {
-			asset := discoveredAssets.Assets[i].Asset
-			slices.Sort(asset.PlatformIds)
-			if presentAsset, present := progressBarElements[asset.PlatformIds[0]]; present {
-				return nil, fmt.Errorf("asset %s and %s have the same platform id %s", presentAsset, asset.Name, asset.PlatformIds[0])
-			}
-			progressBarElements[asset.PlatformIds[0]] = asset.Name
-			orderedKeys = append(orderedKeys, asset.PlatformIds[0])
-		}
-		var err error
-		multiprogress, err = progress.NewMultiProgressBars(progressBarElements, orderedKeys, progress.WithScore())
-		if err != nil {
-			return nil, multierr.Wrap(err, "failed to create progress bars")
-		}
-	} else {
-		multiprogress = progress.NoopMultiProgressBars{}
+		return progress.NewTodoList(progress.WithScore())
 	}
-	return multiprogress, nil
+	return progress.NoopMultiProgress{}, nil
 }
