@@ -299,16 +299,32 @@ func (m *modelTodoList) View() string {
 		}
 	}
 
-	// Rolling window: in-progress on top, then last 2 finished, then next 2 pending.
+	// Layout (top to bottom): overflow → pending → finished → in-progress.
+	// The in-progress task anchors at the bottom where the eye naturally rests.
 	const maxFinished = 2
 	const maxPending = 2
 
-	// In-progress tasks (typically 1 in sequential scanning)
-	for _, t := range inProgress {
-		b.WriteString(m.renderTask(t))
+	// Overflow indicator at the top for unseen pending tasks.
+	shownPending := maxPending
+	if shownPending > len(pending) {
+		shownPending = len(pending)
+	}
+	remaining := len(pending) - shownPending
+	if remaining > 0 {
+		label := "asset"
+		if remaining > 1 {
+			label = "assets"
+		}
+		b.WriteString(styleDim.Render(fmt.Sprintf("  ... %d more %s ...", remaining, label)))
+		b.WriteString("\n")
 	}
 
-	// Most recently finished tasks (tail of the finished slice)
+	// Next pending tasks (closest-to-scan at bottom, so render in reverse)
+	for i := shownPending - 1; i >= 0; i-- {
+		b.WriteString(m.renderTask(pending[i]))
+	}
+
+	// Most recently finished tasks (oldest on top, newest closest to in-progress)
 	start := len(finished) - maxFinished
 	if start < 0 {
 		start = 0
@@ -317,24 +333,9 @@ func (m *modelTodoList) View() string {
 		b.WriteString(m.renderTask(t))
 	}
 
-	// Next pending tasks
-	shown := 0
-	for _, t := range pending {
-		if shown >= maxPending {
-			break
-		}
+	// In-progress task at the bottom
+	for _, t := range inProgress {
 		b.WriteString(m.renderTask(t))
-		shown++
-	}
-
-	remaining := len(pending) - shown
-	if remaining > 0 {
-		label := "asset"
-		if remaining > 1 {
-			label = "assets"
-		}
-		b.WriteString(styleDim.Render(fmt.Sprintf("  ... %d more %s ...", remaining, label)))
-		b.WriteString("\n")
 	}
 
 	// Footer: completion stats with elapsed time.
