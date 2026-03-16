@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 6.1.0
+    version: 6.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -24,6 +24,7 @@ policies:
         - AlloyDB
         - API Keys
         - Audit Logging
+        - Backup & DR
         - BigQuery
         - Bigtable
         - Binary Authorization
@@ -48,6 +49,7 @@ policies:
         - Secret Manager
         - Spanner
         - SSL/TLS Policies
+        - Vertex AI
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
@@ -246,6 +248,19 @@ policies:
         checks:
           - uid: mondoo-gcp-security-alloydb-cmek-encryption
           - uid: mondoo-gcp-security-alloydb-no-public-ip
+      - title: Backup & DR
+        checks:
+          - uid: mondoo-gcp-security-backupdr-vault-access-restricted
+      - title: Vertex AI
+        checks:
+          - uid: mondoo-gcp-security-vertexai-endpoint-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-endpoint-private-service-connect
+          - uid: mondoo-gcp-security-vertexai-model-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-dataset-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-pipeline-job-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network
+          - uid: mondoo-gcp-security-vertexai-pipeline-job-no-default-service-account
+          - uid: mondoo-gcp-security-vertexai-feature-online-store-cmek-encryption
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -16886,4 +16901,547 @@ queries:
             _['connector_enforcement'] == "REQUIRED"
           )
         )
+      )
+  - uid: mondoo-gcp-security-backupdr-vault-access-restricted
+    title: Ensure Backup & DR vault access is restricted
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    variants:
+      - uid: mondoo-gcp-security-backupdr-vault-access-restricted-gcp
+        tags:
+          mondoo.com/filter-title: GCP Backup & DR
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Backup & DR backup vaults have access restrictions configured. Access restrictions control which projects and regions can store backups in the vault, limiting the blast radius of compromised credentials.
+
+        **Why this matters**
+
+        Backup vaults store critical recovery data that must be protected:
+          - Unrestricted vaults can be accessed from any project, increasing the risk of unauthorized data access or deletion.
+          - Restricting access ensures that only authorized projects can interact with backup data.
+          - Access restrictions help enforce data residency requirements by limiting which regions can access the vault.
+          - Compromised credentials in one project cannot be used to tamper with backups in a restricted vault.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Backup and DR** page in the Google Cloud Console.
+            2. Select **Backup Vaults**.
+            3. Click the vault to modify.
+            4. Review the **Access Restriction** setting.
+            5. Ensure access restrictions are not set to **Unrestricted**.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud backup-dr backup-vaults update VAULT_NAME \
+              --location=LOCATION \
+              --access-restriction=WITHIN_PROJECT
+            ```
+    refs:
+      - url: https://cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault
+        title: Backup vaults overview
+  - uid: mondoo-gcp-security-backupdr-vault-access-restricted-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.backupdr.backupVaults.all(
+        accessRestriction != "WITHIN_ORGANIZATION" &&
+        accessRestriction != "UNRESTRICTED" &&
+        accessRestriction != "ACCESS_RESTRICTION_UNSPECIFIED"
+      )
+  - uid: mondoo-gcp-security-vertexai-endpoint-cmek-encryption
+    title: Ensure Vertex AI endpoints are encrypted with CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-vertexai-endpoint-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI endpoints are encrypted using customer-managed encryption keys (CMEK). Vertex AI endpoints serve model predictions and may process sensitive data that requires encryption with keys you control.
+
+        **Why this matters**
+
+        Vertex AI endpoints handle real-time prediction requests that may contain sensitive data:
+          - Without CMEK, data is encrypted with Google-managed keys that organizations cannot independently control.
+          - CMEK enables organizations to revoke access to encrypted data by disabling or destroying the encryption key.
+          - Key usage can be audited through Cloud Audit Logs for Cloud KMS.
+          - Compliance frameworks such as PCI-DSS, HIPAA, and SOC 2 may require customer-managed encryption for AI/ML workloads.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at endpoint creation time.
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Online prediction > Endpoints**.
+            3. Click **Create Endpoint**.
+            4. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            5. Select or create a Cloud KMS key.
+            6. Complete the endpoint creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at endpoint creation time.
+
+            ```bash
+            gcloud ai endpoints create \
+              --display-name=ENDPOINT_NAME \
+              --region=REGION \
+              --encryption-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-endpoint-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.endpoints.all(
+        encryptionSpec != empty
+      )
+  - uid: mondoo-gcp-security-vertexai-endpoint-private-service-connect
+    title: Ensure Vertex AI endpoints use Private Service Connect
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-6
+    variants:
+      - uid: mondoo-gcp-security-vertexai-endpoint-private-service-connect-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI endpoints have Private Service Connect enabled. Private Service Connect provides private connectivity to Vertex AI endpoints without exposing traffic to the public internet.
+
+        **Why this matters**
+
+        Vertex AI endpoints serve model predictions that may contain sensitive data:
+          - Without Private Service Connect, prediction requests and responses traverse the public internet, increasing exposure to interception.
+          - Private Service Connect keeps traffic within the Google Cloud network, reducing the attack surface.
+          - Network-level isolation helps meet compliance requirements for data in transit.
+          - Private endpoints can be further secured using VPC Service Controls and firewall rules.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: Private Service Connect must be configured at endpoint creation time.
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Online prediction > Endpoints**.
+            3. Click **Create Endpoint**.
+            4. Under **Network**, enable **Private Service Connect**.
+            5. Configure the network and subnetwork settings.
+            6. Complete the endpoint creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: Private Service Connect must be configured at endpoint creation time.
+
+            ```bash
+            gcloud ai endpoints create \
+              --display-name=ENDPOINT_NAME \
+              --region=REGION \
+              --network=projects/PROJECT/global/networks/VPC_NAME \
+              --enable-private-service-connect
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/predictions/using-private-service-connect
+        title: Using Private Service Connect with Vertex AI
+  - uid: mondoo-gcp-security-vertexai-endpoint-private-service-connect-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.endpoints.all(
+        enablePrivateServiceConnect == true
+      )
+  - uid: mondoo-gcp-security-vertexai-model-cmek-encryption
+    title: Ensure Vertex AI models are encrypted with CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-vertexai-model-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI models are encrypted using customer-managed encryption keys (CMEK). Vertex AI models contain trained machine learning artifacts that may encode sensitive patterns from training data.
+
+        **Why this matters**
+
+        Vertex AI models represent significant intellectual property and may contain sensitive information:
+          - Without CMEK, model artifacts are encrypted with Google-managed keys that organizations cannot independently control.
+          - CMEK enables organizations to revoke access to model data by disabling or destroying the encryption key.
+          - Model artifacts may implicitly encode sensitive training data patterns, making encryption critical.
+          - Compliance frameworks may require customer-managed encryption for AI/ML assets.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at model upload time.
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Model Registry**.
+            3. When uploading a model, expand **Encryption**.
+            4. Select **Customer-managed encryption key (CMEK)**.
+            5. Select or create a Cloud KMS key.
+            6. Complete the model upload.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at model upload time.
+
+            ```bash
+            gcloud ai models upload \
+              --display-name=MODEL_NAME \
+              --region=REGION \
+              --container-image-uri=IMAGE_URI \
+              --encryption-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-model-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.models.all(
+        encryptionSpec != empty
+      )
+  - uid: mondoo-gcp-security-vertexai-dataset-cmek-encryption
+    title: Ensure Vertex AI datasets are encrypted with CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-vertexai-dataset-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI datasets are encrypted using customer-managed encryption keys (CMEK). Vertex AI datasets store training and evaluation data that often contains sensitive information.
+
+        **Why this matters**
+
+        Vertex AI datasets contain the data used to train and evaluate machine learning models:
+          - Without CMEK, training data is encrypted with Google-managed keys that organizations cannot independently control.
+          - Training datasets may contain PII, financial records, health data, or other regulated information.
+          - CMEK enables organizations to revoke access to dataset contents by disabling or destroying the encryption key.
+          - Compliance frameworks such as HIPAA and GDPR may require customer-managed encryption for data stores containing sensitive information.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at dataset creation time.
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Datasets**.
+            3. Click **Create Dataset**.
+            4. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            5. Select or create a Cloud KMS key.
+            6. Complete the dataset creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at dataset creation time.
+
+            ```bash
+            gcloud ai datasets create \
+              --display-name=DATASET_NAME \
+              --region=REGION \
+              --encryption-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-dataset-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.datasets.all(
+        encryptionSpec != empty
+      )
+  - uid: mondoo-gcp-security-vertexai-pipeline-job-cmek-encryption
+    title: Ensure Vertex AI pipeline jobs are encrypted with CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-vertexai-pipeline-job-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI pipeline jobs are encrypted using customer-managed encryption keys (CMEK). Pipeline jobs orchestrate ML workflows including training, evaluation, and deployment steps that process sensitive data.
+
+        **Why this matters**
+
+        Vertex AI pipeline jobs process data through multiple stages of ML workflows:
+          - Without CMEK, intermediate and output data are encrypted with Google-managed keys that organizations cannot independently control.
+          - Pipeline jobs may process sensitive training data, model artifacts, and evaluation results.
+          - CMEK ensures all data generated during pipeline execution is encrypted with keys you control.
+          - Compliance frameworks may require customer-managed encryption for data processing pipelines.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at pipeline job creation time.
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Pipelines**.
+            3. When creating a pipeline run, expand **Encryption**.
+            4. Select **Customer-managed encryption key (CMEK)**.
+            5. Select or create a Cloud KMS key.
+            6. Submit the pipeline run.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at pipeline job submission time.
+
+            ```bash
+            gcloud ai pipelines create \
+              --display-name=PIPELINE_JOB_NAME \
+              --region=REGION \
+              --encryption-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-pipeline-job-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.pipelineJobs.all(
+        encryptionSpec != empty
+      )
+  - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network
+    title: Ensure Vertex AI pipeline jobs use a VPC network
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-6
+    variants:
+      - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI pipeline jobs are configured to run within a VPC network. Without VPC peering, pipeline jobs may communicate over the public internet, increasing the risk of data exposure.
+
+        **Why this matters**
+
+        Vertex AI pipeline jobs process and transfer data between stages:
+          - Without a VPC network, data may traverse the public internet during pipeline execution.
+          - VPC peering ensures all communication between pipeline components stays within the Google Cloud private network.
+          - Network-level isolation helps prevent data exfiltration from ML training and processing jobs.
+          - VPC configuration enables the use of VPC Service Controls for additional protection.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Pipelines**.
+            3. When creating a pipeline run, expand **Network**.
+            4. Select a VPC network for the pipeline job.
+            5. Submit the pipeline run.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud ai pipelines create \
+              --display-name=PIPELINE_JOB_NAME \
+              --region=REGION \
+              --network=projects/PROJECT/global/networks/VPC_NAME
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/vpc-peering
+        title: VPC Network Peering for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.pipelineJobs.all(
+        network != ""
+      )
+  - uid: mondoo-gcp-security-vertexai-pipeline-job-no-default-service-account
+    title: Ensure Vertex AI pipeline jobs don't use default SA
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    variants:
+      - uid: mondoo-gcp-security-vertexai-pipeline-job-no-default-service-account-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI pipeline jobs are not using the default Compute Engine service account. Default service accounts have overly broad permissions and should be replaced with custom service accounts scoped to only the permissions required by the pipeline.
+
+        **Why this matters**
+
+        Vertex AI pipeline jobs using default service accounts inherit excessive permissions:
+          - The default Compute Engine service account has broad access to project resources via the Editor role.
+          - A compromised pipeline job with a default service account can access, modify, or delete resources across the entire project.
+          - ML pipelines often access sensitive data stores, model registries, and storage buckets that should be scoped precisely.
+          - Custom service accounts with narrowly scoped roles limit the blast radius of security incidents.
+
+        **Risk mitigation:**
+          - Create a dedicated service account with only the IAM roles needed for the pipeline.
+          - Specify the custom service account when submitting pipeline jobs.
+          - Regularly audit service account permissions and usage.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Pipelines**.
+            3. When creating a pipeline run, expand **Advanced options**.
+            4. Under **Service account**, select a custom service account.
+            5. Submit the pipeline run.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            ```bash
+            gcloud ai pipelines create \
+              --display-name=PIPELINE_JOB_NAME \
+              --region=REGION \
+              --service-account=CUSTOM_SA_EMAIL
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/pipelines/configure-project#service-account
+        title: Configure a service account for Vertex AI Pipelines
+  - uid: mondoo-gcp-security-vertexai-pipeline-job-no-default-service-account-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.pipelineJobs.all(
+        serviceAccount != "" &&
+        serviceAccount != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+        serviceAccount != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-vertexai-feature-online-store-cmek-encryption
+    title: Ensure Vertex AI feature online stores use CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-vertexai-feature-online-store-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/icon: gcp
+    docs:
+      desc: |
+        This check ensures that Vertex AI feature online stores are encrypted using customer-managed encryption keys (CMEK). Feature online stores serve precomputed feature values for real-time predictions and may contain sensitive data.
+
+        **Why this matters**
+
+        Vertex AI feature online stores hold feature data used for real-time ML serving:
+          - Without CMEK, feature data is encrypted with Google-managed keys that organizations cannot independently control.
+          - Feature stores often contain derived or aggregated customer data, transaction patterns, or behavioral signals.
+          - CMEK enables organizations to revoke access to feature data by disabling or destroying the encryption key.
+          - Compliance frameworks may require customer-managed encryption for data stores serving production ML systems.
+      remediation:
+        - id: console
+          desc: |
+            **Using Google Cloud Console**
+
+            Note: CMEK must be configured at feature online store creation time.
+
+            1. Go to the **Vertex AI** page in the Google Cloud Console.
+            2. Navigate to **Feature Store > Online Stores**.
+            3. Click **Create Online Store**.
+            4. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
+            5. Select or create a Cloud KMS key.
+            6. Complete the store creation.
+        - id: cli
+          desc: |
+            **Using Google Cloud CLI**
+
+            Note: CMEK must be configured at creation time.
+
+            ```bash
+            gcloud ai feature-online-stores create STORE_NAME \
+              --region=REGION \
+              --encryption-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-feature-online-store-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.featureOnlineStores.all(
+        encryptionSpec != empty
       )
