@@ -39,14 +39,14 @@ type MultiProgress interface {
 // NoopMultiProgress is a no-op implementation of MultiProgress.
 type NoopMultiProgress struct{}
 
-func (n NoopMultiProgress) Open() error                       { return nil }
-func (n NoopMultiProgress) AddTask(string, *inventory.Asset)  {}
-func (n NoopMultiProgress) OnProgress(string, float64)        {}
-func (n NoopMultiProgress) Score(string, string)              {}
-func (n NoopMultiProgress) Errored(string)                    {}
-func (n NoopMultiProgress) NotApplicable(string)              {}
-func (n NoopMultiProgress) Completed(string)                  {}
-func (n NoopMultiProgress) Close()                            {}
+func (n NoopMultiProgress) Open() error                      { return nil }
+func (n NoopMultiProgress) AddTask(string, *inventory.Asset) {}
+func (n NoopMultiProgress) OnProgress(string, float64)       {}
+func (n NoopMultiProgress) Score(string, string)             {}
+func (n NoopMultiProgress) Errored(string)                   {}
+func (n NoopMultiProgress) NotApplicable(string)             {}
+func (n NoopMultiProgress) Completed(string)                 {}
+func (n NoopMultiProgress) Close()                           {}
 
 // MultiProgressAdapter maps single-asset Progress calls to a keyed MultiProgress.
 type MultiProgressAdapter struct {

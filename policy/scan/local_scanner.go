@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/v13/policy"
@@ -25,7 +26,6 @@ import (
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
-	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/logger"
@@ -558,12 +558,19 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 					discoveredAsset, err := handleDelayedDiscovery(ctx, asset, runtime, services, spaceMrn)
 					if err != nil {
 						reporter.AddScanError(asset, err)
-						multiprogress.Errored(asset.PlatformIds[0])
+						if len(asset.PlatformIds) > 0 {
+							multiprogress.Errored(asset.PlatformIds[0])
+						}
 						continue
 					}
 					asset = discoveredAsset
 					// Re-register with the discovered asset's platform ID if it changed
 					multiprogress.AddTask(asset.PlatformIds[0], asset)
+				}
+
+				if len(asset.PlatformIds) == 0 {
+					log.Warn().Str("name", asset.Name).Msg("asset has no platform IDs, skipping")
+					continue
 				}
 
 				p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: multiprogress}

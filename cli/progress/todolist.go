@@ -238,10 +238,10 @@ func (m *modelTodoList) allDoneLocked() bool {
 }
 
 var (
-	styleHeader    = lipgloss.NewStyle().Bold(true)
-	styleDim       = lipgloss.NewStyle().Faint(true)
-	styleSuccess   = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
-	styleError     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4672"))
+	styleHeader     = lipgloss.NewStyle().Bold(true)
+	styleDim        = lipgloss.NewStyle().Faint(true)
+	styleSuccess    = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
+	styleError      = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4672"))
 	styleInProgress = lipgloss.NewStyle().Foreground(lipgloss.Color("#7571F9"))
 
 	// scoreColors maps score rating text to lipgloss colors, matching
@@ -270,11 +270,11 @@ func (m *modelTodoList) View() string {
 
 	// Count tasks by state and collect buckets for the rolling window.
 	var (
-		inProgress    []*task
-		finished      []*task // completed, errored, n/a — in original order
-		pending       []*task
-		completed int
-		errored   int
+		inProgress []*task
+		finished   []*task // completed, errored, n/a — in original order
+		pending    []*task
+		completed  int
+		errored    int
 	)
 	for _, t := range m.tasks {
 		switch t.state {
@@ -451,8 +451,10 @@ func newTodoListProgram(input io.Reader, output io.Writer, opts ...Option) (*tod
 }
 
 func (t *todoListProgress) Open() error {
-	(logger.LogOutputWriter.(*logger.BufferedWriter)).Pause()
-	defer (logger.LogOutputWriter.(*logger.BufferedWriter)).Resume()
+	if bw, ok := logger.LogOutputWriter.(*logger.BufferedWriter); ok {
+		bw.Pause()
+		defer bw.Resume()
+	}
 	if _, err := t.program.Run(); err != nil {
 		return err
 	}
