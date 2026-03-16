@@ -1,0 +1,497 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-bigip-security
+    name: Mondoo F5 BIG-IP Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: bigip,networkdevice
+    require:
+      - provider: bigip
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure F5 BIG-IP device configurations
+    docs:
+      desc: |-
+        The Mondoo F5 BIG-IP Security policy provides security checks for F5 BIG-IP application delivery controllers. This policy helps ensure your BIG-IP infrastructure is properly configured and hardened according to security best practices.
+
+        This policy covers the following critical security areas:
+
+        - **SSL/TLS Certificates**: Validates that certificates are not expired and use strong cryptographic parameters
+        - **SSL/TLS Profiles**: Ensures client and server SSL profiles use secure cipher suites and proper authentication
+        - **Network Security**: Checks VLAN source checking, route domain isolation, and SNMP access restrictions
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+
+    groups:
+      - title: SSL/TLS Certificates
+        filters: asset.platform == "bigip"
+        checks:
+          - uid: mondoo-bigip-security-certificates-not-expired
+          - uid: mondoo-bigip-security-certificates-strong-key-size
+          - uid: mondoo-bigip-security-keys-strong-key-size
+      - title: SSL/TLS Profiles
+        filters: asset.platform == "bigip"
+        checks:
+          - uid: mondoo-bigip-security-client-ssl-secure-ciphers
+          - uid: mondoo-bigip-security-server-ssl-secure-ciphers
+          - uid: mondoo-bigip-security-server-ssl-authenticate-backend
+      - title: Network Security
+        filters: asset.platform == "bigip"
+        checks:
+          - uid: mondoo-bigip-security-vlan-source-checking
+          - uid: mondoo-bigip-security-route-domain-strict-isolation
+          - uid: mondoo-bigip-security-snmp-restricted-access
+queries:
+  - uid: mondoo-bigip-security-certificates-not-expired
+    title: Ensure SSL certificates are not expired
+    impact: 90
+    mql: |
+      bigip.certificates.none(
+        expirationDate != 0 && expirationDate < time.now.unix
+      )
+    docs:
+      desc: |
+        This check verifies that no SSL certificates installed on the BIG-IP device have expired. Expired certificates cause TLS handshake failures and can lead to service outages or insecure fallback behavior.
+
+        **Why this matters**
+
+        When an SSL certificate expires, clients connecting to virtual servers using that certificate will receive certificate validation errors. If certificate validation is not enforced:
+
+        - Man-in-the-middle attacks become possible because clients may accept invalid certificates.
+        - Automated systems and APIs that perform strict certificate validation will fail, causing service disruptions.
+        - Users may be trained to bypass certificate warnings, weakening the overall security posture.
+        - Compliance frameworks that require valid certificates will report the device as non-compliant.
+
+        Regularly monitoring certificate expiration dates and renewing certificates before they expire ensures uninterrupted and secure TLS communication.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**
+            2. Identify any expired certificates by checking the expiration date
+            3. For each expired certificate, generate a new CSR or import a renewed certificate:
+               - Click the certificate name
+               - Click **Renew** to generate a new CSR, or **Import** to upload a renewed certificate
+            4. Update any SSL profiles referencing the expired certificate to use the new one
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            List certificates and their expiration dates:
+
+            ```
+            tmsh list sys crypto cert
+            ```
+
+            Install a renewed certificate:
+
+            ```
+            tmsh install sys crypto cert <name> from-local-file <path>
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K14318
+        title: F5 - Managing SSL certificates
+      - url: https://my.f5.com/manage/s/article/K6353
+        title: F5 - Updating SSL certificates
+
+  - uid: mondoo-bigip-security-certificates-strong-key-size
+    title: Ensure SSL certificates use strong key sizes
+    impact: 80
+    mql: |
+      bigip.certificates.all(keySize >= 2048)
+    docs:
+      desc: |
+        This check verifies that all SSL certificates installed on the BIG-IP device use a key size of at least 2048 bits. Certificates with smaller key sizes are vulnerable to brute-force attacks.
+
+        **Why this matters**
+
+        RSA keys shorter than 2048 bits are considered cryptographically weak by NIST, the CA/Browser Forum, and all major industry standards. If certificates use weak key sizes:
+
+        - Attackers with sufficient computing resources can factor the private key and decrypt traffic.
+        - Man-in-the-middle attacks become feasible by recovering the private key.
+        - Certificate authorities no longer issue certificates with key sizes below 2048 bits, making weak keys a sign of legacy or misconfigured infrastructure.
+        - Compliance frameworks including PCI DSS and NIST SP 800-131A require a minimum of 2048-bit RSA keys.
+
+        All certificates should use at least 2048-bit RSA keys, or equivalent strength elliptic curve keys (256-bit or higher).
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**
+            2. Identify certificates with key sizes below 2048 bits
+            3. For each weak certificate, generate a new key and CSR with a minimum 2048-bit key size:
+               - Click **Create**
+               - Set the **Key Size** to 2048 or higher
+               - Complete the CSR fields and submit to your certificate authority
+            4. Import the new certificate and update SSL profiles to reference it
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Generate a new key and CSR with a 2048-bit key:
+
+            ```
+            tmsh create sys crypto key <name> key-size 2048
+            tmsh create sys crypto csr <name> key <key-name> common-name <cn>
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K14318
+        title: F5 - Managing SSL certificates
+      - url: https://csrc.nist.gov/pubs/sp/800/131/a/r2/final
+        title: NIST SP 800-131A Rev. 2 - Transitioning the Use of Cryptographic Algorithms
+
+  - uid: mondoo-bigip-security-keys-strong-key-size
+    title: Ensure SSL keys use strong key sizes
+    impact: 80
+    mql: |
+      bigip.keys.all(keySize >= 2048)
+    docs:
+      desc: |
+        This check verifies that all SSL keys on the BIG-IP device use a key size of at least 2048 bits. Weak keys undermine the security of all certificates and SSL profiles that reference them.
+
+        **Why this matters**
+
+        SSL keys are the foundation of TLS encryption. If a private key can be compromised through brute-force factoring:
+
+        - All traffic encrypted with that key can be decrypted, exposing sensitive data in transit.
+        - An attacker who recovers the private key can impersonate the server, enabling man-in-the-middle attacks.
+        - All certificates signed with that key are effectively compromised regardless of their own parameters.
+
+        Keys below 2048 bits for RSA (or 256 bits for ECDSA) should be replaced immediately.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**
+            2. Click the **Key** tab to review installed keys and their sizes
+            3. For each weak key, generate a replacement with a minimum 2048-bit key size
+            4. Re-issue associated certificates with the new key
+            5. Update all SSL profiles referencing the old key
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Generate a new 2048-bit key:
+
+            ```
+            tmsh create sys crypto key <name> key-size 2048
+            ```
+
+            List existing keys to identify weak ones:
+
+            ```
+            tmsh list sys crypto key
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K14318
+        title: F5 - Managing SSL certificates
+      - url: https://csrc.nist.gov/pubs/sp/800/131/a/r2/final
+        title: NIST SP 800-131A Rev. 2 - Transitioning the Use of Cryptographic Algorithms
+
+  - uid: mondoo-bigip-security-client-ssl-secure-ciphers
+    title: Ensure client SSL profiles use secure ciphers
+    impact: 85
+    mql: |
+      bigip.clientSslProfiles.none(
+        ciphers.downcase.contains("rc4") ||
+        ciphers.downcase.contains("des") ||
+        ciphers.downcase.contains("null") ||
+        ciphers.downcase.contains("export")
+      )
+    docs:
+      desc: |
+        This check verifies that no client SSL profiles on the BIG-IP device reference insecure cipher suites. Weak ciphers such as RC4, DES, NULL, and EXPORT-grade ciphers have known cryptographic vulnerabilities.
+
+        **Why this matters**
+
+        Client SSL profiles control the TLS parameters used when clients connect to BIG-IP virtual servers. If weak ciphers are permitted:
+
+        - **RC4** has known biases that allow plaintext recovery from captured TLS traffic (RFC 7465 prohibits its use).
+        - **DES and 3DES** use short block sizes vulnerable to the SWEET32 birthday attack, allowing data recovery from long-lived connections.
+        - **NULL ciphers** provide no encryption at all, transmitting all data in plaintext.
+        - **EXPORT ciphers** were intentionally weakened and are trivially broken, as demonstrated by the FREAK and Logjam attacks.
+
+        Removing these ciphers from client SSL profiles forces clients to negotiate strong encryption.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **Local Traffic → Profiles → SSL → Client**
+            2. Click on the affected profile
+            3. In the **Ciphers** field, replace the cipher string with a secure configuration, for example:
+               `DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL`
+            4. Click **Update**
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Update the cipher string on a client SSL profile:
+
+            ```
+            tmsh modify ltm profile client-ssl <profile-name> ciphers 'DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL'
+            ```
+
+            Verify the effective cipher list:
+
+            ```
+            tmsh list ltm profile client-ssl <profile-name> ciphers
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K13156
+        title: F5 - Configuring the cipher strength for SSL profiles
+      - url: https://tools.ietf.org/html/rfc7465
+        title: RFC 7465 - Prohibiting RC4 Cipher Suites
+
+  - uid: mondoo-bigip-security-server-ssl-secure-ciphers
+    title: Ensure server SSL profiles use secure ciphers
+    impact: 85
+    mql: |
+      bigip.serverSslProfiles.none(
+        ciphers.downcase.contains("rc4") ||
+        ciphers.downcase.contains("des") ||
+        ciphers.downcase.contains("null") ||
+        ciphers.downcase.contains("export")
+      )
+    docs:
+      desc: |
+        This check verifies that no server SSL profiles on the BIG-IP device reference insecure cipher suites. Server SSL profiles control the TLS parameters used when the BIG-IP connects to backend pool members.
+
+        **Why this matters**
+
+        Even when client-facing connections use strong encryption, weak ciphers on the backend leg expose traffic between the BIG-IP and application servers. If weak ciphers are configured:
+
+        - An attacker with network access between the BIG-IP and backend servers can decrypt traffic using known attacks against RC4, DES, or EXPORT ciphers.
+        - The end-to-end encryption chain is only as strong as its weakest link, negating the security provided by strong client-side ciphers.
+        - Backend connections carrying sensitive data such as authentication tokens, personal information, and financial data are exposed.
+
+        Server SSL profiles should enforce the same cipher standards as client SSL profiles.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **Local Traffic → Profiles → SSL → Server**
+            2. Click on the affected profile
+            3. In the **Ciphers** field, replace the cipher string with a secure configuration, for example:
+               `DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL`
+            4. Click **Update**
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Update the cipher string on a server SSL profile:
+
+            ```
+            tmsh modify ltm profile server-ssl <profile-name> ciphers 'DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL'
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K13156
+        title: F5 - Configuring the cipher strength for SSL profiles
+      - url: https://tools.ietf.org/html/rfc7465
+        title: RFC 7465 - Prohibiting RC4 Cipher Suites
+
+  - uid: mondoo-bigip-security-server-ssl-authenticate-backend
+    title: Ensure server SSL profiles authenticate backend servers
+    impact: 80
+    mql: |
+      bigip.serverSslProfiles.none(authenticate == "none")
+    docs:
+      desc: |
+        This check verifies that server SSL profiles on the BIG-IP device are configured to authenticate backend servers. Without server authentication, the BIG-IP blindly trusts any server presenting a certificate, making it vulnerable to man-in-the-middle attacks.
+
+        **Why this matters**
+
+        When the BIG-IP connects to backend pool members over TLS without authenticating the server's certificate:
+
+        - An attacker who compromises the network between the BIG-IP and a backend server can intercept and modify traffic by presenting a fraudulent certificate.
+        - DNS spoofing or ARP poisoning attacks can redirect backend connections to a malicious server without detection.
+        - The BIG-IP may send sensitive data (session tokens, credentials, personal information) to an impersonator.
+        - Compliance frameworks such as PCI DSS require authentication of all parties in a communication channel.
+
+        Enabling server authentication ensures the BIG-IP validates the backend server's certificate against a trusted CA before establishing the connection.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **Local Traffic → Profiles → SSL → Server**
+            2. Click on the affected profile
+            3. Set **Server Authentication** to **require** (or **always**)
+            4. Configure the **Trusted Certificate Authorities** field to reference a CA bundle that includes the backend server's issuing CA
+            5. Click **Update**
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Enable server authentication on a server SSL profile:
+
+            ```
+            tmsh modify ltm profile server-ssl <profile-name> authenticate require
+            tmsh modify ltm profile server-ssl <profile-name> ca-file <ca-bundle-name>
+            ```
+
+            Verify the configuration:
+
+            ```
+            tmsh list ltm profile server-ssl <profile-name> authenticate ca-file
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K14783
+        title: F5 - Configuring server certificate verification
+
+  - uid: mondoo-bigip-security-vlan-source-checking
+    title: Ensure VLAN source checking is enabled
+    impact: 75
+    mql: |
+      bigip.vlans.all(sourceChecking == "enabled")
+    docs:
+      desc: |
+        This check verifies that source checking is enabled on all VLANs configured on the BIG-IP device. Source checking validates that incoming packets have a source address that matches the network assigned to the receiving interface, preventing IP spoofing.
+
+        **Why this matters**
+
+        Without source checking, the BIG-IP accepts packets with forged source IP addresses on its VLANs. This enables several attack vectors:
+
+        - **IP spoofing**: Attackers can send packets with forged source addresses to bypass IP-based access controls and appear as trusted hosts.
+        - **Reflection attacks**: Spoofed source addresses can redirect response traffic to a victim, amplifying denial-of-service attacks.
+        - **Session hijacking**: Forged packets can be injected into existing connections by spoofing the source address of a legitimate client.
+        - **Audit trail poisoning**: Logs record the spoofed source address rather than the attacker's real address, making forensic analysis unreliable.
+
+        Enabling source checking on all VLANs provides a fundamental layer of defense against IP spoofing.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **Network → VLANs → VLAN List**
+            2. Click on the affected VLAN
+            3. Set **Source Checking** to **Enabled**
+            4. Click **Update**
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Enable source checking on a VLAN:
+
+            ```
+            tmsh modify net vlan <vlan-name> source-checking enabled
+            ```
+
+            Verify the setting:
+
+            ```
+            tmsh list net vlan <vlan-name> source-checking
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K13520
+        title: F5 - VLAN configuration
+
+  - uid: mondoo-bigip-security-route-domain-strict-isolation
+    title: Ensure route domains use strict isolation
+    impact: 80
+    mql: |
+      bigip.routeDomains.all(strict == "enabled")
+    docs:
+      desc: |
+        This check verifies that all route domains on the BIG-IP device are configured with strict isolation. Route domains provide traffic separation by creating independent routing tables, but without strict mode, traffic can leak between domains.
+
+        **Why this matters**
+
+        Route domains are used to segment network traffic on the BIG-IP, often to separate different tenants, environments (production vs. development), or security zones. Without strict isolation:
+
+        - Traffic from one route domain can be forwarded into another, breaking network segmentation boundaries.
+        - A compromised application in one segment can reach resources in another segment that should be isolated.
+        - Multi-tenant environments lose tenant isolation, potentially exposing one customer's traffic to another.
+        - Regulatory requirements for network segmentation (such as PCI DSS cardholder data environment isolation) are violated.
+
+        Strict isolation ensures that traffic within a route domain stays within that domain and cannot cross into other domains.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **Network → Route Domains**
+            2. Click on the affected route domain
+            3. Set **Strict Isolation** to **Enabled**
+            4. Click **Update**
+
+            **Note**: Enabling strict isolation may break existing cross-domain traffic flows. Review your network architecture before making this change.
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Enable strict isolation on a route domain:
+
+            ```
+            tmsh modify net route-domain <id> strict enabled
+            ```
+
+            Verify the configuration:
+
+            ```
+            tmsh list net route-domain <id> strict
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K14163
+        title: F5 - Route domain configuration
+
+  - uid: mondoo-bigip-security-snmp-restricted-access
+    title: Ensure SNMP allowed addresses are restricted
+    impact: 85
+    mql: |
+      bigip.snmp.allowedAddresses.none(
+        _ == "0.0.0.0/0" ||
+        _ == "0.0.0.0" ||
+        _ == "::/0" ||
+        _ == "ALL"
+      )
+    docs:
+      desc: |
+        This check verifies that the SNMP allowed addresses list on the BIG-IP device does not permit unrestricted access. SNMP exposes detailed system configuration and operational data that attackers can use for reconnaissance and exploitation.
+
+        **Why this matters**
+
+        SNMP provides read (and potentially write) access to device configuration, performance metrics, network topology, and operational state. If SNMP access is unrestricted:
+
+        - **Information disclosure**: Any host on the network can enumerate system details including software versions, interface configurations, routing tables, and virtual server configurations.
+        - **Community string attacks**: SNMPv1/v2c use community strings as plaintext passwords. Unrestricted access maximizes the exposure window for brute-force attacks.
+        - **Configuration manipulation**: If write access is enabled (SNMPv1/v2c with read-write community strings or SNMPv3 with write privileges), an attacker can modify the device configuration remotely.
+        - **Lateral movement**: Information gathered via SNMP (such as network topology and connected systems) aids attackers in mapping the network for further exploitation.
+
+        SNMP access should be restricted to specific management stations by IP address.
+      remediation:
+        - id: console
+          desc: |
+            **Using the BIG-IP Web Interface (TMUI)**
+
+            1. Navigate to **System → SNMP → Agent → Access Control**
+            2. Review the **Allowed Addresses** list
+            3. Remove any overly broad entries such as `0.0.0.0/0` or `ALL`
+            4. Add only the specific IP addresses or subnets of authorized SNMP management stations
+            5. Click **Update**
+        - id: cli
+          desc: |
+            **Using tmsh**
+
+            Restrict SNMP access to specific management hosts:
+
+            ```
+            tmsh modify sys snmp allowed-addresses replace-all-with { 10.0.1.100 10.0.1.101 }
+            ```
+
+            Verify the allowed addresses:
+
+            ```
+            tmsh list sys snmp allowed-addresses
+            ```
+    refs:
+      - url: https://my.f5.com/manage/s/article/K13625
+        title: F5 - Configuring SNMP access
