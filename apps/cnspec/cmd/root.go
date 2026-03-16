@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
+	"go.mondoo.com/cnspec/v13"
 	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
 	"go.mondoo.com/mql/v13/cli/config"
 	cli_errors "go.mondoo.com/mql/v13/cli/errors"
@@ -162,10 +163,16 @@ func init() {
 				log.Warn().Err(err).Msg("could not determine system information for upstream headers")
 				return
 			}
+			product := rangerUtils.Product{
+				Name:    "cnspec",
+				Version: cnspec.Version,
+				Build:   cnspec.Build,
+			}
 			csi := &rangerUtils.ClientSysInfo{
 				IP:         si.IP,
 				Hostname:   si.Hostname,
 				PlatformID: si.PlatformId,
+				Product:    product,
 			}
 			if si.Platform != nil {
 				csi.PlatformName = si.Platform.Name
