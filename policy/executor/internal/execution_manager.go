@@ -6,7 +6,7 @@ package internal
 import (
 	"errors"
 	"os"
-	"runtime"
+	goruntime "runtime"
 	"sync"
 	"time"
 
@@ -175,7 +175,18 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 			Msg("finished query execution")
 		if time.Since(startTime) > 5*time.Minute {
 			// if the query duration was more than 5 minutes, send an alert to platform
-			health.ReportSlowQuery("cnspec", cnspec.Version, cnspec.Build, health.SlowQueryInfo{CodeID: codeID, Query: codeBundle.Source, Duration: time.Since(startTime)})
+			health.ReportSlowQuery(
+				"cnspec", cnspec.Version, cnspec.Build,
+				health.SlowQueryInfo{
+					CodeID:   codeID,
+					Query:    codeBundle.Source,
+					Duration: time.Since(startTime),
+				},
+				health.WithTags(map[string]string{
+					"client.runtime.os":   goruntime.GOOS,
+					"client.runtime.arch": goruntime.GOARCH,
+				}),
+			)
 		}
 	}()
 	// TODO(jaym): sendResult may not be correct. We may need to fill in the
@@ -186,8 +197,8 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	}
 
 	if memDebug {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
+		var m goruntime.MemStats
+		goruntime.ReadMemStats(&m)
 
 		log.Warn().Uint64("allocated", bToMb(m.Alloc)).Str("qrid", codeID).Msg("memory allocated after query")
 	}
