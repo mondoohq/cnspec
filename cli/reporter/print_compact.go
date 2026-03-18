@@ -507,6 +507,13 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		sortedFailed := []string{}
 		sortedExceptions := []string{}
 
+		// Build a mapping from CodeId to the query MRN used in the resolved policy.
+		// QueryMap() deduplicates by CodeId, so when multiple queries share the same
+		// compiled code (same CodeId) but have different MRNs, it may pick one whose
+		// MRN doesn't match the score key in the report. This mapping lets us find the
+		// correct MRN via the reporting job graph.
+		codeIdToResolvedMrn := buildCodeIdToMrnMap(resolved)
+
 		for id, query := range queries {
 			_, ok := resolved.CollectorJob.ReportingQueries[id]
 			if !ok {
@@ -515,7 +522,22 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 
 			pscore, ok := report.Scores[query.Mrn]
 			if !ok {
-				r.out("Couldn't find any queries for score of " + id)
+				// QueryMap() may have mapped this CodeId to a different MRN than
+				// the one used during policy resolution. Fall back to the resolved
+				// policy's MRN for this CodeId.
+				if resolvedMrn, found := codeIdToResolvedMrn[id]; found {
+					pscore, ok = report.Scores[resolvedMrn]
+					if ok {
+						// Use the correct query from the bundle so that title,
+						// impact, and other metadata match the resolved policy.
+						if resolvedQuery, qFound := r.bundle.Queries[resolvedMrn]; qFound && resolvedQuery != nil {
+							query = resolvedQuery
+						}
+					}
+				}
+			}
+			if !ok {
+				log.Debug().Str("id", id).Str("mrn", query.Mrn).Msg("couldn't find score for query")
 				continue
 			}
 
@@ -827,6 +849,38 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 }
 
 // ============================= ^^ ============================================
+
+// buildCodeIdToMrnMap builds a mapping from CodeId to the query MRN used in
+// the resolved policy. This is needed because QueryMap() deduplicates by
+// CodeId and may map a CodeId to a query whose MRN differs from the one
+// used during policy resolution (e.g. when multiple policies define checks
+// with the same MQL code but different MRNs).
+func buildCodeIdToMrnMap(resolved *policy.ResolvedPolicy) map[string]string {
+	if resolved == nil || resolved.CollectorJob == nil {
+		return nil
+	}
+
+	res := map[string]string{}
+	for _, rj := range resolved.CollectorJob.ReportingJobs {
+		if rj.Type != policy.ReportingJob_EXECUTION_QUERY {
+			continue
+		}
+		// EXECUTION_QUERY reporting jobs have QrId = CodeId.
+		// Their Notify list contains the UUIDs of parent reporting jobs
+		// (CHECK or CHECK_AND_DATA_QUERY), whose QrId is the query MRN.
+		for _, parentUUID := range rj.Notify {
+			parentRJ := resolved.CollectorJob.ReportingJobs[parentUUID]
+			if parentRJ == nil {
+				continue
+			}
+			if parentRJ.Type == policy.ReportingJob_CHECK || parentRJ.Type == policy.ReportingJob_CHECK_AND_DATA_QUERY {
+				res[rj.QrId] = parentRJ.QrId
+				break
+			}
+		}
+	}
+	return res
+}
 
 // buildExceptionSet builds a set of check MRNs that have exceptions applied,
 // by inspecting the ReportingJob.ChildJobs edges in the resolved policy for
