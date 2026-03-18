@@ -526,9 +526,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 			// Register all tasks in the batch before scanning so the TODO list
 			// knows the full set and does not quit after the first completion.
+			// Skip assets with DelayDiscovery since their platform IDs may
+			// change during discovery; they are registered after discovery.
 			for i := range batch {
 				a := batch[i].Asset
-				if len(a.PlatformIds) > 0 {
+				if len(a.PlatformIds) > 0 && !a.Connections[0].DelayDiscovery {
 					multiprogress.AddTask(a.PlatformIds[0], a)
 				}
 			}
