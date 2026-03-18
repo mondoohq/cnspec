@@ -50,7 +50,7 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.18.0
 	go.mondoo.com/mondoo-go v0.0.0-20260312120712-01a1ecc5b1ce
-	go.mondoo.com/mql/v13 v13.1.1-0.20260317153305-52e7bf676701
+	go.mondoo.com/mql/v13 v13.1.1
 	go.mondoo.com/ranger-rpc v0.8.0
 	gocloud.dev v0.45.0
 	golang.org/x/sync v0.20.0
