@@ -476,10 +476,10 @@ func (ge *GraphExecutor) addDatapointNode(datapointChecksum string, expectedType
 	}
 
 	nodeData := &DatapointNodeData{
-		expectedType: expectedType,
-		isReported:   res != nil,
-		res:          res,
-		dump:         ge.dumpDatapoints,
+		expectedType:   expectedType,
+		isReported:     res != nil,
+		res:            res,
+		dumpDatapoints: ge.dumpDatapoints,
 	}
 	n := &Node{
 		id:       NodeID(datapointChecksum),
