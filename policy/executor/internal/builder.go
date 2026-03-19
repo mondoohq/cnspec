@@ -58,6 +58,8 @@ type GraphBuilder struct {
 	// featureFlagFailErrors is a feature flag to count errors as failures
 	// See https://www.notion.so/mondoo/Errors-and-Scoring-5dc554348aad4118a1dbf35123368329
 	featureFlagFailErrors bool
+
+	dumpDatapoints bool
 }
 
 func NewBuilder() *GraphBuilder {
@@ -72,6 +74,7 @@ func NewBuilder() *GraphBuilder {
 		progressReporter:          progress.Noop{},
 		mondooVersion:             cnspec.GetCoreVersion(),
 		queryTimeout:              5 * time.Minute,
+		dumpDatapoints:            false,
 	}
 }
 
@@ -87,6 +90,10 @@ func (b *GraphBuilder) AddQuery(c *llx.CodeBundle, propertyChecksums map[string]
 
 func (b *GraphBuilder) AddDatapointType(datapointChecksum string, typ string) {
 	b.datapointType[datapointChecksum] = typ
+}
+
+func (b *GraphBuilder) WithDumpDatapoints() {
+	b.dumpDatapoints = true
 }
 
 // CollectDatapoint requests the provided checksum be collected and sent to
@@ -158,11 +165,12 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		priorityMap:  map[NodeID]int{},
 		queryTimeout: b.queryTimeout,
 		executionManager: newExecutionManager(runtime, make(chan runQueueItem, len(queries)),
-			resultChan, b.queryTimeout),
+			resultChan, b.queryTimeout, b.dumpDatapoints),
 		resultChan: resultChan,
 		doneChan:   make(chan struct{}),
 
 		featureFlagFailErrors: b.featureFlagFailErrors,
+		dumpDatapoints:        b.dumpDatapoints,
 	}
 
 	ge.nodes[DatapointCollectorID] = &Node{
@@ -468,9 +476,10 @@ func (ge *GraphExecutor) addDatapointNode(datapointChecksum string, expectedType
 	}
 
 	nodeData := &DatapointNodeData{
-		expectedType: expectedType,
-		isReported:   res != nil,
-		res:          res,
+		expectedType:   expectedType,
+		isReported:     res != nil,
+		res:            res,
+		dumpDatapoints: ge.dumpDatapoints,
 	}
 	n := &Node{
 		id:       NodeID(datapointChecksum),

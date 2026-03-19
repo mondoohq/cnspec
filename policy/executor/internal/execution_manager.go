@@ -41,6 +41,8 @@ type executionManager struct {
 	// stopChan is a channel that is closed when a stop is requested
 	stopChan chan struct{}
 	wg       sync.WaitGroup
+
+	dumpDatapoints bool
 }
 
 type runQueueItem struct {
@@ -49,15 +51,16 @@ type runQueueItem struct {
 }
 
 func newExecutionManager(runtime llx.Runtime, runQueue chan runQueueItem,
-	resultChan chan *llx.RawResult, timeout time.Duration,
+	resultChan chan *llx.RawResult, timeout time.Duration, dumpDatapoints bool,
 ) *executionManager {
 	return &executionManager{
-		runQueue:   runQueue,
-		runtime:    runtime,
-		resultChan: resultChan,
-		errChan:    make(chan error, 1),
-		stopChan:   make(chan struct{}),
-		timeout:    timeout,
+		runQueue:       runQueue,
+		runtime:        runtime,
+		resultChan:     resultChan,
+		errChan:        make(chan error, 1),
+		stopChan:       make(chan struct{}),
+		timeout:        timeout,
+		dumpDatapoints: dumpDatapoints,
 	}
 }
 
@@ -128,7 +131,11 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	wg := NewWaitGroup()
 
 	sendResult := func(rr *llx.RawResult) {
-		log.Trace().Str("codeID", rr.CodeID).Msg("received result from executor")
+		tr := log.Trace().Str("codeID", rr.CodeID)
+		if em.dumpDatapoints {
+			tr.Interface("data", rr.Data)
+		}
+		tr.Msg("received result from executor")
 		wg.Done(rr.CodeID)
 		select {
 		case em.resultChan <- rr:

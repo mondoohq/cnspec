@@ -14,6 +14,19 @@ import (
 	"go.mondoo.com/mql/v13/utils/multierr"
 )
 
+// isNilResult returns true if the result has nil value and no error,
+// which indicates it came from short-circuit evaluation.
+func isNilResult(res *llx.RawResult) bool {
+	return res != nil && res.Data != nil &&
+		res.Data.Value == nil && res.Data.Error == nil
+}
+
+// hasRealData returns true if the result contains a non-nil value or an error.
+func hasRealData(res *llx.RawResult) bool {
+	return res != nil && res.Data != nil &&
+		(res.Data.Value != nil || res.Data.Error != nil)
+}
+
 const (
 	// ExecutionQueryNodeType represents a node that will execute
 	// a query. It can be notified by datapoint nodes, representing
@@ -200,10 +213,11 @@ func (d *ExecutionQueryNodeData) updateRunState() {
 
 // DatapointNodeData is the data for queries of type DatapointNodeType.
 type DatapointNodeData struct {
-	expectedType *string
-	isReported   bool
-	invalidated  bool
-	res          *llx.RawResult
+	expectedType   *string
+	isReported     bool
+	invalidated    bool
+	dumpDatapoints bool
+	res            *llx.RawResult
 }
 
 func (nodeData *DatapointNodeData) initialize() {
@@ -214,14 +228,18 @@ func (nodeData *DatapointNodeData) initialize() {
 
 // consume saves the result of the datapoint.
 func (nodeData *DatapointNodeData) consume(from NodeID, data *envelope) {
-	if nodeData.isReported {
-		// No change detection happens. If a datapoint is reported once, that is the value
-		// we will use.
-		return
-	}
 	if data == nil || data.res == nil {
 		// This can be triggered with no data by the execution query nodes. These
 		// messages are not the ones we care about
+		return
+	}
+	if nodeData.isReported {
+		// Allow a real result to override a nil one. This handles the case
+		// where short-circuit evaluation (e.g. &&) reports nil for an
+		// unevaluated branch, and a later query reports the actual value.
+		if isNilResult(nodeData.res) && hasRealData(data.res) {
+			nodeData.set(data.res)
+		}
 		return
 	}
 
@@ -249,6 +267,9 @@ func (nodeData *DatapointNodeData) recalculate() *envelope {
 
 	nodeData.invalidated = false
 
+	if nodeData.dumpDatapoints {
+		log.Trace().Str("codeId", nodeData.res.CodeID).Interface("data", nodeData.res.Data).Msg("datapoint collected")
+	}
 	return &envelope{
 		res: nodeData.res,
 	}
@@ -278,6 +299,11 @@ func (nodeData *ReportingQueryNodeData) consume(from NodeID, data *envelope) {
 		return
 	}
 	if dr.resolved {
+		// Allow a real result to override a nil one (short-circuit case)
+		if isNilResult(dr.value) && hasRealData(data.res) {
+			dr.value = data.res
+			nodeData.invalidated = true
+		}
 		return
 	}
 
@@ -464,6 +490,12 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 		dp, ok := nodeData.datapoints[from]
 		if !ok {
 			panic("invalid datapoint report")
+		}
+		// If the previously-reported result was nil (from short-circuit) and
+		// we're now getting real data, reset completed so the score can be
+		// recalculated with the actual data.
+		if nodeData.completed && isNilResult(dp.res) && hasRealData(data.res) {
+			nodeData.completed = false
 		}
 		dp.res = data.res
 		nodeData.invalidated = true
