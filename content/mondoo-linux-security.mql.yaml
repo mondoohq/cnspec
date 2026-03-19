@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
-    version: 2.5.0
+    version: 2.6.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -196,6 +196,13 @@ policies:
           - uid: mondoo-linux-security-system-is-disabled-when-audit-logs-are-full
           - uid: mondoo-linux-security-the-audit-configuration-is-immutable
           - uid: mondoo-linux-security-unsuccessful-unauthorized-file-access-attempts-are-collected
+      - title: Mandatory Access Control
+        filters: |
+          asset.family.contains('linux')
+          asset.family.contains("redhat") || asset.platform == "amazonlinux"
+        checks:
+          - uid: mondoo-linux-security-selinux-enforcing
+          - uid: mondoo-linux-security-selinux-config-enforcing
       - title: Users and Groups
         filters: |
           asset.family.contains('linux')
@@ -11347,3 +11354,109 @@ queries:
     refs:
       - url: https://www.linux-pam.org/Linux-PAM-html/
         title: Linux-PAM System Administrator's Guide
+  - uid: mondoo-linux-security-selinux-enforcing
+    title: Ensure SELinux is in enforcing mode
+    impact: 70
+    mql: |
+      selinux.mode == "enforcing"
+    docs:
+      desc: |
+        This check verifies that SELinux is actively enforcing mandatory access control policies on the system.
+
+        **Why this matters**
+
+        SELinux in enforcing mode confines processes to the minimum set of privileges they need, limiting the damage from compromised services or applications. When SELinux is set to permissive or disabled:
+
+          - Exploited services can access files and resources beyond their intended scope.
+          - Privilege escalation attacks become significantly easier.
+          - The system loses a critical defense-in-depth layer against zero-day exploits.
+
+        Running SELinux in enforcing mode is a baseline requirement for CIS benchmarks and many compliance frameworks including PCI DSS, DISA STIG, and FedRAMP.
+      remediation:
+        - id: cli
+          desc: |
+            1. Set SELinux to enforcing mode immediately (does not survive reboot):
+
+                ```bash
+                setenforce 1
+                ```
+
+            2. To make the change persistent, edit `/etc/selinux/config` and set:
+
+                ```
+                SELINUX=enforcing
+                ```
+
+            3. Reboot the system to fully apply the policy:
+
+                ```bash
+                reboot
+                ```
+
+            **Note:** Switching from disabled to enforcing requires a system relabel. On the next boot, SELinux will automatically relabel the filesystem, which may take several minutes depending on disk size.
+        - id: ansible
+          desc: |
+            ```yaml
+            ---
+            - name: Ensure SELinux is in enforcing mode
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Set SELinux to enforcing
+                  ansible.posix.selinux:
+                    policy: targeted
+                    state: enforcing
+            ```
+    refs:
+      - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/using_selinux/changing-selinux-states-and-modes_using-selinux
+        title: Red Hat - Changing SELinux states and modes
+  - uid: mondoo-linux-security-selinux-config-enforcing
+    title: Ensure SELinux config is set to enforcing
+    impact: 70
+    mql: |
+      selinux.configMode == "enforcing"
+    docs:
+      desc: |
+        This check verifies that the SELinux persistent configuration in `/etc/selinux/config` is set to enforcing mode.
+
+        **Why this matters**
+
+        Even when SELinux is currently enforcing at runtime, the persistent configuration may be set to permissive or disabled. This means SELinux protection will be lost after the next reboot:
+
+          - An administrator may have temporarily set enforcing mode with `setenforce 1` without updating the configuration file.
+          - A system update or configuration management drift may have changed the persistent setting.
+          - An attacker with root access may have modified the config to disable SELinux on next reboot.
+
+        Verifying both the runtime mode and the persistent configuration ensures that SELinux protection survives reboots and is not silently weakened.
+      remediation:
+        - id: cli
+          desc: |
+            Edit `/etc/selinux/config` and ensure the following line is set:
+
+            ```
+            SELINUX=enforcing
+            ```
+
+            This change takes effect on the next reboot. To also enforce immediately, run:
+
+            ```bash
+            setenforce 1
+            ```
+        - id: ansible
+          desc: |
+            ```yaml
+            ---
+            - name: Ensure SELinux config is set to enforcing
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Set SELinux to enforcing in config
+                  ansible.posix.selinux:
+                    policy: targeted
+                    state: enforcing
+            ```
+    refs:
+      - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/using_selinux/changing-selinux-states-and-modes_using-selinux
+        title: Red Hat - Changing SELinux states and modes
