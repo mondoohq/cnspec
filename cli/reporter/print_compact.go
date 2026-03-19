@@ -501,21 +501,38 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 
 	if r.Conf.printChecks {
 		exceptionSet := buildExceptionSet(resolved)
+
+		// Build a map of matched queries keyed by MRN. We use the resolved
+		// policy's CHECK reporting jobs to determine which queries actually
+		// apply to this asset, rather than the bundle's QueryMap which may
+		// return queries that don't match the asset's platform.
+		matchedByMrn := map[string]*policy.Mquery{}
+		if r.bundle != nil {
+			for _, job := range resolved.CollectorJob.ReportingJobs {
+				if job.Type != policy.ReportingJob_CHECK && job.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
+					continue
+				}
+				query, ok := r.bundle.Queries[job.QrId]
+				if !ok || query == nil || query.CodeId == "" {
+					continue
+				}
+				if _, ok := resolved.CollectorJob.ReportingQueries[query.CodeId]; !ok {
+					continue
+				}
+				matchedByMrn[query.Mrn] = query
+			}
+		}
+
 		foundChecks := map[string]simpleScore{}
 		sortedPassed := []string{}
 		sortedWarnings := []string{}
 		sortedFailed := []string{}
 		sortedExceptions := []string{}
 
-		for id, query := range queries {
-			_, ok := resolved.CollectorJob.ReportingQueries[id]
+		for mrn, query := range matchedByMrn {
+			pscore, ok := report.Scores[mrn]
 			if !ok {
-				continue
-			}
-
-			pscore, ok := report.Scores[query.Mrn]
-			if !ok {
-				r.out("Couldn't find any queries for score of " + id)
+				r.out("Couldn't find any queries for score of " + mrn)
 				continue
 			}
 
@@ -536,17 +553,21 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				// FIXME v12: this is incorrect because the score value is 100 for failing checks whose impact is 0
 				Success: isSuccess,
 			}
-			foundChecks[id] = score
+			foundChecks[mrn] = score
 
-			if _, isException := exceptionSet[id]; isException {
-				sortedExceptions = append(sortedExceptions, id)
+			if _, isException := exceptionSet[mrn]; isException {
+				sortedExceptions = append(sortedExceptions, mrn)
+				continue
+			}
+			if _, isException := exceptionSet[query.CodeId]; isException {
+				sortedExceptions = append(sortedExceptions, mrn)
 				continue
 			}
 
 			if score.Success {
-				sortedPassed = append(sortedPassed, id)
+				sortedPassed = append(sortedPassed, mrn)
 			} else if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
-				sortedWarnings = append(sortedWarnings, id)
+				sortedWarnings = append(sortedWarnings, mrn)
 			} else {
 				if g, ok := checkToPreview[query.Mrn]; ok {
 					var pg *previewGroup
@@ -555,15 +576,15 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 					} else {
 						pg = previewGroups[math.MaxInt]
 					}
-					pg.sortedFailures = append(pg.sortedFailures, id)
+					pg.sortedFailures = append(pg.sortedFailures, mrn)
 				} else {
-					sortedFailed = append(sortedFailed, id)
+					sortedFailed = append(sortedFailed, mrn)
 				}
 			}
 		}
 
 		sort.Slice(sortedPassed, func(i, j int) bool {
-			return queries[sortedPassed[i]].Title < queries[sortedPassed[j]].Title
+			return matchedByMrn[sortedPassed[i]].Title < matchedByMrn[sortedPassed[j]].Title
 		})
 
 		sort.Slice(sortedWarnings, func(i, j int) bool {
@@ -572,7 +593,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			a := foundChecks[ida].Value
 			b := foundChecks[idb].Value
 			if a == b {
-				return queries[ida].Title < queries[idb].Title
+				return matchedByMrn[ida].Title < matchedByMrn[idb].Title
 			}
 			return a > b
 		})
@@ -583,7 +604,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			a := foundChecks[ida].Value
 			b := foundChecks[idb].Value
 			if a == b {
-				return queries[ida].Title < queries[idb].Title
+				return matchedByMrn[ida].Title < matchedByMrn[idb].Title
 			}
 			return a > b
 		})
@@ -591,8 +612,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		prevPrinted := false
 		if len(sortedPassed) != 0 {
 			r.out("Passing:" + NewLineCharacter)
-			for _, id := range sortedPassed {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results, false)
+			for _, mrn := range sortedPassed {
+				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
 			}
 			prevPrinted = true
 		}
@@ -603,8 +624,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 			// FIXME v12: rename to risk threshold
 			r.out("Warnings (below risk threshold):" + NewLineCharacter)
-			for _, id := range sortedWarnings {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results, false)
+			for _, mrn := range sortedWarnings {
+				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
 			}
 			prevPrinted = true
 		}
@@ -633,19 +654,19 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				a := foundChecks[ida].Value
 				b := foundChecks[idb].Value
 				if a == b {
-					return queries[ida].Title < queries[idb].Title
+					return matchedByMrn[ida].Title < matchedByMrn[idb].Title
 				}
 				return a > b
 			})
 
-			for _, id := range group.sortedFailures {
+			for _, mrn := range group.sortedFailures {
 				// we have to force the score type for the printer here,
 				// so we can see it as a failure and not as a skip
-				score := foundChecks[id]
+				score := foundChecks[mrn]
 				score.Type = policy.ScoreType_Result
 				ps := policy.Score{Value: score.Value, Type: score.Type, ScoreCompletion: 100}
 				score.Rating = ps.Rating()
-				r.printCheck(score, queries[id], resolved, report, results, false)
+				r.printCheck(score, matchedByMrn[mrn], resolved, report, results, false)
 			}
 
 			prevPrinted = true
@@ -657,12 +678,12 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 
 			sort.Slice(sortedExceptions, func(i, j int) bool {
-				return queries[sortedExceptions[i]].Title < queries[sortedExceptions[j]].Title
+				return matchedByMrn[sortedExceptions[i]].Title < matchedByMrn[sortedExceptions[j]].Title
 			})
 
 			r.out("Exceptions:" + NewLineCharacter)
-			for _, id := range sortedExceptions {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results, true)
+			for _, mrn := range sortedExceptions {
+				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, true)
 			}
 			prevPrinted = true
 		}
@@ -676,8 +697,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			} else {
 				r.out("Failing:" + NewLineCharacter)
 			}
-			for _, id := range sortedFailed {
-				r.printCheck(foundChecks[id], queries[id], resolved, report, results, false)
+			for _, mrn := range sortedFailed {
+				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
 			}
 		}
 	}
