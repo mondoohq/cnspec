@@ -354,14 +354,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		reporter.AddScanError(assetErr.Asset, assetErr.Err)
 	}
 
-	// Seed the depth-first stack with connected root assets.
-	// collectBatch will push their children onto the stack as it processes them.
-	stack := make([]*discovery.TrackedAsset, 0)
-	for _, root := range explorer.Connected() {
-		stack = append(stack, root)
-	}
-
-	if len(stack) == 0 {
+	if len(explorer.Connected()) == 0 {
 		return reporter.Reports(), nil
 	}
 
@@ -479,6 +472,14 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			continue
 		}
 
+		if len(connected.Asset.PlatformIds) == 0 {
+			log.Warn().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
+			if err := sc.explorer.CloseAsset(connected); err != nil {
+				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
+			}
+			continue
+		}
+
 		if len(connected.Children) > 0 {
 			// Branch node (e.g. a namespace with workloads under it).
 			// Flush any pending leaf batch first, then recurse.
@@ -519,7 +520,9 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			return err
 		}
 	} else {
-		sc.explorer.CloseAsset(node)
+		if err := sc.explorer.CloseAsset(node); err != nil {
+			log.Error().Err(err).Str("asset", node.Asset.Name).Msg("failed to close asset")
+		}
 	}
 
 	return nil
@@ -535,7 +538,9 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 		asset := tracked.Asset
 		isDelayed := len(asset.Connections) > 0 && asset.Connections[0].DelayDiscovery
 		if !isDelayed {
-			sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+			if len(asset.PlatformIds) > 0 {
+				sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+			}
 			readyToSync = append(readyToSync, tracked)
 		}
 	}
@@ -620,6 +625,9 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 				updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
 				if err != nil {
 					sc.reporter.AddScanError(asset, err)
+					if err := sc.explorer.CloseAsset(tracked); err != nil {
+						log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+					}
 					continue
 				}
 				asset = updatedAsset
@@ -627,12 +635,27 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 
 				// Now that the asset has real platform IDs, register it in the
 				// progress bar and synchronize with upstream individually.
-				sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+				if len(asset.PlatformIds) > 0 {
+					sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+				}
 				if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, sc.services, sc.spaceMrn, sc.scanner.recording); syncErr != nil {
 					sc.reporter.AddScanError(asset, syncErr)
-					sc.multiprogress.Errored(asset.PlatformIds[0])
+					if len(asset.PlatformIds) > 0 {
+						sc.multiprogress.Errored(asset.PlatformIds[0])
+					}
+					if err := sc.explorer.CloseAsset(tracked); err != nil {
+						log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+					}
 					continue
 				}
+			}
+
+			if len(asset.PlatformIds) == 0 {
+				log.Warn().Str("name", asset.Name).Msg("asset has no platform IDs after discovery, skipping")
+				if err := sc.explorer.CloseAsset(tracked); err != nil {
+					log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+				}
+				continue
 			}
 
 			p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: sc.multiprogress}
@@ -665,7 +688,7 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 
 			// Close asset after scanning to free the gRPC connection
 			if err := sc.explorer.CloseAsset(tracked); err != nil {
-				log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
+				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
 			}
 		}
 	}()
