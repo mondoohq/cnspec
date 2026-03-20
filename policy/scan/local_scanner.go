@@ -606,6 +606,33 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 			default:
 			}
 
+			// Handle delayed discovery (e.g. container registry images).
+			// This triggers the actual image download right before scanning,
+			// ensuring only one container is on disk at a time.
+			if len(asset.Connections) > 0 && asset.Connections[0].DelayDiscovery {
+				updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
+				if err != nil {
+					sc.reporter.AddScanError(asset, err)
+					if len(asset.PlatformIds) > 0 {
+						sc.multiprogress.Errored(asset.PlatformIds[0])
+					}
+					continue
+				}
+				asset = updatedAsset
+				tracked.Asset = asset
+
+				// The asset now has real platform IDs after the delayed connect.
+				// Synchronize it with upstream individually since the batch-level
+				// sync skipped it (it didn't have proper platform info yet).
+				if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, sc.services, sc.spaceMrn, sc.scanner.recording); syncErr != nil {
+					sc.reporter.AddScanError(asset, syncErr)
+					if len(asset.PlatformIds) > 0 {
+						sc.multiprogress.Errored(asset.PlatformIds[0])
+					}
+					continue
+				}
+			}
+
 			p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: sc.multiprogress}
 			sc.scanner.RunAssetJob(&AssetJob{
 				DoRecord:         sc.job.DoRecord,
