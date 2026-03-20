@@ -479,11 +479,6 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			continue
 		}
 
-		if len(connected.Asset.PlatformIds) == 0 {
-			log.Warn().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
-			continue
-		}
-
 		if len(connected.Children) > 0 {
 			// Branch node (e.g. a namespace with workloads under it).
 			// Flush any pending leaf batch first, then recurse.
@@ -516,13 +511,14 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		}
 	}
 
-	// Scan the node itself if it has platform IDs (e.g. the namespace)
+	// Scan the node itself (e.g. the namespace), then close to free resources.
+	// Some nodes are pure gateways with no platform IDs (e.g. the k8s cluster
+	// root with staged discovery) — just close them without scanning.
 	if len(node.Asset.PlatformIds) > 0 {
 		if err := sc.syncAndScanBatch(ctx, []*discovery.TrackedAsset{node}); err != nil {
 			return err
 		}
 	} else {
-		// Not scannable — just close to free resources
 		sc.explorer.CloseAsset(node)
 	}
 
@@ -531,14 +527,25 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 
 // syncAndScanBatch synchronizes, scans, and closes a batch of assets.
 func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.TrackedAsset) error {
-	// Register batch assets in the progress bar
+	// Split the batch: assets with DelayDiscovery may not have platform IDs yet,
+	// so we can't register them in the progress bar or sync them with upstream
+	// until HandleDelayedDiscovery resolves them in the scan loop below.
+	var readyToSync []*discovery.TrackedAsset
 	for _, tracked := range batch {
-		sc.multiprogress.AddTask(tracked.Asset.PlatformIds[0], tracked.Asset)
+		asset := tracked.Asset
+		isDelayed := len(asset.Connections) > 0 && asset.Connections[0].DelayDiscovery
+		if !isDelayed {
+			sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+			readyToSync = append(readyToSync, tracked)
+		}
 	}
 
-	// Synchronize assets with upstream or assign local MRNs
-	if err := syncBatchWithUpstream(ctx, batch, sc.services, sc.spaceMrn, sc.scanner.recording); err != nil {
-		return err
+	// Synchronize only non-delayed assets with upstream or assign local MRNs.
+	// Delayed assets are synced individually after HandleDelayedDiscovery.
+	if len(readyToSync) > 0 {
+		if err := syncBatchWithUpstream(ctx, readyToSync, sc.services, sc.spaceMrn, sc.scanner.recording); err != nil {
+			return err
+		}
 	}
 
 	// Scan each asset in a goroutine with panic reporting, then close it
@@ -613,22 +620,17 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 				updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
 				if err != nil {
 					sc.reporter.AddScanError(asset, err)
-					if len(asset.PlatformIds) > 0 {
-						sc.multiprogress.Errored(asset.PlatformIds[0])
-					}
 					continue
 				}
 				asset = updatedAsset
 				tracked.Asset = asset
 
-				// The asset now has real platform IDs after the delayed connect.
-				// Synchronize it with upstream individually since the batch-level
-				// sync skipped it (it didn't have proper platform info yet).
+				// Now that the asset has real platform IDs, register it in the
+				// progress bar and synchronize with upstream individually.
+				sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
 				if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, sc.services, sc.spaceMrn, sc.scanner.recording); syncErr != nil {
 					sc.reporter.AddScanError(asset, syncErr)
-					if len(asset.PlatformIds) > 0 {
-						sc.multiprogress.Errored(asset.PlatformIds[0])
-					}
+					sc.multiprogress.Errored(asset.PlatformIds[0])
 					continue
 				}
 			}
