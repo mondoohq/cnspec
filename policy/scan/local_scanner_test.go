@@ -521,6 +521,29 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	}
 }
 
+func (s *LocalScannerSuite) TestRunIncognito_ContextCancellation() {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/shared-query.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+
+	// Cancel the context immediately — the scan should exit without hanging
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	scanner := NewLocalScanner(DisableProgressBar())
+	_, err = scanner.RunIncognito(ctx, s.job)
+	// The scan should return a context error, not hang
+	s.Error(err)
+}
+
 func TestGetAssetDetectBundle(t *testing.T) {
 	bundle := getAssetDetectBundle()
 	require.NotNil(t, bundle)

@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -433,7 +435,9 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
 
 	scanner := scan.NewLocalScanner(opts...)
-	ctx := mql.SetFeatures(context.Background(), config.Features)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx = mql.SetFeatures(ctx, config.Features)
 
 	var res *scan.ScanResult
 	var err error
