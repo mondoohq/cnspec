@@ -440,7 +440,7 @@ type todoListProgress struct {
 // NewTodoList creates a new TODO-list style multi-asset progress reporter.
 func NewTodoList(opts ...Option) (*todoListProgress, error) {
 	m := newTodoListModel(opts...)
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithoutSignalHandler())
 	return &todoListProgress{program: p}, nil
 }
 

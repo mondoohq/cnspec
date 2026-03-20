@@ -363,11 +363,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, err
 	}
 
-	// Wrap the context with a cancel function so that when the progress bar
-	// exits (e.g. user presses Ctrl+C), we can cancel the scan context.
-	ctx, cancelScan := context.WithCancel(ctx)
-	defer cancelScan()
-
 	// start the progress bar
 	scanGroups := sync.WaitGroup{}
 	scanGroups.Add(1)
@@ -378,9 +373,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		if err := multiprogress.Open(); err != nil {
 			log.Error().Err(err).Msg("failed to open progress bar")
 		}
-		// When the progress bar exits (e.g. Ctrl+C), cancel the scan context
-		// so all in-flight operations stop.
-		cancelScan()
 	}()
 	// Make sure the progress bar is closed when we exit early. Calling this multiple times
 	// is safe
