@@ -363,6 +363,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, err
 	}
 
+	// Wrap the context with a cancel function so that when the progress bar
+	// exits (e.g. user presses Ctrl+C), we can cancel the scan context.
+	ctx, cancelScan := context.WithCancel(ctx)
+	defer cancelScan()
+
 	// start the progress bar
 	scanGroups := sync.WaitGroup{}
 	scanGroups.Add(1)
@@ -373,6 +378,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		if err := multiprogress.Open(); err != nil {
 			log.Error().Err(err).Msg("failed to open progress bar")
 		}
+		// When the progress bar exits (e.g. Ctrl+C), cancel the scan context
+		// so all in-flight operations stop.
+		cancelScan()
 	}()
 	// Make sure the progress bar is closed when we exit early. Calling this multiple times
 	// is safe
@@ -530,6 +538,19 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 
 // syncAndScanBatch synchronizes, scans, and closes a batch of assets.
 func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.TrackedAsset) error {
+	// Check for cancellation before doing any work
+	select {
+	case <-ctx.Done():
+		// Close all assets in the batch since we won't scan them
+		for _, tracked := range batch {
+			if err := sc.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+			}
+		}
+		return ctx.Err()
+	default:
+	}
+
 	// Split the batch: assets with DelayDiscovery may not have platform IDs yet,
 	// so we can't register them in the progress bar or sync them with upstream
 	// until HandleDelayedDiscovery resolves them in the scan loop below.
