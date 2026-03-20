@@ -553,7 +553,10 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 		}
 	}
 
-	// Scan each asset in a goroutine with panic reporting, then close it
+	// Scan each asset in a goroutine with panic reporting, then close it.
+	// scanErr captures any error (e.g. context cancellation) from the goroutine
+	// so it can be propagated to the caller.
+	var scanErr error
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -600,7 +603,7 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 			log.Info().Msg("reported panic to Mondoo Platform")
 		})
 
-		for _, tracked := range batch {
+		for i, tracked := range batch {
 			asset := tracked.Asset
 			runtime := tracked.Runtime
 
@@ -613,7 +616,14 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 			select {
 			case <-ctx.Done():
 				log.Warn().Msg("request context has been canceled")
+				// Close all remaining unscanned assets in the batch
+				for _, remaining := range batch[i:] {
+					if err := sc.explorer.CloseAsset(remaining); err != nil {
+						log.Error().Err(err).Str("asset", remaining.Asset.Name).Msg("failed to close asset")
+					}
+				}
 				sc.multiprogress.Close()
+				scanErr = ctx.Err()
 				return
 			default:
 			}
@@ -680,7 +690,7 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 	}()
 	wg.Wait()
 
-	return nil
+	return scanErr
 }
 
 // syncBatchWithUpstream synchronizes a batch of connected assets with the
