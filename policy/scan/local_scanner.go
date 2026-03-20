@@ -594,8 +594,10 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 				tags["assetMrn"] = batch[0].Asset.Mrn
 				tags["assetName"] = batch[0].Asset.Name
 				tags["platformIDs"] = strings.Join(batch[0].Asset.PlatformIds, ",")
-				tags["assetPlatform"] = batch[0].Asset.Platform.Name
-				tags["assetPlatformVersion"] = batch[0].Asset.Platform.Version
+				if batch[0].Asset.Platform != nil {
+					tags["assetPlatform"] = batch[0].Asset.Platform.Name
+					tags["assetPlatformVersion"] = batch[0].Asset.Platform.Version
+				}
 			}
 
 			event := &health.SendErrorReq{
