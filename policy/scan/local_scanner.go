@@ -589,6 +589,22 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 					runtime:          runtime,
 				})
 
+				// Report any recovered provider panics to the Mondoo Platform.
+				for _, critErr := range runtime.CriticalErrors() {
+					tags := map[string]string{
+						"assetMrn":  asset.Mrn,
+						"assetName": asset.Name,
+					}
+					if len(asset.PlatformIds) > 0 {
+						tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
+					}
+					if asset.Platform != nil {
+						tags["assetPlatform"] = asset.Platform.Name
+						tags["assetPlatformVersion"] = asset.Platform.Version
+					}
+					health.ReportError("cnspec", cnspec.Version, cnspec.Build, critErr.Error(), health.WithTags(tags))
+				}
+
 				// shut down all ephemeral runtimes
 				runtime.Close()
 			}
