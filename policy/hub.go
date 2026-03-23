@@ -64,8 +64,8 @@ func (s *LocalServices) PreparePolicy(ctx context.Context, policyObj *Policy, bu
 	logCtx := logger.FromContext(ctx)
 	var err error
 
-	if policyObj == nil || len(policyObj.Mrn) == 0 {
-		return nil, nil, nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	if len(policyObj.GetMrn()) == 0 {
+		return nil, nil, nil, status.Error(codes.InvalidArgument, "PreparePolicy> policy mrn is required")
 	}
 
 	var queriesLookup map[string]*Mquery
@@ -129,8 +129,8 @@ func (s *LocalServices) PrepareFramework(ctx context.Context, frameworkObj *Fram
 	logCtx := logger.FromContext(ctx)
 	var err error
 
-	if frameworkObj == nil || len(frameworkObj.Mrn) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "framework mrn is required")
+	if len(frameworkObj.GetMrn()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "PrepareFramework> framework mrn is required")
 	}
 
 	// TODO: we need to decide if it is up to the caller to ensure that the checksum is up-to-date
@@ -257,8 +257,8 @@ func (s *LocalServices) setQuery(ctx context.Context, mrn string, query *Mquery)
 func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
 	logCtx := logger.FromContext(ctx)
 
-	if in == nil || len(in.Mrn) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	if len(in.GetMrn()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "GetPolicy> policy mrn is required")
 	}
 
 	b, err := s.DataLake.GetValidatedPolicy(ctx, in.Mrn)
@@ -280,8 +280,8 @@ func (s *LocalServices) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error)
 
 // GetBundle retrieves the given policy and all its dependencies (policies/queries)
 func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
-	if in == nil || len(in.Mrn) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	if len(in.GetMrn()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "GetBundle> policy mrn is required")
 	}
 
 	b, err := s.DataLake.GetValidatedBundle(ctx, in.Mrn)
@@ -298,8 +298,8 @@ func (s *LocalServices) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error)
 
 // GetPolicyFilters retrieves the asset filter queries for a given policy
 func (s *LocalServices) GetPolicyFilters(ctx context.Context, mrn *Mrn) (*Mqueries, error) {
-	if mrn == nil || len(mrn.Mrn) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "policy mrn is required")
+	if len(mrn.GetMrn()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "GetPolicyFilters> policy mrn is required")
 	}
 
 	// If there is an upstream set, we should prefer using that always.
@@ -344,8 +344,8 @@ func (s *LocalServices) List(ctx context.Context, filter *ListReq) (*Policies, e
 
 // DeletePolicy removes a policy via its given MRN
 func (s *LocalServices) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
-	if in == nil || len(in.Mrn) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "policy MRN is required")
+	if len(in.GetMrn()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "DeletePolicy> policy mrn is required")
 	}
 
 	return globalEmpty, s.DataLake.DeletePolicy(ctx, in.Mrn)
