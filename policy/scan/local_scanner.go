@@ -704,6 +704,10 @@ func (s *LocalScanner) upstreamClient(ctx context.Context, conf *upstream.Upstre
 }
 
 func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
+	if job.Asset.Mrn == "" {
+		return nil, errors.New("asset MRN is required to run the scan")
+	}
+
 	var res *AssetReport
 	var policyErr error
 	var client *upstream.UpstreamClient
