@@ -39,7 +39,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/mql/v13/utils/multierr"
-	"go.mondoo.com/mql/v13/utils/slicesx"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
@@ -327,30 +326,35 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}
 
+	// Enable staged discovery on root inventory assets so that providers
+	// supporting it can split discovery into phases (e.g. cluster first,
+	// workloads per namespace later), matching the batched scan approach.
+	for _, asset := range job.Inventory.Spec.Assets {
+		for _, conf := range asset.Connections {
+			if conf.Options == nil {
+				conf.Options = map[string]string{}
+			}
+			conf.Options[plugin.OptionStagedDiscovery] = ""
+		}
+	}
+
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
-	discoveredAssets, err := discovery.DiscoverAssets(ctx, job.Inventory, upstream, s.recording)
+	explorer, err := discovery.NewAssetExplorer(ctx, discovery.AssetExplorerConfig{
+		Inventory: job.Inventory,
+		Upstream:  upstream,
+		Recording: s.recording,
+	})
 	if err != nil {
 		return nil, err
 	}
+	defer explorer.Shutdown()
 
-	// if we had asset errors we want to place them into the reporter
-	for i := range discoveredAssets.Errors {
-		reporter.AddScanError(discoveredAssets.Errors[i].Asset, discoveredAssets.Errors[i].Err)
+	// Report initial discovery errors
+	for _, assetErr := range explorer.Errors() {
+		reporter.AddScanError(assetErr.Asset, assetErr.Err)
 	}
 
-	// For each discovered asset, we initialize a new runtime and connect to it.
-	// Within this process, we set up a catch-all deferred function, that shuts
-	// down all runtimes, in case we exit early.
-	defer func() {
-		for _, asset := range discoveredAssets.Assets {
-			// we can call close multiple times and it will only execute once
-			if asset.Runtime != nil {
-				asset.Runtime.Close()
-			}
-		}
-	}()
-
-	if len(discoveredAssets.Assets) == 0 {
+	if len(explorer.Connected()) == 0 {
 		return reporter.Reports(), nil
 	}
 
@@ -389,245 +393,396 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}
 
-	assetBatches := slicesx.Batch(discoveredAssets.Assets, 100)
-	for i := range assetBatches {
-		batch := assetBatches[i]
+	scanCtx := &scanContext{
+		scanner:       s,
+		explorer:      explorer,
+		job:           job,
+		upstream:      upstream,
+		reporter:      reporter,
+		multiprogress: multiprogress,
+		services:      services,
+		spaceMrn:      spaceMrn,
+	}
 
-		// sync assets
-		if services != nil {
-			log.Info().Msg("synchronize assets")
-			assetsToSync := make([]*inventory.Asset, 0, len(batch))
-			for i := range batch {
-				// If discovery has been skipped, then we don't sync that asset just yet. We will do that during the scan
-				if batch[i].Asset.Connections[0].DelayDiscovery {
-					continue
-				}
-				assetsToSync = append(assetsToSync, batch[i].Asset)
-			}
-			log.Debug().Int("assets", len(assetsToSync)).Msg("synchronizing assets upstream")
-			resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-				SpaceMrn: spaceMrn,
-				List:     assetsToSync,
-			})
-			if err != nil {
-				return nil, err
-			}
-			log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
-			platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
-			for i := range resp.Details {
-				log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
-				platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
-			}
-
-			// attach the asset details to the assets list
-			for i := range batch {
-				cur := batch[i]
-				asset := cur.Asset
-				log.Debug().Str("asset", asset.Name).Strs("platform-ids", asset.PlatformIds).Msg("update asset")
-
-				for _, platformMrn := range asset.PlatformIds {
-					if details, ok := platformAssetMapping[platformMrn]; ok {
-						asset.Mrn = details.AssetMrn
-						asset.Url = details.Url
-						asset.Labels["mondoo.com/project-id"] = details.ProjectId
-
-						if asset.Annotations == nil {
-							asset.Annotations = make(map[string]string)
-						}
-						for k, v := range details.Annotations {
-							if _, ok := asset.Annotations[k]; !ok {
-								asset.Annotations[k] = v
-							}
-						}
-
-						err = cur.Runtime.SetRecording(s.recording)
-						if err != nil {
-							// we do not want to stop the scan if we cannot set the recording
-							log.Error().Err(err).Msg("could not set recording")
-							break
-						}
-						cur.Runtime.AssetUpdated(asset)
-						break
-					}
-				}
-
-			}
-		} else {
-			// ensure we have non-empty asset MRNs
-			for i := range batch {
-				asset := batch[i].Asset
-				if asset.Mrn == "" {
-					randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
-					x, err := mrn.NewMRN(randID)
-					if err != nil {
-						return nil, multierr.Wrap(err, "failed to generate a random asset MRN")
-					}
-					asset.Mrn = x.String()
-					batch[i].Runtime.AssetUpdated(asset)
-				}
+	// Process each root asset's subtree. The root is already connected by
+	// NewAssetExplorer; scanSubtree will connect children one branch at a
+	// time so only one parent's children data is in memory at once.
+	for _, root := range explorer.Connected() {
+		// Register the root and its already-discovered children in the
+		// progress bar so the TODO list knows how much work is pending
+		// and doesn't close prematurely.
+		if len(root.Asset.PlatformIds) > 0 {
+			multiprogress.AddTask(root.Asset.PlatformIds[0], root.Asset)
+		}
+		for _, child := range root.Children {
+			if len(child.Asset.PlatformIds) > 0 {
+				multiprogress.AddTask(child.Asset.PlatformIds[0], child.Asset)
 			}
 		}
 
-		// // if a bundle was provided check that it matches the filter, bundles can also be downloaded
-		// // later therefore we do not want to stop execution here
-		// if job.Bundle != nil && job.Bundle.FilterPolicies(job.PolicyFilters) {
-		// 	return nil, false, errors.New("all available packs filtered out. nothing to do.")
-		// }
-
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build, func(product, version, build string, r any, stacktrace []byte) {
-				// 1. read config
-				opts, err := config.Read()
-				if err != nil {
-					log.Error().Err(err).Msg("failed to read config")
-					return
-				}
-
-				serviceAccount := opts.GetServiceCredential()
-				if serviceAccount == nil {
-					log.Error().Msg("no service account configured")
-					return
-				}
-
-				tags := map[string]string{
-					"spaceMrn": spaceMrn,
-				}
-				if len(batch) > 0 {
-					tags["assetMrn"] = batch[0].Asset.Mrn
-					tags["assetName"] = batch[0].Asset.Name
-					tags["platformIDs"] = strings.Join(batch[0].Asset.PlatformIds, ",")
-					tags["assetPlatform"] = batch[0].Asset.Platform.Name
-					tags["assetPlatformVersion"] = batch[0].Asset.Platform.Version
-				}
-
-				// 2. create local support bundle
-				event := &health.SendErrorReq{
-					ServiceAccountMrn: opts.ServiceAccountMrn,
-					AgentMrn:          opts.AgentMrn,
-					Product: &health.ProductInfo{
-						Name:    product,
-						Version: version,
-						Build:   build,
-					},
-					Error: &health.ErrorInfo{
-						Message:    "panic: " + fmt.Sprintf("%v -- %v", r, tags),
-						Stacktrace: string(stacktrace),
-					},
-				}
-
-				// 3. send error to mondoo platform
-				sendErrorToMondooPlatform(serviceAccount, event)
-
-				log.Info().Msg("reported panic to Mondoo Platform")
-			})
-
-			// Register all tasks in the batch before scanning so the TODO list
-			// knows the full set and does not quit after the first completion.
-			// Skip assets with DelayDiscovery since their platform IDs may
-			// change during discovery; they are registered after discovery.
-			for i := range batch {
-				a := batch[i].Asset
-				if len(a.PlatformIds) > 0 && !a.Connections[0].DelayDiscovery {
-					multiprogress.AddTask(a.PlatformIds[0], a)
-				}
-			}
-
-			for i := range batch {
-				asset := batch[i].Asset
-				runtime := batch[i].Runtime
-
-				if err := runtime.EnsureProvidersConnected(); err != nil {
-					log.Error().Err(err).Msg("could not connect to providers")
-				}
-
-				log.Debug().Interface("platform", asset.Platform).Str("name", asset.Name).Msg("start scan")
-
-				// Make sure the context has not been canceled in the meantime. Note that this approach works only for single threaded execution. If we have more than 1 thread calling this function,
-				// we need to solve this at a different level.
-				select {
-				case <-ctx.Done():
-					log.Warn().Msg("request context has been canceled")
-					// When we scan concurrently, we need to call Errored(asset.Mrn) status for this asset
-					multiprogress.Close()
-					return
-				default:
-				}
-
-				if asset.Connections[0].DelayDiscovery {
-					discoveredAsset, err := handleDelayedDiscovery(ctx, asset, runtime, services, spaceMrn)
-					if err != nil {
-						reporter.AddScanError(asset, err)
-						if len(asset.PlatformIds) > 0 {
-							multiprogress.Errored(asset.PlatformIds[0])
-						}
-						continue
-					}
-					asset = discoveredAsset
-					// Re-register with the discovered asset's platform ID if it changed
-					multiprogress.AddTask(asset.PlatformIds[0], asset)
-				}
-
-				if len(asset.PlatformIds) == 0 {
-					log.Warn().Str("name", asset.Name).Msg("asset has no platform IDs, skipping")
-					continue
-				}
-
-				p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: multiprogress}
-				s.RunAssetJob(&AssetJob{
-					DoRecord:         job.DoRecord,
-					UpstreamConfig:   upstream,
-					Asset:            asset,
-					Bundle:           job.Bundle,
-					Props:            job.Props,
-					PolicyFilters:    preprocessPolicyFilters(job.PolicyFilters),
-					Ctx:              ctx,
-					Reporter:         reporter,
-					ProgressReporter: p,
-					runtime:          runtime,
-				})
-
-				// shut down all ephemeral runtimes
-				runtime.Close()
-			}
-		}()
-		wg.Wait()
+		if err := scanCtx.scanSubtree(ctx, root); err != nil {
+			return nil, err
+		}
 	}
-	scanGroups.Wait() // wait for all scans to complete
+
+	scanGroups.Wait() // wait for the progress bar to finish
 	return reporter.Reports(), nil
 }
 
-func handleDelayedDiscovery(ctx context.Context, asset *inventory.Asset, runtime *providers.Runtime, services *policy.Services, spaceMrn string) (*inventory.Asset, error) {
-	asset.Connections[0].DelayDiscovery = false
-	if err := runtime.Connect(&plugin.ConnectReq{Asset: asset}); err != nil {
-		return nil, err
-	}
-	asset = runtime.Provider.Connection.Asset
-	slices.Sort(asset.PlatformIds)
-	p := asset.GetPlatform()
-	if p == nil {
-		return nil, errors.Newf("no platform detected for asset %s", asset.Name)
-	}
-	asset.KindString = p.Kind
+const batchSize = 50
 
-	if services != nil {
-		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: spaceMrn,
-			List:     []*inventory.Asset{asset},
-		})
-		if err != nil {
-			return nil, err
+// scanContext holds the shared state needed while recursively walking the
+// asset tree. It avoids threading many parameters through every call.
+type scanContext struct {
+	scanner       *LocalScanner
+	explorer      *discovery.AssetExplorer
+	job           *Job
+	upstream      *upstream.UpstreamConfig
+	reporter      Reporter
+	multiprogress progress.MultiProgress
+	services      *policy.Services
+	spaceMrn      string
+}
+
+// scanSubtree processes a single connected node's subtree depth-first.
+// It connects each child one at a time. If a child has its own children
+// (i.e. it is a branch node like a namespace), the current leaf batch is
+// flushed and we recurse into that child before touching any sibling.
+// This guarantees only one branch node's children data is in memory at a time.
+// After all children are handled, the node itself is scanned (if it has
+// platform IDs) and then closed.
+func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedAsset) error {
+	var leafBatch []*discovery.TrackedAsset
+
+	for _, child := range node.Children {
+		// Check for cancellation before connecting the next child
+		select {
+		case <-ctx.Done():
+			sc.multiprogress.Close()
+			return ctx.Err()
+		default:
 		}
 
-		details := resp.Details[asset.PlatformIds[0]]
-		asset.Mrn = details.AssetMrn
-		asset.Url = details.Url
-		asset.Labels["mondoo.com/project-id"] = details.ProjectId
-		runtime.AssetUpdated(asset)
+		// Connect the child — creates its runtime and discovers its children
+		connected, err := sc.explorer.Connect(child)
+		if err != nil {
+			if !errors.Is(err, discovery.ErrDuplicateAsset) {
+				sc.reporter.AddScanError(child.Asset, err)
+			}
+			continue
+		}
+
+		if len(connected.Asset.PlatformIds) == 0 {
+			log.Warn().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
+			if err := sc.explorer.CloseAsset(connected); err != nil {
+				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
+			}
+			continue
+		}
+
+		if len(connected.Children) > 0 {
+			// Branch node (e.g. a namespace with workloads under it).
+			// Flush any pending leaf batch first, then recurse.
+			if len(leafBatch) > 0 {
+				if err := sc.syncAndScanBatch(ctx, leafBatch); err != nil {
+					return err
+				}
+				leafBatch = nil
+			}
+			if err := sc.scanSubtree(ctx, connected); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Leaf node — accumulate into the current batch
+		leafBatch = append(leafBatch, connected)
+		if len(leafBatch) >= batchSize {
+			if err := sc.syncAndScanBatch(ctx, leafBatch); err != nil {
+				return err
+			}
+			leafBatch = nil
+		}
 	}
-	return asset, nil
+
+	// Flush remaining leaves
+	if len(leafBatch) > 0 {
+		if err := sc.syncAndScanBatch(ctx, leafBatch); err != nil {
+			return err
+		}
+	}
+
+	// Scan the node itself (e.g. the namespace), then close to free resources.
+	// Some nodes are pure gateways with no platform IDs (e.g. the k8s cluster
+	// root with staged discovery) — just close them without scanning.
+	if len(node.Asset.PlatformIds) > 0 {
+		if err := sc.syncAndScanBatch(ctx, []*discovery.TrackedAsset{node}); err != nil {
+			return err
+		}
+	} else {
+		if err := sc.explorer.CloseAsset(node); err != nil {
+			log.Error().Err(err).Str("asset", node.Asset.Name).Msg("failed to close asset")
+		}
+	}
+
+	return nil
+}
+
+// syncAndScanBatch synchronizes, scans, and closes a batch of assets.
+func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.TrackedAsset) error {
+	// Check for cancellation before doing any work
+	select {
+	case <-ctx.Done():
+		// Close all assets in the batch since we won't scan them
+		for _, tracked := range batch {
+			if err := sc.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+			}
+		}
+		return ctx.Err()
+	default:
+	}
+
+	// Split the batch: assets with DelayDiscovery may not have platform IDs yet,
+	// so we can't register them in the progress bar or sync them with upstream
+	// until HandleDelayedDiscovery resolves them in the scan loop below.
+	var readyToSync []*discovery.TrackedAsset
+	for _, tracked := range batch {
+		asset := tracked.Asset
+		isDelayed := len(asset.Connections) > 0 && asset.Connections[0].DelayDiscovery
+		if !isDelayed {
+			if len(asset.PlatformIds) > 0 {
+				sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+			}
+			readyToSync = append(readyToSync, tracked)
+		}
+	}
+
+	// Synchronize only non-delayed assets with upstream or assign local MRNs.
+	// Delayed assets are synced individually after HandleDelayedDiscovery.
+	if len(readyToSync) > 0 {
+		if err := syncBatchWithUpstream(ctx, readyToSync, sc.services, sc.spaceMrn, sc.scanner.recording); err != nil {
+			return err
+		}
+	}
+
+	// Scan each asset in a goroutine with panic reporting, then close it.
+	// scanErr captures any error (e.g. context cancellation) from the goroutine
+	// so it can be propagated to the caller.
+	var scanErr error
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build, func(product, version, build string, r any, stacktrace []byte) {
+			opts, err := config.Read()
+			if err != nil {
+				log.Error().Err(err).Msg("failed to read config")
+				return
+			}
+
+			serviceAccount := opts.GetServiceCredential()
+			if serviceAccount == nil {
+				log.Error().Msg("no service account configured")
+				return
+			}
+
+			tags := map[string]string{
+				"spaceMrn": sc.spaceMrn,
+			}
+			if len(batch) > 0 {
+				tags["assetMrn"] = batch[0].Asset.Mrn
+				tags["assetName"] = batch[0].Asset.Name
+				tags["platformIDs"] = strings.Join(batch[0].Asset.PlatformIds, ",")
+				if batch[0].Asset.Platform != nil {
+					tags["assetPlatform"] = batch[0].Asset.Platform.Name
+					tags["assetPlatformVersion"] = batch[0].Asset.Platform.Version
+				}
+			}
+
+			event := &health.SendErrorReq{
+				ServiceAccountMrn: opts.ServiceAccountMrn,
+				AgentMrn:          opts.AgentMrn,
+				Product: &health.ProductInfo{
+					Name:    product,
+					Version: version,
+					Build:   build,
+				},
+				Error: &health.ErrorInfo{
+					Message:    "panic: " + fmt.Sprintf("%v -- %v", r, tags),
+					Stacktrace: string(stacktrace),
+				},
+			}
+
+			sendErrorToMondooPlatform(serviceAccount, event)
+			log.Info().Msg("reported panic to Mondoo Platform")
+		})
+
+		for i, tracked := range batch {
+			asset := tracked.Asset
+			runtime := tracked.Runtime
+
+			if err := runtime.EnsureProvidersConnected(); err != nil {
+				log.Error().Err(err).Msg("could not connect to providers")
+			}
+
+			log.Debug().Interface("platform", asset.Platform).Str("name", asset.Name).Msg("start scan")
+
+			select {
+			case <-ctx.Done():
+				log.Warn().Msg("request context has been canceled")
+				// Close all remaining unscanned assets in the batch
+				for _, remaining := range batch[i:] {
+					if err := sc.explorer.CloseAsset(remaining); err != nil {
+						log.Error().Err(err).Str("asset", remaining.Asset.Name).Msg("failed to close asset")
+					}
+				}
+				sc.multiprogress.Close()
+				scanErr = ctx.Err()
+				return
+			default:
+			}
+
+			// Handle delayed discovery (e.g. container registry images).
+			// This triggers the actual image download right before scanning,
+			// ensuring only one container is on disk at a time.
+			if len(asset.Connections) > 0 && asset.Connections[0].DelayDiscovery {
+				updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
+				if err != nil {
+					sc.reporter.AddScanError(asset, err)
+					if err := sc.explorer.CloseAsset(tracked); err != nil {
+						log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+					}
+					continue
+				}
+				asset = updatedAsset
+				tracked.Asset = asset
+
+				// Now that the asset has real platform IDs, register it in the
+				// progress bar and synchronize with upstream individually.
+				if len(asset.PlatformIds) > 0 {
+					sc.multiprogress.AddTask(asset.PlatformIds[0], asset)
+				}
+				if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, sc.services, sc.spaceMrn, sc.scanner.recording); syncErr != nil {
+					sc.reporter.AddScanError(asset, syncErr)
+					if len(asset.PlatformIds) > 0 {
+						sc.multiprogress.Errored(asset.PlatformIds[0])
+					}
+					if err := sc.explorer.CloseAsset(tracked); err != nil {
+						log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+					}
+					continue
+				}
+			}
+
+			if len(asset.PlatformIds) == 0 {
+				log.Warn().Str("name", asset.Name).Msg("asset has no platform IDs after discovery, skipping")
+				if err := sc.explorer.CloseAsset(tracked); err != nil {
+					log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+				}
+				continue
+			}
+
+			p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: sc.multiprogress}
+			sc.scanner.RunAssetJob(&AssetJob{
+				DoRecord:         sc.job.DoRecord,
+				UpstreamConfig:   sc.upstream,
+				Asset:            asset,
+				Bundle:           sc.job.Bundle,
+				Props:            sc.job.Props,
+				PolicyFilters:    preprocessPolicyFilters(sc.job.PolicyFilters),
+				Ctx:              ctx,
+				Reporter:         sc.reporter,
+				ProgressReporter: p,
+				runtime:          runtime,
+			})
+
+			// Close asset after scanning to free the gRPC connection
+			if err := sc.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+			}
+		}
+	}()
+	wg.Wait()
+
+	return scanErr
+}
+
+// syncBatchWithUpstream synchronizes a batch of connected assets with the
+// upstream Mondoo Platform, or assigns local MRNs when running in incognito mode.
+func syncBatchWithUpstream(
+	ctx context.Context,
+	batch []*discovery.TrackedAsset,
+	services *policy.Services,
+	spaceMrn string,
+	rec llx.Recording,
+) error {
+	if services != nil {
+		log.Info().Msg("synchronize assets")
+		assetsToSync := make([]*inventory.Asset, 0, len(batch))
+		for _, tracked := range batch {
+			assetsToSync = append(assetsToSync, tracked.Asset)
+		}
+		log.Debug().Int("assets", len(assetsToSync)).Msg("synchronizing assets upstream")
+		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
+			SpaceMrn: spaceMrn,
+			List:     assetsToSync,
+		})
+		if err != nil {
+			return err
+		}
+		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
+		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
+		for i := range resp.Details {
+			log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
+			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
+		}
+
+		for _, tracked := range batch {
+			asset := tracked.Asset
+			log.Debug().Str("asset", asset.Name).Strs("platform-ids", asset.PlatformIds).Msg("update asset")
+
+			for _, platformMrn := range asset.PlatformIds {
+				if details, ok := platformAssetMapping[platformMrn]; ok {
+					asset.Mrn = details.AssetMrn
+					asset.Url = details.Url
+					asset.Labels["mondoo.com/project-id"] = details.ProjectId
+
+					if asset.Annotations == nil {
+						asset.Annotations = make(map[string]string)
+					}
+					for k, v := range details.Annotations {
+						if _, ok := asset.Annotations[k]; !ok {
+							asset.Annotations[k] = v
+						}
+					}
+
+					err = tracked.Runtime.SetRecording(rec)
+					if err != nil {
+						log.Error().Err(err).Msg("could not set recording")
+						break
+					}
+					tracked.Runtime.AssetUpdated(asset)
+					break
+				}
+			}
+		}
+	} else {
+		// Incognito mode: ensure we have non-empty asset MRNs
+		for _, tracked := range batch {
+			asset := tracked.Asset
+			if asset.Mrn == "" {
+				randID := "//" + policy.POLICY_SERVICE_NAME + "/" + policy.MRN_RESOURCE_ASSET + "/" + ksuid.New().String()
+				x, err := mrn.NewMRN(randID)
+				if err != nil {
+					return multierr.Wrap(err, "failed to generate a random asset MRN")
+				}
+				asset.Mrn = x.String()
+				tracked.Runtime.AssetUpdated(asset)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *LocalScanner) upstreamServices(ctx context.Context, conf *upstream.UpstreamConfig) *policy.Services {
