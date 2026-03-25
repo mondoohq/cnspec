@@ -48,8 +48,6 @@ var serveCmd = &cobra.Command{
 	Short: "Start cnspec in background mode",
 
 	PreRun: func(cmd *cobra.Command, args []string) {
-		_ = viper.BindPFlag("scan_interval.timer", cmd.Flags().Lookup("timer"))
-		_ = viper.BindPFlag("scan_interval.splay", cmd.Flags().Lookup("splay"))
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		_ = viper.BindPFlag("inventory-template", cmd.Flags().Lookup("inventory-template"))
 		logger.StandardZerologLogger()
@@ -87,6 +85,16 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			// we return the specific error code to prevent systemd from restarting
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
+		}
+
+		// CLI flags override config file values
+		if cmd.Flags().Changed("timer") {
+			v, _ := cmd.Flags().GetInt("timer")
+			cliConfig.ScanInterval.Timer = v
+		}
+		if cmd.Flags().Changed("splay") {
+			v, _ := cmd.Flags().GetInt("splay")
+			cliConfig.ScanInterval.Splay = v
 		}
 
 		ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
@@ -230,7 +238,7 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 	// set the default scan interval if not set
 	if opts.ScanInterval == nil {
 		opts.ScanInterval = &cnspec_config.ScanInterval{
-			Timer: cnspec_config.DefaultScanIntervalSplay,
+			Timer: cnspec_config.DefaultScanIntervalTimer,
 			Splay: cnspec_config.DefaultScanIntervalSplay,
 		}
 	}
