@@ -140,10 +140,13 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		// Read a limited amount of the response body for diagnostics.
+		// Truncate to 512 bytes to avoid leaking sensitive details in Sentry tags.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		health.ReportError("cnspec", cnspec.Version, cnspec.Build,
 			fmt.Sprintf("upload failed with status %d", resp.StatusCode),
 			health.WithTags(map[string]string{
+				"assetMrn":     assetMrn,
 				"responseBody": string(body),
 			}),
 		)
