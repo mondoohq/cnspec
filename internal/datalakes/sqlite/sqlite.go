@@ -7,15 +7,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 )
 
 func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
@@ -137,6 +140,13 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		health.ReportError("cnspec", cnspec.Version, cnspec.Build,
+			fmt.Sprintf("upload failed with status %d", resp.StatusCode),
+			health.WithTags(map[string]string{
+				"responseBody": string(body),
+			}),
+		)
 		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
 	}
 
