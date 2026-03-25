@@ -89,12 +89,20 @@ var serveCmd = &cobra.Command{
 
 		// CLI flags override config file values
 		if cmd.Flags().Changed("timer") {
-			v, _ := cmd.Flags().GetInt("timer")
-			cliConfig.ScanInterval.Timer = v
+			v, err := cmd.Flags().GetInt("timer")
+			if err != nil {
+				log.Warn().Err(err).Msg("failed to read --timer flag")
+			} else {
+				cliConfig.ScanInterval.Timer = v
+			}
 		}
 		if cmd.Flags().Changed("splay") {
-			v, _ := cmd.Flags().GetInt("splay")
-			cliConfig.ScanInterval.Splay = v
+			v, err := cmd.Flags().GetInt("splay")
+			if err != nil {
+				log.Warn().Err(err).Msg("failed to read --splay flag")
+			} else {
+				cliConfig.ScanInterval.Splay = v
+			}
 		}
 
 		ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
