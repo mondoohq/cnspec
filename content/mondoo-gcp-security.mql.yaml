@@ -1760,6 +1760,32 @@ queries:
           - Encryption key revocation cannot be used to deny access to model data.
           - Encryption coverage gaps may exist if datasets and tables use CMEK but models do not.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure CMEK encryption on the BigQuery dataset so all models inherit customer-managed encryption:
+
+            ```hcl
+            resource "google_bigquery_dataset" "example" {
+              dataset_id = "example_dataset"
+              location   = "US"
+
+              default_encryption_configuration {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "US"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -8854,6 +8880,32 @@ queries:
           - Prefer Workload Identity Federation or Google-managed keys over user-managed keys to avoid rotation requirements entirely.
           - Maintain an inventory of all service account keys with their creation dates and intended use.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Use `time_rotating` with a `replace_triggered_by` lifecycle meta-argument to ensure service account keys are rotated within 90 days:
+
+            ```hcl
+            resource "time_rotating" "sa_key_rotation" {
+              rotation_days = 90
+            }
+
+            resource "google_service_account_key" "example" {
+              service_account_id = google_service_account.example.name
+
+              lifecycle {
+                replace_triggered_by = [time_rotating.sa_key_rotation]
+              }
+            }
+
+            resource "google_service_account" "example" {
+              account_id   = "example-sa"
+              display_name = "Example Service Account"
+            }
+            ```
+
+            Note: When the `time_rotating` resource triggers, Terraform will destroy the old key and create a new one on the next apply. Ensure consumers are updated to use the new key.
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -12109,6 +12161,27 @@ queries:
           - Monitor key age using Cloud Monitoring and alert when keys approach the rotation deadline.
           - Delete keys that are no longer needed rather than leaving them to age.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Use Terraform to manage API keys with restrictions. To rotate a stale key, update the resource to force recreation:
+
+            ```hcl
+            resource "google_apikeys_key" "example" {
+              name         = "example-key"
+              display_name = "Example API Key"
+              project      = var.project_id
+
+              restrictions {
+                api_targets {
+                  service = "maps-backend.googleapis.com"
+                }
+              }
+            }
+            ```
+
+            Note: To rotate the key, use `terraform apply -replace=google_apikeys_key.example` to force recreation. Ensure all consumers are updated to use the new key value.
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -15146,6 +15219,40 @@ queries:
           - Proactively monitoring certificate expiration prevents unplanned outages.
           - Self-managed certificates require manual renewal, making them more prone to oversight.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Use Google-managed SSL certificates for automatic renewal, or manage self-managed certificates with Terraform:
+
+            ```hcl
+            # Option 1: Google-managed certificate (recommended - auto-renews)
+            resource "google_compute_managed_ssl_certificate" "example" {
+              name = "example-managed-cert"
+
+              managed {
+                domains = ["example.com"]
+              }
+            }
+
+            # Option 2: Self-managed certificate
+            variable "ssl_private_key" {
+              type      = string
+              sensitive = true
+            }
+
+            resource "google_compute_ssl_certificate" "example" {
+              name        = "example-cert"
+              private_key = var.ssl_private_key
+              certificate = file("path/to/certificate.crt")
+
+              lifecycle {
+                create_before_destroy = true
+              }
+            }
+            ```
+
+            Note: For self-managed certificates, pass the private key via a sensitive variable or secrets manager rather than reading it from a file in version control. Update the certificate before it expires and run `terraform apply` to deploy the renewal.
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -16930,6 +17037,20 @@ queries:
           - Access restrictions help enforce data residency requirements by limiting which regions can access the vault.
           - Compromised credentials in one project cannot be used to tamper with backups in a restricted vault.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure the backup vault with access restrictions:
+
+            ```hcl
+            resource "google_backup_dr_backup_vault" "example" {
+              location                          = "us-central1"
+              backup_vault_id                   = "example-vault"
+              access_restriction                = "WITHIN_PROJECT"
+              backup_minimum_enforced_retention_duration = "86400s"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -16986,6 +17107,33 @@ queries:
           - Key usage can be audited through Cloud Audit Logs for Cloud KMS.
           - Compliance frameworks such as PCI-DSS, HIPAA, and SOC 2 may require customer-managed encryption for AI/ML workloads.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure CMEK encryption when creating a Vertex AI endpoint:
+
+            ```hcl
+            resource "google_vertex_ai_endpoint" "example" {
+              name         = "example-endpoint"
+              display_name = "Example Endpoint"
+              location     = "us-central1"
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us-central1"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17047,6 +17195,30 @@ queries:
           - Network-level isolation helps meet compliance requirements for data in transit.
           - Private endpoints can be further secured using VPC Service Controls and firewall rules.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure Private Service Connect when creating a Vertex AI endpoint:
+
+            ```hcl
+            resource "google_vertex_ai_endpoint" "example" {
+              name         = "example-endpoint"
+              display_name = "Example Endpoint"
+              location     = "us-central1"
+              network      = google_compute_network.example.id
+
+              private_service_connect_config {
+                enable_private_service_connect = true
+                project_allowlist              = [var.project_id]
+              }
+            }
+
+            resource "google_compute_network" "example" {
+              name                    = "example-network"
+              auto_create_subnetworks = false
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17109,6 +17281,36 @@ queries:
           - Model artifacts may implicitly encode sensitive training data patterns, making encryption critical.
           - Compliance frameworks may require customer-managed encryption for AI/ML assets.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure CMEK encryption when uploading a Vertex AI model:
+
+            ```hcl
+            resource "google_vertex_ai_model" "example" {
+              display_name = "example-model"
+              location     = "us-central1"
+
+              container_spec {
+                image_uri = "us-docker.pkg.dev/vertex-ai/prediction/tf2-cpu.2-12:latest"
+              }
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us-central1"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17171,6 +17373,33 @@ queries:
           - CMEK enables organizations to revoke access to dataset contents by disabling or destroying the encryption key.
           - Compliance frameworks such as HIPAA and GDPR may require customer-managed encryption for data stores containing sensitive information.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure CMEK encryption when creating a Vertex AI dataset:
+
+            ```hcl
+            resource "google_vertex_ai_dataset" "example" {
+              display_name        = "example-dataset"
+              metadata_schema_uri = "gs://google-cloud-aiplatform/schema/dataset/metadata/image_1.0.0.yaml"
+              region              = "us-central1"
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us-central1"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17232,6 +17461,45 @@ queries:
           - CMEK ensures all data generated during pipeline execution is encrypted with keys you control.
           - Compliance frameworks may require customer-managed encryption for data processing pipelines.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Vertex AI pipeline jobs are not directly managed as Terraform resources. Use `google_vertex_ai_custom_job` for Terraform-managed ML jobs with CMEK encryption, or submit pipeline jobs via the gcloud CLI or API with CMEK configured:
+
+            ```hcl
+            resource "google_vertex_ai_custom_job" "example" {
+              display_name = "example-custom-job"
+              location     = "us-central1"
+              project      = var.project_id
+
+              job_spec {
+                worker_pool_specs {
+                  replica_count = 1
+                  machine_spec {
+                    machine_type = "n1-standard-4"
+                  }
+                  container_spec {
+                    image_uri = "gcr.io/PROJECT/IMAGE:latest"
+                  }
+                }
+              }
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us-central1"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17293,6 +17561,38 @@ queries:
           - Network-level isolation helps prevent data exfiltration from ML training and processing jobs.
           - VPC configuration enables the use of VPC Service Controls for additional protection.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Vertex AI pipeline jobs are not directly managed as Terraform resources. Use `google_vertex_ai_custom_job` for Terraform-managed ML jobs with VPC networking, or submit pipeline jobs via the gcloud CLI or API with a network configured:
+
+            ```hcl
+            resource "google_vertex_ai_custom_job" "example" {
+              display_name = "example-custom-job"
+              location     = "us-central1"
+              project      = var.project_id
+
+              job_spec {
+                network = google_compute_network.example.id
+
+                worker_pool_specs {
+                  replica_count = 1
+                  machine_spec {
+                    machine_type = "n1-standard-4"
+                  }
+                  container_spec {
+                    image_uri = "gcr.io/PROJECT/IMAGE:latest"
+                  }
+                }
+              }
+            }
+
+            resource "google_compute_network" "example" {
+              name                    = "example-network"
+              auto_create_subnetworks = false
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17354,6 +17654,44 @@ queries:
           - Specify the custom service account when submitting pipeline jobs.
           - Regularly audit service account permissions and usage.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Vertex AI pipeline jobs are not directly managed as Terraform resources. Use `google_vertex_ai_custom_job` for Terraform-managed ML jobs with a custom service account, or submit pipeline jobs via the gcloud CLI or API with a custom service account configured:
+
+            ```hcl
+            resource "google_vertex_ai_custom_job" "example" {
+              display_name = "example-custom-job"
+              location     = "us-central1"
+              project      = var.project_id
+
+              job_spec {
+                service_account = google_service_account.pipeline_sa.email
+
+                worker_pool_specs {
+                  replica_count = 1
+                  machine_spec {
+                    machine_type = "n1-standard-4"
+                  }
+                  container_spec {
+                    image_uri = "gcr.io/PROJECT/IMAGE:latest"
+                  }
+                }
+              }
+            }
+
+            resource "google_service_account" "pipeline_sa" {
+              account_id   = "vertex-pipeline-sa"
+              display_name = "Vertex AI Pipeline Service Account"
+            }
+
+            resource "google_project_iam_member" "pipeline_sa_roles" {
+              project = var.project_id
+              role    = "roles/aiplatform.customCodeServiceAgent"
+              member  = "serviceAccount:${google_service_account.pipeline_sa.email}"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
@@ -17412,6 +17750,40 @@ queries:
           - CMEK enables organizations to revoke access to feature data by disabling or destroying the encryption key.
           - Compliance frameworks may require customer-managed encryption for data stores serving production ML systems.
       remediation:
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure CMEK encryption when creating a Vertex AI feature online store:
+
+            ```hcl
+            resource "google_vertex_ai_feature_online_store" "example" {
+              name     = "example-feature-store"
+              region   = "us-central1"
+
+              bigtable {
+                auto_scaling {
+                  min_node_count         = 1
+                  max_node_count         = 3
+                  cpu_utilization_target = 50
+                }
+              }
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+
+            resource "google_kms_crypto_key" "example" {
+              name     = "example-key"
+              key_ring = google_kms_key_ring.example.id
+            }
+
+            resource "google_kms_key_ring" "example" {
+              name     = "example-keyring"
+              location = "us-central1"
+            }
+            ```
         - id: console
           desc: |
             **Using Google Cloud Console**
