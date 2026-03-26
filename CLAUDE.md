@@ -331,7 +331,7 @@ For MQL resources available per provider, see [MQL resources documentation](http
 
 When adding/modifying policies:
 
-1. **Lint the policy**: `cnspec policy lint <file>`
+1. **Lint the policy before committing**: `cnspec policy lint <file>` (e.g., `cnspec policy lint content/mondoo-aws-security.mql.yaml`). This must pass before committing any policy changes.
 2. **Test against target**: `cnspec scan <target> -f <policy-file>`
 3. **Check for regressions**: Run existing policy tests in `content/` directory
 4. **Verify scoring**: Ensure impact ratings and scoring systems work correctly
