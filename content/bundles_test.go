@@ -27,7 +27,7 @@ func init() {
 
 func TestMain(m *testing.M) {
 	// ensure providers are loaded
-	providerList := []string{"terraform", "k8s", "aws", "azure", "gcp"}
+	providerList := []string{"terraform", "k8s", "aws", "azure", "gcp", "cloudformation"}
 	for _, p := range providerList {
 		_, err := providers.EnsureProvider(providers.ProviderLookup{ProviderName: p}, true, nil)
 		if err != nil {
