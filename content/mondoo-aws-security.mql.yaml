@@ -3159,7 +3159,9 @@ queries:
   - uid: mondoo-aws-security-ec2-imdsv2-check-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
     mql: |
-      cloudformation.template.resources.where(type == "AWS::EC2::Instance").all( properties['MetadataOptions'][0].http_endpoint == "disabled" || properties['MetadataOptions'][0].http_tokens == "required" )
+      cloudformation.template.resources.where(type == "AWS::EC2::Instance").all(
+      properties['MetadataOptions'] == empty || properties['MetadataOptions']['HttpTokens'] == "required"
+      )
   - uid: mondoo-aws-security-vpc-bpa-enabled
     title: Ensure VPC Block Public Access (BPA) is enabled
     impact: 90
@@ -3696,7 +3698,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::DynamoDB::Table").all(
       properties['SSESpecification'] != empty &&
-      properties['SSESpecification'].all(enabled == true && kms_key_arn != empty)
+      properties['SSESpecification']['SSEEnabled'] == true && properties['SSESpecification']['KMSMasterKeyId'] != empty
       )
   - uid: mondoo-aws-security-lambda-concurrency-check
     title: Ensure Lambda functions have concurrent execution limits
@@ -5586,8 +5588,8 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::Instance").all(
-      properties['RootBlockDevice'].none(delete_on_termination != true) &&
-      properties['EbsBlockDevice'].none(delete_on_termination != true)
+      properties['BlockDeviceMappings'] == empty ||
+      properties['BlockDeviceMappings'].all(_['Ebs'] == empty || _['Ebs']['DeleteOnTermination'] != false)
       )
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check
     title: Ensure EBS snapshots are not publicly restorable
@@ -7289,8 +7291,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ElasticLoadBalancingV2::LoadBalancer")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ElasticLoadBalancingV2::LoadBalancer").all(
-      properties['AccessLogs'] != empty &&
-      properties['AccessLogs'].all(enabled == true)
+      properties['LoadBalancerAttributes'] != empty
       )
   - uid: mondoo-aws-security-elb-deletion-protection-enabled
     title: Ensure Application Load Balancers have deletion protection
@@ -7608,7 +7609,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::Elasticsearch::Domain").all(
       properties['EncryptAtRestOptions'] != empty &&
-      properties['EncryptAtRestOptions'].all(enabled == true)
+      properties['EncryptAtRestOptions']['Enabled'] == true
       )
   - uid: mondoo-aws-security-elasticsearch-node-to-node-encryption
     title: Ensure Amazon Elasticsearch Service domains use node-to-node encryption
@@ -7748,7 +7749,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::Elasticsearch::Domain").all(
       properties['NodeToNodeEncryptionOptions'] != empty &&
-      properties['NodeToNodeEncryptionOptions'].all(enabled == true)
+      properties['NodeToNodeEncryptionOptions']['Enabled'] == true
       )
   - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled
     title: Ensure rotation for customer-managed keys (CMKs) is enabled
@@ -9353,7 +9354,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGateway::Stage")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ApiGateway::Stage").all(
-      properties['Settings'][0].cache_data_encrypted == true
+      properties['MethodSettings'] == empty || properties['MethodSettings'].all(_['CacheDataEncrypted'] == true)
       )
   - uid: mondoo-aws-security-api-gw-execution-logging-enabled
     title: Ensure API Gateway stages have execution logging enabled
@@ -10270,7 +10271,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::Bucket")
     mql: |
       cloudformation.template.resources.where(type == "AWS::S3::Bucket").all(
-      properties['VersioningConfiguration'][0].status.downcase == "enabled"
+      properties['VersioningConfiguration'] != empty && properties['VersioningConfiguration']['Status'] == "Enabled"
       )
   - uid: mondoo-aws-security-s3-bucket-logging-enabled
     title: Ensure S3 bucket logging is enabled
@@ -10537,7 +10538,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::Bucket")
     mql: |
       cloudformation.template.resources.where(type == "AWS::S3::Bucket").all(
-      properties['Rule'][0].apply_server_side_encryption_by_default != empty
+      properties['BucketEncryption'] != empty && properties['BucketEncryption']['ServerSideEncryptionConfiguration'] != empty
       )
   - uid: mondoo-aws-security-s3-bucket-public-read-prohibited
     title: Ensure S3 buckets do not allow public read access via ACLs
@@ -11096,7 +11097,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudFront::Distribution")
     mql: |
       cloudformation.template.resources.where(type == "AWS::CloudFront::Distribution").all(
-      properties['DefaultCacheBehavior'].all(_['viewer_protocol_policy'] != "allow-all")
+      properties['DistributionConfig'] != empty && properties['DistributionConfig']['DefaultCacheBehavior'] != empty && properties['DistributionConfig']['DefaultCacheBehavior']['ViewerProtocolPolicy'] != "allow-all"
       )
   - uid: mondoo-aws-security-eks-cluster-logging-enabled
     title: Ensure Amazon EKS control plane logging is enabled
@@ -11417,8 +11418,8 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::OpenSearchService::Domain")
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
-      properties['EncryptAtRestOptions'] != empty &&
-      properties['EncryptAtRestOptions'].all(enabled == true)
+      properties['EncryptionAtRestOptions'] != empty &&
+      properties['EncryptionAtRestOptions']['Enabled'] == true
       )
   - uid: mondoo-aws-security-opensearch-enforce-https
     title: Ensure Amazon OpenSearch Service domains enforce HTTPS
@@ -11559,7 +11560,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
       properties['DomainEndpointOptions'] != empty &&
-      properties['DomainEndpointOptions'].all(enforce_https == true)
+      properties['DomainEndpointOptions']['EnforceHTTPS'] == true
       )
   - uid: mondoo-aws-security-opensearch-node-to-node-encryption
     title: Ensure Amazon OpenSearch Service domains use node-to-node encryption
@@ -11700,7 +11701,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
       properties['NodeToNodeEncryptionOptions'] != empty &&
-      properties['NodeToNodeEncryptionOptions'].all(enabled == true)
+      properties['NodeToNodeEncryptionOptions']['Enabled'] == true
       )
   - uid: mondoo-aws-security-opensearch-tls-policy
     title: Ensure Amazon OpenSearch Service domains use TLS 1.2 or higher
@@ -11843,7 +11844,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
       properties['DomainEndpointOptions'] != empty &&
-      properties['DomainEndpointOptions'].all(tls_security_policy == /Policy-Min-TLS-1-2/)
+      properties['DomainEndpointOptions']['TLSSecurityPolicy'] == /Policy-Min-TLS-1-2/
       )
   - uid: mondoo-aws-security-opensearch-fine-grained-access-control
     title: Ensure OpenSearch Service domains have fine-grained access control
@@ -12009,7 +12010,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
       properties['AdvancedSecurityOptions'] != empty &&
-      properties['AdvancedSecurityOptions'].all(enabled == true)
+      properties['AdvancedSecurityOptions']['Enabled'] == true
       )
   - uid: mondoo-aws-security-opensearch-audit-logging
     title: Ensure Amazon OpenSearch Service domains have audit logging enabled
@@ -12165,7 +12166,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
       properties['LogPublishingOptions'] != empty &&
-      properties['LogPublishingOptions'].any(log_type == "AUDIT_LOGS")
+      properties['LogPublishingOptions'] != empty && properties['LogPublishingOptions']['AUDIT_LOGS'] != empty
       )
   - uid: mondoo-aws-security-opensearch-in-vpc
     title: Ensure Amazon OpenSearch Service domains are deployed within a VPC
@@ -12466,7 +12467,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::OpenSearchService::Domain")
     mql: |
       cloudformation.template.resources.where(type == "AWS::OpenSearchService::Domain").all(
-      properties['AdvancedSecurityOptions'].all(anonymous_auth_enabled != true)
+      properties['AdvancedSecurityOptions'] == empty || properties['AdvancedSecurityOptions']['AnonymousAuthEnabled'] != true
       )
   - uid: mondoo-aws-security-ecr-image-scan-on-push
     title: Ensure ECR repositories have image scanning on push enabled
@@ -12604,7 +12605,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECR::Repository").all(
       properties['ImageScanningConfiguration'] != empty &&
-      properties['ImageScanningConfiguration'].all(scan_on_push == true)
+      properties['ImageScanningConfiguration']['ScanOnPush'] == true
       )
   - uid: mondoo-aws-security-ecr-tag-immutability
     title: Ensure ECR repositories have image tag immutability enabled
@@ -13045,7 +13046,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECS::TaskDefinition")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
-      properties['ContainerDefinitions'].all(_['readonlyRootFilesystem'] == true)
+      properties['ContainerDefinitions'].all(_['ReadonlyRootFilesystem'] == true)
       )
   - uid: mondoo-aws-security-ecs-logging-enabled
     title: Ensure ECS task definitions have logging configured for all containers
@@ -13357,7 +13358,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EFS::FileSystem")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EFS::FileSystem").all(
-      properties['BackupPolicy'].all(status == "ENABLED")
+      properties['BackupPolicy'] != empty && properties['BackupPolicy']['Status'] == "ENABLED"
       )
   - uid: mondoo-aws-security-elb-drop-invalid-headers
     title: Ensure Application Load Balancers drop invalid HTTP headers
@@ -13814,8 +13815,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EKS::Cluster").all(
       properties['VpcConfig'] != empty &&
       properties['VpcConfig'].all(
-      _['public_access_cidrs'] != empty &&
-      _['public_access_cidrs'].none(_ == "0.0.0.0/0")
+      _['PublicAccessCidrs'] != empty &&
+      _['PublicAccessCidrs'].none(_ == "0.0.0.0/0")
       )
       )
   - uid: mondoo-aws-security-eks-cluster-deletion-protection
@@ -14117,7 +14118,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CodeBuild::Project")
     mql: |
       cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
-      properties['Environment'].all(_['privileged_mode'] != true)
+      properties['Environment'] == empty || properties['Environment']['PrivilegedMode'] != true
       )
   - uid: mondoo-aws-security-codebuild-no-plaintext-credentials
     title: Ensure CodeBuild projects do not store plaintext credentials
@@ -14344,10 +14345,10 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CodeBuild::Project")
     mql: |
       cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
-      properties['Environment'].all(
-      _['image_pull_credentials_type'] == "CODEBUILD" ||
-      _['image_pull_credentials_type'] == "SERVICE_ROLE"
-      )
+      properties['Environment'] == empty ||
+      properties['Environment']['ImagePullCredentialsType'] == "CODEBUILD" ||
+      properties['Environment']['ImagePullCredentialsType'] == "SERVICE_ROLE"
+      
       )
       cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
       properties['Environment'].all(
@@ -17058,7 +17059,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::CloudFront::Distribution").all(
       properties['ViewerCertificate'] != empty &&
-      properties['ViewerCertificate'].all(minimum_protocol_version == /TLSv1\.2/)
+      properties['DistributionConfig'] != empty && properties['DistributionConfig']['ViewerCertificate'] != empty && properties['DistributionConfig']['ViewerCertificate']['MinimumProtocolVersion'] == /TLSv1\.2/
       )
   - uid: mondoo-aws-security-cloudfront-waf-enabled
     title: Ensure CloudFront distributions have WAF web ACL associated
@@ -17781,8 +17782,9 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECS::TaskDefinition")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
-      properties['Volume'].where(_['efs_volume_configuration'] != empty).all(
-      _['efs_volume_configuration']['transit_encryption'] == "ENABLED"
+      properties['Volumes'] == empty ||
+      properties['Volumes'].where(_['EFSVolumeConfiguration'] != empty).all(
+      _['EFSVolumeConfiguration']['TransitEncryption'] == "ENABLED"
       )
       )
   - uid: mondoo-aws-security-cloudwatch-log-group-retention-set
@@ -18380,7 +18382,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::Instance").all(
-      properties['MetadataOptions'][0].http_put_response_hop_limit == 1
+      properties['MetadataOptions'] != empty && properties['MetadataOptions']['HttpPutResponseHopLimit'] == 1
       )
   - uid: mondoo-aws-security-guardduty-all-features-enabled
     title: Ensure GuardDuty protection features are enabled
@@ -19166,7 +19168,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CodeBuild::Project")
     mql: |
       cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
-      properties['Source'][0].insecure_ssl != true
+      properties['Source'] == empty || properties['Source']['InsecureSsl'] != true
       )
   - uid: mondoo-aws-security-elasticache-serverless-cmk-encryption
     title: Ensure ElastiCache serverless caches use CMK encryption
@@ -19624,7 +19626,7 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ssm_parameter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ssm_parameter").all(
-      change.after.type == "SecureString"
+      change.after.type == "SecureString" && change.after.key_id != empty
       )
   - uid: mondoo-aws-security-ssm-parameter-encryption-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ssm_parameter")
@@ -20239,20 +20241,29 @@ queries:
   - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_network_acl_rule")
     mql: |
-      terraform.resources.where(nameLabel == "aws_network_acl_rule").all(
-      arguments.egress == true || arguments.rule_action != "allow" || arguments.cidr_block != "0.0.0.0/0" && arguments.ipv6_cidr_block != "::/0" || arguments.from_port != 22 && arguments.from_port != 3389
+      terraform.resources.where(nameLabel == "aws_network_acl_rule" && arguments.egress != true && arguments.rule_action == "allow").none(
+      arguments.from_port == 22 && arguments.cidr_block == "0.0.0.0/0" ||
+      arguments.from_port == 22 && arguments.ipv6_cidr_block == "::/0" ||
+      arguments.from_port == 3389 && arguments.cidr_block == "0.0.0.0/0" ||
+      arguments.from_port == 3389 && arguments.ipv6_cidr_block == "::/0"
       )
   - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_network_acl_rule")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_network_acl_rule").all(
-      change.after.egress == true || change.after.rule_action != "allow" || change.after.cidr_block != "0.0.0.0/0" && change.after.ipv6_cidr_block != "::/0" || change.after.from_port != 22 && change.after.from_port != 3389
+      terraform.plan.resourceChanges.where(type == "aws_network_acl_rule" && change.after.egress != true && change.after.rule_action == "allow").none(
+      change.after.from_port == 22 && change.after.cidr_block == "0.0.0.0/0" ||
+      change.after.from_port == 22 && change.after.ipv6_cidr_block == "::/0" ||
+      change.after.from_port == 3389 && change.after.cidr_block == "0.0.0.0/0" ||
+      change.after.from_port == 3389 && change.after.ipv6_cidr_block == "::/0"
       )
   - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_network_acl_rule")
     mql: |
-      terraform.state.resources.where(type == "aws_network_acl_rule").all(
-      values.egress == true || values.rule_action != "allow" || values.cidr_block != "0.0.0.0/0" && values.ipv6_cidr_block != "::/0" || values.from_port != 22 && values.from_port != 3389
+      terraform.state.resources.where(type == "aws_network_acl_rule" && values.egress != true && values.rule_action == "allow").none(
+      values.from_port == 22 && values.cidr_block == "0.0.0.0/0" ||
+      values.from_port == 22 && values.ipv6_cidr_block == "::/0" ||
+      values.from_port == 3389 && values.cidr_block == "0.0.0.0/0" ||
+      values.from_port == 3389 && values.ipv6_cidr_block == "::/0"
       )
   - uid: mondoo-aws-security-default-nacl-restrictive
     title: Ensure the default network ACL restricts all traffic
@@ -20778,7 +20789,7 @@ queries:
     mql: |
       terraform.resources.where(nameLabel == "aws_ecs_cluster").all(
       blocks.where(type == "setting") != empty &&
-      blocks.where(type == "setting").all(arguments.name == "containerInsights" && arguments.value == "enabled")
+      blocks.where(type == "setting").any(arguments.name == "containerInsights" && arguments.value == "enabled")
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ecs_cluster")
@@ -27679,7 +27690,7 @@ queries:
     mql: |
       terraform.resources.where(nameLabel == "aws_elastic_beanstalk_environment").all(
       blocks.where(type == "setting") != empty &&
-      blocks.where(type == "setting").all(arguments.namespace == "aws:elasticbeanstalk:healthreporting:system" && arguments.value == "enhanced")
+      blocks.where(type == "setting").any(arguments.namespace == "aws:elasticbeanstalk:healthreporting:system" && arguments.value == "enhanced")
       )
   - uid: mondoo-aws-security-elasticbeanstalk-enhanced-health-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_elastic_beanstalk_environment")
