@@ -135,6 +135,7 @@ policies:
           - uid: mondoo-aws-security-vpc-subnet-no-auto-assign-public-ip
           - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp
           - uid: mondoo-aws-security-default-nacl-restrictive
+          - uid: mondoo-aws-security-no-default-vpc
       - title: Amazon DynamoDB Table
         checks:
           - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
@@ -146,6 +147,9 @@ policies:
           - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
           - uid: mondoo-aws-security-rds-snapshot-encrypted
           - uid: mondoo-aws-security-rds-instance-iam-auth
+          - uid: mondoo-aws-security-rds-backup-retention
+          - uid: mondoo-aws-security-rds-performance-insights
+          - uid: mondoo-aws-security-rds-deletion-protection
       - title: Amazon RDS Proxy
         checks:
           - uid: mondoo-aws-security-rds-proxy-tls-required
@@ -156,6 +160,7 @@ policies:
           - uid: mondoo-aws-security-rds-cluster-encryption-at-rest
           - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
           - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl
+          - uid: mondoo-aws-security-rds-cluster-deletion-protection
       - title: Amazon Redshift Cluster
         checks:
           - uid: mondoo-aws-security-redshift-cluster-public-access-check
@@ -183,10 +188,13 @@ policies:
           - uid: mondoo-aws-security-ec2-uefi-boot-mode
           - uid: mondoo-aws-security-ec2-no-paravirtual-instances
           - uid: mondoo-aws-security-ec2-hibernation-encrypted-check
+          - uid: mondoo-aws-security-ec2-launch-template-no-secrets
       - title: Amazon ECR
         checks:
           - uid: mondoo-aws-security-ecr-image-scan-on-push
           - uid: mondoo-aws-security-ecr-tag-immutability
+          - uid: mondoo-aws-security-ecr-repository-cmk-encryption
+          - uid: mondoo-aws-security-ecr-no-public-access
       - title: Amazon ECS
         checks:
           - uid: mondoo-aws-security-ecs-no-privileged-containers
@@ -196,6 +204,7 @@ policies:
           - uid: mondoo-aws-security-ecs-efs-volume-transit-encryption
           - uid: mondoo-aws-security-ecs-cluster-container-insights
           - uid: mondoo-aws-security-ecs-cluster-fargate-encryption
+          - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets
       - title: Amazon EFS Filesystem
         checks:
           - uid: mondoo-aws-security-efs-encrypted-check
@@ -280,6 +289,7 @@ policies:
           - uid: mondoo-aws-security-cloud-trail-multi-region-enabled
           - uid: mondoo-aws-security-cloudtrail-s3-bucket-not-public
           - uid: mondoo-aws-security-cloudtrail-s3-bucket-logging
+          - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration
       - title: Amazon EKS Cluster
         checks:
           - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -302,6 +312,7 @@ policies:
         checks:
           - uid: mondoo-aws-security-config-recorder-enabled
           - uid: mondoo-aws-security-config-recorder-all-resources
+          - uid: mondoo-aws-security-config-aggregator-enabled
       - title: AWS Secrets Manager
         checks:
           - uid: mondoo-aws-security-secretsmanager-rotation-enabled
@@ -325,6 +336,7 @@ policies:
           - uid: mondoo-aws-security-elasticache-encryption-in-transit
           - uid: mondoo-aws-security-elasticache-redis-auth-enabled
           - uid: mondoo-aws-security-elasticache-serverless-cmk-encryption
+          - uid: mondoo-aws-security-elasticache-backup-retention
       - title: AWS Backup
         checks:
           - uid: mondoo-aws-security-backup-vault-encrypted
@@ -345,6 +357,7 @@ policies:
           - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted
           - uid: mondoo-aws-security-neptune-cluster-cmk-encryption
           - uid: mondoo-aws-security-neptune-instance-public-access
+          - uid: mondoo-aws-security-neptune-cluster-log-export
       - title: Amazon Inspector
         checks:
           - uid: mondoo-aws-security-inspector-ec2-scanning-enabled
@@ -411,6 +424,7 @@ policies:
           - uid: mondoo-aws-security-documentdb-cluster-cmk-encryption
           - uid: mondoo-aws-security-documentdb-instance-auto-minor-version-upgrade
           - uid: mondoo-aws-security-documentdb-snapshot-encrypted
+          - uid: mondoo-aws-security-documentdb-cluster-log-export
       - title: AWS Glue
         checks:
           - uid: mondoo-aws-security-glue-job-security-configuration
@@ -445,6 +459,7 @@ policies:
           - uid: mondoo-aws-security-emr-encryption-at-rest
           - uid: mondoo-aws-security-emr-encryption-in-transit
           - uid: mondoo-aws-security-emr-logging-enabled
+          - uid: mondoo-aws-security-emr-local-disk-encryption
       - title: Amazon DynamoDB DAX
         checks:
           - uid: mondoo-aws-security-dax-encryption-at-rest
@@ -33554,4 +33569,1827 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::SQS::QueuePolicy").all(
       properties['PolicyDocument'].string != /"Principal"\s*:\s*"\*"/
+      )
+  - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets
+    title: Ensure ECS task definitions do not contain plaintext secrets
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon ECS task definitions do not contain plaintext secrets in container environment variables. Hardcoded secrets such as passwords, API keys, and access tokens in environment variables can be exposed through the ECS console, API calls, or container introspection.
+
+        **Why this matters**
+
+        Storing secrets as plaintext environment variables in ECS task definitions poses significant security risks:
+
+        - **Credential exposure:** Environment variables are visible to anyone with permissions to describe task definitions and can be logged in various places.
+        - **Rotation difficulty:** Hardcoded secrets require redeployment of task definitions to rotate, making it difficult to respond to compromises.
+        - **Blast radius:** A single compromised task definition can expose multiple secrets simultaneously.
+
+        **Scope:** This check detects common secret patterns in environment variable names (e.g., `DB_PASSWORD`, `API_KEY`, `AWS_SECRET_ACCESS_KEY`) and values (AWS access key IDs, private key headers). Secrets stored under non-standard variable names without recognizable value patterns will not be detected.
+
+        **Risk mitigation:**
+
+        - Use AWS Secrets Manager or AWS Systems Manager Parameter Store to manage secrets securely.
+        - Reference secrets in task definitions using the `secrets` field with `valueFrom` instead of the `environment` field.
+        - Implement automated secret rotation through Secrets Manager.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the Amazon ECS Console.
+            2. Select **Task definitions** in the left panel.
+            3. Select the task definition to review.
+            4. For each container definition, review the **Environment variables** section.
+            5. Remove any environment variables with names that store secrets (e.g., `DB_PASSWORD`, `API_KEY`, `SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`).
+            6. Instead, use the **Secrets** section to reference values from AWS Secrets Manager or SSM Parameter Store.
+            7. Create a new revision of the task definition with the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check for plaintext secrets in task definitions:
+
+            ```bash
+            aws ecs describe-task-definition --task-definition <task-def-name> \
+              --query "taskDefinition.containerDefinitions[*].{Name:name, Environment:environment}"
+            ```
+
+            Update the task definition to use secrets references instead of environment variables:
+
+            ```bash
+            aws ecs register-task-definition --cli-input-json file://task-definition.json
+            ```
+
+            In your task definition JSON, replace environment variables containing secrets with the `secrets` field:
+
+            ```json
+            {
+              "containerDefinitions": [
+                {
+                  "name": "app",
+                  "secrets": [
+                    {
+                      "name": "DB_PASSWORD",
+                      "valueFrom": "arn:aws:secretsmanager:region:account-id:secret:my-secret"
+                    }
+                  ]
+                }
+              ]
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html
+        title: AWS Documentation - Passing sensitive data to a container
+  - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.taskDefinitions.all(
+        containerDefinitions.all(
+          environment.none( name == /(?i)^(aws_secret_access_key|aws_access_key_id|db_password|database_password|master_password|admin_password|api_key|api_secret|private_key|secret_key|auth_token|access_token)$/ ) &&
+          environment.none( value == /(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/ ) &&
+          environment.none( value == /-----BEGIN (RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY/ )
+        )
+      )
+  - uid: mondoo-aws-security-no-default-vpc
+    title: Ensure the default VPC is not used
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-no-default-vpc-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that the default VPC is not present in the AWS account. Default VPCs are created automatically in each AWS region with permissive network configurations that are unsuitable for production workloads.
+
+        **Why this matters**
+
+        Default VPCs have several security concerns:
+
+        - **Permissive configuration:** Default VPCs include an internet gateway, public subnets, and auto-assigned public IP addresses, which can inadvertently expose resources to the internet.
+        - **Lack of segmentation:** The default network configuration does not enforce proper network segmentation or least-privilege access.
+        - **Accidental deployment:** Resources launched without specifying a VPC are placed in the default VPC, potentially bypassing security controls.
+
+        **Risk mitigation:**
+
+        - Delete default VPCs in all regions to prevent accidental use.
+        - Create custom VPCs with properly configured subnets, route tables, and security groups.
+        - Enforce VPC selection through service control policies or IAM conditions.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **VPC Console**.
+            2. Select **Your VPCs** in the left panel.
+            3. Identify VPCs marked as **Default VPC = Yes**.
+            4. Before deleting, ensure no resources (EC2 instances, RDS instances, etc.) are using the default VPC.
+            5. Delete all associated resources (subnets, internet gateways, route tables, network ACLs, security groups).
+            6. Select the default VPC and choose **Actions** > **Delete VPC**.
+            7. Repeat for each AWS region.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            List default VPCs across all regions:
+
+            ```bash
+            for region in $(aws ec2 describe-regions --query "Regions[].RegionName" --output text); do
+              echo "Region: $region"
+              aws ec2 describe-vpcs --region "$region" --filters "Name=isDefault,Values=true" \
+                --query "Vpcs[].VpcId" --output text
+            done
+            ```
+
+            Delete the default VPC (after removing all dependent resources):
+
+            ```bash
+            aws ec2 delete-vpc --vpc-id <vpc-id> --region <region>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/vpc/latest/userguide/default-vpc.html
+        title: AWS Documentation - Default VPCs
+  - uid: mondoo-aws-security-no-default-vpc-aws
+    filters: asset.platform == "aws"
+    mql: aws.vpcs.none(isDefault == true)
+  - uid: mondoo-aws-security-emr-local-disk-encryption
+    title: Ensure EMR clusters have local disk encryption enabled
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-emr-local-disk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-emr-local-disk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon EMR clusters have local disk encryption enabled. Local disk encryption protects data stored on instance store volumes and EBS volumes attached to EMR cluster nodes using Linux Unified Key Setup (LUKS) or other encryption mechanisms.
+
+        **Why this matters**
+
+        Without local disk encryption, sensitive data processed by EMR jobs is stored in plaintext on cluster node disks:
+
+        - **Data exposure:** Temporary data, shuffle data, and spill files written during MapReduce, Spark, or Hive jobs can contain sensitive information.
+        - **Compliance requirements:** Many regulatory frameworks require encryption of data at rest, including data on local storage volumes.
+        - **Instance store volatility:** While instance store data is lost on termination, it remains accessible during the cluster lifetime without encryption.
+
+        **Risk mitigation:**
+
+        - **Data protection:** Ensures all data on local disks is encrypted, preventing unauthorized access to intermediate processing data.
+        - **Compliance:** Meets regulatory requirements for encryption of data at rest on compute instances.
+        - **Defense in depth:** Adds an additional layer of protection beyond network-level controls.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon EMR Console**.
+            2. Select **Security configurations** in the left panel.
+            3. Create a new security configuration or edit an existing one.
+            4. Under **Encryption**, enable **At-rest encryption**.
+            5. Under **Local disk encryption**, select the encryption provider and configure the key.
+            6. Apply the security configuration when creating new EMR clusters.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a security configuration with local disk encryption:
+
+            ```bash
+            aws emr create-security-configuration \
+              --name "emr-encryption-config" \
+              --security-configuration '{
+                "EncryptionConfiguration": {
+                  "EnableAtRestEncryption": true,
+                  "AtRestEncryptionConfiguration": {
+                    "LocalDiskEncryptionConfiguration": {
+                      "EncryptionKeyProviderType": "AwsKms",
+                      "AwsKmsKey": "arn:aws:kms:region:account-id:key/key-id"
+                    }
+                  },
+                  "EnableInTransitEncryption": false
+                }
+              }'
+            ```
+
+            Launch an EMR cluster with the security configuration:
+
+            ```bash
+            aws emr create-cluster \
+              --name "secure-cluster" \
+              --security-configuration "emr-encryption-config" \
+              --release-label emr-6.15.0 \
+              --instance-type m5.xlarge
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an EMR security configuration with local disk encryption:
+
+            ```hcl
+            resource "aws_emr_security_configuration" "encryption" {
+              name = "emr-local-disk-encryption"
+
+              configuration = jsonencode({
+                EncryptionConfiguration = {
+                  EnableAtRestEncryption = true
+                  AtRestEncryptionConfiguration = {
+                    LocalDiskEncryptionConfiguration = {
+                      EncryptionKeyProviderType = "AwsKms"
+                      AwsKmsKey                = aws_kms_key.emr.arn
+                    }
+                  }
+                  EnableInTransitEncryption = false
+                }
+              })
+            }
+
+            resource "aws_emr_cluster" "example" {
+              name                   = "secure-cluster"
+              release_label          = "emr-6.15.0"
+              security_configuration = aws_emr_security_configuration.encryption.name
+
+              # ... other configuration
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            EMRSecurityConfiguration:
+              Type: AWS::EMR::SecurityConfiguration
+              Properties:
+                Name: emr-local-disk-encryption
+                SecurityConfiguration:
+                  EncryptionConfiguration:
+                    EnableAtRestEncryption: true
+                    AtRestEncryptionConfiguration:
+                      LocalDiskEncryptionConfiguration:
+                        EncryptionKeyProviderType: AwsKms
+                        AwsKmsKey: !GetAtt EMRKmsKey.Arn
+                    EnableInTransitEncryption: false
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-data-encryption-options.html
+        title: AWS Documentation - Encryption options for Amazon EMR
+  - uid: mondoo-aws-security-emr-local-disk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.emr.clusters.all(
+        encryptionConfiguration.atRestEnabled == true &&
+        encryptionConfiguration.atRestConfiguration['LocalDiskEncryptionConfiguration'] != empty
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_security_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_emr_security_configuration").all(
+      arguments.configuration.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_emr_security_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_emr_security_configuration").all(
+      change.after.configuration.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_emr_security_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_emr_security_configuration").all(
+      values.configuration.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::SecurityConfiguration")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EMR::SecurityConfiguration").all(
+      properties['SecurityConfiguration'].string.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration
+    title: Ensure CloudTrail trails deliver logs to CloudWatch
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-aws
+        tags:
+          mondoo.com/filter-title: AWS CloudTrail Trail
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that AWS CloudTrail multi-region trails are configured to deliver logs to Amazon CloudWatch Logs. CloudWatch integration enables real-time monitoring, alerting, and automated responses to CloudTrail events.
+
+        **Why this matters**
+
+        Without CloudWatch integration, CloudTrail logs are only available in S3, limiting monitoring capabilities:
+
+        - **Delayed detection:** Without real-time log analysis, security incidents may go undetected for extended periods.
+        - **No automated alerting:** S3-only logging requires manual or separate tooling for alert generation.
+        - **Compliance gaps:** Many security frameworks require real-time monitoring and alerting on security-relevant events.
+
+        **Risk mitigation:**
+
+        - **Real-time monitoring:** Enables immediate detection of suspicious API activity through CloudWatch metric filters and alarms.
+        - **Automated response:** CloudWatch alarms can trigger SNS notifications, Lambda functions, or other automated remediation actions.
+        - **Compliance:** Meets requirements for continuous monitoring and real-time alerting in security frameworks.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **AWS CloudTrail Console**.
+            2. Select **Trails** in the left panel.
+            3. Select the trail to configure.
+            4. Under **CloudWatch Logs**, select **Edit**.
+            5. Enable CloudWatch Logs delivery.
+            6. Create a new log group or select an existing one.
+            7. Create or select an IAM role that grants CloudTrail permissions to deliver logs to CloudWatch.
+            8. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Configure CloudWatch Logs delivery for a trail:
+
+            ```bash
+            aws cloudtrail update-trail \
+              --name <trail-name> \
+              --cloud-watch-logs-log-group-arn arn:aws:logs:region:account-id:log-group:my-log-group:* \
+              --cloud-watch-logs-role-arn arn:aws:iam::account-id:role/CloudTrail_CloudWatchLogs_Role
+            ```
+
+            Verify the configuration:
+
+            ```bash
+            aws cloudtrail describe-trails \
+              --trail-name-list <trail-name> \
+              --query "trailList[*].{Name:Name,CloudWatchLogsLogGroupArn:CloudWatchLogsLogGroupArn}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a CloudTrail trail with CloudWatch Logs integration:
+
+            ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/my-trail"
+              retention_in_days = 90
+            }
+
+            resource "aws_cloudtrail" "example" {
+              name                          = "my-trail"
+              s3_bucket_name                = aws_s3_bucket.cloudtrail.id
+              is_multi_region_trail         = true
+              cloud_watch_logs_group_arn    = "${aws_cloudwatch_log_group.cloudtrail.arn}:*"
+              cloud_watch_logs_role_arn     = aws_iam_role.cloudtrail_cloudwatch.arn
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure a CloudTrail trail with CloudWatch Logs integration:
+
+            ```yaml
+            Resources:
+              CloudTrailLogGroup:
+                Type: AWS::Logs::LogGroup
+                Properties:
+                  LogGroupName: /aws/cloudtrail/my-trail
+                  RetentionInDays: 90
+              CloudTrail:
+                Type: AWS::CloudTrail::Trail
+                Properties:
+                  TrailName: my-trail
+                  S3BucketName: !Ref CloudTrailBucket
+                  IsMultiRegionTrail: true
+                  IsLogging: true
+                  CloudWatchLogsLogGroupArn: !GetAtt CloudTrailLogGroup.Arn
+                  CloudWatchLogsRoleArn: !GetAtt CloudTrailRole.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/send-cloudtrail-events-to-cloudwatch-logs.html
+        title: AWS Documentation - Sending events to CloudWatch Logs
+  - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-aws
+    filters: asset.platform == "aws-cloudtrail-trail" && aws.cloudtrail.trail.isMultiRegionTrail == true
+    mql: |
+      aws.cloudtrail.trail.cloudWatchLogsLogGroupArn != "" && aws.cloudtrail.trail.cloudWatchLogsLogGroupArn != empty
+  - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_cloudtrail" && arguments['is_multi_region_trail'] == true).all(
+        arguments['cloud_watch_logs_group_arn'] != empty
+      )
+  - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudtrail")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail" && change.after['is_multi_region_trail'] == true).all(
+        change.after['cloud_watch_logs_group_arn'] != empty
+      )
+  - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudtrail")
+    mql: |
+      terraform.state.resources.where(type == "aws_cloudtrail" && values['is_multi_region_trail'] == true).all(
+        values['cloud_watch_logs_group_arn'] != empty
+      )
+  - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudTrail::Trail")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").all(
+        properties['CloudWatchLogsLogGroupArn'] != empty
+      )
+  - uid: mondoo-aws-security-elasticache-backup-retention
+    title: Ensure ElastiCache clusters have backup retention
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-elasticache-backup-retention-aws
+        tags:
+          mondoo.com/filter-title: AWS ElastiCache Cluster
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-elasticache-backup-retention-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-elasticache-backup-retention-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-elasticache-backup-retention-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-elasticache-backup-retention-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Redis ElastiCache clusters have automatic backup (snapshot) retention configured. Automatic backups protect against data loss and enable point-in-time recovery.
+
+        **Why this matters**
+
+        Without backup retention, data in ElastiCache Redis clusters is at risk of permanent loss:
+
+        - **Data loss:** Hardware failures, software bugs, or accidental deletions can result in irrecoverable data loss without backups.
+        - **Recovery capability:** Backups are essential for disaster recovery and restoring data to a known good state.
+        - **Compliance:** Many regulatory frameworks require backup and recovery capabilities for data stores.
+
+        **Risk mitigation:**
+
+        - **Data protection:** Ensures regular snapshots are taken and retained for recovery purposes.
+        - **Business continuity:** Enables rapid recovery from data loss scenarios.
+        - **Compliance:** Meets regulatory requirements for data backup and retention.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon ElastiCache Console**.
+            2. Select **Redis clusters** in the left panel.
+            3. Select the cluster to configure.
+            4. Choose **Modify**.
+            5. Under **Backup**, set **Enable automatic backups** to **Yes**.
+            6. Set the **Backup retention period** to an appropriate value (e.g., 7 days).
+            7. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable backup retention for a Redis replication group:
+
+            ```bash
+            aws elasticache modify-replication-group \
+              --replication-group-id <replication-group-id> \
+              --snapshot-retention-limit 7 \
+              --apply-immediately
+            ```
+
+            Verify the backup configuration:
+
+            ```bash
+            aws elasticache describe-replication-groups \
+              --replication-group-id <replication-group-id> \
+              --query "ReplicationGroups[*].{Id:ReplicationGroupId,SnapshotRetentionLimit:SnapshotRetentionLimit}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an ElastiCache replication group with backup retention:
+
+            ```hcl
+            resource "aws_elasticache_replication_group" "example" {
+              replication_group_id = "example-redis"
+              description          = "Example Redis cluster"
+              engine               = "redis"
+              node_type            = "cache.r6g.large"
+              num_cache_clusters   = 2
+
+              snapshot_retention_limit = 7
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure an ElastiCache replication group with backup retention:
+
+            ```yaml
+            Resources:
+              RedisReplicationGroup:
+                Type: AWS::ElastiCache::ReplicationGroup
+                Properties:
+                  ReplicationGroupDescription: Example Redis cluster
+                  Engine: redis
+                  CacheNodeType: cache.r6g.large
+                  NumCacheClusters: 2
+                  SnapshotRetentionLimit: 7
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/backups.html
+        title: AWS Documentation - Backup and restore for ElastiCache for Redis
+  - uid: mondoo-aws-security-elasticache-backup-retention-aws
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    mql: aws.elasticache.cluster.snapshotRetentionLimit > 0
+  - uid: mondoo-aws-security-elasticache-backup-retention-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticache_replication_group")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_elasticache_replication_group").all(
+        arguments['snapshot_retention_limit'] > 0
+      )
+  - uid: mondoo-aws-security-elasticache-backup-retention-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_elasticache_replication_group")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_elasticache_replication_group").all(
+        change.after['snapshot_retention_limit'] > 0
+      )
+  - uid: mondoo-aws-security-elasticache-backup-retention-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_elasticache_replication_group")
+    mql: |
+      terraform.state.resources.where(type == "aws_elasticache_replication_group").all(
+        values['snapshot_retention_limit'] > 0
+      )
+  - uid: mondoo-aws-security-elasticache-backup-retention-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ElastiCache::ReplicationGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ElastiCache::ReplicationGroup").all(
+        properties['SnapshotRetentionLimit'] > 0
+      )
+  - uid: mondoo-aws-security-rds-backup-retention
+    title: Ensure RDS DB instances have backup retention enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-rds-backup-retention-aws
+        tags:
+          mondoo.com/filter-title: AWS RDS DB Instance
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-rds-backup-retention-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-backup-retention-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-backup-retention-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-backup-retention-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon RDS DB instances have automated backup retention configured. Automated backups allow point-in-time recovery and are essential for data protection and disaster recovery.
+
+        **Why this matters**
+
+        RDS instances without backup retention are at risk of permanent data loss:
+
+        - **No recovery options:** Without automated backups, there is no way to restore data to a specific point in time after an incident.
+        - **Compliance violations:** Most regulatory frameworks require data backup and recovery capabilities.
+        - **Operational risk:** Accidental deletions, corruption, or application bugs can cause irreversible data loss.
+
+        **Risk mitigation:**
+
+        - **Data protection:** Ensures automated backups are taken daily and retained for the configured period.
+        - **Point-in-time recovery:** Enables restoration of the database to any point within the retention window.
+        - **Compliance:** Meets regulatory requirements for data backup and retention.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon RDS Console**.
+            2. Select **Databases** in the left panel.
+            3. Select the DB instance to configure.
+            4. Choose **Modify**.
+            5. Under **Backup**, set the **Backup retention period** to a value greater than 0 (e.g., 7 days).
+            6. Choose **Apply immediately** or during the next maintenance window.
+            7. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable automated backups with a retention period:
+
+            ```bash
+            aws rds modify-db-instance \
+              --db-instance-identifier <db-instance-id> \
+              --backup-retention-period 7 \
+              --apply-immediately
+            ```
+
+            Verify the backup configuration:
+
+            ```bash
+            aws rds describe-db-instances \
+              --db-instance-identifier <db-instance-id> \
+              --query "DBInstances[*].{DBInstanceId:DBInstanceIdentifier,BackupRetentionPeriod:BackupRetentionPeriod}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an RDS instance with backup retention:
+
+            ```hcl
+            resource "aws_db_instance" "example" {
+              identifier              = "example-db"
+              engine                  = "mysql"
+              instance_class          = "db.t3.medium"
+              allocated_storage       = 20
+              backup_retention_period = 7
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure an RDS instance with backup retention:
+
+            ```yaml
+            Resources:
+              MyDBInstance:
+                Type: AWS::RDS::DBInstance
+                Properties:
+                  DBInstanceIdentifier: example-db
+                  Engine: mysql
+                  DBInstanceClass: db.t3.medium
+                  AllocatedStorage: 20
+                  BackupRetentionPeriod: 7
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.html
+        title: AWS Documentation - Working with backups
+  - uid: mondoo-aws-security-rds-backup-retention-aws
+    filters: asset.platform == "aws-rds-dbinstance"
+    mql: aws.rds.dbinstance.backupRetentionPeriod > 0
+  - uid: mondoo-aws-security-rds-backup-retention-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_db_instance").all(
+        arguments['backup_retention_period'] > 0
+      )
+  - uid: mondoo-aws-security-rds-backup-retention-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_db_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_db_instance").all(
+        change.after['backup_retention_period'] > 0
+      )
+  - uid: mondoo-aws-security-rds-backup-retention-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_db_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_db_instance").all(
+        values['backup_retention_period'] > 0
+      )
+  - uid: mondoo-aws-security-rds-backup-retention-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBInstance")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RDS::DBInstance").all(
+        properties['BackupRetentionPeriod'] > 0
+      )
+  - uid: mondoo-aws-security-rds-performance-insights
+    title: Ensure RDS instances have Performance Insights enabled
+    impact: 50
+    variants:
+      - uid: mondoo-aws-security-rds-performance-insights-aws
+        tags:
+          mondoo.com/filter-title: AWS RDS DB Instance
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-rds-performance-insights-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-performance-insights-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-performance-insights-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-performance-insights-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon RDS DB instances have Performance Insights enabled. Performance Insights helps monitor and troubleshoot database performance issues by providing a dashboard that visualizes database load and helps identify bottlenecks.
+
+        **Why this matters**
+
+        Without Performance Insights, database performance issues can be difficult to diagnose:
+
+        - **Limited visibility:** Without detailed performance data, identifying the root cause of performance degradation is time-consuming and error-prone.
+        - **Reactive troubleshooting:** Lack of historical performance data means issues can only be investigated in real time.
+        - **Operational impact:** Unresolved performance issues can lead to application slowdowns, outages, and degraded user experience.
+
+        **Risk mitigation:**
+
+        - **Proactive monitoring:** Enables early detection of performance trends before they impact applications.
+        - **Faster resolution:** Provides detailed wait event and SQL-level analysis for rapid root cause identification.
+        - **Capacity planning:** Historical data supports informed decisions about instance sizing and optimization.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon RDS Console**.
+            2. Select **Databases** in the left panel.
+            3. Select the DB instance to configure.
+            4. Choose **Modify**.
+            5. Under **Performance Insights**, enable **Turn on Performance Insights**.
+            6. Configure the retention period (default is 7 days free tier, or longer with additional cost).
+            7. Choose **Apply immediately** or during the next maintenance window.
+            8. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable Performance Insights on an RDS instance:
+
+            ```bash
+            aws rds modify-db-instance \
+              --db-instance-identifier <db-instance-id> \
+              --enable-performance-insights \
+              --performance-insights-retention-period 7 \
+              --apply-immediately
+            ```
+
+            Verify Performance Insights is enabled:
+
+            ```bash
+            aws rds describe-db-instances \
+              --db-instance-identifier <db-instance-id> \
+              --query "DBInstances[*].{DBInstanceId:DBInstanceIdentifier,PerformanceInsightsEnabled:PerformanceInsightsEnabled}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an RDS instance with Performance Insights enabled:
+
+            ```hcl
+            resource "aws_db_instance" "example" {
+              identifier                    = "example-db"
+              engine                        = "mysql"
+              instance_class                = "db.t3.medium"
+              allocated_storage             = 20
+              performance_insights_enabled  = true
+              performance_insights_retention_period = 7
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure an RDS instance with Performance Insights enabled:
+
+            ```yaml
+            Resources:
+              MyDBInstance:
+                Type: AWS::RDS::DBInstance
+                Properties:
+                  DBInstanceIdentifier: example-db
+                  Engine: mysql
+                  DBInstanceClass: db.t3.medium
+                  AllocatedStorage: 20
+                  EnablePerformanceInsights: true
+                  PerformanceInsightsRetentionPeriod: 7
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PerfInsights.html
+        title: AWS Documentation - Monitoring DB load with Performance Insights
+  - uid: mondoo-aws-security-rds-performance-insights-aws
+    filters: asset.platform == "aws-rds-dbinstance"
+    mql: aws.rds.dbinstance.performanceInsightsEnabled == true
+  - uid: mondoo-aws-security-rds-performance-insights-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_db_instance").all(
+        arguments['performance_insights_enabled'] == true
+      )
+  - uid: mondoo-aws-security-rds-performance-insights-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_db_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_db_instance").all(
+        change.after['performance_insights_enabled'] == true
+      )
+  - uid: mondoo-aws-security-rds-performance-insights-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_db_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_db_instance").all(
+        values['performance_insights_enabled'] == true
+      )
+  - uid: mondoo-aws-security-rds-performance-insights-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBInstance")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RDS::DBInstance").all(
+        properties['EnablePerformanceInsights'] == true
+      )
+  - uid: mondoo-aws-security-rds-deletion-protection
+    title: Ensure RDS DB instances have deletion protection
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-rds-deletion-protection-aws
+        tags:
+          mondoo.com/filter-title: AWS RDS DB Instance
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-rds-deletion-protection-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-deletion-protection-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-deletion-protection-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-deletion-protection-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon RDS DB instances have deletion protection enabled. Deletion protection prevents accidental or unauthorized deletion of RDS instances, which could result in permanent data loss.
+
+        **Why this matters**
+
+        Without deletion protection, RDS instances can be deleted by any user with sufficient IAM permissions:
+
+        - **Accidental deletion:** Human error during infrastructure changes can lead to unintended deletion of production databases.
+        - **Unauthorized deletion:** Compromised credentials could be used to delete critical database instances.
+        - **Data loss:** Deleted RDS instances without final snapshots result in permanent data loss.
+
+        **Risk mitigation:**
+
+        - **Accidental deletion prevention:** Adds a safety mechanism that requires explicit disabling before an instance can be deleted.
+        - **Defense in depth:** Complements IAM policies by adding an instance-level protection.
+        - **Operational safety:** Protects against mistakes during infrastructure automation and maintenance.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon RDS Console**.
+            2. Select **Databases** in the left panel.
+            3. Select the DB instance to configure.
+            4. Choose **Modify**.
+            5. Under **Deletion protection**, enable **Enable deletion protection**.
+            6. Choose **Apply immediately**.
+            7. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable deletion protection on an RDS instance:
+
+            ```bash
+            aws rds modify-db-instance \
+              --db-instance-identifier <db-instance-id> \
+              --deletion-protection \
+              --apply-immediately
+            ```
+
+            Verify deletion protection is enabled:
+
+            ```bash
+            aws rds describe-db-instances \
+              --db-instance-identifier <db-instance-id> \
+              --query "DBInstances[*].{DBInstanceId:DBInstanceIdentifier,DeletionProtection:DeletionProtection}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an RDS instance with deletion protection:
+
+            ```hcl
+            resource "aws_db_instance" "example" {
+              identifier          = "example-db"
+              engine              = "mysql"
+              instance_class      = "db.t3.medium"
+              allocated_storage   = 20
+              deletion_protection = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure an RDS instance with deletion protection:
+
+            ```yaml
+            Resources:
+              MyDBInstance:
+                Type: AWS::RDS::DBInstance
+                Properties:
+                  DBInstanceIdentifier: example-db
+                  Engine: mysql
+                  DBInstanceClass: db.t3.medium
+                  AllocatedStorage: 20
+                  DeletionProtection: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_DeleteInstance.html
+        title: AWS Documentation - Deleting a DB instance
+  - uid: mondoo-aws-security-rds-deletion-protection-aws
+    filters: asset.platform == "aws-rds-dbinstance"
+    mql: aws.rds.dbinstance.deletionProtection == true
+  - uid: mondoo-aws-security-rds-deletion-protection-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_db_instance").all(
+        arguments['deletion_protection'] == true
+      )
+  - uid: mondoo-aws-security-rds-deletion-protection-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_db_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_db_instance").all(
+        change.after['deletion_protection'] == true
+      )
+  - uid: mondoo-aws-security-rds-deletion-protection-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_db_instance")
+    mql: |
+      terraform.state.resources.where(type == "aws_db_instance").all(
+        values['deletion_protection'] == true
+      )
+  - uid: mondoo-aws-security-rds-deletion-protection-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBInstance")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RDS::DBInstance").all(
+        properties['DeletionProtection'] == true
+      )
+  - uid: mondoo-aws-security-rds-cluster-deletion-protection
+    title: Ensure RDS DB clusters have deletion protection enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-rds-cluster-deletion-protection-aws
+        tags:
+          mondoo.com/filter-title: AWS RDS DB Cluster
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-rds-cluster-deletion-protection-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-cluster-deletion-protection-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-cluster-deletion-protection-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-rds-cluster-deletion-protection-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon RDS DB clusters (Aurora) have deletion protection enabled. Deletion protection prevents accidental or unauthorized deletion of Aurora clusters, which could result in permanent data loss.
+
+        **Why this matters**
+
+        Without deletion protection, RDS clusters can be deleted by any user with sufficient IAM permissions:
+
+        - **Accidental deletion:** Human error during infrastructure changes can lead to unintended deletion of production database clusters.
+        - **Unauthorized deletion:** Compromised credentials could be used to delete critical Aurora clusters.
+        - **Data loss:** Deleted clusters without final snapshots result in permanent data loss.
+
+        **Risk mitigation:**
+
+        - **Accidental deletion prevention:** Adds a safety mechanism that requires explicit disabling before a cluster can be deleted.
+        - **Defense in depth:** Complements IAM policies by adding a cluster-level protection.
+        - **Operational safety:** Protects against mistakes during infrastructure automation and maintenance.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon RDS Console**.
+            2. Select **Databases** in the left panel.
+            3. Select the DB cluster to configure.
+            4. Choose **Modify**.
+            5. Under **Deletion protection**, enable **Enable deletion protection**.
+            6. Choose **Apply immediately**.
+            7. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable deletion protection on an RDS cluster:
+
+            ```bash
+            aws rds modify-db-cluster \
+              --db-cluster-identifier <cluster-id> \
+              --deletion-protection \
+              --apply-immediately
+            ```
+
+            Verify deletion protection is enabled:
+
+            ```bash
+            aws rds describe-db-clusters \
+              --db-cluster-identifier <cluster-id> \
+              --query "DBClusters[*].{ClusterId:DBClusterIdentifier,DeletionProtection:DeletionProtection}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an RDS cluster with deletion protection:
+
+            ```hcl
+            resource "aws_rds_cluster" "example" {
+              cluster_identifier  = "example-cluster"
+              engine              = "aurora-mysql"
+              engine_version      = "8.0.mysql_aurora.3.04.0"
+              master_username     = "admin"
+              master_password     = "changeme"
+              deletion_protection = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure an RDS cluster with deletion protection:
+
+            ```yaml
+            Resources:
+              MyDBCluster:
+                Type: AWS::RDS::DBCluster
+                Properties:
+                  DBClusterIdentifier: example-cluster
+                  Engine: aurora-mysql
+                  EngineVersion: 8.0.mysql_aurora.3.04.0
+                  MasterUsername: admin
+                  MasterUserPassword: changeme
+                  DeletionProtection: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/USER_DeleteCluster.html
+        title: AWS Documentation - Deleting an Aurora DB cluster
+  - uid: mondoo-aws-security-rds-cluster-deletion-protection-aws
+    filters: asset.platform == "aws-rds-dbcluster"
+    mql: aws.rds.dbcluster.deletionProtection == true
+  - uid: mondoo-aws-security-rds-cluster-deletion-protection-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_rds_cluster").all(
+        arguments['deletion_protection'] == true
+      )
+  - uid: mondoo-aws-security-rds-cluster-deletion-protection-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_rds_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_rds_cluster").all(
+        change.after['deletion_protection'] == true
+      )
+  - uid: mondoo-aws-security-rds-cluster-deletion-protection-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_rds_cluster").all(
+        values['deletion_protection'] == true
+      )
+  - uid: mondoo-aws-security-rds-cluster-deletion-protection-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBCluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RDS::DBCluster").all(
+        properties['DeletionProtection'] == true
+      )
+  - uid: mondoo-aws-security-ecr-repository-cmk-encryption
+    title: Ensure ECR repositories use KMS encryption
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-ecr-repository-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-ecr-repository-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon ECR repositories are configured to use AWS KMS encryption instead of the default AES-256 encryption. Customer-managed KMS encryption provides additional control over the encryption keys used to protect container images at rest.
+
+        **Why this matters**
+
+        Using the default AES-256 encryption limits control over encryption key management:
+
+        - **Key management:** With default encryption, AWS manages the encryption keys and organizations cannot control key policies, rotation, or access.
+        - **Audit trail:** KMS encryption provides CloudTrail logging of all key usage, enabling detailed audit trails.
+        - **Access control:** KMS key policies provide fine-grained control over which principals can encrypt and decrypt images.
+
+        **Risk mitigation:**
+
+        - **Enhanced control:** Organizations can manage key policies, enforce key rotation, and revoke access as needed.
+        - **Compliance:** Meets regulatory requirements that mandate customer-managed encryption keys.
+        - **Auditability:** All encryption and decryption operations are logged in CloudTrail.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon ECR Console**.
+            2. Select **Repositories** in the left panel.
+            3. To configure KMS encryption, you must create a new repository (encryption type cannot be changed after creation).
+            4. Choose **Create repository**.
+            5. Under **Encryption settings**, select **KMS encryption**.
+            6. Choose an existing KMS key or create a new one.
+            7. Complete the repository creation.
+            8. Migrate images from the old repository to the new KMS-encrypted repository.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create an ECR repository with KMS encryption:
+
+            ```bash
+            aws ecr create-repository \
+              --repository-name <repository-name> \
+              --encryption-configuration encryptionType=KMS,kmsKey=arn:aws:kms:region:account-id:key/key-id
+            ```
+
+            Check the encryption configuration of existing repositories:
+
+            ```bash
+            aws ecr describe-repositories \
+              --query "repositories[*].{Name:repositoryName,EncryptionType:encryptionConfiguration.encryptionType}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an ECR repository with KMS encryption:
+
+            ```hcl
+            resource "aws_ecr_repository" "example" {
+              name = "example-repo"
+
+              encryption_configuration {
+                encryption_type = "KMS"
+                kms_key         = aws_kms_key.ecr.arn
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure an ECR repository with KMS encryption:
+
+            ```yaml
+            Resources:
+              MyECRRepository:
+                Type: AWS::ECR::Repository
+                Properties:
+                  RepositoryName: example-repo
+                  EncryptionConfiguration:
+                    EncryptionType: KMS
+                    KmsKey: !GetAtt ECRKmsKey.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/encryption-at-rest.html
+        title: AWS Documentation - Encryption at rest for Amazon ECR
+  - uid: mondoo-aws-security-ecr-repository-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: aws.ecr.privateRepositories.all( encryptionType == "KMS" )
+  - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_ecr_repository").all(
+        blocks.where(type == "encryption_configuration").length > 0 &&
+        blocks.where(type == "encryption_configuration").all(arguments['encryption_type'] == "KMS")
+      )
+  - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ecr_repository")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_ecr_repository").all(
+        change.after['encryption_configuration'] != empty &&
+        change.after['encryption_configuration'].all(_['encryption_type'] == "KMS")
+      )
+  - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ecr_repository")
+    mql: |
+      terraform.state.resources.where(type == "aws_ecr_repository").all(
+        values['encryption_configuration'] != empty &&
+        values['encryption_configuration'].all(_['encryption_type'] == "KMS")
+      )
+  - uid: mondoo-aws-security-ecr-repository-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECR::Repository")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ECR::Repository").all(
+        properties['EncryptionConfiguration']['EncryptionType'] == "KMS"
+      )
+  - uid: mondoo-aws-security-neptune-cluster-log-export
+    title: Ensure Neptune clusters have audit log export enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-neptune-cluster-log-export-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-neptune-cluster-log-export-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-neptune-cluster-log-export-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-neptune-cluster-log-export-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-neptune-cluster-log-export-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon Neptune DB clusters have audit log export to CloudWatch Logs enabled. Exporting Neptune audit logs to CloudWatch enables centralized monitoring, analysis, and alerting on database activities.
+
+        **Why this matters**
+
+        Without audit log export, database activity monitoring is limited:
+
+        - **Limited visibility:** Audit logs are essential for tracking database queries, authentication attempts, and administrative actions.
+        - **Incident response:** Without centralized logs, investigating security incidents involving the database becomes significantly more difficult.
+        - **Compliance:** Many regulatory frameworks require audit logging and centralized log management for database services.
+
+        **Risk mitigation:**
+
+        - **Monitoring:** Enables real-time monitoring of database activities through CloudWatch.
+        - **Forensics:** Provides audit trails for security investigations and compliance audits.
+        - **Alerting:** Enables automated alerting on suspicious database activities.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon Neptune Console**.
+            2. Select **Databases** in the left panel.
+            3. Select the Neptune cluster to configure.
+            4. Choose **Modify**.
+            5. Under **Log exports**, enable **Audit log**.
+            6. Choose **Apply immediately** or during the next maintenance window.
+            7. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable audit log export for a Neptune cluster:
+
+            ```bash
+            aws neptune modify-db-cluster \
+              --db-cluster-identifier <cluster-id> \
+              --enable-cloudwatch-logs-exports '["audit"]' \
+              --apply-immediately
+            ```
+
+            Verify log export configuration:
+
+            ```bash
+            aws neptune describe-db-clusters \
+              --db-cluster-identifier <cluster-id> \
+              --query "DBClusters[*].{ClusterId:DBClusterIdentifier,LogExports:EnabledCloudwatchLogsExports}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a Neptune cluster with audit log export:
+
+            ```hcl
+            resource "aws_neptune_cluster" "example" {
+              cluster_identifier                   = "example-neptune"
+              engine                               = "neptune"
+              enable_cloudwatch_logs_exports        = ["audit"]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure a Neptune cluster with audit log export:
+
+            ```yaml
+            Resources:
+              MyNeptuneCluster:
+                Type: AWS::Neptune::DBCluster
+                Properties:
+                  DBClusterIdentifier: example-neptune
+                  EnableCloudwatchLogsExports:
+                    - audit
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/neptune/latest/userguide/auditing.html
+        title: AWS Documentation - Auditing Amazon Neptune
+  - uid: mondoo-aws-security-neptune-cluster-log-export-aws
+    filters: asset.platform == "aws"
+    mql: aws.neptune.clusters.all( enabledCloudwatchLogsExports.contains("audit") )
+  - uid: mondoo-aws-security-neptune-cluster-log-export-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_neptune_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_neptune_cluster").all(
+        arguments['enable_cloudwatch_logs_exports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-neptune-cluster-log-export-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_neptune_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_neptune_cluster").all(
+        change.after['enable_cloudwatch_logs_exports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-neptune-cluster-log-export-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_neptune_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_neptune_cluster").all(
+        values['enable_cloudwatch_logs_exports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-neptune-cluster-log-export-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Neptune::DBCluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Neptune::DBCluster").all(
+        properties['EnableCloudwatchLogsExports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-documentdb-cluster-log-export
+    title: Ensure DocumentDB clusters have audit log export enabled
+    impact: 60
+    variants:
+      - uid: mondoo-aws-security-documentdb-cluster-log-export-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-documentdb-cluster-log-export-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-documentdb-cluster-log-export-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-documentdb-cluster-log-export-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-documentdb-cluster-log-export-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon DocumentDB clusters have audit log export to CloudWatch Logs enabled. Exporting audit logs to CloudWatch enables centralized monitoring, analysis, and alerting on DocumentDB operations.
+
+        **Why this matters**
+
+        Without audit log export, database activity monitoring is limited:
+
+        - **Limited visibility:** Audit logs track data definition language (DDL), authentication, authorization, and data manipulation language (DML) events.
+        - **Incident response:** Centralized logs are critical for investigating security incidents and unauthorized access attempts.
+        - **Compliance:** Regulatory frameworks such as PCI DSS, HIPAA, and SOC 2 require audit logging for database services.
+
+        **Risk mitigation:**
+
+        - **Monitoring:** Enables real-time monitoring of database operations through CloudWatch.
+        - **Forensics:** Provides detailed audit trails for security investigations.
+        - **Alerting:** Enables automated alerting on suspicious database activities through CloudWatch alarms.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon DocumentDB Console**.
+            2. Select **Clusters** in the left panel.
+            3. Select the DocumentDB cluster to configure.
+            4. Choose **Modify**.
+            5. Under **Log exports**, enable **Audit logs**.
+            6. Ensure the cluster parameter group has `audit_logs` set to `enabled`.
+            7. Choose **Apply immediately** or during the next maintenance window.
+            8. Save the changes.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Enable audit log export for a DocumentDB cluster:
+
+            ```bash
+            aws docdb modify-db-cluster \
+              --db-cluster-identifier <cluster-id> \
+              --enable-cloudwatch-logs-exports '["audit"]' \
+              --apply-immediately
+            ```
+
+            Ensure the cluster parameter group enables auditing:
+
+            ```bash
+            aws docdb modify-db-cluster-parameter-group \
+              --db-cluster-parameter-group-name <parameter-group-name> \
+              --parameters "ParameterName=audit_logs,ParameterValue=enabled,ApplyMethod=pending-reboot"
+            ```
+
+            Verify log export configuration:
+
+            ```bash
+            aws docdb describe-db-clusters \
+              --db-cluster-identifier <cluster-id> \
+              --query "DBClusters[*].{ClusterId:DBClusterIdentifier,LogExports:EnabledCloudwatchLogsExports}"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure a DocumentDB cluster with audit log export:
+
+            ```hcl
+            resource "aws_docdb_cluster" "example" {
+              cluster_identifier              = "example-docdb"
+              engine                          = "docdb"
+              master_username                 = "admin"
+              master_password                 = "changeme"
+              enabled_cloudwatch_logs_exports = ["audit"]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            Configure a DocumentDB cluster with audit log export:
+
+            ```yaml
+            Resources:
+              MyDocDBCluster:
+                Type: AWS::DocDB::DBCluster
+                Properties:
+                  DBClusterIdentifier: example-docdb
+                  MasterUsername: admin
+                  MasterUserPassword: changeme
+                  EnableCloudwatchLogsExports:
+                    - audit
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/event-auditing.html
+        title: AWS Documentation - Auditing Amazon DocumentDB events
+  - uid: mondoo-aws-security-documentdb-cluster-log-export-aws
+    filters: asset.platform == "aws"
+    mql: aws.documentdb.clusters.all( enabledCloudwatchLogsExports.contains("audit") )
+  - uid: mondoo-aws-security-documentdb-cluster-log-export-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_docdb_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_docdb_cluster").all(
+        arguments['enabled_cloudwatch_logs_exports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-documentdb-cluster-log-export-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_docdb_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_docdb_cluster").all(
+        change.after['enabled_cloudwatch_logs_exports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-documentdb-cluster-log-export-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_docdb_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_docdb_cluster").all(
+        values['enabled_cloudwatch_logs_exports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-documentdb-cluster-log-export-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::DocDB::DBCluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::DocDB::DBCluster").all(
+        properties['EnableCloudwatchLogsExports'].contains("audit")
+      )
+  - uid: mondoo-aws-security-config-aggregator-enabled
+    title: Ensure AWS Config aggregator is configured
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-config-aggregator-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+      - uid: mondoo-aws-security-config-aggregator-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-config-aggregator-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-config-aggregator-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-config-aggregator-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that an AWS Config aggregator is configured to collect configuration and compliance data across all AWS accounts and regions. Without an aggregator, Config data is siloed per region, making it difficult to maintain a centralized view of resource compliance.
+
+        **Why this matters**
+
+        - **Incomplete visibility:** Without aggregation, security teams must check each region individually for compliance data.
+        - **Regulatory gaps:** Many compliance frameworks require a centralized view of all infrastructure configuration across the entire organization.
+        - **Incident response delays:** During security incidents, the inability to quickly query configuration data across all regions slows investigation and remediation.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **AWS Config Console**.
+            2. Select **Aggregators** in the left panel.
+            3. Choose **Add aggregator**.
+            4. Enter a name for the aggregator.
+            5. Select **Add all accounts** or specify individual account IDs.
+            6. Select **Add all regions** to aggregate data from every region.
+            7. If using AWS Organizations, select the organization aggregation option and provide the required IAM role.
+            8. Choose **Save**.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Create a Config aggregator for all regions:
+
+            ```bash
+            aws configservice put-configuration-aggregator \
+              --configuration-aggregator-name my-aggregator \
+              --account-aggregation-sources '[{"AccountIds":["123456789012"],"AllAwsRegions":true}]'
+            ```
+
+            For organization-level aggregation:
+
+            ```bash
+            aws configservice put-configuration-aggregator \
+              --configuration-aggregator-name my-org-aggregator \
+              --organization-aggregation-source '{"RoleArn":"arn:aws:iam::123456789012:role/ConfigAggregatorRole","AllAwsRegions":true}'
+            ```
+
+            Verify the aggregator:
+
+            ```bash
+            aws configservice describe-configuration-aggregators
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "aws_config_configuration_aggregator" "organization" {
+              name = "organization-aggregator"
+
+              organization_aggregation_source {
+                all_regions = true
+                role_arn    = aws_iam_role.config_aggregator.arn
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            Resources:
+              ConfigAggregator:
+                Type: AWS::Config::ConfigurationAggregator
+                Properties:
+                  ConfigurationAggregatorName: organization-aggregator
+                  OrganizationAggregationSource:
+                    AllAwsRegions: true
+                    RoleArn: !GetAtt ConfigAggregatorRole.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/aggregate-data.html
+        title: AWS Documentation - Multi-Account Multi-Region Data Aggregation
+  - uid: mondoo-aws-security-config-aggregator-enabled-aws
+    filters: asset.platform == "aws"
+    mql: aws.config.aggregators.length > 0
+  - uid: mondoo-aws-security-config-aggregator-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_config_configuration_aggregator")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_config_configuration_aggregator").length > 0
+  - uid: mondoo-aws-security-config-aggregator-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_config_configuration_aggregator")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_config_configuration_aggregator").length > 0
+  - uid: mondoo-aws-security-config-aggregator-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_config_configuration_aggregator")
+    mql: |
+      terraform.state.resources.where(type == "aws_config_configuration_aggregator").length > 0
+  - uid: mondoo-aws-security-config-aggregator-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Config::ConfigurationAggregator")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Config::ConfigurationAggregator").length > 0
+  - uid: mondoo-aws-security-ecr-no-public-access
+    title: Ensure ECR repositories do not allow public access
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-ecr-no-public-access-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon ECR private repository access policies do not grant public access. A repository policy that allows the `*` principal enables any AWS account or unauthenticated user to pull container images, potentially exposing proprietary code, configuration, and embedded secrets.
+
+        **Why this matters**
+
+        - **Image exposure:** Container images often contain application source code, configuration files, and embedded credentials that should not be publicly accessible.
+        - **Supply chain risk:** Publicly accessible images can be analyzed by attackers to discover vulnerabilities and develop targeted exploits.
+        - **Intellectual property:** Container images may contain proprietary business logic and trade secrets.
+        - **Compliance violations:** Many regulatory frameworks prohibit public exposure of application artifacts.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **Amazon ECR Console**.
+            2. Select **Repositories** in the left panel.
+            3. Select the repository to review.
+            4. Choose the **Permissions** tab.
+            5. Review the policy document for any principals set to `*`.
+            6. Select **Edit policy JSON** and remove or restrict any overly permissive statements.
+            7. Save the updated policy.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            View the current repository policy:
+
+            ```bash
+            aws ecr get-repository-policy \
+              --repository-name <repo-name>
+            ```
+
+            Delete an overly permissive policy:
+
+            ```bash
+            aws ecr delete-repository-policy \
+              --repository-name <repo-name>
+            ```
+
+            Set a restricted policy:
+
+            ```bash
+            aws ecr set-repository-policy \
+              --repository-name <repo-name> \
+              --policy-text file://ecr-policy.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/repository-policies.html
+        title: AWS Documentation - Amazon ECR repository policies
+  - uid: mondoo-aws-security-ecr-no-public-access-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecr.privateRepositories.where(policy != empty).all(
+        policy['Statement'].none(
+          _['Principal'] == "*"
+        )
+      )
+      aws.ecr.privateRepositories.where(policy != empty).all(
+        policy['Statement'].none(
+          _['Principal']['AWS'] == "*"
+        )
+      )
+      aws.ecr.privateRepositories.where(policy != empty).all(
+        policy['Statement'].none(
+          _['Principal']['AWS'].contains("*")
+        )
+      )
+  - uid: mondoo-aws-security-ec2-launch-template-no-secrets
+    title: Ensure EC2 launch templates do not contain secrets
+    impact: 90
+    variants:
+      - uid: mondoo-aws-security-ec2-launch-template-no-secrets-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/icon: aws
+    docs:
+      desc: |
+        This check ensures that EC2 launch template user data does not contain hard-coded secrets such as AWS access keys, private keys, passwords, or API tokens. Launch template user data is visible to anyone with EC2 describe permissions and is stored in plaintext, making it an insecure location for sensitive credentials.
+
+        **Why this matters**
+
+        - **Credential exposure:** Launch template user data is accessible via the EC2 API and console to any IAM principal with `ec2:DescribeLaunchTemplateVersions` permissions.
+        - **Persistence:** Unlike instance-level user data, launch templates persist indefinitely and can be used across many instances, increasing the blast radius of leaked credentials.
+        - **Version history:** All versions of a launch template are retained, meaning secrets embedded in any version remain accessible.
+
+        **Risk mitigation:**
+
+        - Use IAM instance profiles instead of embedding AWS credentials.
+        - Store secrets in AWS Secrets Manager or SSM Parameter Store and retrieve them at boot time.
+        - Use EC2 instance metadata service (IMDSv2) for temporary credentials.
+      remediation:
+        - id: console
+          desc: |
+            **Using AWS Console**
+
+            1. Navigate to the **EC2 Console**.
+            2. Select **Launch templates** in the left panel.
+            3. Select the launch template to review.
+            4. For each version, expand **Advanced details** and review the **User data** section.
+            5. Remove any hard-coded secrets from the user data.
+            6. Replace secrets with references to AWS Secrets Manager or SSM Parameter Store.
+            7. Create a new version of the launch template with the updated user data.
+        - id: cli
+          desc: |
+            **Using AWS CLI**
+
+            Check user data in launch template versions:
+
+            ```bash
+            aws ec2 describe-launch-template-versions \
+              --launch-template-id <template-id> \
+              --query "LaunchTemplateVersions[*].{Version:VersionNumber,UserData:LaunchTemplateData.UserData}"
+            ```
+
+            Create a new launch template version without secrets:
+
+            ```bash
+            aws ec2 create-launch-template-version \
+              --launch-template-id <template-id> \
+              --launch-template-data file://updated-template-data.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-launch-templates.html
+        title: AWS Documentation - Launch templates
+      - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html
+        title: AWS Documentation - What is AWS Secrets Manager
+  - uid: mondoo-aws-security-ec2-launch-template-no-secrets-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.launchTemplates.all(
+        userData != /(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/ &&
+        userData != /-----BEGIN (RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY/ &&
+        userData != /(?i)(aws_secret_access_key|password|secret_key|api_key|apikey|access_token|auth_token)\s*[=:]\s*['"]?[A-Za-z0-9\/+=]{8,}/
       )
