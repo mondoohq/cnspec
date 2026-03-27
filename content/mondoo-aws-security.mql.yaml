@@ -33724,6 +33724,22 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/icon: aws
+      - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+      - uid: mondoo-aws-security-emr-local-disk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/icon: cloudformation
     docs:
       desc: |
         This check ensures that Amazon EMR clusters have local disk encryption enabled. Local disk encryption protects data stored on instance store volumes and EBS volumes attached to EMR cluster nodes using Linux Unified Key Setup (LUKS) or other encryption mechanisms.
@@ -33784,6 +33800,56 @@ queries:
               --release-label emr-6.15.0 \
               --instance-type m5.xlarge
             ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure an EMR security configuration with local disk encryption:
+
+            ```hcl
+            resource "aws_emr_security_configuration" "encryption" {
+              name = "emr-local-disk-encryption"
+
+              configuration = jsonencode({
+                EncryptionConfiguration = {
+                  EnableAtRestEncryption = true
+                  AtRestEncryptionConfiguration = {
+                    LocalDiskEncryptionConfiguration = {
+                      EncryptionKeyProviderType = "AwsKms"
+                      AwsKmsKey                = aws_kms_key.emr.arn
+                    }
+                  }
+                  EnableInTransitEncryption = false
+                }
+              })
+            }
+
+            resource "aws_emr_cluster" "example" {
+              name                   = "secure-cluster"
+              release_label          = "emr-6.15.0"
+              security_configuration = aws_emr_security_configuration.encryption.name
+
+              # ... other configuration
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            **Using CloudFormation**
+
+            ```yaml
+            EMRSecurityConfiguration:
+              Type: AWS::EMR::SecurityConfiguration
+              Properties:
+                Name: emr-local-disk-encryption
+                SecurityConfiguration:
+                  EncryptionConfiguration:
+                    EnableAtRestEncryption: true
+                    AtRestEncryptionConfiguration:
+                      LocalDiskEncryptionConfiguration:
+                        EncryptionKeyProviderType: AwsKms
+                        AwsKmsKey: !GetAtt EMRKmsKey.Arn
+                    EnableInTransitEncryption: false
+            ```
     refs:
       - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-data-encryption-options.html
         title: AWS Documentation - Encryption options for Amazon EMR
@@ -33793,6 +33859,30 @@ queries:
       aws.emr.clusters.all(
         encryptionConfiguration.atRestEnabled == true &&
         encryptionConfiguration.atRestConfiguration['LocalDiskEncryptionConfiguration'] != empty
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_security_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_emr_security_configuration").all(
+      arguments.configuration.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_emr_security_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_emr_security_configuration").all(
+      change.after.configuration.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_emr_security_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_emr_security_configuration").all(
+      values.configuration.contains("LocalDiskEncryptionConfiguration")
+      )
+  - uid: mondoo-aws-security-emr-local-disk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::SecurityConfiguration")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EMR::SecurityConfiguration").all(
+      properties['SecurityConfiguration'].string.contains("LocalDiskEncryptionConfiguration")
       )
   - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration
     title: Ensure CloudTrail trails deliver logs to CloudWatch
@@ -33923,19 +34013,19 @@ queries:
   - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail")
     mql: |
-      terraform.resources.where(nameLabel == "aws_cloudtrail").all(
+      terraform.resources.where(nameLabel == "aws_cloudtrail" && arguments['is_multi_region_trail'] == true).all(
         arguments['cloud_watch_logs_group_arn'] != empty
       )
   - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudtrail")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").all(
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail" && change.after['is_multi_region_trail'] == true).all(
         change.after['cloud_watch_logs_group_arn'] != empty
       )
   - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudtrail")
     mql: |
-      terraform.state.resources.where(type == "aws_cloudtrail").all(
+      terraform.state.resources.where(type == "aws_cloudtrail" && values['is_multi_region_trail'] == true).all(
         values['cloud_watch_logs_group_arn'] != empty
       )
   - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration-cloudformation
@@ -34744,6 +34834,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository")
     mql: |
       terraform.resources.where(nameLabel == "aws_ecr_repository").all(
+        blocks.where(type == "encryption_configuration").length > 0 &&
         blocks.where(type == "encryption_configuration").all(arguments['encryption_type'] == "KMS")
       )
   - uid: mondoo-aws-security-ecr-repository-cmk-encryption-terraform-plan
