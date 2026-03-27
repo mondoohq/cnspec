@@ -4506,6 +4506,13 @@ queries:
           arguments['protocol'] == /Udp|\*/i &&
           arguments['source_address_prefix'] == /\*|0\.0\.0\.0|Internet|Any/i &&
           arguments['destination_port_range'] == "*"
+        ) &&
+        blocks.where(type == "security_rule").none(
+          arguments['direction'] == "Inbound" &&
+          arguments['access'] == "Allow" &&
+          arguments['protocol'] == /Udp|\*/i &&
+          arguments['source_address_prefix'] == /\*|0\.0\.0\.0|Internet|Any/i &&
+          arguments['destination_port_range'] == /^(53|123|161|389|1900)$/
         )
       )
   - uid: mondoo-azure-security-disable-udp-virtualmachines-terraform-plan
@@ -4521,6 +4528,16 @@ queries:
           _['destination_port_range'] == "*"
         )
       )
+      terraform.plan.resourceChanges.where(type == "azurerm_network_security_group").all(
+        change.after.security_rule == null ||
+        change.after.security_rule.none(
+          _['direction'] == "Inbound" &&
+          _['access'] == "Allow" &&
+          _['protocol'] == /Udp|\*/i &&
+          _['source_address_prefix'] == /\*|0\.0\.0\.0|Internet|Any/i &&
+          _['destination_port_range'] == /^(53|123|161|389|1900)$/
+        )
+      )
   - uid: mondoo-azure-security-disable-udp-virtualmachines-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_network_security_group")
     mql: |
@@ -4532,6 +4549,16 @@ queries:
           _['protocol'] == /Udp|\*/i &&
           _['source_address_prefix'] == /\*|0\.0\.0\.0|Internet|Any/i &&
           _['destination_port_range'] == "*"
+        )
+      )
+      terraform.state.resources.where(type == "azurerm_network_security_group").all(
+        values.security_rule == null ||
+        values.security_rule.none(
+          _['direction'] == "Inbound" &&
+          _['access'] == "Allow" &&
+          _['protocol'] == /Udp|\*/i &&
+          _['source_address_prefix'] == /\*|0\.0\.0\.0|Internet|Any/i &&
+          _['destination_port_range'] == /^(53|123|161|389|1900)$/
         )
       )
   - uid: mondoo-azure-security-storage-blob-soft-delete-enabled
@@ -7096,22 +7123,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_web_app/)
     mql: |
       terraform.resources.where(nameLabel == /azurerm_(linux|windows)_web_app/).all(
-        blocks.where(type == "site_config") != empty &&
-        blocks.where(type == "site_config").all(arguments['ftps_state'] == "Disabled")
+        arguments['ftp_publish_basic_authentication_enabled'] == false
       )
   - uid: mondoo-azure-security-app-service-ftp-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_web_app/)
     mql: |
       if (terraform.plan.resourceChanges.where(type == "azurerm_linux_web_app").length > 0) {
         terraform.plan.resourceChanges.where(type == "azurerm_linux_web_app").all(
-          change.after.site_config != empty &&
-          change.after.site_config.all(_["ftps_state"] == "Disabled")
+          change.after['ftp_publish_basic_authentication_enabled'] == false
         )
       }
       if (terraform.plan.resourceChanges.where(type == "azurerm_windows_web_app").length > 0) {
         terraform.plan.resourceChanges.where(type == "azurerm_windows_web_app").all(
-          change.after.site_config != empty &&
-          change.after.site_config.all(_["ftps_state"] == "Disabled")
+          change.after['ftp_publish_basic_authentication_enabled'] == false
         )
       }
   - uid: mondoo-azure-security-app-service-ftp-disabled-terraform-state
@@ -7119,14 +7143,12 @@ queries:
     mql: |
       if (terraform.state.resources.where(type == "azurerm_linux_web_app").length > 0) {
         terraform.state.resources.where(type == "azurerm_linux_web_app").all(
-          values.site_config != empty &&
-          values.site_config.all(_["ftps_state"] == "Disabled")
+          values['ftp_publish_basic_authentication_enabled'] == false
         )
       }
       if (terraform.state.resources.where(type == "azurerm_windows_web_app").length > 0) {
         terraform.state.resources.where(type == "azurerm_windows_web_app").all(
-          values.site_config != empty &&
-          values.site_config.all(_["ftps_state"] == "Disabled")
+          values['ftp_publish_basic_authentication_enabled'] == false
         )
       }
   - uid: mondoo-azure-security-app-service-scm-disabled
@@ -18888,7 +18910,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_server")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_mssql_server").all(
-        arguments['azuread_administrator'] != empty
+        blocks.where(type == "azuread_administrator") != empty
       )
   - uid: mondoo-azure-security-sql-ad-admin-configured-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_server")
@@ -18964,34 +18986,37 @@ queries:
       azure.subscription.mySql.flexibleServer.configuration.where(name == "tls_version").all(value.in(props.latestTlsVersions))
       azure.subscription.mySql.flexibleServer.sslEnforcement == true
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mysql_server" || nameLabel == "azurerm_mysql_flexible_server")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mysql_server" || nameLabel == "azurerm_mysql_flexible_server" || nameLabel == "azurerm_mysql_flexible_server_configuration")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_mysql_server").all(
         arguments['ssl_enforcement_enabled'] == true &&
         arguments['ssl_minimal_tls_version_enforced'] == "TLS1_2"
       )
-      terraform.resources.where(nameLabel == "azurerm_mysql_flexible_server").all(
-        arguments['ssl_enforcement_enabled'] != false
+      terraform.resources.where(nameLabel == "azurerm_mysql_flexible_server_configuration").none(
+        arguments['name'] == "require_secure_transport" &&
+        arguments['value'] == "OFF"
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mysql_server" || type == "azurerm_mysql_flexible_server")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mysql_server" || type == "azurerm_mysql_flexible_server" || type == "azurerm_mysql_flexible_server_configuration")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_mysql_server").all(
         change.after['ssl_enforcement_enabled'] == true &&
         change.after['ssl_minimal_tls_version_enforced'] == "TLS1_2"
       )
-      terraform.plan.resourceChanges.where(type == "azurerm_mysql_flexible_server").all(
-        change.after['ssl_enforcement_enabled'] != false
+      terraform.plan.resourceChanges.where(type == "azurerm_mysql_flexible_server_configuration").none(
+        change.after['name'] == "require_secure_transport" &&
+        change.after['value'] == "OFF"
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mysql_server" || type == "azurerm_mysql_flexible_server")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mysql_server" || type == "azurerm_mysql_flexible_server" || type == "azurerm_mysql_flexible_server_configuration")
     mql: |
       terraform.state.resources.where(type == "azurerm_mysql_server").all(
         values['ssl_enforcement_enabled'] == true &&
         values['ssl_minimal_tls_version_enforced'] == "TLS1_2"
       )
-      terraform.state.resources.where(type == "azurerm_mysql_flexible_server").all(
-        values['ssl_enforcement_enabled'] != false
+      terraform.state.resources.where(type == "azurerm_mysql_flexible_server_configuration").none(
+        values['name'] == "require_secure_transport" &&
+        values['value'] == "OFF"
       )
   - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_firewall_rule" || nameLabel == "azurerm_postgresql_flexible_server_firewall_rule" || nameLabel == "azurerm_mysql_flexible_server_firewall_rule")
@@ -19061,7 +19086,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_postgresql_flexible_server")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_postgresql_flexible_server").all(
-        arguments['customer_managed_key'] != empty
+        blocks.where(type == "customer_managed_key") != empty
       )
   - uid: mondoo-azure-security-postgresql-flexible-server-infrastructure-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_postgresql_flexible_server")
@@ -19134,7 +19159,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mysql_flexible_server")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_mysql_flexible_server").all(
-        arguments['customer_managed_key'] != empty
+        blocks.where(type == "customer_managed_key") != empty
       )
   - uid: mondoo-azure-security-mysql-flexible-server-infrastructure-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mysql_flexible_server")
@@ -19180,9 +19205,9 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_postgresql_flexible_server")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_postgresql_flexible_server").all(
-        arguments['authentication'] != empty &&
-        arguments['authentication'].all(
-          _['password_auth_enabled'] == false
+        blocks.where(type == "authentication") != empty &&
+        blocks.where(type == "authentication").all(
+          arguments['password_auth_enabled'] == false
         )
       )
   - uid: mondoo-azure-security-postgresql-flexible-server-password-auth-disabled-terraform-plan

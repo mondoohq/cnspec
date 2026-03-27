@@ -392,7 +392,7 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance')
     mql: |
       # Check that service_account block exists on all compute instances and no service_account uses default service account email
-      terraform.resources('google_compute_instance').any(
+      terraform.resources('google_compute_instance').all(
         blocks.where(type == 'service_account') != empty &&
         blocks.where(type == 'service_account').none(
           arguments.email == /^\d{12}-(compute|cloudservices)@developer\.gserviceaccount\.com$|^[a-z][a-z0-9\-]{4,28}@appspot\.gserviceaccount\.com$/
@@ -5149,9 +5149,12 @@ queries:
       terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key_iam_binding') ||
       terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key_iam_member')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key_iam_policy' || type == 'google_kms_crypto_key_iam_binding' || type == 'google_kms_crypto_key_iam_member').all(
-        change.after.members == empty ||
-          change.after.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key_iam_policy' || type == 'google_kms_crypto_key_iam_binding')
+        .all(
+          change.after.members == empty || change.after.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+        )
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key_iam_member').all(
+        change.after.member != 'allUsers' && change.after.member != 'allAuthenticatedUsers'
       )
   - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible-terraform-state
     filters: |
@@ -5160,9 +5163,12 @@ queries:
       terraform.state.resources.contains(type == 'google_kms_crypto_key_iam_binding') ||
       terraform.state.resources.contains(type == 'google_kms_crypto_key_iam_member')
     mql: |
-      terraform.state.resources.where(type == 'google_kms_crypto_key_iam_policy' || type == 'google_kms_crypto_key_iam_binding' || type == 'google_kms_crypto_key_iam_member').all(
-        values.members == empty ||
-          values.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+      terraform.state.resources.where(type == 'google_kms_crypto_key_iam_policy' || type == 'google_kms_crypto_key_iam_binding')
+        .all(
+          values.members == empty || values.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+        )
+      terraform.state.resources.where(type == 'google_kms_crypto_key_iam_member').all(
+        values.member != 'allUsers' && values.member != 'allAuthenticatedUsers'
       )
   - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days
     title: Ensure KMS Encryption Keys Are Rotated Within a Period of 90 Days
@@ -6253,7 +6259,7 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dns_managed_zone')
     mql: |
-      terraform.resources('google_dns_managed_zone').all(
+      terraform.resources('google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == empty).all(
         blocks.where(type == 'dnssec_config') != empty &&
         blocks.where(type == 'dnssec_config').all(
           arguments.state == "on" &&
@@ -6264,7 +6270,7 @@ queries:
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').all(
+      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == empty).all(
         change.after.dnssec_config != empty &&
         change.after.dnssec_config.all(
           state == "on" &&
@@ -6275,7 +6281,7 @@ queries:
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dns_managed_zone')
     mql: |
-      terraform.state.resources.where(type == 'google_dns_managed_zone').all(
+      terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
         values.dnssec_config != empty &&
         values.dnssec_config.all(
           state == "on" &&
@@ -10204,14 +10210,18 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function')
     mql: |
       terraform.resources.where(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function').all(
-        arguments.service_account_email != empty
+        arguments.service_account_email != empty &&
+        arguments.service_account_email != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+        arguments.service_account_email != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
       )
   - uid: mondoo-gcp-security-cloud-functions-no-default-service-account-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
-        change.after.service_account_email != empty
+        change.after.service_account_email != empty &&
+        change.after.service_account_email != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+        change.after.service_account_email != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
       )
   - uid: mondoo-gcp-security-cloud-functions-no-default-service-account-terraform-state
     filters: |
@@ -10785,7 +10795,9 @@ queries:
     mql: |
       terraform.resources('google_cloud_run_v2_service').all(
         blocks.where(type == 'template').all(
-          arguments.service_account != empty
+          arguments.service_account != empty &&
+          arguments.service_account != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+          arguments.service_account != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
         )
       )
   - uid: mondoo-gcp-security-cloud-run-no-default-service-account-terraform-plan
@@ -10794,7 +10806,11 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_cloud_run_v2_service').all(
         change.after.template != empty &&
-        change.after.template.all(_['service_account'] != empty)
+        change.after.template.all(
+          _['service_account'] != empty &&
+          _['service_account'] != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+          _['service_account'] != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+        )
       )
   - uid: mondoo-gcp-security-cloud-run-no-default-service-account-terraform-state
     filters: |
