@@ -1212,13 +1212,15 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_storage_account")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_storage_account").all(
-        change.after.https_traffic_only_enabled == true
+        change.after['https_traffic_only_enabled'] == true ||
+        change.after['enable_https_traffic_only'] == true
       )
   - uid: mondoo-azure-security-secure-transfer-required-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_storage_account")
     mql: |
       terraform.state.resources.where(type == "azurerm_storage_account").all(
-        values.https_traffic_only_enabled == true
+        values['https_traffic_only_enabled'] == true ||
+        values['enable_https_traffic_only'] == true
       )
   - uid: mondoo-azure-security-public-access-level-private-blob-containers
     title: Ensure blob anonymous access and storage public access are disabled
@@ -5622,44 +5624,23 @@ queries:
     mql: |
       azure.subscription.compute.vm.dataDisks.all(properties.encryption.type == "EncryptionAtRestWithCustomerKey")
   - uid: mondoo-azure-security-compute-data-disks-encrypted-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_virtual_machine/)
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_managed_disk")
     mql: |
-      if (terraform.resources.where(nameLabel == "azurerm_linux_virtual_machine").length > 0) {
-        terraform.resources.where(nameLabel == "azurerm_linux_virtual_machine").all(
-          arguments['encryption_at_host_enabled'] == true
-        )
-      }
-      if (terraform.resources.where(nameLabel == "azurerm_windows_virtual_machine").length > 0) {
-        terraform.resources.where(nameLabel == "azurerm_windows_virtual_machine").all(
-          arguments['encryption_at_host_enabled'] == true
-        )
-      }
+      terraform.resources.where(nameLabel == "azurerm_managed_disk").all(
+        arguments['disk_encryption_set_id'] != empty
+      )
   - uid: mondoo-azure-security-compute-data-disks-encrypted-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_virtual_machine/)
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_managed_disk")
     mql: |
-      if (terraform.plan.resourceChanges.where(type == "azurerm_linux_virtual_machine").length > 0) {
-        terraform.plan.resourceChanges.where(type == "azurerm_linux_virtual_machine").all(
-          change.after['encryption_at_host_enabled'] == true
-        )
-      }
-      if (terraform.plan.resourceChanges.where(type == "azurerm_windows_virtual_machine").length > 0) {
-        terraform.plan.resourceChanges.where(type == "azurerm_windows_virtual_machine").all(
-          change.after['encryption_at_host_enabled'] == true
-        )
-      }
+      terraform.plan.resourceChanges.where(type == "azurerm_managed_disk").all(
+        change.after['disk_encryption_set_id'] != empty
+      )
   - uid: mondoo-azure-security-compute-data-disks-encrypted-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_virtual_machine/)
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_managed_disk")
     mql: |
-      if (terraform.state.resources.where(type == "azurerm_linux_virtual_machine").length > 0) {
-        terraform.state.resources.where(type == "azurerm_linux_virtual_machine").all(
-          values['encryption_at_host_enabled'] == true
-        )
-      }
-      if (terraform.state.resources.where(type == "azurerm_windows_virtual_machine").length > 0) {
-        terraform.state.resources.where(type == "azurerm_windows_virtual_machine").all(
-          values['encryption_at_host_enabled'] == true
-        )
-      }
+      terraform.state.resources.where(type == "azurerm_managed_disk").all(
+        values['disk_encryption_set_id'] != empty
+      )
   - uid: mondoo-azure-security-network-watcher-flow-logs-enabled
     title: Ensure Network Watcher flow logs are enabled
     impact: 80
@@ -18737,19 +18718,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_redis_cache")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_redis_cache").all(
-        arguments['redis_version'] == "6"
+        arguments['redis_version'] >= "6"
       )
   - uid: mondoo-azure-security-redis-latest-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_redis_cache")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_redis_cache").all(
-        change.after['redis_version'] == "6"
+        change.after['redis_version'] >= "6"
       )
   - uid: mondoo-azure-security-redis-latest-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_redis_cache")
     mql: |
       terraform.state.resources.where(type == "azurerm_redis_cache").all(
-        values['redis_version'] == "6"
+        values['redis_version'] >= "6"
       )
   - uid: mondoo-azure-security-redis-auth-required-azure
     filters: |
@@ -18951,22 +18932,25 @@ queries:
       // TLS/SSL is enforced on the server by default.
       azure.subscription.postgreSql.flexibleServer.configuration.where(name == 'require_secure_transport').all(value.downcase == "on")
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_postgresql_flexible_server")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_postgresql_flexible_server_configuration")
     mql: |
-      terraform.resources.where(nameLabel == "azurerm_postgresql_flexible_server").all(
-        arguments['ssl_enforcement_enabled'] != false
+      // Flexible Server enforces SSL by default; verify require_secure_transport is not disabled
+      terraform.resources.where(nameLabel == "azurerm_postgresql_flexible_server_configuration" && arguments['name'] == "require_secure_transport").all(
+        arguments['value'].downcase == "on"
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_postgresql_flexible_server")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_postgresql_flexible_server_configuration")
     mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_postgresql_flexible_server").all(
-        change.after['ssl_enforcement_enabled'] != false
+      // Flexible Server enforces SSL by default; verify require_secure_transport is not disabled
+      terraform.plan.resourceChanges.where(type == "azurerm_postgresql_flexible_server_configuration" && change.after['name'] == "require_secure_transport").all(
+        change.after['value'].downcase == "on"
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_postgresql_flexible_server")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_postgresql_flexible_server_configuration")
     mql: |
-      terraform.state.resources.where(type == "azurerm_postgresql_flexible_server").all(
-        values['ssl_enforcement_enabled'] != false
+      // Flexible Server enforces SSL by default; verify require_secure_transport is not disabled
+      terraform.state.resources.where(type == "azurerm_postgresql_flexible_server_configuration" && values['name'] == "require_secure_transport").all(
+        values['value'].downcase == "on"
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-azure
     filters: |
