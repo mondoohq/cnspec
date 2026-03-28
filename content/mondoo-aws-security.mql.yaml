@@ -588,6 +588,13 @@ queries:
               vpc_config {
                 subnet_ids = [aws_subnet.eks_subnet.id]
               }
+
+              encryption_config {
+                provider {
+                  key_arn = aws_kms_key.example.arn
+                }
+                resources = ["secrets"]
+              }
             }
             ```
         - id: cloudformation
@@ -1168,10 +1175,6 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/icon: terraform
-      - uid: mondoo-aws-security-iam-password-policy-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS accounts enforce a strong IAM password policy to enhance security by preventing weak or easily guessable passwords. A well-defined password policy helps protect against brute-force attacks, credential stuffing, and unauthorized access.
@@ -1256,21 +1259,20 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            CloudFormation can enforce a strong IAM password policy by creating an AWS::IAM::AccountPasswordPolicy resource with the necessary complexity requirements:
+            CloudFormation does not support managing the IAM account password policy. There is no `AWS::IAM::AccountPasswordPolicy` resource type.
 
-            ```yaml
-            Resources:
-              StrongIAMPasswordPolicy:
-                Type: "AWS::IAM::AccountPasswordPolicy"
-                Properties:
-                  MinimumPasswordLength: 14
-                  RequireUppercaseCharacters: true
-                  RequireLowercaseCharacters: true
-                  RequireNumbers: true
-                  RequireSymbols: true
-                  MaxPasswordAge: 90
-                  PasswordReusePrevention: 24
-                  AllowUsersToChangePassword: true
+            Use the AWS CLI to configure the account password policy:
+
+            ```bash
+            aws iam update-account-password-policy \
+              --minimum-password-length 14 \
+              --require-uppercase-characters \
+              --require-lowercase-characters \
+              --require-numbers \
+              --require-symbols \
+              --max-password-age 90 \
+              --password-reuse-prevention 24 \
+              --allow-users-to-change-password
             ```
     refs:
       - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords.html
@@ -1334,19 +1336,6 @@ queries:
         values.max_password_age <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge &&
         values.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention &&
         values.allow_users_to_change_password == true
-      )
-  - uid: mondoo-aws-security-iam-password-policy-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IAM::AccountPasswordPolicy")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::IAM::AccountPasswordPolicy").all(
-      properties['MinimumPasswordLength'] >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength &&
-      properties['RequireUppercaseCharacters'] == true &&
-      properties['RequireLowercaseCharacters'] == true &&
-      properties['RequireNumbers'] == true &&
-      properties['RequireSymbols'] == true &&
-      properties['MaxPasswordAge'] <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge &&
-      properties['PasswordReusePrevention'] >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention &&
-      properties['AllowUsersToChangePassword'] == true
       )
   - uid: mondoo-aws-security-access-keys-rotated
     title: Ensure IAM user access keys are rotated
@@ -2298,30 +2287,21 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            CloudFormation can help you manage the default security group to ensure it has no inbound or outbound rules:
+            CloudFormation cannot directly manage or remove rules from a VPC's default security group. The default security group is automatically created with each VPC and cannot be deleted or have its rules managed through native CloudFormation resources.
 
-            ```yaml
-            Resources:
-              DefaultSecurityGroup:
-                Type: AWS::EC2::SecurityGroupIngress
-                Properties:
-                  GroupId: !GetAtt MainVPC.DefaultSecurityGroup
-                  # Empty list for no inbound rules
+            To restrict the default security group, use one of these approaches:
 
-              DefaultSecurityGroupEgress:
-                Type: AWS::EC2::SecurityGroupEgress
-                Properties:
-                  GroupId: !GetAtt MainVPC.DefaultSecurityGroup
-                  # Empty list for no outbound rules
+            - **AWS CLI**: Remove all inbound and outbound rules manually:
 
-              DefaultSecurityGroupTagging:
-                Type: AWS::EC2::Tags
-                Properties:
-                  ResourceId: !GetAtt MainVPC.DefaultSecurityGroup
-                  Tags:
-                    - Key: Name
-                      Value: Restricted Default SG
+            ```bash
+            # Revoke all ingress rules
+            aws ec2 revoke-security-group-ingress --group-id <default-sg-id> --protocol all --source-group <default-sg-id>
+
+            # Revoke all egress rules
+            aws ec2 revoke-security-group-egress --group-id <default-sg-id> --protocol all --cidr 0.0.0.0/0
             ```
+
+            - **Lambda-backed Custom Resource**: Create a CloudFormation custom resource backed by a Lambda function that uses the AWS SDK to revoke all rules from the default security group after VPC creation.
     refs:
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-controls-reference.html
         title: AWS Documentation - Security Hub controls reference
@@ -2456,19 +2436,15 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            CloudFormation can enable EBS encryption by default for your AWS account:
+            CloudFormation does not support enabling EBS encryption by default. There are no `AWS::EC2::EBSEncryptionByDefault` or `AWS::EC2::EBSDefaultKMSKey` resource types. This is an account-level setting that must be configured outside of CloudFormation.
 
-            ```yaml
-            Resources:
-              DefaultEBSEncryption:
-                Type: AWS::EC2::EBSEncryptionByDefault
-                Properties:
-                  Enabled: true
+            Use the AWS CLI to enable EBS encryption by default:
 
-              DefaultEBSKMSKey:
-                Type: AWS::EC2::EBSDefaultKMSKey
-                Properties:
-                  KmsKeyId: !GetAtt EBSEncryptionKey.Arn
+            ```bash
+            aws ec2 enable-ebs-encryption-by-default
+
+            # Optionally set a custom KMS key for EBS encryption
+            aws ec2 modify-ebs-default-kms-key-id --kms-key-id <kms-key-arn>
             ```
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html#encryption-by-default
@@ -2592,18 +2568,15 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            CloudFormation can enable S3 Block Public Access at the account level:
+            CloudFormation does not support managing S3 Block Public Access at the account level. There is no `AWS::S3::AccountPublicAccessBlock` resource type. This is an account-level setting that must be configured outside of CloudFormation.
 
-            ```yaml
-            Resources:
-              # Enable S3 Block Public Access at the account level
-                S3AccountPublicAccessBlock:
-                Type: AWS::S3::AccountPublicAccessBlock
-                Properties:
-                  BlockPublicAcls: true
-                  IgnorePublicAcls: true
-                  BlockPublicPolicy: true
-                  RestrictPublicBuckets: true
+            Use the AWS CLI to enable account-level S3 Block Public Access:
+
+            ```bash
+            aws s3control put-public-access-block \
+              --account-id <account-id> \
+              --public-access-block-configuration \
+              BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
             ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
@@ -2805,21 +2778,23 @@ queries:
           desc: |
             **Using CloudFormation**
 
+            Use the `PublicAccessBlockConfiguration` property within the `AWS::S3::Bucket` resource to enable public access blocking at the bucket level:
+
             ```yaml
             Resources:
-              SecureBucketPublicAccessBlock:
-                Type: AWS::S3::BucketPublicAccessBlock
+              SecureBucket:
+                Type: AWS::S3::Bucket
                 Properties:
-                  Bucket: !Ref MyBucket
-                  BlockPublicAcls: true
-                  IgnorePublicAcls: true
-                  BlockPublicPolicy: true
-                  RestrictPublicBuckets: true
+                  PublicAccessBlockConfiguration:
+                    BlockPublicAcls: true
+                    BlockPublicPolicy: true
+                    IgnorePublicAcls: true
+                    RestrictPublicBuckets: true
 
               SecureBucketPolicy:
                 Type: AWS::S3::BucketPolicy
                 Properties:
-                  Bucket: !Ref MyBucket
+                  Bucket: !Ref SecureBucket
                   PolicyDocument:
                     Version: '2012-10-17'
                     Statement:
@@ -2827,8 +2802,8 @@ queries:
                         Principal: '*'
                         Action: 's3:*'
                         Resource:
-                          - !Sub 'arn:aws:s3:::${MyBucket}'
-                          - !Sub 'arn:aws:s3:::${MyBucket}/*'
+                          - !Sub 'arn:aws:s3:::${SecureBucket}'
+                          - !Sub 'arn:aws:s3:::${SecureBucket}/*'
                         Condition:
                           Bool:
                             'aws:SecureTransport': 'false'
@@ -3044,7 +3019,10 @@ queries:
   - uid: mondoo-aws-security-ec2-instance-no-public-ip-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
     mql: |
-      cloudformation.template.resources.where(type == "AWS::EC2::Instance").none( properties['AssociatePublicIpAddress'] == true )
+      cloudformation.template.resources.where(type == "AWS::EC2::Instance").all(
+        properties['NetworkInterfaces'] == empty ||
+        properties['NetworkInterfaces'].all(_['AssociatePublicIpAddress'] != true)
+      )
   - uid: mondoo-aws-security-ec2-imdsv2-check
     title: Ensure EC2 instances use IMDSv2 for metadata access
     impact: 90
@@ -3316,28 +3294,14 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            ```yaml
-            Resources:
-              MainVPC:
-                Type: "AWS::EC2::VPC"
-                Properties:
-                  CidrBlock: "10.0.0.0/16"
-                  Tags:
-                    - Key: "Name"
-                      Value: "main-vpc"
+            CloudFormation does not support managing VPC Block Public Access. There are no `AWS::EC2::VPCBlockPublicAccess` or `AWS::EC2::VPCBlockPublicAccessExclusion` resource types.
 
-              VPCBlockPublicAccess:
-                Type: "AWS::EC2::VPCBlockPublicAccess"
-                Properties:
-                  VpcId: !Ref MainVPC
+            Use the AWS CLI to enable VPC Block Public Access:
 
-              # Optional: If you need exclusions for specific resources
-              VPCBlockPublicAccessExclusion:
-                Type: "AWS::EC2::VPCBlockPublicAccessExclusion"
-                Properties:
-                  VpcId: !Ref MainVPC
-                  SubnetId: !Ref PublicSubnet
-                  InternetGatewayExclusionMode: "allow-egress"
+            ```bash
+            aws ec2 create-vpc-block-public-access-exclusion \
+              --vpc-id <vpc-id> \
+              --internet-gateway-exclusion-mode block-ingress
             ```
     refs:
       - url: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-best-practices.html
@@ -5715,14 +5679,12 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            Ensure that EBS snapshots are private in CloudFormation:
+            CloudFormation does not support managing EBS snapshot block public access. There is no `AWS::EC2::SnapshotBlockPublicAccess` resource type. This is an account-level setting that must be configured outside of CloudFormation.
 
-            ```yaml
-            Resources:
-              SecureSnapshot:
-                Type: AWS::EC2::SnapshotBlockPublicAccess
-                Properties:
-                  State: block-all-sharing
+            Use the AWS CLI to block public access for EBS snapshots:
+
+            ```bash
+            aws ec2 enable-snapshot-block-public-access --state block-all-sharing
             ```
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-security.html
@@ -6146,7 +6108,7 @@ queries:
           desc: |
             **Using CloudFormation**
 
-            Ensure EBS volumes are deleted on termination:
+            Ensure EBS volumes are encrypted:
 
             ```yaml
             Resources:
@@ -17079,8 +17041,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Redshift::Cluster")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Redshift::Cluster").all(
-      properties['Logging'] != empty &&
-      properties['Logging'].all(_['enable'] == true)
+      properties['LoggingProperties'] != empty
       )
   - uid: mondoo-aws-security-redshift-cluster-enhanced-vpc-routing
     title: Ensure Redshift clusters use enhanced VPC routing
@@ -17444,7 +17405,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudFront::Distribution")
     mql: |
       cloudformation.template.resources.where(type == "AWS::CloudFront::Distribution").all(
-      properties['WebAclId'] != empty
+      properties['DistributionConfig']['WebACLId'] != empty
       )
   - uid: mondoo-aws-security-rds-snapshot-encrypted
     title: Ensure RDS snapshots are encrypted at rest
@@ -17872,7 +17833,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
       properties['ContainerDefinitions'].all(
-      _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+      _['User'] != empty && _['User'] != "root" && _['User'] != "0"
       )
       )
   - uid: mondoo-aws-security-ecs-efs-volume-transit-encryption
@@ -18354,7 +18315,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Redshift::ClusterParameterGroup")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Redshift::ClusterParameterGroup").all(
-      properties['Parameter'].where(name == "require_ssl").map(value).first == "true"
+      properties['Parameters'].where(name == "require_ssl").map(value).first == "true"
       )
   - uid: mondoo-aws-security-vpc-subnet-no-auto-assign-public-ip
     title: Ensure VPC subnets do not automatically assign public IP addresses
@@ -18976,7 +18937,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Neptune::DBCluster")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Neptune::DBCluster").all(
-      properties['EnableIAMDatabaseAuthentication'] == true
+      properties['IamAuthEnabled'] == true
       )
   - uid: mondoo-aws-security-kms-grants-no-create-grant
     title: Ensure KMS key grants do not include the CreateGrant permission
@@ -19336,26 +19297,26 @@ queries:
   - uid: mondoo-aws-security-kms-key-origin-aws-kms-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kms_key")
     mql: |
-      terraform.resources.where(nameLabel == "aws_kms_key").all(
-      arguments.key_usage == "ENCRYPT_DECRYPT"
-      )
+      // Terraform-created aws_kms_key resources use AWS_KMS origin by default.
+      // Keys with external key material would use aws_kms_external_key instead.
+      terraform.resources.none(nameLabel == "aws_kms_external_key")
   - uid: mondoo-aws-security-kms-key-origin-aws-kms-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_kms_key")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_kms_key").all(
-      change.after.key_usage == "ENCRYPT_DECRYPT"
-      )
+      // Terraform-created aws_kms_key resources use AWS_KMS origin by default.
+      // Keys with external key material would use aws_kms_external_key instead.
+      terraform.plan.resourceChanges.none(type == "aws_kms_external_key")
   - uid: mondoo-aws-security-kms-key-origin-aws-kms-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_kms_key")
     mql: |
-      terraform.state.resources.where(type == "aws_kms_key").all(
-      values.key_usage == "ENCRYPT_DECRYPT"
-      )
+      // Terraform-created aws_kms_key resources use AWS_KMS origin by default.
+      // Keys with external key material would use aws_kms_external_key instead.
+      terraform.state.resources.none(type == "aws_kms_external_key")
   - uid: mondoo-aws-security-kms-key-origin-aws-kms-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::KMS::Key")
     mql: |
       cloudformation.template.resources.where(type == "AWS::KMS::Key").all(
-      properties['KeySpec'] != "EXTERNAL"
+      properties['Origin'] == empty || properties['Origin'] == "AWS_KMS"
       )
   - uid: mondoo-aws-security-codebuild-source-ssl-verification
     title: Ensure CodeBuild projects have SSL verification enabled for source fetches
@@ -22273,7 +22234,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::NotebookInstance")
     mql: |
       cloudformation.template.resources.where(type == "AWS::SageMaker::NotebookInstance").all(
-      properties['InstanceMetadataServiceConfiguration'][0].minimum_instance_metadata_service_version == "2"
+      properties['InstanceMetadataServiceConfiguration']['MinimumInstanceMetadataServiceVersion'] == "2"
       )
   - uid: mondoo-aws-security-sagemaker-notebook-no-root-access
     title: Ensure SageMaker notebook instances do not allow root access
@@ -22563,8 +22524,10 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::Bucket")
     mql: |
       cloudformation.template.resources.where(type == "AWS::S3::Bucket").all(
-      properties['Rule'][0].apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms" ||
-      properties['Rule'][0].apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms:dsse"
+      properties['BucketEncryption']['ServerSideEncryptionConfiguration'].all(
+        _['ServerSideEncryptionByDefault']['SSEAlgorithm'] == "aws:kms" ||
+        _['ServerSideEncryptionByDefault']['SSEAlgorithm'] == "aws:kms:dsse"
+      )
       )
   - uid: mondoo-aws-security-codebuild-encryption-key-configured
     title: Ensure CodeBuild projects use KMS CMKs for artifact encryption
