@@ -34,6 +34,18 @@ resource "google_sql_database_instance" "sqlserver_public_instance" {
       enable_password_policy = true
     }
 
+    # Disable contained database authentication
+    database_flags {
+      name  = "contained database authentication"
+      value = "off"
+    }
+
+    # Disable cross db ownership chaining
+    database_flags {
+      name  = "cross db ownership chaining"
+      value = "off"
+    }
+
     # Enable maintenance window
     maintenance_window {
       day          = 7 # Sunday

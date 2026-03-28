@@ -41,6 +41,7 @@ policies:
           - uid: mondoo-docker-best-practice-yarn-clean-cache
           - uid: mondoo-docker-best-practice-npm-clean-cache
           - uid: mondoo-docker-best-practice-apt-no-install-recommends
+          - uid: mondoo-docker-best-practice-microdnf-clean-cache
       - title: Health & Runtime
         filters: |
           asset.platform == "dockerfile"
@@ -57,6 +58,7 @@ policies:
           - uid: mondoo-docker-best-practice-yum-assume-yes
           - uid: mondoo-docker-best-practice-dnf-assume-yes
           - uid: mondoo-docker-best-practice-zypper-non-interactive
+          - uid: mondoo-docker-best-practice-copy-dest-trailing-slash
 queries:
   - uid: mondoo-docker-best-practice-use-apt-get
     title: Use `apt-get` instead of `apt` for consistent package management
@@ -696,3 +698,63 @@ queries:
         title: Dockerfile Reference - WORKDIR
       - url: https://docs.docker.com/build/building/best-practices/#workdir
         title: Dockerfile Best Practices - WORKDIR
+  - uid: mondoo-docker-best-practice-microdnf-clean-cache
+    title: Clean microdnf cache after installing packages
+    impact: 40
+    mql: |
+      docker.file.stages.all(run.where(script.contains("microdnf install")).all(script.contains("microdnf clean all")))
+    docs:
+      desc: |
+        This check ensures that `microdnf clean all` is run after `microdnf install` commands in Dockerfiles. microdnf is a minimal DNF implementation used in Red Hat UBI micro images. Like other package managers, it caches downloaded packages and metadata that bloat the image if not cleaned up.
+
+        **Why this matters**
+
+        - **Image bloat:** microdnf caches packages in `/var/cache/yum` and metadata in `/var/lib/rpm`, which can add significant size to the image layer.
+        - **Consistency:** All other package manager checks (apt, yum, dnf, zypper) require cache cleanup; microdnf should not be an exception.
+        - **Layer optimization:** Combining install and cleanup in a single `RUN` instruction ensures the cache never persists in any layer.
+      remediation:
+        - id: console
+          desc: |
+            Combine `microdnf install` and `microdnf clean all` in the same RUN instruction:
+
+            ```dockerfile
+            # Bad
+            RUN microdnf install -y httpd
+            RUN microdnf clean all
+
+            # Good
+            RUN microdnf install -y httpd && \
+                microdnf clean all
+            ```
+    refs:
+      - url: https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/building_running_and_managing_containers/assembly_adding-software-to-a-ubi-container_building-running-and-managing-containers
+        title: Red Hat UBI Container Guide
+  - uid: mondoo-docker-best-practice-copy-dest-trailing-slash
+    title: Ensure COPY with multiple sources ends with /
+    impact: 60
+    mql: |
+      docker.file.stages.all(copy.where(src.length > 1).all(dst == /\/$/))
+    docs:
+      desc: |
+        This check ensures that COPY instructions with more than one source argument use a destination path ending with `/`. When COPY has multiple source files but the destination does not end with a slash, the build may fail or produce unexpected results depending on the Docker version.
+
+        **Why this matters**
+
+        - **Build failures:** With multiple source files, Docker expects the destination to be a directory (indicated by a trailing slash). Without it, the build may fail with an ambiguous error.
+        - **Accidental overwrites:** If only two arguments are provided and the destination does not end with `/`, Docker treats it as a file path, overwriting the destination with the last source file rather than copying both files into a directory.
+        - **Clarity:** A trailing slash explicitly communicates that the destination is a directory, making the Dockerfile easier to understand and maintain.
+      remediation:
+        - id: console
+          desc: |
+            Add a trailing slash to COPY destinations when copying multiple files:
+
+            ```dockerfile
+            # Bad - ambiguous, may fail or overwrite
+            COPY file1.txt file2.txt /app
+
+            # Good - clearly copies into /app/ directory
+            COPY file1.txt file2.txt /app/
+            ```
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#copy
+        title: Dockerfile Reference - COPY

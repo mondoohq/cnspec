@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-macos-security
     name: Mondoo macOS Security
-    version: 1.3.1
+    version: 1.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -64,6 +64,7 @@ policies:
           - uid: mondoo-macos-security-enable-filevault
           - uid: mondoo-macos-security-enable-firewall
           - uid: mondoo-macos-security-enable-firewall-stealth-mode
+          - uid: mondoo-macos-security-firewall-block-all-incoming
           - uid: mondoo-macos-security-enable-gatekeeper
           - uid: mondoo-macos-security-enable-show-wifi-status
           - uid: mondoo-macos-security-ensure-airdrop-is-disabled
@@ -1145,19 +1146,7 @@ queries:
   - uid: mondoo-macos-security-enable-firewall
     title: Enable Firewall
     impact: 50
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params["com.apple.security.firewall"]["EnableFirewall"]["value"] == true
-        }
-        filePath2 = "/Library/Preferences/com.apple.alf.plist"
-        b = file(filePath2).exists == true &&
-          parse.plist(filePath2).params['globalstate'] == 1
-        c = macos.alf.globalState == 1
-        a || b || c
-      }
+    mql: macos.firewall.enabled == true
     docs:
       desc: |
         This check ensures that the firewall is enabled on macOS systems to block unwanted incoming connections and enhance system security.
@@ -1221,17 +1210,7 @@ queries:
   - uid: mondoo-macos-security-enable-firewall-stealth-mode
     title: Enable Firewall Stealth Mode
     impact: 60
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params["com.apple.security.firewall"]["EnableStealthMode"]["value"] == true
-        }
-        b = command('/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode').stdout.trim == "Stealth mode enabled"
-        c = macos.alf.stealthEnabled == 1
-        a || b || c
-      }
+    mql: macos.firewall.stealthEnabled == true
     docs:
       desc: |-
         This check ensures that Firewall Stealth Mode is enabled on macOS systems to prevent the computer from responding to unsolicited network probes, enhancing security in untrusted environments.
@@ -1634,7 +1613,7 @@ queries:
   - uid: mondoo-macos-security-ensure-firewall-is-configured-to-log
     title: Ensure Firewall is configured to log
     impact: 20
-    mql: macos.alf.loggingEnabled == 1
+    mql: macos.firewall.loggingEnabled == true
     docs:
       desc: |
         This check ensures that the firewall is configured to log activity on macOS systems, providing visibility into allowed and denied network connections.
@@ -2619,3 +2598,52 @@ queries:
     refs:
       - url: https://support.apple.com/guide/mac-help/keep-your-mac-up-to-date-mchlpx1065/mac
         title: Apple - Keep Your Mac Up to Date
+  - uid: mondoo-macos-security-firewall-block-all-incoming
+    title: Ensure macOS firewall blocks all incoming connections
+    impact: 60
+    mql: |
+      macos.firewall.blockAllIncoming == true
+    docs:
+      desc: |
+        This check ensures that the macOS firewall is configured to block all incoming connections, providing the strongest protection against network-based attacks.
+
+        **Why this matters**
+
+        Blocking all incoming connections provides the strongest protection against network-based attacks. When enabled, only essential system services (like DHCP and Bonjour) can receive incoming connections. This is appropriate for high-security endpoints that do not need to accept inbound connections.
+
+        By enabling this setting, organizations can:
+          - Maximize protection against unauthorized network access
+          - Reduce the attack surface to only essential system services
+          - Enforce a strict security posture for high-security endpoints
+
+        Without this protection, the system may accept incoming connections that could be exploited by attackers.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Run this command to block all incoming connections:
+
+            ```bash
+            sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setblockall on
+            ```
+
+            **Impact:**
+
+            Blocking all incoming connections will prevent any application from receiving inbound network traffic, except for essential system services like DHCP and Bonjour. This may disrupt services that rely on incoming connections, such as file sharing, screen sharing, or remote management. Ensure this setting is appropriate for the device's role before enabling.
+        - id: gui
+          desc: |
+            **Using the GUI**
+
+            1. Open **System Settings**
+            2. Select **Network**
+            3. Select **Firewall**
+            4. Select **Options**
+            5. Enable **Block all incoming connections**
+
+            **Impact:**
+
+            Blocking all incoming connections will prevent any application from receiving inbound network traffic, except for essential system services like DHCP and Bonjour. This may disrupt services that rely on incoming connections, such as file sharing, screen sharing, or remote management. Ensure this setting is appropriate for the device's role before enabling.
+    refs:
+      - url: https://support.apple.com/guide/mac-help/block-connections-to-your-mac-with-a-firewall-mh34041/mac
+        title: Apple - Block Connections with Firewall
