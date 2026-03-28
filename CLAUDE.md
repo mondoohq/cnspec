@@ -383,5 +383,8 @@ Provider development happens in separate repos but can be tested with cnspec.
 
 - [cnspec Documentation](https://mondoo.com/docs/cnspec/)
 - [MQL Documentation](https://mondoo.com/docs/mql/)
+- [MQL Built-in Functions](https://mondoo.com/docs/mql/functions) (parse.json, parse.date, regex, etc.)
+- [MQL Resources by Provider](https://mondoo.com/docs/mql/resources/) ([AWS](https://mondoo.com/docs/mql/resources/aws-pack/), [Azure](https://mondoo.com/docs/mql/resources/azure-pack/), [GCP](https://mondoo.com/docs/mql/resources/gcp-pack/), [Core](https://mondoo.com/docs/mql/resources/core-pack/))
 - [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
 - [cnquery Repository](https://github.com/mondoohq/cnquery)
+- [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt)
