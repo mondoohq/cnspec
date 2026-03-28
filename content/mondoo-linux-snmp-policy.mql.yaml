@@ -138,7 +138,58 @@ queries:
     docs:
       desc: |
         No Read-Write community strings should be allowed.
-      remediation: Remove the `rwcommunity` or `rwcommunity6` strings from your SNMP configuration files.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Remove the `rwcommunity` or `rwcommunity6` strings from your SNMP configuration files:
+
+            ```bash
+            sed -i '/^\s*\(rwcommunity\|rwcommunity6\)\s/d' /etc/snmp/snmpd.conf
+            find /etc/snmp/snmpd.conf.d -type f -exec sed -i '/^\s*\(rwcommunity\|rwcommunity6\)\s/d' {} +
+            systemctl restart snmpd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Remove read-write community strings from SNMP configuration files using the following Ansible playbook:
+
+            ```yaml
+            ---
+            - name: Remove SNMP read-write community strings
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Remove rwcommunity lines from /etc/snmp/snmpd.conf
+                  ansible.builtin.lineinfile:
+                    path: /etc/snmp/snmpd.conf
+                    regexp: '^\s*(rwcommunity|rwcommunity6)\s'
+                    state: absent
+                  notify: Restart snmpd
+
+                - name: Find files in /etc/snmp/snmpd.conf.d
+                  ansible.builtin.find:
+                    paths: /etc/snmp/snmpd.conf.d
+                    file_type: file
+                  register: snmp_conf_files
+
+                - name: Remove rwcommunity lines from snmpd.conf.d files
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^\s*(rwcommunity|rwcommunity6)\s'
+                    state: absent
+                  loop: "{{ snmp_conf_files.files }}"
+                  notify: Restart snmpd
+
+              handlers:
+                - name: Restart snmpd
+                  ansible.builtin.service:
+                    name: snmpd
+                    state: restarted
+            ```
   - uid: linux-snmp-no-unauthenticated-access
     title: Ensure unauthenticated access to SNMP is not allowed
     impact: 100
@@ -157,4 +208,55 @@ queries:
       desc: |
         No unauthenticated access to SNMP should be allowed.
         Note: So far this only works for Debian-based OS.
-      remediation: Remove or reconfigure any `rwuser` directives that specify `noauth` security level in `/etc/snmp/snmpd.conf` or files in `/etc/snmp/snmpd.conf.d/`. Either delete these lines or change them to use `authNoPriv` or `authPriv` security levels which require authentication.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Remove or reconfigure any `rwuser` directives that specify `noauth` security level in `/etc/snmp/snmpd.conf` or files in `/etc/snmp/snmpd.conf.d/`. Either delete these lines or change them to use `authNoPriv` or `authPriv` security levels which require authentication.
+
+            ```bash
+            sed -i '/^\s*rwuser\s\+noauth\s*/d' /etc/snmp/snmpd.conf
+            find /etc/snmp/snmpd.conf.d -type f -exec sed -i '/^\s*rwuser\s\+noauth\s*/d' {} +
+            systemctl restart snmpd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Remove unauthenticated SNMP access using the following Ansible playbook:
+
+            ```yaml
+            ---
+            - name: Remove unauthenticated SNMP access
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Remove rwuser noauth lines from /etc/snmp/snmpd.conf
+                  ansible.builtin.lineinfile:
+                    path: /etc/snmp/snmpd.conf
+                    regexp: '^\s*rwuser\s+noauth\s*'
+                    state: absent
+                  notify: Restart snmpd
+
+                - name: Find files in /etc/snmp/snmpd.conf.d
+                  ansible.builtin.find:
+                    paths: /etc/snmp/snmpd.conf.d
+                    file_type: file
+                  register: snmp_conf_files
+
+                - name: Remove rwuser noauth lines from snmpd.conf.d files
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^\s*rwuser\s+noauth\s*'
+                    state: absent
+                  loop: "{{ snmp_conf_files.files }}"
+                  notify: Restart snmpd
+
+              handlers:
+                - name: Restart snmpd
+                  ansible.builtin.service:
+                    name: snmpd
+                    state: restarted
+            ```
