@@ -567,10 +567,12 @@ queries:
             aws eks describe-cluster --name <cluster_name> --query "cluster.encryptionConfig"
             ```
 
-            If no custom KMS key is listed, you can update the cluster configuration:
+            If no custom KMS key is listed, associate an encryption configuration with the cluster:
 
             ```bash
-            aws eks update-cluster-config --name <cluster_name> --resources-vpc-config <vpc_config> --encryption-config <kms_key_arn>
+            aws eks associate-encryption-config \
+              --cluster-name <cluster_name> \
+              --encryption-config '[{"resources":["secrets"],"provider":{"keyArn":"<kms_key_arn>"}}]'
             ```
         - id: terraform
           desc: |
@@ -1017,7 +1019,7 @@ queries:
             If no device is listed, assign a new MFA device (replace arn-of-mfa-device with the correct ARN):
 
             ```bash
-            aws iam enable-mfa-device --user-name root --serial-number arn-of-mfa-device --authentication-code-1 123456 --authentication-code-2 654321
+            aws iam enable-mfa-device --user-name root --serial-number arn-of-mfa-device --authentication-code1 123456 --authentication-code2 654321
             ```
         - id: terraform
           desc: |
@@ -1518,7 +1520,7 @@ queries:
             If no MFA device is listed, enforce MFA by setting up a virtual MFA device:
 
             ```bash
-            aws iam enable-mfa-device --user-name <username> --serial-number "arn-of-mfa-device" --authentication-code-1 123456 --authentication-code-2 654321
+            aws iam enable-mfa-device --user-name <username> --serial-number "arn-of-mfa-device" --authentication-code1 123456 --authentication-code2 654321
             ```
         - id: terraform
           desc: |
@@ -2864,10 +2866,10 @@ queries:
             aws ec2 disassociate-address --public-ip <public-ip-address>
             ```
 
-            Modify an instance's network interface to remove the public IP (requires instance stop/start):
+            To prevent future instances from receiving a public IP, disable auto-assign on the subnet:
 
             ```bash
-            aws ec2 modify-instance-attribute --instance-id <instance-id> --no-associate-public-ip-address
+            aws ec2 modify-subnet-attribute --subnet-id <subnet-id> --no-map-public-ip-on-launch
             ```
         - id: terraform
           desc: |
@@ -3163,19 +3165,23 @@ queries:
             To ensure VPC Block Public Access (BPA) is enabled using the AWS CLI, enable VPC Block Public Access for a specific VPC:
 
             ```bash
-            aws ec2 enable-vpc-block-public-access-v2 --vpc-ids vpc-12345678
+            aws ec2 modify-vpc-block-public-access-options \
+              --internet-gateway-block-mode block-bidirectional
             ```
 
             Create an exclusion for specific resources (if necessary):
 
             ```bash
-            aws ec2 create-vpc-block-public-access-exclusion --vpc-id vpc-12345678 --internet-gateway-exclusion-mode "allow-egress" --subnet-id subnet-12345678
+            aws ec2 create-vpc-block-public-access-exclusion \
+              --vpc-id vpc-12345678 \
+              --internet-gateway-exclusion-mode allow-egress \
+              --subnet-id subnet-12345678
             ```
 
             Verify the status of VPC BPA:
 
             ```bash
-            aws ec2 describe-vpc-block-public-access --vpc-ids vpc-12345678
+            aws ec2 describe-vpc-block-public-access-options
             ```
         - id: terraform
           desc: |
@@ -4879,14 +4885,13 @@ queries:
               aws rds describe-db-instances --query "DBInstances[*].{DBInstanceIdentifier:DBInstanceIdentifier, DBClusterIdentifier:DBClusterIdentifier, PubliclyAccessible:PubliclyAccessible}"
             ```
 
-            If the cluster or any of its instances are public, modify them:
+            If any instances are publicly accessible, disable public access on each instance:
 
             ```bash
-            aws rds modify-db-cluster --db-cluster-identifier <db-cluster-id> --publicly-accessible false --apply-immediately
-            ```
-
-            ```bash
-            aws rds modify-db-instance --db-instance-identifier <db-instance-id> --publicly-accessible false --apply-immediately
+            aws rds modify-db-instance \
+              --db-instance-identifier <db-instance-id> \
+              --no-publicly-accessible \
+              --apply-immediately
             ```
 
             Ensure your RDS cluster is deployed in private subnets:
@@ -5056,7 +5061,7 @@ queries:
             If an instance is publicly accessible, modify it:
 
             ```bash
-            aws rds modify-db-instance --db-instance-identifier <db-instance-id> --publicly-accessible false --apply-immediately
+            aws rds modify-db-instance --db-instance-identifier <db-instance-id> --no-publicly-accessible --apply-immediately
             ```
 
             Ensure that RDS is in a private subnet:
@@ -5218,7 +5223,7 @@ queries:
             If a cluster is publicly accessible, modify it:
 
             ```bash
-            aws redshift modify-cluster --cluster-identifier <cluster-id> --publicly-accessible false
+            aws redshift modify-cluster --cluster-identifier <cluster-id> --no-publicly-accessible
             ```
 
             Ensure the cluster is placed in a private subnet:
@@ -19631,10 +19636,13 @@ queries:
             5. Apply the changes.
         - id: cli
           desc: |
-            To ensure DMS replication instances are not publicly accessible using the AWS CLI:
+            To ensure DMS replication instances are not publicly accessible using the AWS CLI, note that public accessibility cannot be changed after creation. Create a new private instance and migrate:
 
             ```bash
-            aws dms modify-replication-instance --replication-instance-arn <arn> --no-publicly-accessible
+            aws dms create-replication-instance \
+              --replication-instance-identifier <new-instance-id> \
+              --replication-instance-class <instance-class> \
+              --no-publicly-accessible
             ```
         - id: terraform
           desc: |
@@ -20035,7 +20043,7 @@ queries:
               --name <name> \
               --db-instance-type db.influx.medium \
               --vpc-subnet-ids <private-subnet-ids> \
-              --publicly-accessible false \
+              --no-publicly-accessible \
               --allocated-storage 20
             ```
         - id: terraform
@@ -21163,7 +21171,8 @@ queries:
             To ensure ECS clusters use KMS encryption for Fargate ephemeral storage using the AWS CLI:
 
             ```bash
-            aws ecs put-cluster-capacity-providers --cluster <cluster-name> --managed-storage-configuration fargateEphemeralStorageKmsKeyId=<kms-key-arn>
+            aws ecs update-cluster --cluster <cluster-name> \
+              --configuration 'managedStorageConfiguration={fargateEphemeralStorageKmsKeyId=<kms-key-arn>}'
             ```
         - id: terraform
           desc: |
@@ -31095,7 +31104,7 @@ queries:
               --deployment-mode SINGLE_INSTANCE \
               --engine-type ACTIVEMQ \
               --engine-version "5.17.6" \
-              --publicly-accessible false \
+              --no-publicly-accessible \
               --subnet-ids <subnet-id> \
               --users Username=admin,Password=<password>,ConsoleAccess=true
             ```
