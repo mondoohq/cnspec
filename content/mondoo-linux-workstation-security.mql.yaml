@@ -234,6 +234,41 @@ queries:
             echo "Securing /boot/efi mount options..."
             sed -i 's|^UUID=.* /boot/efi vfat|UUID=.* /boot/efi vfat defaults,umask=0027,fmask=0077,uid=0,gid=0|' /etc/fstab
             ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Secure the bootloader configuration files with the following Ansible playbook:
+
+            ```yaml
+            ---
+            - name: Secure bootloader configuration files
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Set ownership and permissions on GRUB config files
+                  ansible.builtin.file:
+                    path: "{{ item }}"
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  loop:
+                    - /boot/grub/grub.cfg
+                    - /boot/grub/menu.lst
+                    - /boot/grub2/grub.cfg
+                    - /boot/grub2/user.cfg
+                    - /boot/loader/loader.conf
+                  when: item is ansible.builtin.file
+
+                - name: Set fmask for /boot/efi in /etc/fstab
+                  ansible.builtin.lineinfile:
+                    path: /etc/fstab
+                    regexp: '(\S+\s+/boot/efi\s+vfat\s+)\S+(.*)'
+                    line: '\1defaults,umask=0027,fmask=0077,uid=0,gid=0\2'
+                    backrefs: true
+                  when: ansible_mounts | selectattr('mount', 'equalto', '/boot/efi') | list | length > 0
+            ```
   - uid: mondoo-linux-workstation-security-secure-boot-is-enabled
     title: Ensure Secure Boot is enabled
     impact: 90
@@ -328,3 +363,28 @@ queries:
             ```
 
             If the `fwupdmgr` tool is not available, you may need to download the latest BIOS firmware from your hardware vendor's website and follow their instructions to update it.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Update the system BIOS firmware using fwupdmgr with the following Ansible playbook:
+
+            ```yaml
+            ---
+            - name: Update system BIOS firmware
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Refresh fwupd metadata
+                  ansible.builtin.command: fwupdmgr refresh --force
+                  changed_when: true
+
+                - name: Apply firmware updates
+                  ansible.builtin.command: fwupdmgr update -y --no-reboot-check
+                  register: fwupd_result
+                  changed_when: "'Successfully installed' in fwupd_result.stdout"
+                  failed_when:
+                    - fwupd_result.rc != 0
+                    - "'No upgrades for' not in fwupd_result.stderr"
+            ```

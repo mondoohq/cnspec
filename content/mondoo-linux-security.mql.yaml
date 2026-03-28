@@ -4836,6 +4836,34 @@ queries:
                 ```bash
                 update-grub
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to ensure the `audit=1` kernel parameter is set in the GRUB bootloader configuration and regenerate the GRUB config:
+
+            ```yaml
+            ---
+            - name: Enable auditing for processes that start prior to auditd
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure audit=1 is set in GRUB_CMDLINE_LINUX
+                  ansible.builtin.lineinfile:
+                    path: /etc/default/grub
+                    regexp: '^GRUB_CMDLINE_LINUX="((?!audit=1).*)"$'
+                    line: 'GRUB_CMDLINE_LINUX="audit=1 \1"'
+                    backrefs: yes
+
+                - name: Regenerate GRUB configuration (Debian/Ubuntu)
+                  ansible.builtin.command: update-grub
+                  when: ansible_os_family == "Debian"
+
+                - name: Regenerate GRUB configuration (RHEL/SUSE BIOS)
+                  ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
+                  when: ansible_os_family in ["RedHat", "Suse"]
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -7465,6 +7493,36 @@ queries:
               chmod 600 /var/log/sudo.log
               chown root:root /var/log/sudo.log
               ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to configure sudo logging to a dedicated file:
+
+            ```yaml
+            ---
+            - name: Enable sudo logging to a dedicated file
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Create sudoers.d file for sudo logging
+                  ansible.builtin.copy:
+                    dest: /etc/sudoers.d/sudo-logging
+                    content: 'Defaults logfile="/var/log/sudo.log"'
+                    owner: root
+                    group: root
+                    mode: '0440'
+                    validate: visudo -cf %s
+
+                - name: Ensure sudo log file exists with correct permissions
+                  ansible.builtin.file:
+                    path: /var/log/sudo.log
+                    state: touch
+                    owner: root
+                    group: root
+                    mode: '0600'
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -8097,6 +8155,75 @@ queries:
                 f /var/log/sudo.log 0640 root utmp -
                 f /var/log/wtmp 0640 root utmp -
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set secure permissions on all log files in `/var/log/` and configure rsyslog default file permissions:
+
+            ```yaml
+            ---
+            - name: Ensure secure permissions on all log files
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Find all files in /var/log
+                  ansible.builtin.find:
+                    paths: /var/log
+                    recurse: yes
+                    file_type: file
+                  register: log_files
+
+                - name: Remove group write/execute and other rwx on log files
+                  ansible.builtin.file:
+                    path: "{{ item.path }}"
+                    mode: "g-wx,o-rwx"
+                  loop: "{{ log_files.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+
+                - name: Configure rsyslog default file creation mode
+                  ansible.builtin.lineinfile:
+                    path: /etc/rsyslog.conf
+                    regexp: '^\$FileCreateMode'
+                    line: '$FileCreateMode 0640'
+                  notify: Restart rsyslog
+                  when: ansible_facts.services['rsyslog.service'] is defined
+
+                - name: Configure rsyslog umask
+                  ansible.builtin.lineinfile:
+                    path: /etc/rsyslog.conf
+                    regexp: '^\$Umask'
+                    line: '$Umask 0077'
+                  notify: Restart rsyslog
+                  when: ansible_facts.services['rsyslog.service'] is defined
+
+                - name: Create tmpfiles.d configuration for log file permissions
+                  ansible.builtin.copy:
+                    dest: /etc/tmpfiles.d/var.conf
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      f /var/log/alternatives.log 0640 root utmp -
+                      f /var/log/apt/history.log 0640 root utmp -
+                      f /var/log/auth.log 0640 root utmp -
+                      f /var/log/btmp 0640 root utmp -
+                      f /var/log/cron.log 0640 root utmp -
+                      f /var/log/daemon.log 0640 root utmp -
+                      f /var/log/dpkg.log 0640 root utmp -
+                      f /var/log/faillog 0640 root root -
+                      f /var/log/lastlog 0640 root utmp -
+                      f /var/log/sudo.log 0640 root utmp -
+                      f /var/log/wtmp 0640 root utmp -
+
+              handlers:
+                - name: Restart rsyslog
+                  ansible.builtin.service:
+                    name: rsyslog
+                    state: restarted
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
