@@ -33,6 +33,7 @@ policies:
           asset.platform == "dockerfile"
         checks:
           - uid: mondoo-docker-security-no-management-ports
+          - uid: mondoo-docker-security-port-out-of-range
       - title: Package Management Security
         filters: |
           asset.platform == "dockerfile"
@@ -41,6 +42,7 @@ policies:
           - uid: mondoo-docker-security-no-insecure-certificate-validation-curl
           - uid: mondoo-docker-security-no-insecure-certificate-validation-wget
           - uid: mondoo-docker-security-no-gpg-skip-yum
+          - uid: mondoo-docker-security-no-apt-get-dist-upgrade
       - title: Privilege & User Security
         filters: |
           asset.platform == "dockerfile"
@@ -53,6 +55,7 @@ policies:
           asset.platform == "dockerfile"
         checks:
           - uid: mondoo-docker-security-no-sensitive-volume-mounts
+          - uid: mondoo-docker-security-no-workdir-system-dirs
       - title: Build Security
         filters: |
           asset.platform == "dockerfile"
@@ -479,3 +482,100 @@ queries:
         title: Dockerfile Reference - VOLUME
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
+  - uid: mondoo-docker-security-port-out-of-range
+    title: Ensure exposed ports are within valid range
+    impact: 80
+    mql: |
+      docker.file.stages.all(expose.all(port > 0 && port <= 65535))
+    docs:
+      desc: |
+        This check ensures that all ports exposed in the Dockerfile are within the valid TCP/UDP port range (1-65535). An exposed port outside this range indicates a misconfiguration that will cause unexpected behavior at runtime.
+
+        **Why this matters**
+
+        - **Silent failures:** Docker may silently ignore or misinterpret out-of-range port values, leading to containers that appear to start correctly but are not accessible on the expected port.
+        - **Configuration errors:** Out-of-range ports typically indicate a typo or copy-paste error in the Dockerfile.
+        - **Security tooling bypass:** Network security tools may not correctly evaluate or enforce rules for invalid port numbers.
+      remediation:
+        - id: console
+          desc: |
+            Review the `EXPOSE` instructions in your Dockerfile and ensure all port numbers are between 1 and 65535:
+
+            ```dockerfile
+            # Correct
+            EXPOSE 8080
+            EXPOSE 443/tcp
+
+            # Incorrect
+            EXPOSE 99999
+            ```
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#expose
+        title: Dockerfile Reference - EXPOSE
+  - uid: mondoo-docker-security-no-apt-get-dist-upgrade
+    title: Don't use 'apt-get dist-upgrade' in Dockerfiles
+    impact: 80
+    mql: |
+      docker.file.stages.all(run.where(script.contains("apt-get")).none(script.contains("dist-upgrade")))
+    docs:
+      desc: |
+        This check ensures that `apt-get dist-upgrade` is not used in Dockerfile RUN instructions. Unlike `apt-get upgrade`, `dist-upgrade` can remove existing packages, install new dependencies, and make major changes to the package configuration, leading to unpredictable and unreproducible builds.
+
+        **Why this matters**
+
+        - **Unpredictable builds:** `dist-upgrade` may remove or replace packages that your application depends on, causing builds to break non-deterministically.
+        - **Security risk:** Upgrading the distribution within a container image can introduce untested package combinations and unexpected behavior.
+        - **Image bloat:** Distribution upgrades pull in many unnecessary packages, increasing image size and attack surface.
+        - **Reproducibility:** Container images should be deterministic. Pin specific package versions instead of running broad upgrades.
+      remediation:
+        - id: console
+          desc: |
+            Replace `apt-get dist-upgrade` with targeted package installs:
+
+            ```dockerfile
+            # Bad
+            RUN apt-get update && apt-get dist-upgrade -y
+
+            # Good - install specific packages with pinned versions
+            RUN apt-get update && apt-get install -y --no-install-recommends \
+                package1=1.2.3 \
+                package2=4.5.6 \
+              && rm -rf /var/lib/apt/lists/*
+            ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#apt-get
+        title: Dockerfile Best Practices - apt-get
+  - uid: mondoo-docker-security-no-workdir-system-dirs
+    title: Don't set WORKDIR to system directories
+    impact: 70
+    mql: |
+      docker.file.stages.all(workdir.none(path == /^\/(proc|sys|dev|sbin|boot)(\/|$)/ || path == "/"))
+    docs:
+      desc: |
+        This check ensures that WORKDIR is not set to the filesystem root (`/`) or sensitive system directories such as `/proc`, `/sys`, `/dev`, `/sbin`, or `/boot` (including subpaths). Setting the working directory to a system path can cause build or runtime commands to inadvertently modify critical system files or interfere with kernel interfaces.
+
+        **Why this matters**
+
+        - **System corruption:** Commands that create temporary files, write logs, or extract archives into the working directory could corrupt system paths.
+        - **Security exposure:** `/proc` and `/sys` expose kernel parameters and process information. Using them as a working directory increases the risk of accidental information disclosure or privilege escalation.
+        - **Unexpected behavior:** Build tools and package managers may create files in the working directory, leading to unpredictable results when that directory is a system path.
+      remediation:
+        - id: console
+          desc: |
+            Use application-specific directories for WORKDIR:
+
+            ```dockerfile
+            # Bad
+            WORKDIR /
+            WORKDIR /proc
+            WORKDIR /sys
+            WORKDIR /boot/efi
+            WORKDIR /dev/shm
+
+            # Good
+            WORKDIR /app
+            WORKDIR /opt/myservice
+            ```
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#workdir
+        title: Dockerfile Reference - WORKDIR
