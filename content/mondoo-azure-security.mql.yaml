@@ -21041,8 +21041,17 @@ queries:
             **Using Azure CLI**
 
             ```bash
-            az redis update --resource-group <ResourceGroupName> --name <CacheName> --set "redisConfiguration.customer-managed-key-encryption" --identity-type UserAssigned --user-assigned-identity-id <IdentityId>
+            az redis create \
+              --resource-group <ResourceGroupName> \
+              --name <CacheName> \
+              --location <Location> \
+              --sku Premium \
+              --vm-size p1 \
+              --mi-user-assigned <UserAssignedIdentityResourceId> \
+              --redis-configuration '{"customer-managed-key-encryption": {"identity-type": "userAssignedIdentity", "key-encryption-key-url": "<KeyVaultKeyUrl>", "user-assigned-identity-resource-id": "<IdentityResourceId>"}}'
             ```
+
+            Note: CMK encryption must be configured at cache creation time. To update an existing cache, recreate it with CMK enabled.
         - id: terraform
           desc: |
             **Using Terraform**
@@ -21087,19 +21096,15 @@ queries:
                   capacity: 1
                 }
                 redisConfiguration: {
-                  'aof-backup-enabled': 'true'
+                  'customer-managed-key-encryption': {
+                    identityType: 'userAssignedIdentity'
+                    keyEncryptionKeyUrl: keyVaultKey.properties.keyUriWithVersion
+                    userAssignedIdentityResourceId: managedIdentity.id
+                  }
                 }
               }
             }
-
-            resource redisLinkedServer 'Microsoft.Cache/redis/linkedServers@2023-08-01' = {
-              parent: redisCache
-              name: 'example'
-              properties: {}
-            }
             ```
-
-            Note: Customer-managed key encryption for Redis requires configuring the encryption identity and key through additional properties or post-deployment CLI commands depending on the API version.
     refs:
       - url: https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-customer-managed-keys
         title: Configure customer-managed keys for Azure Cache for Redis
@@ -22759,14 +22764,15 @@ queries:
         properties['retentionPolicy']['enabled'] == true
       )
       azure.subscription.monitor.logProfiles.all(
-        properties['retentionPolicy']['days'] >= 365
+        properties['retentionPolicy']['days'] >= 365 ||
+        properties['retentionPolicy']['days'] == 0
       )
   - uid: mondoo-azure-security-activity-log-retention-365-days-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_monitor_log_profile")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_monitor_log_profile").all(
         blocks.where(type == "retention_policy") != empty &&
-        blocks.where(type == "retention_policy").all(arguments['enabled'] == true && arguments['days'] >= 365)
+        blocks.where(type == "retention_policy").all(arguments['enabled'] == true && (arguments['days'] >= 365 || arguments['days'] == 0))
       )
   - uid: mondoo-azure-security-activity-log-retention-365-days-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_monitor_log_profile")
@@ -22774,7 +22780,7 @@ queries:
       terraform.plan.resourceChanges.where(type == "azurerm_monitor_log_profile").all(
         change.after['retention_policy'] != empty &&
         change.after['retention_policy'][0]['enabled'] == true &&
-        change.after['retention_policy'][0]['days'] >= 365
+        (change.after['retention_policy'][0]['days'] >= 365 || change.after['retention_policy'][0]['days'] == 0)
       )
   - uid: mondoo-azure-security-activity-log-retention-365-days-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_monitor_log_profile")
@@ -22782,7 +22788,7 @@ queries:
       terraform.state.resources.where(type == "azurerm_monitor_log_profile").all(
         values['retention_policy'] != empty &&
         values['retention_policy'][0]['enabled'] == true &&
-        values['retention_policy'][0]['days'] >= 365
+        (values['retention_policy'][0]['days'] >= 365 || values['retention_policy'][0]['days'] == 0)
       )
   - uid: mondoo-azure-security-log-profile-all-locations
     title: Ensure activity logs capture events from all locations
@@ -23727,7 +23733,7 @@ queries:
               location            = azurerm_resource_group.example.location
               resource_group_name = azurerm_resource_group.example.name
 
-              public_network_enabled = false
+              public_network_access_enabled = false
             }
             ```
         - id: bicep
@@ -24401,19 +24407,22 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_synapse_workspace")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_synapse_workspace").all(
-        blocks.where(type == "aad_admin") != empty
+        blocks.where(type == "aad_admin") != empty &&
+        arguments['sql_aad_authentication_only'] == true
       )
   - uid: mondoo-azure-security-synapse-aad-only-auth-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_synapse_workspace")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_synapse_workspace").all(
-        change.after['aad_admin'] != empty
+        change.after['aad_admin'] != empty &&
+        change.after['sql_aad_authentication_only'] == true
       )
   - uid: mondoo-azure-security-synapse-aad-only-auth-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_synapse_workspace")
     mql: |
       terraform.state.resources.where(type == "azurerm_synapse_workspace").all(
-        values['aad_admin'] != empty
+        values['aad_admin'] != empty &&
+        values['sql_aad_authentication_only'] == true
       )
   - uid: mondoo-azure-security-synapse-cmk-encryption
     title: Ensure Synapse uses customer-managed key encryption
