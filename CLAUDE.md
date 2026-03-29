@@ -296,6 +296,7 @@ policies:
 **Formatting requirements**:
 - All `desc` (description) and `remediation` fields in policy files must be valid Markdown. These fields are rendered as Markdown in the UI, so use proper Markdown syntax for headings, lists, code blocks, links, etc.
 - Check `title` fields must be 75 characters or fewer.
+- When writing CLI commands in remediation steps, verify that the subcommands and flags you use are valid by checking the reference data in `content/validation/cmd_data/` (e.g., `aws_commands.json`, `azure_commands.json`). Read the relevant JSON file and confirm the command and its flags exist before including them in remediation content.
 
 Test policy files:
 
@@ -332,9 +333,42 @@ For MQL resources available per provider, see [MQL resources documentation](http
 When adding/modifying policies:
 
 1. **Lint the policy before committing**: `cnspec policy lint <file>` (e.g., `cnspec policy lint content/mondoo-aws-security.mql.yaml`). This must pass before committing any policy changes.
-2. **Test against target**: `cnspec scan <target> -f <policy-file>`
+2. **Validate remediation commands**: `python3 content/validation/validate_remediation_commands.py` (see below).
 3. **Check for regressions**: Run existing policy tests in `content/` directory
 4. **Verify scoring**: Ensure impact ratings and scoring systems work correctly
+
+### Validating Remediation CLI Commands
+
+The `content/validation/` directory contains tooling to verify that CLI commands in remediation sections use valid subcommands and flags.
+
+**Validate commands:**
+
+```bash
+# Validate all policies (currently AWS and Azure)
+python3 content/validation/validate_remediation_commands.py
+
+# Validate a specific cloud
+python3 content/validation/validate_remediation_commands.py aws
+python3 content/validation/validate_remediation_commands.py azure
+```
+
+The validator checks each `aws`/`az` command in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+
+**Reference data for writing remediation commands:**
+
+The `content/validation/cmd_data/` directory contains JSON files listing all valid CLI commands and their flags:
+
+- `aws_commands.json` — AWS CLI services, subcommands, and flags (sourced from botocore)
+- `azure_commands.json` — Azure CLI commands and flags (sourced from az CLI internals)
+
+When writing remediation steps, consult these files to verify that the CLI commands and flags you reference actually exist. The JSON structure maps command names to their valid flags (e.g., `"eks describe-cluster": ["--name", "--query", ...]`).
+
+**Regenerate command data** (needed when CLI versions change):
+
+```bash
+python3 content/validation/dump_aws_commands.py
+python3 content/validation/dump_azure_commands.py
+```
 
 ### Working with Providers
 
@@ -371,6 +405,7 @@ Provider development happens in separate repos but can be tested with cnspec.
   - `components/`: Reusable UI components
   - `reporter/`: Output formatters (SARIF, JUnit, JSON, etc.)
 - **`content/`**: Default security policies (AWS, Linux, K8s, etc.)
+  - `validation/`: CLI command validation scripts and reference data
 - **`internal/`**: Internal packages
   - `bundle/`: Bundle loading and validation
   - `datalakes/`: Data storage implementations
