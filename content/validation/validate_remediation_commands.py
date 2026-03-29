@@ -23,9 +23,9 @@ CMD_DATA_DIR = SCRIPT_DIR / "cmd_data"
 
 VALIDATORS = ["aws", "azure", "oci", "gcp"]
 
-# Collected failures for SARIF output.  Each entry is a dict with keys:
+# Collected failures for annotation output.  Each entry is a dict with keys:
 # file, line, uid, command, errors, cloud
-SARIF_RESULTS: list[dict] = []
+FAILURES: list[dict] = []
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +242,7 @@ def validate_aws() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
-                SARIF_RESULTS.append({
+                FAILURES.append({
                     "file": policy_relpath,
                     "line": line_num,
                     "uid": uid,
@@ -370,7 +370,7 @@ def validate_azure() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
-                SARIF_RESULTS.append({
+                FAILURES.append({
                     "file": policy_relpath,
                     "line": line_num,
                     "uid": uid,
@@ -498,7 +498,7 @@ def validate_oci() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
-                SARIF_RESULTS.append({
+                FAILURES.append({
                     "file": policy_relpath,
                     "line": line_num,
                     "uid": uid,
@@ -625,7 +625,7 @@ def validate_gcloud() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
-                SARIF_RESULTS.append({
+                FAILURES.append({
                     "file": policy_relpath,
                     "line": line_num,
                     "uid": uid,
@@ -638,68 +638,21 @@ def validate_gcloud() -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# SARIF output
+# GitHub Actions annotations
 # ---------------------------------------------------------------------------
 
-def write_sarif(output_path: str) -> None:
-    """Write collected failures as a SARIF 2.1.0 file."""
-    rules: list[dict] = []
-    rule_indices: dict[str, int] = {}
-    results: list[dict] = []
+def emit_github_annotations() -> None:
+    """Print GitHub Actions workflow commands for each failure.
 
-    for r in SARIF_RESULTS:
-        rule_id = f"{r['cloud']}/{r['uid']}"
-        if rule_id not in rule_indices:
-            rule_indices[rule_id] = len(rules)
-            rules.append({
-                "id": rule_id,
-                "shortDescription": {
-                    "text": f"Invalid {r['cloud'].upper()} CLI command in check {r['uid']}",
-                },
-                "helpUri": "https://mondoo.com/docs/cnspec/write-policies/write-intro/",
-            })
-
-        results.append({
-            "ruleId": rule_id,
-            "ruleIndex": rule_indices[rule_id],
-            "level": "error",
-            "message": {
-                "text": "\n".join(r["errors"]) + f"\n\nCommand: `{r['command']}`",
-            },
-                "locations": [
-                    {
-                        "physicalLocation": {
-                            "artifactLocation": {
-                                "uri": r["file"],
-                                "uriBaseId": "%SRCROOT%",
-                            },
-                            "region": {
-                                "startLine": r["line"],
-                            },
-                        },
-                    }
-                ],
-            })
-
-    sarif = {
-        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
-        "version": "2.1.0",
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": "validate-remediation-commands",
-                        "informationUri": "https://github.com/mondoohq/cnspec",
-                        "version": "1.0.0",
-                        "rules": rules,
-                    },
-                },
-                "results": results,
-            }
-        ],
-    }
-
-    Path(output_path).write_text(json.dumps(sarif, indent=2) + "\n")
+    These produce inline annotations on the PR Files tab, regardless of
+    whether the annotated file is part of the PR diff.
+    See https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#setting-an-error-message
+    """
+    for r in FAILURES:
+        msg = "; ".join(r["errors"]) + f" — {r['command']}"
+        # Workflow command special characters must be encoded
+        msg = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error file={r['file']},line={r['line']},title={r['cloud'].upper()} CLI validation ({r['uid']})::{msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -708,19 +661,16 @@ def write_sarif(output_path: str) -> None:
 
 def main():
     args = sys.argv[1:]
-    sarif_output = None
+    github_actions = False
     target = "all"
 
-    # Parse --sarif <file> option
-    i = 0
+    # Parse flags
     positional = []
-    while i < len(args):
-        if args[i] == "--sarif" and i + 1 < len(args):
-            sarif_output = args[i + 1]
-            i += 2
+    for arg in args:
+        if arg == "--github-actions":
+            github_actions = True
         else:
-            positional.append(args[i])
-            i += 1
+            positional.append(arg)
 
     if positional:
         target = positional[0]
@@ -728,7 +678,7 @@ def main():
     if target not in ("all", *VALIDATORS):
         print(
             f"Unknown validator: {target}\n"
-            f"Usage: {sys.argv[0]} [{'|'.join(['all'] + VALIDATORS)}] [--sarif <output.sarif>]",
+            f"Usage: {sys.argv[0]} [{'|'.join(['all'] + VALIDATORS)}] [--github-actions]",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -756,8 +706,8 @@ def main():
         total_pass += p
         total_fail += f
 
-    if sarif_output:
-        write_sarif(sarif_output)
+    if github_actions:
+        emit_github_annotations()
 
     print(f"\n{total_pass} passed, {total_fail} failed", file=sys.stderr)
     sys.exit(1 if total_fail > 0 else 0)
