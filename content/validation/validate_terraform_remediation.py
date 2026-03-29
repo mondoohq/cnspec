@@ -14,6 +14,7 @@
 
 import concurrent.futures
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -222,7 +223,7 @@ def write_tflint_config(tmp_dir: Path, providers: set[str]) -> None:
 
 def init_tflint(tmp_dir: Path, plugin_cache: Path) -> bool:
     """Run tflint --init to download plugins. Returns True on success."""
-    env = {**dict(__import__("os").environ), "TFLINT_PLUGIN_DIR": str(plugin_cache)}
+    env = {**dict(os.environ), "TFLINT_PLUGIN_DIR": str(plugin_cache)}
     result = subprocess.run(
         ["tflint", "--init"],
         cwd=tmp_dir,
@@ -236,7 +237,7 @@ def init_tflint(tmp_dir: Path, plugin_cache: Path) -> bool:
 
 def run_tflint(tmp_dir: Path, plugin_cache: Path) -> TflintResult:
     """Run tflint on a temp directory and return structured results."""
-    env = {**dict(__import__("os").environ), "TFLINT_PLUGIN_DIR": str(plugin_cache)}
+    env = {**dict(os.environ), "TFLINT_PLUGIN_DIR": str(plugin_cache)}
     result = subprocess.run(
         ["tflint", "--format=json", "--minimum-failure-severity=error"],
         cwd=tmp_dir,
@@ -313,9 +314,13 @@ def validate_block(
 
 def init_plugins_for_providers(
     provider_sets: set[frozenset[str]], plugin_cache: Path
-) -> None:
-    """Pre-initialize tflint plugins for all needed provider combinations."""
+) -> set[frozenset[str]]:
+    """Pre-initialize tflint plugins for all needed provider combinations.
+
+    Returns the set of provider combinations that failed initialization.
+    """
     initialized: set[str] = set()
+    failed: set[frozenset[str]] = set()
     for providers in provider_sets:
         # Only need to init for providers that have tflint plugins
         plugins_needed = frozenset(p for p in providers if p in TFLINT_PLUGIN_MAP)
@@ -333,6 +338,8 @@ def init_plugins_for_providers(
                     f"Warning: tflint --init failed for plugins: {key}",
                     file=sys.stderr,
                 )
+                failed.add(providers)
+    return failed
 
 
 def validate_policy_file(
@@ -355,13 +362,16 @@ def validate_policy_file(
         providers = detect_providers(b.code)
         if providers:
             provider_sets.add(frozenset(providers))
-    init_plugins_for_providers(provider_sets, plugin_cache)
+    failed_inits = init_plugins_for_providers(provider_sets, plugin_cache)
 
     policy_relpath = str(filepath.resolve().relative_to(Path.cwd()))
     pass_count = 0
     fail_count = 0
 
     def process(block: HclBlock):
+        providers = frozenset(detect_providers(block.code))
+        if providers in failed_inits:
+            return block, False, ["tflint plugin init failed for required providers"]
         return validate_block(block, plugin_cache)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
