@@ -17,19 +17,43 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUTPUT = SCRIPT_DIR / "cmd_data" / "oci_commands.json"
+OCI_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-oci-security.mql.yaml"
 
-# Services referenced in the OCI security policy.
-SERVICES = [
-    "iam",
-    "network",
-    "os",
-]
+
+def detect_services_from_policy() -> list[str]:
+    """Auto-detect OCI services used in the policy file.
+
+    Scans `oci <service> ...` commands in bash code blocks within cli
+    remediation sections and returns the unique set of top-level service
+    names.
+    """
+    if not OCI_POLICY_FILE.exists():
+        print(
+            f"Warning: Policy file not found: {OCI_POLICY_FILE}\n"
+            f"Cannot auto-detect services.",
+            file=sys.stderr,
+        )
+        return []
+
+    content = OCI_POLICY_FILE.read_text()
+    services = set()
+    for match in re.finditer(r"```bash\s*\n(.*?)```", content, re.DOTALL):
+        block = match.group(1)
+        joined = re.sub(r"\\\s*\n\s*", " ", block)
+        for line in joined.split("\n"):
+            line = line.strip()
+            if line.startswith("oci "):
+                parts = line.split()
+                if len(parts) >= 2 and not parts[1].startswith("-"):
+                    services.add(parts[1])
+    return sorted(services)
 
 # Global flags available on every OCI CLI command.
 GLOBAL_FLAGS = [
@@ -115,8 +139,8 @@ print(json.dumps(result))
 """
 
 
-def find_oci_cli_site_packages() -> str:
-    """Find the site-packages directory for the OCI CLI's bundled Python."""
+def find_oci_binary() -> str:
+    """Find the oci CLI binary path, or exit with an error."""
     oci_path = subprocess.run(
         ["which", "oci"], capture_output=True, text=True
     ).stdout.strip()
@@ -125,6 +149,12 @@ def find_oci_cli_site_packages() -> str:
         print("Error: oci CLI not found in PATH.", file=sys.stderr)
         sys.exit(1)
 
+    return oci_path
+
+
+def find_oci_cli_site_packages() -> str:
+    """Find the site-packages directory for the OCI CLI's bundled Python."""
+    oci_path = find_oci_binary()
     real_path = Path(oci_path).resolve()
     base = real_path.parent.parent
     candidates = list(base.glob("**/site-packages/oci_cli/__init__.py"))
@@ -142,13 +172,7 @@ def find_oci_cli_site_packages() -> str:
 
 def find_oci_python() -> str:
     """Find the Python interpreter used by the OCI CLI."""
-    oci_path = subprocess.run(
-        ["which", "oci"], capture_output=True, text=True
-    ).stdout.strip()
-
-    if not oci_path:
-        print("Error: oci CLI not found in PATH.", file=sys.stderr)
-        sys.exit(1)
+    oci_path = find_oci_binary()
 
     # Read the shebang line to find the Python interpreter
     with open(oci_path) as f:
@@ -186,6 +210,12 @@ def main():
     )
     args = parser.parse_args()
 
+    services = detect_services_from_policy()
+    if not services:
+        print("Error: No OCI services detected from policy file.", file=sys.stderr)
+        sys.exit(1)
+    print(f"Detected services from policy: {', '.join(services)}", file=sys.stderr)
+
     site_packages = find_oci_cli_site_packages()
     python_path = find_oci_python()
     print(f"Using OCI CLI from: {site_packages}", file=sys.stderr)
@@ -198,7 +228,7 @@ def main():
             "-c",
             _EXTRACT_SCRIPT,
             site_packages,
-            json.dumps(SERVICES),
+            json.dumps(services),
         ],
         capture_output=True,
         text=True,

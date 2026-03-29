@@ -131,26 +131,31 @@ AWS_COMMANDS_FILE = CMD_DATA_DIR / "aws_commands.json"
 
 
 def parse_aws_command(cmd: str) -> tuple[str, str, list[str]]:
-    """Parse an aws command into (service, subcommand, flags)."""
+    """Parse an aws command into (service, subcommand, flags).
+
+    Always returns a non-empty service when the command starts with 'aws'
+    followed by at least one non-flag token, so the caller can report
+    unknown services/subcommands instead of silently skipping them.
+    """
     try:
         tokens = shlex.split(cmd)
     except ValueError:
         tokens = cmd.split()
 
-    if len(tokens) < 3 or tokens[0] != "aws":
+    if len(tokens) < 2 or tokens[0] != "aws":
         return "", "", []
 
     service = tokens[1]
-    subcommand = tokens[2]
+    if service.startswith("-"):
+        return "", "", []
 
-    if subcommand.startswith("-"):
-        return service, "", []
-
+    subcommand = ""
     flags = []
-    for token in tokens[3:]:
+    for token in tokens[2:]:
         if token.startswith("--"):
-            flag = token.split("=")[0]
-            flags.append(flag)
+            flags.append(token.split("=")[0])
+        elif not subcommand and not token.startswith("-"):
+            subcommand = token
 
     return service, subcommand, flags
 
@@ -166,6 +171,10 @@ def validate_aws_command(
 
     if service not in commands_db:
         errors.append(f"unknown service '{service}'")
+        return False, errors
+
+    if not subcommand:
+        errors.append(f"missing subcommand for '{service}'")
         return False, errors
 
     valid_subcommands = commands_db[service]
@@ -209,7 +218,7 @@ def validate_aws() -> tuple[int, int]:
         for cmd, line_num in commands:
             service, subcommand, flags = parse_aws_command(cmd)
 
-            if not service or not subcommand:
+            if not service:
                 continue
 
             is_valid, errors = validate_aws_command(
