@@ -650,9 +650,11 @@ def emit_github_annotations() -> None:
     """
     for r in FAILURES:
         msg = "; ".join(r["errors"]) + f" — {r['command']}"
+        title = f"{r['cloud'].upper()} CLI validation ({r['uid']})"
         # Workflow command special characters must be encoded
         msg = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::error file={r['file']},line={r['line']},title={r['cloud'].upper()} CLI validation ({r['uid']})::{msg}")
+        title = title.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(",", "%2C").replace("::", "%3A%3A")
+        print(f"::error file={r['file']},line={r['line']},title={title}::{msg}")
 
 
 # ---------------------------------------------------------------------------
