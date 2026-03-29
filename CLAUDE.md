@@ -344,15 +344,16 @@ The `content/validation/` directory contains tooling to verify that CLI commands
 **Validate commands:**
 
 ```bash
-# Validate all policies (currently AWS and Azure)
+# Validate all policies (currently AWS, Azure, and OCI)
 python3 content/validation/validate_remediation_commands.py
 
 # Validate a specific cloud
 python3 content/validation/validate_remediation_commands.py aws
 python3 content/validation/validate_remediation_commands.py azure
+python3 content/validation/validate_remediation_commands.py oci
 ```
 
-The validator checks each `aws`/`az` command in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator checks each `aws`/`az`/`oci` command in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
 
 **Reference data for writing remediation commands:**
 
@@ -360,6 +361,7 @@ The `content/validation/cmd_data/` directory contains JSON files listing all val
 
 - `aws_commands.json` — AWS CLI services, subcommands, and flags (sourced from botocore)
 - `azure_commands.json` — Azure CLI commands and flags (sourced from az CLI internals)
+- `oci_commands.json` — OCI CLI commands and flags (sourced from oci_cli Click command tree)
 
 When writing remediation steps, consult these files to verify that the CLI commands and flags you reference actually exist. The JSON structure maps command names to their valid flags (e.g., `"eks describe-cluster": ["--name", "--query", ...]`).
 
@@ -368,6 +370,7 @@ When writing remediation steps, consult these files to verify that the CLI comma
 ```bash
 python3 content/validation/dump_aws_commands.py
 python3 content/validation/dump_azure_commands.py
+python3 content/validation/dump_oci_commands.py
 ```
 
 ### Working with Providers
