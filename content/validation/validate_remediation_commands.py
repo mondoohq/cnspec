@@ -9,6 +9,7 @@
 #   python3 validate_remediation_commands.py            # validate all
 #   python3 validate_remediation_commands.py aws         # validate AWS commands only
 #   python3 validate_remediation_commands.py azure       # validate Azure commands only
+#   python3 validate_remediation_commands.py oci         # validate OCI commands only
 
 import json
 import re
@@ -19,7 +20,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 CMD_DATA_DIR = SCRIPT_DIR / "cmd_data"
 
-VALIDATORS = ["aws", "azure"]
+VALIDATORS = ["aws", "azure", "oci"]
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +242,9 @@ def parse_az_command(cmd: str, commands_db: dict[str, list[str]]) -> tuple[str, 
     """Parse an az command into (command_path, flags).
 
     Azure CLI commands have variable-depth paths (e.g. 'network nsg rule create').
-    We match the longest known command path from the database.
+    We match the longest known command path from the database. If no match is
+    found, the raw command path (tokens before the first flag) is returned so
+    the caller can report it as unknown.
     """
     try:
         tokens = shlex.split(cmd)
@@ -255,12 +258,18 @@ def parse_az_command(cmd: str, commands_db: dict[str, list[str]]) -> tuple[str, 
     # we hit a flag or run out of matching commands
     parts = tokens[1:]  # skip 'az'
     command_path = ""
+    raw_path_parts = []
     for i in range(len(parts)):
         if parts[i].startswith("-"):
             break
+        raw_path_parts.append(parts[i])
         candidate = " ".join(parts[: i + 1])
         if candidate in commands_db:
             command_path = candidate
+
+    # If no match found, return the raw path so the caller can report it
+    if not command_path and raw_path_parts:
+        command_path = " ".join(raw_path_parts)
 
     # Extract flags from remaining tokens
     flags = []
@@ -340,6 +349,124 @@ def validate_azure() -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
+# OCI validation
+# ---------------------------------------------------------------------------
+
+OCI_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-oci-security.mql.yaml"
+OCI_COMMANDS_FILE = CMD_DATA_DIR / "oci_commands.json"
+
+
+def parse_oci_command(cmd: str, commands_db: dict[str, list[str]]) -> tuple[str, list[str]]:
+    """Parse an oci command into (command_path, flags).
+
+    OCI CLI commands have variable-depth paths (e.g. 'iam user api-key list').
+    We match the longest known command path from the database. If no match is
+    found, the raw command path (tokens before the first flag) is returned so
+    the caller can report it as unknown.
+    """
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        tokens = cmd.split()
+
+    if len(tokens) < 2 or tokens[0] != "oci":
+        return "", []
+
+    # Find the longest matching command path by consuming tokens until
+    # we hit a flag or run out of matching commands
+    parts = tokens[1:]  # skip 'oci'
+    command_path = ""
+    raw_path_parts = []
+    for i in range(len(parts)):
+        if parts[i].startswith("-"):
+            break
+        raw_path_parts.append(parts[i])
+        candidate = " ".join(parts[: i + 1])
+        if candidate in commands_db:
+            command_path = candidate
+
+    # If no match found, return the raw path so the caller can report it
+    if not command_path and raw_path_parts:
+        command_path = " ".join(raw_path_parts)
+
+    # Extract flags from remaining tokens
+    flags = []
+    for token in parts:
+        if token.startswith("--"):
+            flag = token.split("=")[0]
+            flags.append(flag)
+
+    return command_path, flags
+
+
+def validate_oci_command(
+    command_path: str,
+    flags: list[str],
+    commands_db: dict[str, list[str]],
+) -> tuple[bool, list[str]]:
+    """Validate a parsed OCI CLI command against the commands database."""
+    errors = []
+
+    if command_path not in commands_db:
+        errors.append(f"unknown command 'oci {command_path}'")
+        return False, errors
+
+    valid_flags = set(commands_db[command_path])
+    for flag in flags:
+        if flag not in valid_flags:
+            errors.append(f"unknown flag '{flag}' for 'oci {command_path}'")
+
+    return len(errors) == 0, errors
+
+
+def validate_oci() -> tuple[int, int]:
+    """Validate OCI CLI commands. Returns (pass_count, fail_count)."""
+    if not OCI_POLICY_FILE.exists():
+        print(f"Error: Policy file not found: {OCI_POLICY_FILE}", file=sys.stderr)
+        sys.exit(1)
+
+    if not OCI_COMMANDS_FILE.exists():
+        print(
+            f"Error: Commands database not found: {OCI_COMMANDS_FILE}\n"
+            f"Run dump_oci_commands.py first to generate it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    commands_db = json.loads(OCI_COMMANDS_FILE.read_text())
+    content = OCI_POLICY_FILE.read_text()
+    blocks = extract_bash_blocks(content)
+
+    pass_count = 0
+    fail_count = 0
+
+    for block_text, block_line, uid in blocks:
+        commands = split_commands(block_text, "oci", block_line)
+        for cmd, line_num in commands:
+            command_path, flags = parse_oci_command(cmd, commands_db)
+
+            if not command_path:
+                continue
+
+            is_valid, errors = validate_oci_command(
+                command_path, flags, commands_db
+            )
+
+            if is_valid:
+                print(f"[PASS] {uid}")
+                print(f"       {truncate_cmd(cmd)}")
+                pass_count += 1
+            else:
+                print(f"[FAIL] {uid}")
+                print(f"       {truncate_cmd(cmd)}")
+                for error in errors:
+                    print(f"       {error}")
+                fail_count += 1
+
+    return pass_count, fail_count
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -364,6 +491,11 @@ def main():
 
     if target in ("all", "azure"):
         p, f = validate_azure()
+        total_pass += p
+        total_fail += f
+
+    if target in ("all", "oci"):
+        p, f = validate_oci()
         total_pass += p
         total_fail += f
 
