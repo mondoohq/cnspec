@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -126,7 +127,6 @@ def dedent_snippet(code: str) -> str:
     as the baseline, since the --- document marker may have been stripped
     to column 0 by the extraction process.
     """
-    import textwrap
     return textwrap.dedent(code)
 
 
@@ -194,7 +194,11 @@ def run_ansible_lint(playbook_path: Path) -> LintResult:
                 issues.append("\n".join(lines))
 
     if not issues:
-        return LintResult(success=True)
+        # Exit code 2 = lint issues found, 0 = clean. Anything else is a crash.
+        if result.returncode not in (0, 2):
+            issues.append(f"ansible-lint exited with code {result.returncode}")
+        else:
+            return LintResult(success=True)
 
     return LintResult(success=False, issues=issues)
 
