@@ -80,7 +80,6 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
     """
     lines = block.split("\n")
     commands = []
-    current_line = block_start_line
     i = 0
 
     while i < len(lines):
@@ -96,10 +95,18 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
 
         stripped = full_line.strip()
         if stripped and not stripped.startswith("#"):
-            for match in re.finditer(rf"({prefix}\s+\S.*?)(?:\||;|$)", stripped):
-                cmd = match.group(1).strip()
-                if cmd.startswith(f"{prefix} "):
-                    commands.append((cmd, raw_line_num))
+            # Use shlex to handle quoted values containing | or ;
+            # then re-join and split on unquoted pipes/semicolons
+            try:
+                tokens = shlex.split(stripped)
+            except ValueError:
+                tokens = stripped.split()
+            rejoined = " ".join(tokens)
+            # Split on pipe/semicolon boundaries
+            for segment in re.split(r"\s*[|;]\s*", rejoined):
+                segment = segment.strip()
+                if segment.startswith(f"{prefix} "):
+                    commands.append((segment, raw_line_num))
 
         i += 1 + cont_lines
 

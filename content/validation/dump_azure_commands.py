@@ -116,7 +116,12 @@ def find_az_site_packages() -> str:
 
 
 def get_flags_from_help(cmd_name: str) -> list[str]:
-    """Parse `az <cmd> --help` to extract user-facing flags."""
+    """Parse `az <cmd> --help` to extract user-facing flags.
+
+    Only extracts flags from argument sections (e.g. "Arguments",
+    "Global Arguments"), stopping at "Examples" to avoid picking up
+    flags from example text.
+    """
     result = subprocess.run(
         ["az"] + cmd_name.split() + ["--help"],
         capture_output=True,
@@ -124,12 +129,25 @@ def get_flags_from_help(cmd_name: str) -> list[str]:
         timeout=30,
     )
     output = result.stdout + result.stderr
+
+    # Only parse lines within argument sections, stop at Examples
     flags = set()
-    for match in re.finditer(r"(--[a-z][a-z0-9-]*)", output):
-        flag = match.group(1)
-        # Skip flags that are part of example text or descriptions
-        if flag not in ("--defaults",):
-            flags.add(flag)
+    in_args = False
+    for line in output.splitlines():
+        # Section headers are left-aligned capitalized words
+        if re.match(r"^[A-Z]", line):
+            header = line.strip().rstrip(":")
+            if "Arguments" in header or "Parameters" in header:
+                in_args = True
+            else:
+                in_args = False
+            # Stop entirely at Examples section
+            if header == "Examples":
+                break
+            continue
+        if in_args:
+            for match in re.finditer(r"(--[a-z][a-z0-9-]*)", line):
+                flags.add(match.group(1))
     return sorted(flags)
 
 

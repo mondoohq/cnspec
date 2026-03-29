@@ -172,12 +172,6 @@ print(json.dumps(result))
 
 def find_awscli_site_packages() -> str:
     """Find the site-packages directory for the AWS CLI's bundled Python."""
-    result = subprocess.run(
-        ["aws", "--version"], capture_output=True, text=True
-    )
-    # aws-cli/2.x.x Python/3.x.x ...
-    version_str = result.stdout.strip() or result.stderr.strip()
-
     # Find via the aws binary's real path
     aws_path = subprocess.run(
         ["which", "aws"], capture_output=True, text=True
