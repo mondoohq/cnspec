@@ -2,7 +2,7 @@
 # Copyright (c) Mondoo, Inc.
 # SPDX-License-Identifier: BUSL-1.1
 #
-# Validates CLI commands found in remediation sections of security policies
+# Validates CLI commands found in remediation sections of cnspec policies
 # against known-good sets of subcommands and flags.
 #
 # Usage:
