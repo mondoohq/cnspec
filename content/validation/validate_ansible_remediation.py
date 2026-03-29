@@ -196,7 +196,19 @@ def run_ansible_lint(playbook_path: Path) -> LintResult:
     if not issues:
         # Exit code 2 = lint issues found, 0 = clean. Anything else is a crash.
         if result.returncode not in (0, 2):
-            issues.append(f"ansible-lint exited with code {result.returncode}")
+            # Include stderr for debugging config/fatal errors
+            stderr_lines = [
+                l for l in (result.stderr or "").strip().split("\n")
+                if l.strip() and not any(s in l for s in [
+                    "caching", "WARNING", "UserWarning",
+                    "cache_dir", "unskippable",
+                ])
+            ]
+            detail = "; ".join(stderr_lines) if stderr_lines else ""
+            msg = f"ansible-lint exited with code {result.returncode}"
+            if detail:
+                msg += f": {detail}"
+            issues.append(msg)
         else:
             return LintResult(success=True)
 
@@ -323,7 +335,11 @@ def main():
         if args[i] == "--github-actions":
             github_actions = True
         elif args[i] == "--workers" and i + 1 < len(args):
-            workers = int(args[i + 1])
+            try:
+                workers = int(args[i + 1])
+            except ValueError:
+                print(f"Error: --workers requires an integer, got '{args[i + 1]}'", file=sys.stderr)
+                sys.exit(2)
             i += 1
         else:
             positional.append(args[i])
