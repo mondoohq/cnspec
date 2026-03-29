@@ -239,7 +239,7 @@ def run_tflint(tmp_dir: Path, plugin_cache: Path) -> TflintResult:
     """Run tflint on a temp directory and return structured results."""
     env = {**dict(os.environ), "TFLINT_PLUGIN_DIR": str(plugin_cache)}
     result = subprocess.run(
-        ["tflint", "--format=json", "--minimum-failure-severity=error"],
+        ["tflint", "--format=json", "--minimum-failure-severity=warning"],
         cwd=tmp_dir,
         capture_output=True,
         text=True,
@@ -364,7 +364,12 @@ def validate_policy_file(
             provider_sets.add(frozenset(providers))
     failed_inits = init_plugins_for_providers(provider_sets, plugin_cache)
 
-    policy_relpath = str(filepath.resolve().relative_to(Path.cwd()))
+    resolved = filepath.resolve()
+    try:
+        policy_relpath = str(resolved.relative_to(Path.cwd()))
+    except ValueError:
+        # Running from a subdirectory — use path relative to repo root
+        policy_relpath = str(resolved.relative_to(SCRIPT_DIR.resolve().parent.parent))
     pass_count = 0
     fail_count = 0
 
