@@ -648,26 +648,24 @@ def write_sarif(output_path: str) -> None:
     results: list[dict] = []
 
     for r in SARIF_RESULTS:
-        # One rule per unique (cloud, error_type) combination
-        for error in r["errors"]:
-            rule_id = f"{r['cloud']}/{r['uid']}"
-            if rule_id not in rule_indices:
-                rule_indices[rule_id] = len(rules)
-                rules.append({
-                    "id": rule_id,
-                    "shortDescription": {
-                        "text": f"Invalid {r['cloud'].upper()} CLI command in check {r['uid']}",
-                    },
-                    "helpUri": "https://mondoo.com/docs/cnspec/write-policies/write-intro/",
-                })
-
-            results.append({
-                "ruleId": rule_id,
-                "ruleIndex": rule_indices[rule_id],
-                "level": "error",
-                "message": {
-                    "text": f"{error}\n\nCommand: `{r['command']}`",
+        rule_id = f"{r['cloud']}/{r['uid']}"
+        if rule_id not in rule_indices:
+            rule_indices[rule_id] = len(rules)
+            rules.append({
+                "id": rule_id,
+                "shortDescription": {
+                    "text": f"Invalid {r['cloud'].upper()} CLI command in check {r['uid']}",
                 },
+                "helpUri": "https://mondoo.com/docs/cnspec/write-policies/write-intro/",
+            })
+
+        results.append({
+            "ruleId": rule_id,
+            "ruleIndex": rule_indices[rule_id],
+            "level": "error",
+            "message": {
+                "text": "\n".join(r["errors"]) + f"\n\nCommand: `{r['command']}`",
+            },
                 "locations": [
                     {
                         "physicalLocation": {
