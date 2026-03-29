@@ -36,9 +36,9 @@ TARGETS = {
 }
 
 # shellcheck codes to exclude:
-# SC2034 - variable appears unused (common in example snippets)
+# SC2016 - expressions don't expand in single quotes (intentional for config file content)
 # SC2312 - consider invoking separately to avoid masking return values (noisy for examples)
-EXCLUDE_CODES = ["SC2034", "SC2312"]
+EXCLUDE_CODES = ["SC2016", "SC2312"]
 
 FAILURES: list[dict] = []
 
@@ -138,7 +138,7 @@ def run_shellcheck(script_path: Path) -> ShellcheckResult:
         [
             "shellcheck",
             "--format=json",
-            "--severity=warning",
+            "--severity=info",
             f"--exclude={exclude}",
             str(script_path),
         ],
