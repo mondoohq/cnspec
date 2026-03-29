@@ -23,6 +23,10 @@ CMD_DATA_DIR = SCRIPT_DIR / "cmd_data"
 
 VALIDATORS = ["aws", "azure", "oci", "gcp"]
 
+# Collected failures for SARIF output.  Each entry is a dict with keys:
+# file, line, uid, command, errors, cloud
+SARIF_RESULTS: list[dict] = []
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -214,6 +218,8 @@ def validate_aws() -> tuple[int, int]:
     pass_count = 0
     fail_count = 0
 
+    policy_relpath = str(AWS_POLICY_FILE.resolve().relative_to(Path.cwd()))
+
     for block_text, block_line, uid in blocks:
         commands = split_commands(block_text, "aws", block_line)
         for cmd, line_num in commands:
@@ -236,6 +242,14 @@ def validate_aws() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
+                SARIF_RESULTS.append({
+                    "file": policy_relpath,
+                    "line": line_num,
+                    "uid": uid,
+                    "command": truncate_cmd(cmd),
+                    "errors": errors,
+                    "cloud": "aws",
+                })
 
     return pass_count, fail_count
 
@@ -332,6 +346,8 @@ def validate_azure() -> tuple[int, int]:
     pass_count = 0
     fail_count = 0
 
+    policy_relpath = str(AZURE_POLICY_FILE.resolve().relative_to(Path.cwd()))
+
     for block_text, block_line, uid in blocks:
         commands = split_commands(block_text, "az", block_line)
         for cmd, line_num in commands:
@@ -354,6 +370,14 @@ def validate_azure() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
+                SARIF_RESULTS.append({
+                    "file": policy_relpath,
+                    "line": line_num,
+                    "uid": uid,
+                    "command": truncate_cmd(cmd),
+                    "errors": errors,
+                    "cloud": "azure",
+                })
 
     return pass_count, fail_count
 
@@ -450,6 +474,8 @@ def validate_oci() -> tuple[int, int]:
     pass_count = 0
     fail_count = 0
 
+    policy_relpath = str(OCI_POLICY_FILE.resolve().relative_to(Path.cwd()))
+
     for block_text, block_line, uid in blocks:
         commands = split_commands(block_text, "oci", block_line)
         for cmd, line_num in commands:
@@ -472,6 +498,14 @@ def validate_oci() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
+                SARIF_RESULTS.append({
+                    "file": policy_relpath,
+                    "line": line_num,
+                    "uid": uid,
+                    "command": truncate_cmd(cmd),
+                    "errors": errors,
+                    "cloud": "oci",
+                })
 
     return pass_count, fail_count
 
@@ -567,6 +601,8 @@ def validate_gcloud() -> tuple[int, int]:
     pass_count = 0
     fail_count = 0
 
+    policy_relpath = str(GCLOUD_POLICY_FILE.resolve().relative_to(Path.cwd()))
+
     for block_text, block_line, uid in blocks:
         commands = split_commands(block_text, "gcloud", block_line)
         for cmd, line_num in commands:
@@ -589,8 +625,83 @@ def validate_gcloud() -> tuple[int, int]:
                 for error in errors:
                     print(f"       {error}")
                 fail_count += 1
+                SARIF_RESULTS.append({
+                    "file": policy_relpath,
+                    "line": line_num,
+                    "uid": uid,
+                    "command": truncate_cmd(cmd),
+                    "errors": errors,
+                    "cloud": "gcp",
+                })
 
     return pass_count, fail_count
+
+
+# ---------------------------------------------------------------------------
+# SARIF output
+# ---------------------------------------------------------------------------
+
+def write_sarif(output_path: str) -> None:
+    """Write collected failures as a SARIF 2.1.0 file."""
+    rules: list[dict] = []
+    rule_indices: dict[str, int] = {}
+    results: list[dict] = []
+
+    for r in SARIF_RESULTS:
+        # One rule per unique (cloud, error_type) combination
+        for error in r["errors"]:
+            rule_id = f"{r['cloud']}/{r['uid']}"
+            if rule_id not in rule_indices:
+                rule_indices[rule_id] = len(rules)
+                rules.append({
+                    "id": rule_id,
+                    "shortDescription": {
+                        "text": f"Invalid {r['cloud'].upper()} CLI command in check {r['uid']}",
+                    },
+                    "helpUri": "https://mondoo.com/docs/cnspec/write-policies/write-intro/",
+                })
+
+            results.append({
+                "ruleId": rule_id,
+                "ruleIndex": rule_indices[rule_id],
+                "level": "error",
+                "message": {
+                    "text": f"{error}\n\nCommand: `{r['command']}`",
+                },
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {
+                                "uri": r["file"],
+                                "uriBaseId": "%SRCROOT%",
+                            },
+                            "region": {
+                                "startLine": r["line"],
+                            },
+                        },
+                    }
+                ],
+            })
+
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "validate-remediation-commands",
+                        "informationUri": "https://github.com/mondoohq/cnspec",
+                        "version": "1.0.0",
+                        "rules": rules,
+                    },
+                },
+                "results": results,
+            }
+        ],
+    }
+
+    Path(output_path).write_text(json.dumps(sarif, indent=2) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -598,12 +709,28 @@ def validate_gcloud() -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 
 def main():
-    target = sys.argv[1] if len(sys.argv) > 1 else "all"
+    args = sys.argv[1:]
+    sarif_output = None
+    target = "all"
+
+    # Parse --sarif <file> option
+    i = 0
+    positional = []
+    while i < len(args):
+        if args[i] == "--sarif" and i + 1 < len(args):
+            sarif_output = args[i + 1]
+            i += 2
+        else:
+            positional.append(args[i])
+            i += 1
+
+    if positional:
+        target = positional[0]
 
     if target not in ("all", *VALIDATORS):
         print(
             f"Unknown validator: {target}\n"
-            f"Usage: {sys.argv[0]} [{'|'.join(['all'] + VALIDATORS)}]",
+            f"Usage: {sys.argv[0]} [{'|'.join(['all'] + VALIDATORS)}] [--sarif <output.sarif>]",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -630,6 +757,9 @@ def main():
         p, f = validate_gcloud()
         total_pass += p
         total_fail += f
+
+    if sarif_output:
+        write_sarif(sarif_output)
 
     print(f"\n{total_pass} passed, {total_fail} failed", file=sys.stderr)
     sys.exit(1 if total_fail > 0 else 0)
