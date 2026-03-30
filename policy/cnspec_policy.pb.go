@@ -7935,12 +7935,9 @@ func (x *StoreResultsReq) GetIsLastBatch() bool {
 }
 
 type GetUploadURLReq struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	Kind     UploadURLKind          `protobuf:"varint,1,opt,name=kind,proto3,enum=cnspec.policy.v1.UploadURLKind" json:"kind,omitempty"`
-	ScopeMrn string                 `protobuf:"bytes,2,opt,name=scope_mrn,json=scopeMrn,proto3" json:"scope_mrn,omitempty"`
-	// Optional. Used to explicitly associate the uploaded data with a specific resource when
-	// this information cannot be inferred directly from the scope MRN.
-	ResourceId    string `protobuf:"bytes,3,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          UploadURLKind          `protobuf:"varint,1,opt,name=kind,proto3,enum=cnspec.policy.v1.UploadURLKind" json:"kind,omitempty"`
+	ScopeMrn      string                 `protobuf:"bytes,2,opt,name=scope_mrn,json=scopeMrn,proto3" json:"scope_mrn,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7985,13 +7982,6 @@ func (x *GetUploadURLReq) GetKind() UploadURLKind {
 func (x *GetUploadURLReq) GetScopeMrn() string {
 	if x != nil {
 		return x.ScopeMrn
-	}
-	return ""
-}
-
-func (x *GetUploadURLReq) GetResourceId() string {
-	if x != nil {
-		return x.ResourceId
 	}
 	return ""
 }
@@ -9466,12 +9456,10 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x0f.mql.llx.ResultR\x05value:\x028\x01\x1aX\n" +
 	"\x0eResourcesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.mql.llx.ResourceRecordingR\x05value:\x028\x01\"\x84\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x1a.mql.llx.ResourceRecordingR\x05value:\x028\x01\"c\n" +
 	"\x0fGetUploadURLReq\x123\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1f.cnspec.policy.v1.UploadURLKindR\x04kind\x12\x1b\n" +
-	"\tscope_mrn\x18\x02 \x01(\tR\bscopeMrn\x12\x1f\n" +
-	"\vresource_id\x18\x03 \x01(\tR\n" +
-	"resourceId\"z\n" +
+	"\tscope_mrn\x18\x02 \x01(\tR\bscopeMrn\"z\n" +
 	"\x10GetUploadURLResp\x12*\n" +
 	"\x11upload_session_id\x18\x01 \x01(\tR\x0fuploadSessionId\x12:\n" +
 	"\n" +
