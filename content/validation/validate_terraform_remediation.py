@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) Mondoo, Inc.
+# Copyright Mondoo, Inc. 2026
 # SPDX-License-Identifier: BUSL-1.1
 #
 # Validates Terraform HCL code blocks found in remediation sections of cnspec
