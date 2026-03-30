@@ -7938,7 +7938,8 @@ type GetUploadURLReq struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Kind     UploadURLKind          `protobuf:"varint,1,opt,name=kind,proto3,enum=cnspec.policy.v1.UploadURLKind" json:"kind,omitempty"`
 	ScopeMrn string                 `protobuf:"bytes,2,opt,name=scope_mrn,json=scopeMrn,proto3" json:"scope_mrn,omitempty"`
-	// Optional. Specifies a unique identifier override for the resource that will be uploaded.
+	// Optional. Used to explicitly associate the uploaded data with a specific resource when
+	// this information cannot be inferred directly from the scope MRN.
 	ResourceId    string `protobuf:"bytes,3,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
