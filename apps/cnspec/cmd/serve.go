@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -280,8 +281,9 @@ func updateProviders() error {
 		return err
 	}
 	updatedProviders := []*providers.Provider{}
+	builtinProviders := providers.GetBuiltinProviderNames()
 	for _, provider := range allProviders {
-		if provider.Name == "mock" || provider.Name == "core" || provider.Name == "sbom" {
+		if slices.Contains(builtinProviders, provider.Name) {
 			continue
 		}
 		latestVersion, err := providers.LatestVersion(context.Background(), provider.Name)
