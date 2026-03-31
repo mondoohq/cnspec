@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 2.0.0
+    version: 3.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -38,17 +38,29 @@ policies:
           - uid: mondoo-oci-security-iam-no-overly-permissive-policies
           - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
           - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
+          - uid: mondoo-oci-security-iam-stale-active-users
+          - uid: mondoo-oci-security-iam-no-broad-compartment-policies
       - title: Object Storage
         checks:
           - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
           - uid: mondoo-oci-security-object-storage-buckets-versioning-enabled
           - uid: mondoo-oci-security-object-storage-buckets-event-logging-enabled
           - uid: mondoo-oci-security-object-storage-buckets-customer-managed-encryption
+          - uid: mondoo-oci-security-object-storage-buckets-replication-enabled
+          - uid: mondoo-oci-security-object-storage-archive-buckets-versioning
       - title: Virtual Cloud Network
         checks:
           - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols
           - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports
           - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols
+          - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress
+          - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress
+          - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress
+          - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet
+          - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports
+      - title: Compute
+        checks:
+          - uid: mondoo-oci-security-compute-instance-tagging
     scoring_system: highest impact
 queries:
   - uid: mondoo-oci-security-iam-mfa-enabled-for-active-users
@@ -1177,3 +1189,1071 @@ queries:
       terraform.state.resources.where(type == "oci_core_security_list").all(
         values.egress_security_rules.none(_['destination'] == "0.0.0.0/0" && _['protocol'] == "all")
       )
+  - uid: mondoo-oci-security-iam-stale-active-users
+    title: Ensure active IAM users have logged in within the last 90 days
+    impact: 70
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-10
+      compliance/soc2-2017: soc2-control-cc6-2-2
+    mql: |
+      oci.identity.users.where(state == "ACTIVE" && lastLogin != empty).all(
+        lastLogin > time.now - 90 * time.day
+      )
+    docs:
+      desc: |
+        This check ensures that all active IAM users have logged in within the last 90 days. Accounts that remain active but unused may indicate orphaned identities that increase the attack surface.
+
+        **Why this matters**
+
+        Stale active accounts pose significant security risks:
+          •  Unused accounts may have been forgotten during employee offboarding.
+          •  Dormant accounts with valid credentials are prime targets for attackers.
+          •  Compromised stale accounts may go unnoticed for extended periods.
+          •  Regular login activity is an indicator of account legitimacy and active ownership.
+
+        Risk mitigation
+          •  Disable or delete IAM user accounts that have not been used within 90 days.
+          •  Implement automated account lifecycle management.
+          •  Regularly review user login activity and investigate dormant accounts.
+          •  Establish an offboarding process that includes IAM account deactivation.
+      remediation:
+        - id: console
+          desc: |
+            To identify and remediate stale active users using the OCI Console:
+
+            1. Navigate to **Identity & Security > Users**.
+            2. Review the **Last Sign-In** column for each active user.
+            3. For users who have not signed in within 90 days, select the user.
+            4. Select **Disable** or **Delete** depending on your organization's offboarding policy.
+        - id: cli
+          desc: |
+            To identify stale active users using the OCI CLI, list users and filter by login activity:
+
+            ```bash
+            oci iam user list --compartment-id TENANCY_OCID --all --query "data[?\"lifecycle-state\"=='ACTIVE'].{Name:name, LastLogin:\"last-successful-login-time\"}" --output table
+            ```
+
+            Review the output for users whose last login exceeds 90 days. Disable stale accounts:
+
+            ```bash
+            oci iam user update --user-id USER_OCID --defined-tags '{"Operations": {"Status": "PendingReview"}}'
+            ```
+
+            NOTE: The OCI CLI does not support disabling users directly. Disable or delete stale users through the OCI Console or by removing all credentials (API keys, auth tokens, passwords) via the CLI.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingusers.htm
+        title: CIS OCI Foundations Benchmark 1.13
+  - uid: mondoo-oci-security-iam-no-broad-compartment-policies
+    title: Ensure no IAM policies grant manage all-resources in compartment
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+    variants:
+      - uid: mondoo-oci-security-iam-no-broad-compartment-policies-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-iam-no-broad-compartment-policies-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-iam-no-broad-compartment-policies-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-iam-no-broad-compartment-policies-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM policies grant `manage all-resources` at the compartment level. While compartment-scoped policies are less dangerous than tenancy-level policies, granting full management access to all resources within a compartment still violates the principle of least privilege.
+
+        **Why this matters**
+
+        The `manage all-resources in compartment` permission grants unrestricted control within a compartment:
+          •  Users can create, modify, and delete any resource type in the compartment.
+          •  A compromised account with this permission has full blast radius within the compartment.
+          •  It bypasses fine-grained access control and makes auditing difficult.
+          •  Lateral movement within the compartment is unrestricted once access is obtained.
+
+        Risk mitigation
+          •  Use specific resource types instead of `all-resources` (e.g., `manage instance-family`, `manage virtual-network-family`).
+          •  Grant only the minimum permissions required for each group's function.
+          •  Use multiple policies with narrow scope instead of a single broad policy.
+          •  Regularly audit IAM policies for overly permissive statements.
+      remediation:
+        - id: console
+          desc: |
+            To replace overly permissive compartment policies using the OCI Console:
+
+            1. Navigate to **Identity & Security > Policies**.
+            2. Identify policies containing `manage all-resources in compartment`.
+            3. Replace with scoped policies that grant access to specific resource types:
+
+            ```
+            # Instead of:
+            Allow group DevOps to manage all-resources in compartment Production
+
+            # Use scoped policies:
+            Allow group DevOps to manage instance-family in compartment Production
+            Allow group DevOps to manage virtual-network-family in compartment Production
+            ```
+        - id: cli
+          desc: |
+            To identify and replace overly permissive compartment policies using the OCI CLI, list all policies:
+
+            ```bash
+            oci iam policy list --compartment-id TENANCY_OCID --all --query "data[].{Name:name, Statements:statements}" --output table
+            ```
+
+            Review for statements containing `manage all-resources in compartment`. Update each policy to use specific resource types:
+
+            ```bash
+            oci iam policy update --policy-id POLICY_OCID \
+              --statements '["Allow group DevOps to manage instance-family in compartment Production"]'
+            ```
+        - id: terraform
+          desc: |
+            To enforce scoped compartment policies in Terraform, use specific resource types instead of `all-resources`:
+
+            ```hcl
+            resource "oci_identity_policy" "devops" {
+              compartment_id = var.tenancy_ocid
+              name           = "DevOpsPolicy"
+              description    = "Scoped policy for DevOps team"
+
+              statements = [
+                "Allow group DevOps to manage instance-family in compartment Production",
+                "Allow group DevOps to manage virtual-network-family in compartment Production",
+              ]
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm
+        title: CIS OCI Foundations Benchmark 1.2
+  - uid: mondoo-oci-security-iam-no-broad-compartment-policies-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.policies.none(
+        statements.any(_ == /allow.*manage\s+all-resources\s+in\s+compartment/i)
+      )
+  - uid: mondoo-oci-security-iam-no-broad-compartment-policies-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_identity_policy")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_identity_policy").none(
+        arguments.statements.any(_ == /allow.*manage\s+all-resources\s+in\s+compartment/i)
+      )
+  - uid: mondoo-oci-security-iam-no-broad-compartment-policies-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_identity_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_identity_policy").none(
+        change.after.statements.any(_ == /allow.*manage\s+all-resources\s+in\s+compartment/i)
+      )
+  - uid: mondoo-oci-security-iam-no-broad-compartment-policies-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_identity_policy")
+    mql: |
+      terraform.state.resources.where(type == "oci_identity_policy").none(
+        values.statements.any(_ == /allow.*manage\s+all-resources\s+in\s+compartment/i)
+      )
+  - uid: mondoo-oci-security-object-storage-buckets-replication-enabled
+    title: Ensure Object Storage buckets have replication enabled
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-14
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-a1-2-1
+    variants:
+      - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Object Storage buckets have cross-region replication enabled. Replication automatically copies objects to a bucket in a different region, providing disaster recovery and business continuity protection.
+
+        **Why this matters**
+
+        Without replication, data is stored in a single region and vulnerable to regional failures:
+          •  Regional outages or disasters can make data unavailable or cause permanent data loss.
+          •  Recovery from a single-region failure requires manual restoration from backups, increasing downtime.
+          •  Compliance frameworks often require geographic redundancy for critical data.
+
+        Replication provides:
+          •  Automatic, asynchronous copying of objects to a destination bucket in another region.
+          •  Protection against regional failures and disasters.
+          •  Reduced recovery time objectives (RTO) for business continuity.
+
+        Risk mitigation
+          •  Enable replication for buckets containing critical or regulated data.
+          •  Choose a destination region that meets your compliance and latency requirements.
+          •  Monitor replication status to ensure objects are being copied successfully.
+      remediation:
+        - id: console
+          desc: |
+            To enable replication on an Object Storage bucket using the OCI Console:
+
+            1. Navigate to **Object Storage > Buckets**.
+            2. Select the bucket identified in this finding.
+            3. Under **Resources**, select **Replication Policy**.
+            4. Select **Create Policy**.
+            5. Choose the destination region and destination bucket.
+            6. Select **Create**.
+        - id: cli
+          desc: |
+            To enable replication on an Object Storage bucket using the OCI CLI, create a replication policy:
+
+            ```bash
+            oci os replication create-replication-policy --bucket-name SOURCE_BUCKET_NAME \
+              --destination-bucket DESTINATION_BUCKET_NAME \
+              --destination-region DESTINATION_REGION \
+              --name "cross-region-replication"
+            ```
+        - id: terraform
+          desc: |
+            To enable replication on an Object Storage bucket in Terraform, create a replication policy resource:
+
+            ```hcl
+            resource "oci_objectstorage_replication_policy" "example" {
+              bucket           = oci_objectstorage_bucket.source.name
+              namespace        = var.namespace
+              name             = "cross-region-replication"
+              destination_bucket_name   = oci_objectstorage_bucket.destination.name
+              destination_region_name   = var.destination_region
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingreplication.htm
+        title: OCI Object Storage replication documentation
+  - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.objectStorage.buckets.all(replicationEnabled == true)
+  - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_objectstorage_bucket")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_objectstorage_replication_policy").length >= terraform.resources.where(nameLabel == "oci_objectstorage_bucket").length
+  - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_objectstorage_bucket")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_objectstorage_replication_policy").length >= terraform.plan.resourceChanges.where(type == "oci_objectstorage_bucket").length
+  - uid: mondoo-oci-security-object-storage-buckets-replication-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_objectstorage_bucket")
+    mql: |
+      terraform.state.resources.where(type == "oci_objectstorage_replication_policy").length >= terraform.state.resources.where(type == "oci_objectstorage_bucket").length
+  - uid: mondoo-oci-security-object-storage-archive-buckets-versioning
+    title: Ensure Object Storage archive buckets have versioning enabled
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-14
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-7
+    variants:
+      - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Object Storage buckets using the Archive storage tier have versioning enabled. Archive buckets typically store long-term retention data such as backups, compliance records, and historical logs. Without versioning, deleted or overwritten archive objects are permanently lost.
+
+        **Why this matters**
+
+        Archive-tier buckets hold data intended for long-term preservation:
+          •  Accidental deletion of archive objects cannot be undone without versioning.
+          •  Compliance and legal hold requirements often mandate immutable or version-controlled storage.
+          •  Restoring archive objects from backups is slow and expensive compared to version recovery.
+          •  Ransomware or insider threats can permanently destroy archived data.
+
+        Risk mitigation
+          •  Enable versioning on all archive-tier buckets.
+          •  Configure lifecycle policies to manage version retention costs.
+          •  Consider enabling Object Lock for compliance-critical archives.
+      remediation:
+        - id: console
+          desc: |
+            To enable versioning on an archive-tier bucket using the OCI Console:
+
+            1. Navigate to **Object Storage > Buckets**.
+            2. Select the archive-tier bucket identified in this finding.
+            3. Select **Edit Versioning**.
+            4. Enable versioning.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To enable versioning on an archive-tier bucket using the OCI CLI:
+
+            ```bash
+            oci os bucket update --bucket-name BUCKET_NAME --versioning Enabled
+            ```
+        - id: terraform
+          desc: |
+            To enable versioning on an archive-tier bucket in Terraform, set the `versioning` attribute:
+
+            ```hcl
+            resource "oci_objectstorage_bucket" "archive" {
+              compartment_id = var.compartment_ocid
+              namespace      = var.namespace
+              name           = "archive-bucket"
+              storage_tier   = "Archive"
+              versioning     = "Enabled"
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingversioning.htm
+        title: OCI Object Storage versioning documentation
+  - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.objectStorage.buckets.where(storageTier == "Archive").all(versioning == "Enabled")
+  - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_objectstorage_bucket")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_objectstorage_bucket" && arguments.storage_tier == "Archive").all(
+        arguments.versioning == "Enabled"
+      )
+  - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_objectstorage_bucket")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_objectstorage_bucket" && change.after.storage_tier == "Archive").all(
+        change.after.versioning == "Enabled"
+      )
+  - uid: mondoo-oci-security-object-storage-archive-buckets-versioning-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_objectstorage_bucket")
+    mql: |
+      terraform.state.resources.where(type == "oci_objectstorage_bucket" && values.storage_tier == "Archive").all(
+        values.versioning == "Enabled"
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress
+    title: Ensure VCN security lists block SSH ingress from 0.0.0.0/0
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not allow SSH (TCP port 22) ingress from any source (0.0.0.0/0). SSH access from the internet is one of the most common attack vectors for cloud infrastructure.
+
+        **Why this matters**
+
+        Unrestricted SSH access from the internet exposes instances to:
+          •  Brute-force password attacks and credential stuffing.
+          •  Exploitation of SSH vulnerabilities in unpatched servers.
+          •  Automated scanning and botnet recruitment.
+          •  Unauthorized remote access if credentials are compromised.
+
+        If SSH is open to 0.0.0.0/0, it can lead to:
+          •  Full instance compromise through brute-forced or stolen credentials.
+          •  Lateral movement to other resources in the VCN.
+          •  Data exfiltration from compromised instances.
+          •  Non-compliance with CIS OCI Foundations Benchmark.
+
+        Risk mitigation
+          •  Restrict SSH source CIDR blocks to known trusted IP ranges (e.g., corporate VPN, bastion host).
+          •  Use OCI Bastion service for secure SSH access without exposing port 22.
+          •  Prefer Network Security Groups (NSGs) for instance-level SSH access control.
+          •  Disable password authentication and require SSH key-based access.
+      remediation:
+        - id: console
+          desc: |
+            To restrict SSH ingress in a VCN security list using the OCI Console:
+
+            1. Navigate to **Networking > Virtual Cloud Networks**.
+            2. Select the VCN.
+            3. Select **Security Lists**.
+            4. Select the security list with the SSH rule.
+            5. Edit the TCP ingress rule for port 22 from 0.0.0.0/0 to use a specific trusted source CIDR block (e.g., your corporate network or bastion subnet).
+        - id: cli
+          desc: |
+            To restrict SSH ingress in a VCN security list using the OCI CLI, update the security list with a rule that restricts the source CIDR:
+
+            ```bash
+            oci network security-list update --security-list-id SECURITY_LIST_OCID \
+              --ingress-security-rules '[{"source":"10.0.0.0/24","protocol":"6","tcpOptions":{"destinationPortRange":{"min":22,"max":22}},"isStateless":false}]'
+            ```
+        - id: terraform
+          desc: |
+            To restrict SSH ingress in a VCN security list in Terraform, specify a trusted source CIDR instead of 0.0.0.0/0:
+
+            ```hcl
+            resource "oci_core_security_list" "example" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.example.id
+              display_name   = "example-security-list"
+
+              ingress_security_rules {
+                protocol  = "6" # TCP
+                source    = "10.0.0.0/24" # Bastion subnet only
+                stateless = false
+
+                tcp_options {
+                  min = 22
+                  max = 22
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: CIS OCI Foundations Benchmark 2.3
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcpOptions'] == empty || _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6").none(
+          blocks.where(type == "tcp_options") == empty ||
+          blocks.where(type == "tcp_options").any(
+            arguments.min == 22 || arguments.max == 22 ||
+            arguments.min <= 22 && arguments.max >= 22
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty || _['tcp_options'].any(
+            _['destination_port_range'].any(_['min'] <= 22 && _['max'] >= 22)
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty || _['tcp_options'].any(
+            _['destination_port_range'].any(_['min'] <= 22 && _['max'] >= 22)
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress
+    title: Ensure VCN security lists block RDP ingress from 0.0.0.0/0
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not allow RDP (TCP port 3389) ingress from any source (0.0.0.0/0). Remote Desktop Protocol access from the internet is a high-risk attack vector frequently targeted by ransomware operators.
+
+        **Why this matters**
+
+        Unrestricted RDP access from the internet exposes Windows instances to:
+          •  Brute-force and credential stuffing attacks against Windows accounts.
+          •  Exploitation of RDP vulnerabilities (e.g., BlueKeep, DejaBlue).
+          •  Ransomware delivery — RDP is the top initial access vector for ransomware gangs.
+          •  Session hijacking and man-in-the-middle attacks.
+
+        If RDP is open to 0.0.0.0/0, it can lead to:
+          •  Full instance compromise and ransomware deployment.
+          •  Lateral movement across the VCN to other Windows systems.
+          •  Data encryption and extortion.
+          •  Non-compliance with CIS OCI Foundations Benchmark.
+
+        Risk mitigation
+          •  Restrict RDP source CIDR blocks to known trusted IP ranges.
+          •  Use OCI Bastion service for secure remote desktop access.
+          •  Enable Network Level Authentication (NLA) on all Windows instances.
+          •  Consider using VPN or jump boxes instead of direct RDP exposure.
+      remediation:
+        - id: console
+          desc: |
+            To restrict RDP ingress in a VCN security list using the OCI Console:
+
+            1. Navigate to **Networking > Virtual Cloud Networks**.
+            2. Select the VCN.
+            3. Select **Security Lists**.
+            4. Select the security list with the RDP rule.
+            5. Edit the TCP ingress rule for port 3389 from 0.0.0.0/0 to use a specific trusted source CIDR block.
+        - id: cli
+          desc: |
+            To restrict RDP ingress in a VCN security list using the OCI CLI, update the security list with a rule that restricts the source CIDR:
+
+            ```bash
+            oci network security-list update --security-list-id SECURITY_LIST_OCID \
+              --ingress-security-rules '[{"source":"10.0.0.0/24","protocol":"6","tcpOptions":{"destinationPortRange":{"min":3389,"max":3389}},"isStateless":false}]'
+            ```
+        - id: terraform
+          desc: |
+            To restrict RDP ingress in a VCN security list in Terraform, specify a trusted source CIDR instead of 0.0.0.0/0:
+
+            ```hcl
+            resource "oci_core_security_list" "example" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.example.id
+              display_name   = "example-security-list"
+
+              ingress_security_rules {
+                protocol  = "6" # TCP
+                source    = "10.0.0.0/24" # Management subnet only
+                stateless = false
+
+                tcp_options {
+                  min = 3389
+                  max = 3389
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: CIS OCI Foundations Benchmark 2.4
+  - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcpOptions'] == empty || _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6").none(
+          blocks.where(type == "tcp_options") == empty ||
+          blocks.where(type == "tcp_options").any(
+            arguments.min == 3389 || arguments.max == 3389 ||
+            arguments.min <= 3389 && arguments.max >= 3389
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty || _['tcp_options'].any(
+            _['destination_port_range'].any(_['min'] <= 3389 && _['max'] >= 3389)
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty || _['tcp_options'].any(
+            _['destination_port_range'].any(_['min'] <= 3389 && _['max'] >= 3389)
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress
+    title: Ensure VCN security lists block unrestricted UDP ingress
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not contain UDP ingress rules from 0.0.0.0/0 that allow all UDP ports. When a UDP ingress rule has no port restrictions, every UDP service on the instance is accessible from the internet.
+
+        **Why this matters**
+
+        Unrestricted UDP access from the internet exposes all UDP services:
+          •  DNS (53), NTP (123), SNMP (161/162), and other UDP services become internet-accessible.
+          •  UDP-based services are frequently exploited for DDoS amplification attacks.
+          •  Connection-less nature of UDP makes abuse harder to detect and mitigate.
+          •  Exposed SNMP services can leak sensitive infrastructure information.
+
+        If unrestricted UDP ingress is allowed, it can lead to:
+          •  DDoS amplification attacks using exposed UDP services.
+          •  Information disclosure through SNMP or DNS zone transfer attacks.
+          •  Exploitation of vulnerable UDP services.
+          •  Non-compliance with CIS OCI Foundations Benchmark.
+
+        Risk mitigation
+          •  Always specify destination port ranges in UDP ingress rules.
+          •  Restrict source CIDR blocks to known trusted IP ranges.
+          •  Use the minimum set of UDP ports required for each workload.
+          •  Prefer Network Security Groups (NSGs) for instance-level access control.
+      remediation:
+        - id: console
+          desc: |
+            To restrict unrestricted UDP ingress rules in a VCN security list using the OCI Console:
+
+            1. Navigate to **Networking > Virtual Cloud Networks**.
+            2. Select the VCN.
+            3. Select **Security Lists**.
+            4. Select the security list.
+            5. Edit UDP ingress rules from 0.0.0.0/0 to specify destination port ranges, allowing only the ports required for your workload.
+        - id: cli
+          desc: |
+            To restrict unrestricted UDP ingress rules in a VCN security list using the OCI CLI, update the security list with rules that include specific port ranges:
+
+            ```bash
+            oci network security-list update --security-list-id SECURITY_LIST_OCID \
+              --ingress-security-rules '[{"source":"10.0.0.0/16","protocol":"17","udpOptions":{"destinationPortRange":{"min":53,"max":53}},"isStateless":false}]'
+            ```
+        - id: terraform
+          desc: |
+            To restrict unrestricted UDP ingress in a VCN security list in Terraform, always specify `udp_options` with explicit port ranges:
+
+            ```hcl
+            resource "oci_core_security_list" "example" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.example.id
+              display_name   = "example-security-list"
+
+              ingress_security_rules {
+                protocol  = "17" # UDP
+                source    = "10.0.0.0/16"
+                stateless = false
+
+                udp_options {
+                  min = 53
+                  max = 53
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: CIS OCI Foundations Benchmark 2.5
+  - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "17").none(_['udpOptions'] == empty)
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "17").all(
+          blocks.where(type == "udp_options") != empty
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "17").none(_['udp_options'] == empty)
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "17").none(_['udp_options'] == empty)
+      )
+  - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet
+    title: Ensure VCN security lists have no stateless rules from internet
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not contain stateless ingress rules from 0.0.0.0/0. Stateless rules bypass connection tracking, meaning response traffic is not automatically allowed and every packet is evaluated independently. This creates a more permissive and harder-to-audit security posture for internet-facing rules.
+
+        **Why this matters**
+
+        Stateless ingress rules from the internet introduce additional risk:
+          •  Connection tracking is disabled, so return traffic requires explicit egress rules.
+          •  The lack of state tracking makes it harder to detect and block malicious traffic patterns.
+          •  Stateless rules are more permissive by nature since they do not track connection context.
+          •  Misconfigured stateless rules can inadvertently allow traffic that stateful rules would block.
+
+        Risk mitigation
+          •  Use stateful (non-stateless) rules for all internet-facing ingress rules.
+          •  Reserve stateless rules for high-performance internal traffic where connection tracking overhead is a concern.
+          •  Regularly audit security lists for unintended stateless rules.
+      remediation:
+        - id: console
+          desc: |
+            To convert stateless ingress rules to stateful using the OCI Console:
+
+            1. Navigate to **Networking > Virtual Cloud Networks**.
+            2. Select the VCN.
+            3. Select **Security Lists**.
+            4. Select the security list with the stateless internet-facing rule.
+            5. Edit the ingress rule from 0.0.0.0/0 and uncheck **Stateless**.
+            6. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To convert stateless ingress rules to stateful using the OCI CLI, update the security list with `isStateless` set to `false`:
+
+            ```bash
+            oci network security-list update --security-list-id SECURITY_LIST_OCID \
+              --ingress-security-rules '<updated-rules-with-isStateless-false-json>'
+            ```
+        - id: terraform
+          desc: |
+            To ensure ingress rules from the internet are stateful in Terraform, set `stateless` to `false`:
+
+            ```hcl
+            resource "oci_core_security_list" "example" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.example.id
+              display_name   = "example-security-list"
+
+              ingress_security_rules {
+                protocol  = "6" # TCP
+                source    = "0.0.0.0/0"
+                stateless = false
+
+                tcp_options {
+                  min = 443
+                  max = 443
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: OCI security list documentation
+  - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0").none(_['isStateless'] == true)
+      )
+  - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0").none(arguments.stateless == true)
+      )
+  - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0").none(_['stateless'] == true)
+      )
+  - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0").none(_['stateless'] == true)
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports
+    title: Ensure VCN security lists block unrestricted TCP egress
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI VCN security lists do not contain TCP egress rules to 0.0.0.0/0 that allow all TCP ports. When a TCP egress rule has no port restrictions, compromised instances can communicate with any service on the internet.
+
+        **Why this matters**
+
+        Unrestricted TCP egress to the internet enables compromised instances to:
+          •  Exfiltrate data to arbitrary internet destinations on any TCP port.
+          •  Establish command-and-control (C2) channels on non-standard ports to evade detection.
+          •  Download additional malware, tools, or payloads.
+          •  Tunnel traffic through commonly allowed ports (e.g., 443) to bypass monitoring.
+
+        Risk mitigation
+          •  Always specify destination port ranges in TCP egress rules.
+          •  Restrict destination CIDR blocks to known required endpoints.
+          •  Use a proxy or NAT gateway for controlled internet access.
+          •  Monitor outbound traffic for anomalous connections.
+      remediation:
+        - id: console
+          desc: |
+            To restrict unrestricted TCP egress rules in a VCN security list using the OCI Console:
+
+            1. Navigate to **Networking > Virtual Cloud Networks**.
+            2. Select the VCN.
+            3. Select **Security Lists**.
+            4. Select the security list.
+            5. Edit TCP egress rules to 0.0.0.0/0 to specify destination port ranges, allowing only the ports required for your workload (e.g., 443 for HTTPS).
+        - id: cli
+          desc: |
+            To restrict unrestricted TCP egress rules in a VCN security list using the OCI CLI, update the security list with rules that include specific port ranges:
+
+            ```bash
+            oci network security-list update --security-list-id SECURITY_LIST_OCID \
+              --egress-security-rules '[{"destination":"0.0.0.0/0","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
+            ```
+        - id: terraform
+          desc: |
+            To restrict unrestricted TCP egress in a VCN security list in Terraform, always specify `tcp_options` with explicit port ranges:
+
+            ```hcl
+            resource "oci_core_security_list" "example" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.example.id
+              display_name   = "example-security-list"
+
+              egress_security_rules {
+                protocol    = "6" # TCP
+                destination = "0.0.0.0/0"
+                stateless   = false
+
+                tcp_options {
+                  min = 443
+                  max = 443
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: OCI security list documentation
+  - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.securityLists.all(
+        egressSecurityRules.where(_['destination'] == "0.0.0.0/0" && _['protocol'] == "6").none(_['tcpOptions'] == empty)
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "egress_security_rules" && arguments.destination == "0.0.0.0/0" && arguments.protocol == "6").all(
+          blocks.where(type == "tcp_options") != empty
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.egress_security_rules.where(_['destination'] == "0.0.0.0/0" && _['protocol'] == "6").none(_['tcp_options'] == empty)
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.egress_security_rules.where(_['destination'] == "0.0.0.0/0" && _['protocol'] == "6").none(_['tcp_options'] == empty)
+      )
+  - uid: mondoo-oci-security-compute-instance-tagging
+    title: Ensure compute instances have freeform tags applied
+    impact: 50
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-9
+      compliance/nis-2: nis-2-21-2-a
+      compliance/nist-csf-1: nist-csf-1-id-am-1
+      compliance/nist-csf-2: nist-csf-2-id-am-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-1
+    mql: |
+      oci.compute.instances.where(state == "RUNNING").all(
+        freeformTags != empty
+      )
+    docs:
+      desc: |
+        This check ensures that all running OCI compute instances have at least one freeform tag applied. Tags are essential for resource identification, cost allocation, access control, and operational management.
+
+        **Why this matters**
+
+        Untagged compute instances create governance and security gaps:
+          •  Resources cannot be attributed to teams, projects, or cost centers.
+          •  IAM policies that rely on tag-based access control cannot be enforced.
+          •  Security incident response is slower when instance ownership is unknown.
+          •  Compliance audits require resource classification that tags provide.
+          •  Orphaned or unauthorized instances are harder to detect without tags.
+
+        Risk mitigation
+          •  Establish a mandatory tagging policy (e.g., Owner, Environment, Project, CostCenter).
+          •  Apply tags at instance creation time using Terraform or launch templates.
+          •  Regularly audit instances for missing or incomplete tags.
+          •  Use tag-based IAM policies to enforce access boundaries.
+      remediation:
+        - id: console
+          desc: |
+            To add tags to a compute instance using the OCI Console:
+
+            1. Navigate to **Compute > Instances**.
+            2. Select the untagged instance.
+            3. Under **More Actions**, select **Add Tags**.
+            4. Add freeform tags following your organization's tagging policy (e.g., `Owner`, `Environment`, `Project`).
+            5. Select **Add Tags**.
+        - id: cli
+          desc: |
+            To add freeform tags to a compute instance using the OCI CLI:
+
+            ```bash
+            oci compute instance update --instance-id INSTANCE_OCID \
+              --freeform-tags '{"Owner":"team-name","Environment":"production","Project":"my-project"}'
+            ```
+        - id: terraform
+          desc: |
+            To ensure compute instances have tags in Terraform, set the `freeform_tags` attribute:
+
+            ```hcl
+            resource "oci_core_instance" "example" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.availability_domain
+              shape               = "VM.Standard.E4.Flex"
+              display_name        = "example-instance"
+
+              freeform_tags = {
+                Owner       = "team-name"
+                Environment = "production"
+                Project     = "my-project"
+              }
+
+              # ... other configuration
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Tagging/Concepts/taggingoverview.htm
+        title: OCI tagging documentation
