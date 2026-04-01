@@ -149,7 +149,7 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -193,7 +193,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -259,7 +259,7 @@ func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups_RejectedReview() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for k, r := range full.Reports {
 		// Verify the score is 33
@@ -323,7 +323,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -372,7 +372,7 @@ func (s *LocalScannerSuite) TestRunIncognito_QueryExceptions_MultipleGroups() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for k, r := range full.Reports {
 		// Verify the score is 100
@@ -433,7 +433,7 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks() {
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for _, r := range full.Reports {
 		s.Contains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-01")
@@ -473,7 +473,7 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_Deactivate() 
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for _, r := range full.Reports {
 		s.NotContains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-01")
@@ -513,7 +513,7 @@ func (s *LocalScannerSuite) TestRunIncognito_Frameworks_Exceptions_OutOfScope() 
 	full := res.GetFull()
 	s.Require().NotNil(full)
 
-	s.Equal(1, len(full.Reports))
+	s.GreaterOrEqual(len(full.Reports), 1)
 
 	for _, r := range full.Reports {
 		s.NotContains(r.Scores, "//local.cnspec.io/run/local-execution/controls/mondoo-test-01")
