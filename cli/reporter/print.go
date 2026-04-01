@@ -138,6 +138,7 @@ const (
 	FormatCSV
 	FormatJSONv2
 	FormatYAMLv2
+	FormatSarif
 )
 
 // Formats that are supported by the reporter
@@ -156,6 +157,7 @@ var Formats = map[string]Format{
 	"json":    FormatJSONv2,
 	"junit":   FormatJUnit,
 	"csv":     FormatCSV,
+	"sarif":   FormatSarif,
 }
 
 func AllFormats() string {

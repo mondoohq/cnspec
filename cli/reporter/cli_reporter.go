@@ -162,6 +162,9 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 	case FormatJUnit:
 		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToJunit(data, &writer)
+	case FormatSarif:
+		writer := iox.IOWriter{Writer: r.out}
+		return ConvertToSarif(data, &writer)
 	// case FormatCSV:
 	// 	res, err = data.ToCsv()
 	default:
@@ -189,6 +192,8 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		return errors.New("'report' is not supported for vuln reports, please use one of the other formats")
 	case FormatJUnit:
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
+	case FormatSarif:
+		return errors.New("'sarif' is not supported for vuln reports, please use one of the other formats")
 	case FormatCSV:
 		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)
