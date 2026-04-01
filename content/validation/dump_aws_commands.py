@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright Mondoo, Inc. 2026
+# Copyright Mondoo, Inc. 2024, 2026
 # SPDX-License-Identifier: BUSL-1.1
 #
 # Dumps all valid AWS CLI subcommands and their flags for services used in
