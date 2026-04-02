@@ -36,39 +36,66 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **AWS** - `mondoo-aws-security.mql.yaml` - Comprehensive AWS security baseline and best practices
 - **Azure** - `mondoo-azure-security.mql.yaml` - Microsoft Azure security configuration and compliance checks
 - **GCP** - `mondoo-gcp-security.mql.yaml` - Google Cloud Platform security assessment and hardening
+- **OCI** - `mondoo-oci-security.mql.yaml` - Oracle Cloud Infrastructure security assessment
 
 ### Operating Systems
 
 - **Linux** - `mondoo-linux-security.mql.yaml` - Linux system hardening and security configuration
+- **Linux Workstation** - `mondoo-linux-workstation-security.mql.yaml` - Security baseline for Linux desktop and workstation environments
+- **Linux Operational** - `mondoo-linux-operational-policy.mql.yaml` - Linux operational best practices
+- **Linux SNMP** - `mondoo-linux-snmp-policy.mql.yaml` - SNMP security configuration for Linux systems
+- **FreeBSD** - `mondoo-freebsd-security.mql.yaml` - FreeBSD security hardening and configuration
 - **macOS** - `mondoo-macos-security.mql.yaml` - macOS security baseline and configuration management
-- **Windows** - `mondoo-windows-security.mql.yaml` - Windows security hardening and compliance validation
+- **Windows Server** - `mondoo-windows-security.mql.yaml` - Windows security hardening and compliance validation
+- **Windows Workstation** - `mondoo-windows-workstation-security.mql.yaml` - Security baseline for Windows desktop and workstation environments
+- **Windows 11 Compatibility** - `mondoo-windows-11-compatibility.mql.yaml` - Windows 11 upgrade readiness checks
 
 ### Container & Infrastructure
 
-- **Docker** - `mondoo-dockerfile-security.mql.yaml` - Container security and image vulnerability assessment
-- **Kubernetes** - `mondoo-kubernetes-security.mql.yaml` - Container orchestration security and RBAC validation
-- **Terraform** - Infrastructure as Code security scanning for AWS and GCP
+- **Dockerfile Security** - `mondoo-dockerfile-security.mql.yaml` - Container security and image vulnerability assessment
+- **Dockerfile Best Practices** - `mondoo-dockerfile-best-practices.mql.yaml` - Dockerfile authoring best practices
+- **Kubernetes Security** - `mondoo-kubernetes-security.mql.yaml` - Container orchestration security and RBAC validation
+- **Kubernetes Best Practices** - `mondoo-kubernetes-best-practices.mql.yaml` - Kubernetes operational best practices
+- **Terraform Deprecations** - `terraform-deprecations.mql.yaml` - Detect deprecated Terraform constructs
+
+### Network Devices
+
+- **Arista EOS** - `mondoo-arista-eos-security.mql.yaml` - Arista EOS network device security hardening
+- **Cisco IOS-XE** - `mondoo-cisco-iosxe-security.mql.yaml` - Cisco IOS-XE security configuration and hardening
+- **Cisco IOS-XR** - `mondoo-cisco-iosxr-security.mql.yaml` - Cisco IOS-XR security configuration and hardening
+- **Cisco NX-OS** - `mondoo-cisco-nxos-security.mql.yaml` - Cisco NX-OS security configuration and hardening
+- **F5 BIG-IP** - `mondoo-bigip-security.mql.yaml` - F5 BIG-IP security configuration assessment
+- **Juniper JunOS** - `mondoo-junos-security.mql.yaml` - Juniper JunOS network device security hardening
+- **Palo Alto PAN-OS** - `mondoo-panos-security.mql.yaml` - Palo Alto Networks PAN-OS security assessment
+- **Ubiquiti UniFi** - `mondoo-unifi-security.mql.yaml` - Ubiquiti UniFi network security assessment
 
 ### SaaS & Collaboration
 
-- **GitHub** - Security and best practices for GitHub repositories and organizations
+- **GitHub Security** - `mondoo-github-security.mql.yaml` - GitHub repository and organization security
+- **GitHub Best Practices** - `mondoo-github-best-practices.mql.yaml` - GitHub repository best practices
 - **GitLab** - `mondoo-gitlab-security.mql.yaml` - GitLab security configuration assessment
 - **Microsoft 365** - `mondoo-m365-security.mql.yaml` - Microsoft 365 security and compliance checks
 - **Google Workspace** - `mondoo-google-workspace-security.mql.yaml` - Google Workspace security validation
 - **Okta** - `mondoo-okta-security.mql.yaml` - Identity provider security assessment
 - **Slack** - `mondoo-slack-security.mql.yaml` - Slack workspace security configuration
+- **Snowflake** - `mondoo-snowflake-security.mql.yaml` - Snowflake data platform security assessment
+- **Cloudflare** - `mondoo-cloudflare-security.mql.yaml` - Cloudflare security configuration assessment
+- **Tailscale** - `mondoo-tailscale-security.mql.yaml` - Tailscale network security configuration
 
 ### Network & Infrastructure Services
 
 - **DNS** - `mondoo-dns-security.mql.yaml` - DNS security and configuration checks
-- **HTTP/TLS** - Web service security and SSL/TLS configuration validation
+- **HTTP** - `mondoo-http-security.mql.yaml` - Web service security and header validation
+- **TLS** - `mondoo-tls-security.mql.yaml` - SSL/TLS configuration and certificate validation
 - **Email** - `mondoo-email-security.mql.yaml` - Email security configuration assessment
 
 ### Specialized Systems
 
-- **Chef** - Configuration management security for Chef Infra Client and Server
+- **Chef Infra Client** - `mondoo-chef-infra-client.mql.yaml` - Chef Infra Client security configuration
+- **Chef Infra Server** - `mondoo-chef-infra-server.mql.yaml` - Chef Infra Server security configuration
+- **MCP** - `mondoo-mcp-security.mql.yaml` - Model Context Protocol server security assessment
 - **Phoenix PLCnext** - `mondoo-phoenix-plcnext-security.mql.yaml` - Industrial automation security
-- **EDR Policy** - `mondoo-edr-policy.mql.yaml` - Endpoint Detection and Response validation
+- **EDR** - `mondoo-edr-policy.mql.yaml` - Endpoint Detection and Response validation
 
 > The latest version of the policies in this repository requires cnspec v8+
 
