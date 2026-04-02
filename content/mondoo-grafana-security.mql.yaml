@@ -1,0 +1,366 @@
+# Copyright (c) Mondoo, Inc.
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - summary: Secure Grafana organizations across service accounts, user roles, datasources, and alerting
+    uid: mondoo-grafana-security
+    name: Mondoo Grafana Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: grafana,saas
+    require:
+      - provider: grafana
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Mondoo Grafana Security policy checks Grafana organizations for security best practices covering service accounts, user roles, datasource configuration, and alerting. It validates that the principle of least privilege is applied, credentials are properly scoped and rotated, and datasource connections follow secure defaults.
+
+        ## Remote scan
+
+        Remote scans use the cnspec Grafana provider to query the Grafana HTTP API.
+
+        ### Prerequisites
+
+        Create a service account token with Viewer (preferred) or Admin role in your Grafana instance:
+
+        ```bash
+        # Via Grafana API
+        SA_ID=$(curl -s -u admin:admin -H "Content-Type: application/json" \
+          -d '{"name":"cnspec-auditor","role":"Viewer"}' \
+          https://grafana.example.com/api/serviceaccounts | jq -r .id)
+        TOKEN=$(curl -s -u admin:admin -H "Content-Type: application/json" \
+          -d '{"name":"cnspec-token"}' \
+          https://grafana.example.com/api/serviceaccounts/${SA_ID}/tokens | jq -r .key)
+        ```
+
+        ### Scan a Grafana organization
+
+        ```bash
+        cnspec scan grafana --url https://grafana.example.com --token "$TOKEN"
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Service Account Security
+        filters: asset.platform == "grafana-org"
+        checks:
+          - uid: mondoo-grafana-no-admin-service-accounts
+          - uid: mondoo-grafana-service-account-tokens-have-expiration
+          - uid: mondoo-grafana-no-expired-service-account-tokens
+          - uid: mondoo-grafana-disabled-service-accounts-no-tokens
+      - title: User Role Security
+        filters: asset.platform == "grafana-org"
+        checks:
+          - uid: mondoo-grafana-limit-org-admins
+          - uid: mondoo-grafana-no-default-admin-login
+      - title: Datasource Security
+        filters: asset.platform == "grafana-org"
+        checks:
+          - uid: mondoo-grafana-datasources-use-proxy-mode
+          - uid: mondoo-grafana-datasources-no-basic-auth
+          - uid: mondoo-grafana-datasources-use-tls
+      - title: Alerting Security
+        filters: asset.platform == "grafana-org"
+        checks:
+          - uid: mondoo-grafana-notification-policy-has-receiver
+          - uid: mondoo-grafana-contact-points-resolve-enabled
+    scoring_system: average
+queries:
+  - uid: mondoo-grafana-no-admin-service-accounts
+    title: Ensure service accounts do not use the Admin role
+    impact: 80
+    filters: asset.platform == "grafana-org"
+    mql: grafana.serviceAccounts.none(role == "Admin")
+    docs:
+      desc: |
+        Service accounts should follow the principle of least privilege and not be granted the Admin role. Admin service accounts can modify organization settings, manage users, and install plugins, creating a broad attack surface if the token is compromised.
+
+        ## Rationale
+
+        A compromised Admin-level service account token grants full control over the Grafana organization: user management, datasource credentials, plugin installation, and configuration changes. Restricting service accounts to Viewer or Editor roles limits the blast radius of a credential leak.
+      remediation: |
+        Review all service accounts and downgrade any with Admin role to Viewer or Editor:
+
+        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        2. Identify service accounts with the **Admin** role.
+        3. Change the role to **Viewer** or **Editor** depending on the service account's purpose.
+        4. If Admin access is required for automation, use a dedicated short-lived token with expiration and audit its usage.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
+        title: Grafana Service Accounts
+      - url: https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/
+        title: Grafana Roles and Permissions
+  - uid: mondoo-grafana-service-account-tokens-have-expiration
+    title: Ensure all service account tokens have an expiration date
+    impact: 80
+    filters: asset.platform == "grafana-org"
+    mql: grafana.serviceAccounts.all(tokens.all(hasExpiration == true))
+    docs:
+      desc: |
+        All service account tokens should have an expiration date configured. Tokens without expiration persist indefinitely and pose a significant risk if leaked, as they remain valid until manually revoked.
+
+        ## Rationale
+
+        Non-expiring tokens are a common source of credential sprawl. If a token is embedded in a CI pipeline, committed to a repository, or stored on a compromised workstation, the attacker has indefinite access. Setting an expiration forces regular rotation and limits the window of exposure.
+      remediation: |
+        Replace non-expiring service account tokens with tokens that have a defined expiration:
+
+        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        2. For each service account, review its tokens.
+        3. Delete tokens without an expiration date.
+        4. Create new tokens with an appropriate expiration (recommended: 90 days or less).
+        5. Update any systems that use the old token with the new token value.
+
+        Via the API:
+
+        ```bash
+        # Create a token with 90-day expiration
+        curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"name":"rotated-token","secondsToLive":7776000}' \
+          https://grafana.example.com/api/serviceaccounts/<SA_ID>/tokens
+        ```
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/#service-account-tokens
+        title: Grafana Service Account Tokens
+  - uid: mondoo-grafana-no-expired-service-account-tokens
+    title: Ensure no expired service account tokens exist
+    impact: 70
+    filters: asset.platform == "grafana-org"
+    mql: grafana.serviceAccounts.all(tokens.none(isExpired == true))
+    docs:
+      desc: |
+        Expired service account tokens should be cleaned up promptly. While expired tokens cannot be used for authentication, their presence indicates poor credential hygiene and suggests that token rotation procedures are not followed.
+
+        ## Rationale
+
+        Expired tokens clutter the service account configuration and make it harder to audit active credentials. They also indicate that the associated integration may have broken silently when the token expired, or that an active token was created alongside the expired one without cleaning up.
+      remediation: |
+        Remove expired service account tokens:
+
+        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        2. For each service account, review its tokens and identify expired ones.
+        3. Delete all expired tokens.
+        4. If the associated integration is still active, create a new token with proper expiration and update the integration.
+
+        Via the API:
+
+        ```bash
+        # Delete an expired token
+        curl -s -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+          https://grafana.example.com/api/serviceaccounts/<SA_ID>/tokens/<TOKEN_ID>
+        ```
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/#service-account-tokens
+        title: Grafana Service Account Tokens
+  - uid: mondoo-grafana-disabled-service-accounts-no-tokens
+    title: Ensure disabled service accounts have no active tokens
+    impact: 70
+    filters: asset.platform == "grafana-org"
+    mql: |
+      grafana.serviceAccounts.where(isDisabled == true).all(
+        tokens == empty
+      )
+    docs:
+      desc: |
+        Service accounts that are disabled should not retain any tokens. While disabled service accounts cannot authenticate, retaining tokens is a hygiene risk. If the account is accidentally re-enabled, all existing tokens become immediately valid.
+
+        ## Rationale
+
+        A disabled service account with tokens attached is one toggle away from having active credentials. Cleaning up tokens when disabling an account ensures that re-enablement is a deliberate two-step process: enable the account, then create new purpose-scoped tokens.
+      remediation: |
+        Delete all tokens from disabled service accounts:
+
+        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        2. Filter for disabled service accounts.
+        3. For each disabled account, delete all associated tokens.
+
+        If the service account is no longer needed, delete it entirely.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
+        title: Grafana Service Accounts
+  - uid: mondoo-grafana-limit-org-admins
+    title: Ensure the number of organization administrators is limited
+    impact: 70
+    filters: asset.platform == "grafana-org"
+    mql: grafana.users.where(role == "Admin").length <= 3
+    docs:
+      desc: |
+        The number of users with the Admin role in a Grafana organization should be kept to a minimum. Admin users can modify organization settings, manage users and teams, configure datasources, and install plugins.
+
+        ## Rationale
+
+        Every Admin user is a high-value target. Compromising a single Admin account grants full organizational control. Limiting the number of Admins reduces the attack surface and ensures that privileged access decisions are deliberate and auditable. Most users should operate with Viewer or Editor roles.
+      remediation: |
+        Review the list of organization administrators and downgrade users who do not require Admin access:
+
+        1. Navigate to **Administration > Users** in the Grafana UI.
+        2. Identify users with the **Admin** role.
+        3. For each user, evaluate whether Admin access is operationally required.
+        4. Change unnecessary Admin users to **Editor** or **Viewer** roles.
+        5. Document the justification for each remaining Admin user.
+
+        This check allows up to 3 organization administrators. If your organization requires more, adjust the threshold to match your operational needs.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/
+        title: Grafana Roles and Permissions
+  - uid: mondoo-grafana-no-default-admin-login
+    title: Ensure the default admin login has been changed
+    impact: 80
+    filters: asset.platform == "grafana-org"
+    mql: grafana.users.none(login == "admin" && role == "Admin")
+    docs:
+      desc: |
+        The default Grafana installation creates an admin user with login name `admin`. This well-known login name is the first target for brute-force attacks and credential stuffing.
+
+        ## Rationale
+
+        Attackers routinely scan for default credentials. The `admin` login paired with weak or default passwords is one of the most common attack vectors against Grafana instances. Changing the default admin login name makes automated attacks significantly harder.
+      remediation: |
+        Change the default admin user login or create a new admin user and remove the default:
+
+        1. Log in to Grafana as the default admin.
+        2. Create a new user with a unique login name and grant it the Admin role.
+        3. Log in as the new admin user.
+        4. Downgrade or delete the default `admin` user.
+
+        Alternatively, configure the admin user at installation time:
+
+        ```ini
+        [security]
+        admin_user = your_unique_admin_name
+        admin_password = strong_random_password
+        ```
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/configure-authentication/
+        title: Grafana Authentication Configuration
+  - uid: mondoo-grafana-datasources-use-proxy-mode
+    title: Ensure datasources use proxy access mode
+    impact: 70
+    filters: asset.platform == "grafana-org"
+    mql: grafana.datasources.all(access == "proxy")
+    docs:
+      desc: |
+        Datasources should be configured to use proxy access mode rather than direct (browser) access. In proxy mode, the Grafana server makes requests to the datasource on behalf of the user. In direct mode, the user's browser connects directly to the datasource, potentially exposing internal network endpoints and credentials.
+
+        ## Rationale
+
+        Direct access mode requires the datasource to be reachable from the user's browser, which may expose internal services to the network. It also means authentication credentials for the datasource are sent to the browser. Proxy mode keeps datasource credentials server-side and allows Grafana to enforce access controls.
+      remediation: |
+        Switch datasources from direct to proxy access mode:
+
+        1. Navigate to **Connections > Data sources** in the Grafana UI.
+        2. Select each datasource configured with direct access.
+        3. Change the **Access** setting to **Server (default)** which corresponds to proxy mode.
+        4. Save and test the datasource connection.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/datasources/
+        title: Grafana Datasources
+  - uid: mondoo-grafana-datasources-no-basic-auth
+    title: Ensure datasources do not use basic authentication
+    impact: 70
+    filters: asset.platform == "grafana-org"
+    mql: grafana.datasources.none(basicAuth == true)
+    docs:
+      desc: |
+        Datasources should not rely on basic authentication (username and password). Basic auth transmits credentials in a reversible encoding and is vulnerable to credential interception, especially if TLS is not properly configured end-to-end.
+
+        ## Rationale
+
+        Basic authentication sends credentials as a Base64-encoded header with every request. If any hop in the connection path lacks TLS, or if logs capture HTTP headers, credentials are exposed. Modern authentication methods such as API tokens, OAuth, or managed identity provide stronger security guarantees and better auditability.
+      remediation: |
+        Replace basic authentication with stronger authentication methods:
+
+        1. Navigate to **Connections > Data sources** in the Grafana UI.
+        2. For each datasource using basic authentication, switch to an alternative method:
+           - **API key or bearer token**: Configure token-based access in the datasource settings.
+           - **TLS client certificates**: Use mutual TLS for datasource authentication.
+           - **OAuth or managed identity**: Use identity provider integration where supported.
+        3. Disable the **Basic Auth** toggle for the datasource.
+        4. Remove the stored basic auth credentials.
+        5. Test the datasource connection.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/datasources/
+        title: Grafana Datasources
+  - uid: mondoo-grafana-datasources-use-tls
+    title: Ensure datasource connections use TLS
+    impact: 60
+    filters: asset.platform == "grafana-org"
+    mql: |
+      grafana.datasources.where(url != "").all(
+        url.contains("https://") || url.contains("localhost") || url.contains("127.0.0.1")
+      )
+    docs:
+      desc: |
+        Datasource connection URLs should use HTTPS (TLS) to encrypt data in transit. Unencrypted HTTP connections expose query data and potentially authentication credentials to network-level interception.
+
+        Connections to localhost or 127.0.0.1 are exempt from this check since they do not traverse the network.
+
+        ## Rationale
+
+        Datasources often carry sensitive metrics, logs, or tracing data. Without TLS, this data is visible to anyone with network access between the Grafana server and the datasource. Additionally, authentication headers sent over HTTP can be captured and replayed.
+      remediation: |
+        Update datasource URLs to use HTTPS:
+
+        1. Navigate to **Connections > Data sources** in the Grafana UI.
+        2. For each datasource with an HTTP URL, update it to HTTPS.
+        3. Ensure the datasource endpoint has a valid TLS certificate.
+        4. If using self-signed certificates, configure the CA certificate in the datasource TLS settings.
+        5. Save and test the datasource connection.
+
+        ```ini
+        # In grafana.ini, you can also enforce TLS for the Grafana server itself
+        [server]
+        protocol = https
+        cert_file = /path/to/cert.pem
+        cert_key = /path/to/key.pem
+        min_tls_version = TLS1.2
+        ```
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/configure-database-encryption/
+        title: Grafana Security Configuration
+  - uid: mondoo-grafana-notification-policy-has-receiver
+    title: Ensure notification policy has a default receiver configured
+    impact: 60
+    filters: asset.platform == "grafana-org"
+    mql: grafana.notificationPolicy.receiver != ""
+    docs:
+      desc: |
+        The Grafana notification policy tree should have a default receiver configured. Without a default receiver, alerts that do not match any specific routing rule are silently dropped, leaving security events undetected.
+
+        ## Rationale
+
+        A missing default receiver means unmatched alerts produce no notification. In a security context, this can result in critical alerts being lost if routing rules are misconfigured or incomplete. The default receiver acts as a safety net to ensure all alerts reach at least one notification channel.
+      remediation: |
+        Configure a default receiver in the notification policy:
+
+        1. Navigate to **Alerting > Notification policies** in the Grafana UI.
+        2. Set the **Default contact point** to an appropriate receiver (e.g., email, Slack, PagerDuty).
+        3. Verify that the selected contact point is properly configured and tested.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/alerting/fundamentals/notifications/notification-policies/
+        title: Grafana Notification Policies
+  - uid: mondoo-grafana-contact-points-resolve-enabled
+    title: Ensure contact points do not disable resolve messages
+    impact: 50
+    filters: asset.platform == "grafana-org"
+    mql: grafana.contactPoints.none(disableResolveMessage == true)
+    docs:
+      desc: |
+        Contact points should not disable resolve messages. Resolve messages notify recipients when an alert condition has cleared, which is essential for incident management workflows and reducing alert fatigue.
+
+        ## Rationale
+
+        Without resolve messages, on-call responders must manually check whether an alert condition has cleared, increasing response time and cognitive load. Resolve messages provide automatic incident lifecycle tracking and enable downstream integrations (ticketing systems, chat bots) to close or update incidents automatically.
+      remediation: |
+        Enable resolve messages for all contact points:
+
+        1. Navigate to **Alerting > Contact points** in the Grafana UI.
+        2. For each contact point, ensure the **Disable resolve message** toggle is turned off.
+        3. Save the contact point configuration.
+    refs:
+      - url: https://grafana.com/docs/grafana/latest/alerting/fundamentals/notifications/contact-points/
+        title: Grafana Contact Points
