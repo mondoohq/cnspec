@@ -425,7 +425,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}
 
+	multiprogress.Close()
 	scanGroups.Wait() // wait for the progress bar to finish
+
+	if scanCtx.scannedAssets == 0 {
+		return nil, errors.New("could not find an asset that we can connect to")
+	}
+
 	return reporter.Reports(), nil
 }
 
@@ -442,6 +448,7 @@ type scanContext struct {
 	multiprogress progress.MultiProgress
 	services      *policy.Services
 	spaceMrn      string
+	scannedAssets int
 }
 
 // scanSubtree processes a single connected node's subtree depth-first.
@@ -684,6 +691,7 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 				continue
 			}
 
+			sc.scannedAssets++
 			p := &progress.MultiProgressAdapter{Key: asset.PlatformIds[0], Multi: sc.multiprogress}
 			sc.scanner.RunAssetJob(&AssetJob{
 				DoRecord:         sc.job.DoRecord,
