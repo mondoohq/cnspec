@@ -459,6 +459,10 @@ type scanContext struct {
 // After all children are handled, the node itself is scanned (if it has
 // platform IDs) and then closed.
 func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedAsset) error {
+	if len(node.Children) > 0 {
+		sc.multiprogress.Discovered(len(node.Children))
+	}
+
 	var leafBatch []*discovery.TrackedAsset
 
 	for _, child := range node.Children {
@@ -497,6 +501,7 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		// Leaf node — skip if it has no platform IDs (not scannable)
 		if len(connected.Asset.PlatformIds) == 0 {
 			log.Debug().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
+			sc.multiprogress.Filtered(1)
 			if err := sc.explorer.CloseAsset(connected); err != nil {
 				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
 			}
@@ -528,6 +533,7 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			return err
 		}
 	} else {
+		sc.multiprogress.Filtered(1)
 		if err := sc.explorer.CloseAsset(node); err != nil {
 			log.Error().Err(err).Str("asset", node.Asset.Name).Msg("failed to close asset")
 		}

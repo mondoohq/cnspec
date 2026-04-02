@@ -27,6 +27,8 @@ func (n Noop) Completed()          {}
 // Tasks can be added dynamically via AddTask at any point after Open.
 type MultiProgress interface {
 	Open() error
+	Discovered(count int)
+	Filtered(count int)
 	AddTask(index string, asset *inventory.Asset)
 	OnProgress(index string, percent float64)
 	Score(index string, score string)
@@ -40,6 +42,8 @@ type MultiProgress interface {
 type NoopMultiProgress struct{}
 
 func (n NoopMultiProgress) Open() error                      { return nil }
+func (n NoopMultiProgress) Discovered(int)                   {}
+func (n NoopMultiProgress) Filtered(int)                     {}
 func (n NoopMultiProgress) AddTask(string, *inventory.Asset) {}
 func (n NoopMultiProgress) OnProgress(string, float64)       {}
 func (n NoopMultiProgress) Score(string, string)             {}
