@@ -79,6 +79,9 @@ type msgNotApplicable struct {
 
 type msgTick time.Time
 
+type msgDiscovered struct{ count int }
+type msgFiltered struct{ count int }
+
 // modelTodoList is the bubbletea model for the TODO-list progress UI.
 type modelTodoList struct {
 	tasks        []*task
@@ -87,6 +90,8 @@ type modelTodoList struct {
 	startTime    time.Time
 	includeScore bool
 	spinner      spinner.Model
+	discovered   int
+	filtered     int
 }
 
 func newTodoListModel(opts ...Option) *modelTodoList {
@@ -125,6 +130,18 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
+		return m, nil
+
+	case msgDiscovered:
+		m.lock.Lock()
+		m.discovered += msg.count
+		m.lock.Unlock()
+		return m, nil
+
+	case msgFiltered:
+		m.lock.Lock()
+		m.filtered += msg.count
+		m.lock.Unlock()
 		return m, nil
 
 	case msgAddTask:
@@ -309,11 +326,20 @@ func (m *modelTodoList) View() string {
 	// Footer: completion stats with elapsed time.
 	// All terminal states (completed, errored, n/a) count as "done" tasks.
 	total := len(m.tasks)
-	if total > 0 {
+	if total > 0 || m.discovered > 0 {
 		done := len(finished)
 		elapsed := time.Since(m.startTime).Truncate(time.Second)
 		b.WriteString("\n")
-		footer := fmt.Sprintf("  %d/%d completed", done, total)
+
+		var footer string
+		if m.discovered > 0 {
+			footer = fmt.Sprintf("  %d discovered · %d scanned", m.discovered, done)
+			if m.filtered > 0 {
+				footer += styleDim.Render(fmt.Sprintf(" · %d filtered", m.filtered))
+			}
+		} else {
+			footer = fmt.Sprintf("  %d/%d completed", done, total)
+		}
 		if errored > 0 {
 			footer += styleError.Render(fmt.Sprintf(" · %d errored", errored))
 		}
@@ -433,6 +459,14 @@ func (t *todoListProgress) Open() error {
 		return err
 	}
 	return nil
+}
+
+func (t *todoListProgress) Discovered(count int) {
+	t.program.Send(msgDiscovered{count: count})
+}
+
+func (t *todoListProgress) Filtered(count int) {
+	t.program.Send(msgFiltered{count: count})
 }
 
 func (t *todoListProgress) AddTask(index string, asset *inventory.Asset) {

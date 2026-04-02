@@ -285,3 +285,29 @@ func TestTodoListMultiBatch(t *testing.T) {
 	assert.Contains(t, output, "batch2-b")
 	assert.Contains(t, output, "5/5 completed")
 }
+
+func TestTodoListDiscoveredAndSkipped(t *testing.T) {
+	var in bytes.Buffer
+	var buf bytes.Buffer
+
+	tl, err := newTodoListProgram(&in, &buf)
+	require.NoError(t, err)
+
+	go func() {
+		time.Sleep(1 * time.Millisecond)
+		tl.Discovered(100)
+		tl.AddTask("1", testAsset("scannable1", "linux"))
+		tl.AddTask("2", testAsset("scannable2", "linux"))
+		tl.Filtered(3)
+		tl.Completed("1")
+		tl.Completed("2")
+		tl.Close()
+	}()
+	err = tl.Open()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "100 discovered")
+	assert.Contains(t, output, "2 scanned")
+	assert.Contains(t, output, "3 filtered")
+}
