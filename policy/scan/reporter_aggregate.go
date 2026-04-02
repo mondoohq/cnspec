@@ -4,6 +4,8 @@
 package scan
 
 import (
+	"sync"
+
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/policy"
@@ -15,6 +17,7 @@ import (
 var _ VulnReporter = &AggregateReporter{}
 
 type AggregateReporter struct {
+	mu               sync.Mutex
 	assets           map[string]*inventory.Asset
 	assetReports     map[string]*policy.Report
 	assetVulnReports map[string]*mvd.VulnReport
@@ -35,6 +38,8 @@ func NewAggregateReporter() *AggregateReporter {
 }
 
 func (r *AggregateReporter) AddBundle(bundle *policy.Bundle) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.bundle == nil {
 		r.bundle = bundle
 		return
@@ -45,6 +50,8 @@ func (r *AggregateReporter) AddBundle(bundle *policy.Bundle) {
 func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.assets[asset.Mrn] = asset
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
@@ -61,17 +68,23 @@ func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gq
 	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
 
 	mvdVulnReport := gql.ConvertToMvdVulnReport(vulnReport)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.assets[asset.Mrn] = asset
 	r.assetVulnReports[asset.Mrn] = mvdVulnReport
 }
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
 	log.Debug().Str("asset", asset.Name).Msg("add scan error to report")
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.assets[asset.Mrn] = asset
 	r.assetErrors[asset.Mrn] = err
 }
 
 func (r *AggregateReporter) Reports() *ScanResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	errors := make(map[string]string, len(r.assetErrors))
 	for k, v := range r.assetErrors {
 		errors[k] = v.Error()
@@ -94,6 +107,8 @@ func (r *AggregateReporter) Reports() *ScanResult {
 }
 
 func (r *AggregateReporter) Error() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var err error
 
 	for _, curError := range r.assetErrors {

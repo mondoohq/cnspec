@@ -79,6 +79,7 @@ func init() {
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
 	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report. Currently only supports AWS SQS topic URLs and local files")
+	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel (requires ParallelScanning feature flag)")
 }
 
 var scanCmd = &cobra.Command{
@@ -137,6 +138,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("json", cmd.Flags().Lookup("json"))
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		_ = viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target"))
+		_ = viper.BindPFlag("parallelism", cmd.Flags().Lookup("parallelism"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -220,6 +222,7 @@ type scanConfig struct {
 
 	IsIncognito   bool
 	RiskThreshold int
+	Parallelism   int
 
 	DoRecord bool
 	AgentMrn string
@@ -300,6 +303,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		runtime:       runtime,
 		AgentMrn:      opts.AgentMrn,
 		OutputTarget:  viper.GetString("output-target"),
+		Parallelism:   viper.GetInt("parallelism"),
 	}
 
 	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
@@ -449,6 +453,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
 				Props:         config.Props,
+				Parallelism:   int32(config.Parallelism),
 			})
 	} else {
 		res, err = scanner.Run(
@@ -458,6 +463,7 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 				Bundle:        config.Bundle,
 				PolicyFilters: config.PolicyNames,
 				Props:         config.Props,
+				Parallelism:   int32(config.Parallelism),
 			})
 	}
 

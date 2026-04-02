@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnspec/v13"
@@ -15,6 +16,7 @@ import (
 )
 
 type fetcher struct {
+	mu    sync.Mutex
 	cache map[string]*policy.Bundle
 }
 
@@ -29,7 +31,12 @@ func (f *fetcher) fetchBundles(ctx context.Context, conf mqlc.CompilerConfig, ur
 
 	for i := range urls {
 		url := urls[i]
-		if cur, ok := f.cache[url]; ok {
+
+		f.mu.Lock()
+		cur, ok := f.cache[url]
+		f.mu.Unlock()
+
+		if ok {
 			if err := res.AddBundle(cur); err != nil {
 				return nil, errors.Wrap(err, "failed to add cached bundle")
 			}
@@ -49,6 +56,10 @@ func (f *fetcher) fetchBundles(ctx context.Context, conf mqlc.CompilerConfig, ur
 		}); err != nil {
 			return nil, errors.Wrap(err, "failed to compile fetched bundle")
 		}
+
+		f.mu.Lock()
+		f.cache[url] = cur
+		f.mu.Unlock()
 
 		if err = res.AddBundle(cur); err != nil {
 			return nil, errors.Wrap(err, "failed to add fetched bundle")

@@ -5,6 +5,7 @@ package scan
 
 import (
 	"strings"
+	"sync"
 
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/theme"
@@ -14,6 +15,7 @@ import (
 )
 
 type ErrorReporter struct {
+	mu         sync.Mutex
 	assets     map[string]*policy.Asset
 	errors     map[string]string
 	worstScore *policy.Score
@@ -24,6 +26,8 @@ func NewErrorReporter() Reporter {
 }
 
 func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
 		r.worstScore = results.Report.Score
 	}
@@ -32,6 +36,8 @@ func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) 
 func (r *ErrorReporter) AddBundle(bundle *policy.Bundle) {}
 
 func (c *ErrorReporter) AddScanError(asset *inventory.Asset, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.errors == nil {
 		c.errors = make(map[string]string)
 	}
@@ -46,6 +52,8 @@ func (c *ErrorReporter) AddScanError(asset *inventory.Asset, err error) {
 }
 
 func (r *ErrorReporter) Reports() *ScanResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return &ScanResult{
 		Ok:         len(r.errors) == 0,
 		WorstScore: r.worstScore,

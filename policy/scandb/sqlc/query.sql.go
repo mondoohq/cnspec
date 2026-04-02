@@ -138,7 +138,7 @@ type InsertMetadataParams struct {
 	Value string `json:"value"`
 }
 
-// Copyright (c) Mondoo, Inc.
+// Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 // Metadata operations
 func (q *Queries) InsertMetadata(ctx context.Context, arg InsertMetadataParams) error {
