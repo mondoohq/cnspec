@@ -291,17 +291,20 @@ func (m *modelTodoList) View() string {
 	const visibleSlots = 5
 
 	inProgressCount := len(inProgress)
-	// Start with base 2 finished slots, then fill remaining with pending.
-	// If pending can't fill its slots, give them back to finished.
-	showFinished := min(len(finished), 2)
-	showPending := min(len(pending), visibleSlots-showFinished-inProgressCount)
-	if showPending < 0 {
-		showPending = 0
-	}
-	// Expand finished into any unused slots so the list stays at 5.
-	showFinished = min(len(finished), visibleSlots-showPending-inProgressCount)
-	if showFinished < 0 {
+
+	var showFinished, showPending int
+	if inProgressCount >= visibleSlots {
+		// More in-progress items than visible slots — show them all,
+		// hide finished and pending until in-progress count drops.
 		showFinished = 0
+		showPending = 0
+	} else {
+		// Start with base 2 finished slots, then fill remaining with pending.
+		// If pending can't fill its slots, give them back to finished.
+		showFinished = min(len(finished), 2)
+		showPending = min(len(pending), visibleSlots-showFinished-inProgressCount)
+		// Expand finished into any unused slots so the list stays at 5.
+		showFinished = min(len(finished), visibleSlots-showPending-inProgressCount)
 	}
 
 	// Finished tasks on top (most recent 2)
