@@ -300,6 +300,9 @@ func (m *modelTodoList) View() string {
 	}
 	// Expand finished into any unused slots so the list stays at 5.
 	showFinished = min(len(finished), visibleSlots-showPending-inProgressCount)
+	if showFinished < 0 {
+		showFinished = 0
+	}
 
 	// Finished tasks on top (most recent 2)
 	for _, t := range finished[len(finished)-showFinished:] {
