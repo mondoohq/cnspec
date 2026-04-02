@@ -472,14 +472,6 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			continue
 		}
 
-		if len(connected.Asset.PlatformIds) == 0 {
-			log.Warn().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
-			if err := sc.explorer.CloseAsset(connected); err != nil {
-				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
-			}
-			continue
-		}
-
 		if len(connected.Children) > 0 {
 			// Branch node (e.g. a namespace with workloads under it).
 			// Flush any pending leaf batch first, then recurse.
@@ -491,6 +483,15 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			}
 			if err := sc.scanSubtree(ctx, connected); err != nil {
 				return err
+			}
+			continue
+		}
+
+		// Leaf node — skip if it has no platform IDs (not scannable)
+		if len(connected.Asset.PlatformIds) == 0 {
+			log.Debug().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
+			if err := sc.explorer.CloseAsset(connected); err != nil {
+				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
 			}
 			continue
 		}
