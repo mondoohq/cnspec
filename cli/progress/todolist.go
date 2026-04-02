@@ -173,11 +173,7 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.duration = time.Since(t.startedAt)
 			}
 		}
-		done := m.allDoneLocked()
 		m.lock.Unlock()
-		if done {
-			return m, tea.Quit
-		}
 		return m, nil
 
 	case msgErrored:
@@ -188,11 +184,7 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.duration = time.Since(t.startedAt)
 			}
 		}
-		done := m.allDoneLocked()
 		m.lock.Unlock()
-		if done {
-			return m, tea.Quit
-		}
 		return m, nil
 
 	case msgNotApplicable:
@@ -203,11 +195,7 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.duration = time.Since(t.startedAt)
 			}
 		}
-		done := m.allDoneLocked()
 		m.lock.Unlock()
-		if done {
-			return m, tea.Quit
-		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -221,20 +209,6 @@ func (m *modelTodoList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-}
-
-// allDoneLocked returns true when there is at least one task and all tasks are
-// in a terminal state. Must be called with m.lock held.
-func (m *modelTodoList) allDoneLocked() bool {
-	if len(m.tasks) == 0 {
-		return false
-	}
-	for _, t := range m.tasks {
-		if t.state == taskStatePending || t.state == taskStateInProgress {
-			return false
-		}
-	}
-	return true
 }
 
 var (
