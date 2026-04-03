@@ -396,6 +396,11 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}
 
+	parallelism := int(job.Parallelism)
+	if parallelism < 1 {
+		parallelism = 1
+	}
+
 	scanCtx := &scanContext{
 		scanner:       s,
 		explorer:      explorer,
@@ -405,6 +410,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		multiprogress: multiprogress,
 		services:      services,
 		spaceMrn:      spaceMrn,
+		connSem:       make(chan struct{}, maxConnections),
+		scanSem:       make(chan struct{}, parallelism),
 	}
 
 	// Process each root asset's subtree. The root is already connected by
@@ -438,7 +445,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	return reporter.Reports(), nil
 }
 
-const batchSize = 50
+const (
+	maxConnections = 50 // max assets connected (with runtimes open) at a time
+	syncBatchSize  = 10 // how many assets to batch for upstream sync calls
+)
 
 // scanContext holds the shared state needed while recursively walking the
 // asset tree. It avoids threading many parameters through every call.
@@ -452,13 +462,21 @@ type scanContext struct {
 	services      *policy.Services
 	spaceMrn      string
 	scannedAssets atomic.Int64
+
+	// connSem limits the number of simultaneously connected assets.
+	connSem chan struct{}
+	// scanSem limits the number of assets being scanned concurrently.
+	scanSem chan struct{}
+	// scanWg tracks all in-flight scan goroutines.
+	scanWg sync.WaitGroup
 }
 
 // scanSubtree processes a single connected node's subtree depth-first.
-// It connects each child one at a time. If a child has its own children
-// (i.e. it is a branch node like a namespace), the current leaf batch is
-// flushed and we recurse into that child before touching any sibling.
-// This guarantees only one branch node's children data is in memory at a time.
+// It connects each child, accumulates leaves into small sync batches,
+// and dispatches each asset to the shared worker pool immediately after
+// syncing — so scan workers are never idle waiting for a batch boundary.
+// Branch nodes (children with their own children) flush the current sync
+// batch and recurse before continuing with siblings.
 // After all children are handled, the node itself is scanned (if it has
 // platform IDs) and then closed.
 func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedAsset) error {
@@ -466,7 +484,7 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		sc.multiprogress.Discovered(len(node.Children))
 	}
 
-	var leafBatch []*discovery.TrackedAsset
+	var syncBatch []*discovery.TrackedAsset
 
 	for _, child := range node.Children {
 		// Check for cancellation before connecting the next child
@@ -477,9 +495,14 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		default:
 		}
 
+		// Acquire a connection slot before connecting. This limits the
+		// total number of assets with open runtimes/gRPC connections.
+		sc.connSem <- struct{}{}
+
 		// Connect the child — creates its runtime and discovers its children
 		connected, err := sc.explorer.Connect(child)
 		if err != nil {
+			<-sc.connSem // release the slot on failure
 			if !errors.Is(err, discovery.ErrDuplicateAsset) {
 				sc.reporter.AddScanError(child.Asset, err)
 			}
@@ -488,12 +511,16 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 
 		if len(connected.Children) > 0 {
 			// Branch node (e.g. a namespace with workloads under it).
-			// Flush any pending leaf batch first, then recurse.
-			if len(leafBatch) > 0 {
-				if err := sc.syncAndScanBatch(ctx, leafBatch); err != nil {
+			// Release the connection slot — branch nodes don't hold a
+			// connection themselves, their children will acquire their own.
+			<-sc.connSem
+
+			// Flush any pending sync batch first, then recurse.
+			if len(syncBatch) > 0 {
+				if err := sc.syncAndDispatch(ctx, syncBatch); err != nil {
 					return err
 				}
-				leafBatch = nil
+				syncBatch = nil
 			}
 			if err := sc.scanSubtree(ctx, connected); err != nil {
 				return err
@@ -508,33 +535,39 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			if err := sc.explorer.CloseAsset(connected); err != nil {
 				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
 			}
+			<-sc.connSem
 			continue
 		}
 
-		// Leaf node — accumulate into the current batch
-		leafBatch = append(leafBatch, connected)
-		if len(leafBatch) >= batchSize {
-			if err := sc.syncAndScanBatch(ctx, leafBatch); err != nil {
+		// Leaf node — accumulate into sync batch
+		syncBatch = append(syncBatch, connected)
+		if len(syncBatch) >= syncBatchSize {
+			if err := sc.syncAndDispatch(ctx, syncBatch); err != nil {
 				return err
 			}
-			leafBatch = nil
+			syncBatch = nil
 		}
 	}
 
 	// Flush remaining leaves
-	if len(leafBatch) > 0 {
-		if err := sc.syncAndScanBatch(ctx, leafBatch); err != nil {
+	if len(syncBatch) > 0 {
+		if err := sc.syncAndDispatch(ctx, syncBatch); err != nil {
 			return err
 		}
 	}
+
+	// Wait for all scans dispatched in this subtree (and below) to finish
+	// before we scan or close the node itself.
+	sc.scanWg.Wait()
 
 	// Scan the node itself (e.g. the namespace), then close to free resources.
 	// Some nodes are pure gateways with no platform IDs (e.g. the k8s cluster
 	// root with staged discovery) — just close them without scanning.
 	if len(node.Asset.PlatformIds) > 0 {
-		if err := sc.syncAndScanBatch(ctx, []*discovery.TrackedAsset{node}); err != nil {
+		if err := sc.syncAndDispatch(ctx, []*discovery.TrackedAsset{node}); err != nil {
 			return err
 		}
+		sc.scanWg.Wait()
 	} else {
 		sc.multiprogress.Filtered(1)
 		if err := sc.explorer.CloseAsset(node); err != nil {
@@ -545,16 +578,19 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	return nil
 }
 
-// syncAndScanBatch synchronizes, scans, and closes a batch of assets.
-func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.TrackedAsset) error {
+// syncAndDispatch synchronizes a batch of assets with upstream, then
+// dispatches each one to the shared scan worker pool. It does not wait
+// for scans to complete — the caller must use sc.scanWg.Wait() when it
+// needs to drain in-flight work.
+func (sc *scanContext) syncAndDispatch(ctx context.Context, batch []*discovery.TrackedAsset) error {
 	// Check for cancellation before doing any work
 	select {
 	case <-ctx.Done():
-		// Close all assets in the batch since we won't scan them
 		for _, tracked := range batch {
 			if err := sc.explorer.CloseAsset(tracked); err != nil {
 				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
 			}
+			<-sc.connSem
 		}
 		return ctx.Err()
 	default:
@@ -583,70 +619,21 @@ func (sc *scanContext) syncAndScanBatch(ctx context.Context, batch []*discovery.
 		}
 	}
 
-	parallelism := int(sc.job.Parallelism)
-	if parallelism < 2 {
-		return sc.scanBatchSequential(ctx, batch)
-	}
-	return sc.scanBatchParallel(ctx, batch, parallelism)
-}
-
-// scanBatchSequential scans assets one at a time. This is the default path.
-func (sc *scanContext) scanBatchSequential(ctx context.Context, batch []*discovery.TrackedAsset) error {
-	var scanErr error
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer sc.reportPanic(batch)
-
-		for i, tracked := range batch {
-			select {
-			case <-ctx.Done():
-				log.Warn().Msg("request context has been canceled")
-				for _, remaining := range batch[i:] {
-					if err := sc.explorer.CloseAsset(remaining); err != nil {
-						log.Error().Err(err).Str("asset", remaining.Asset.Name).Msg("failed to close asset")
-					}
-				}
-				sc.multiprogress.Close()
-				scanErr = ctx.Err()
-				return
-			default:
-			}
-
-			sc.scanSingleAsset(ctx, tracked)
-		}
-	}()
-	wg.Wait()
-
-	return scanErr
-}
-
-// scanBatchParallel scans assets concurrently using a worker pool bounded by parallelism.
-func (sc *scanContext) scanBatchParallel(ctx context.Context, batch []*discovery.TrackedAsset, parallelism int) error {
-	sem := make(chan struct{}, parallelism)
-	var wg sync.WaitGroup
-
+	// Dispatch each asset to the shared worker pool.
 	for _, tracked := range batch {
-		select {
-		case <-ctx.Done():
-			break
-		default:
-		}
-
-		sem <- struct{}{}
-		wg.Add(1)
+		sc.scanSem <- struct{}{} // acquire scan slot (blocks if all workers busy)
+		sc.scanWg.Add(1)
 		go func(t *discovery.TrackedAsset) {
-			defer wg.Done()
-			defer func() { <-sem }()
+			defer sc.scanWg.Done()
+			defer func() { <-sc.scanSem }()
+			defer func() { <-sc.connSem }() // release connection slot after scan+close
 			defer sc.reportPanic([]*discovery.TrackedAsset{t})
 
 			sc.scanSingleAsset(ctx, t)
 		}(tracked)
 	}
-	wg.Wait()
 
-	return ctx.Err()
+	return nil
 }
 
 // scanSingleAsset handles the full lifecycle of scanning one asset: delayed discovery,
