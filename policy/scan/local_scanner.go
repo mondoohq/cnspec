@@ -470,6 +470,10 @@ type scanContext struct {
 // upstream sync calls), and the batcher forwards synced assets to the
 // scanDispatcher (which manages the worker pool). Branch nodes flush the
 // batcher and drain the dispatcher before recursing.
+//
+// After all children are connected and dispatched, the node itself is
+// dispatched for scanning without waiting for child scans to finish first.
+// This lets the node scan run concurrently with any still-running children.
 func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedAsset) error {
 	if len(node.Children) > 0 {
 		sc.multiprogress.Discovered(len(node.Children))
@@ -527,20 +531,17 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		}
 	}
 
-	// Flush remaining buffered leaves and wait for all scans to complete
-	// before processing the node itself.
+	// Flush remaining children so they're all dispatched for scanning.
 	if err := sc.batcher.Flush(ctx); err != nil {
 		return err
 	}
-	sc.dispatcher.Wait()
 
-	// Scan the node itself (e.g. the namespace), then close to free resources.
-	// Some nodes are pure gateways with no platform IDs (e.g. the k8s cluster
-	// root with staged discovery) — just close them without scanning.
+	// Dispatch the node itself for scanning. All children are already
+	// connected and dispatched, so closing the node's runtime after its
+	// scan won't interfere with child connections. The node scan runs
+	// concurrently with any still-running child scans — no need to wait
+	// for children to finish first.
 	if len(node.Asset.PlatformIds) > 0 {
-		// Acquire a connection slot for the node — branch nodes released
-		// theirs before recursing and root nodes never had one, but the
-		// dispatcher expects every asset to own a connSem slot.
 		sc.connSem <- struct{}{}
 		if err := sc.batcher.Add(ctx, node); err != nil {
 			return err
@@ -548,13 +549,15 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		if err := sc.batcher.Flush(ctx); err != nil {
 			return err
 		}
-		sc.dispatcher.Wait()
 	} else {
 		sc.multiprogress.Filtered(1)
 		if err := sc.explorer.CloseAsset(node); err != nil {
 			log.Error().Err(err).Str("asset", node.Asset.Name).Msg("failed to close asset")
 		}
 	}
+
+	// Wait for all scans (children + node) to complete before returning.
+	sc.dispatcher.Wait()
 
 	return nil
 }
