@@ -564,6 +564,11 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	// Some nodes are pure gateways with no platform IDs (e.g. the k8s cluster
 	// root with staged discovery) — just close them without scanning.
 	if len(node.Asset.PlatformIds) > 0 {
+		// Acquire a connection slot for the node itself. Branch nodes
+		// released theirs before recursing and root nodes never had one,
+		// but syncAndDispatch expects every asset to own a connSem slot
+		// that the scan goroutine will release after closing the asset.
+		sc.connSem <- struct{}{}
 		if err := sc.syncAndDispatch(ctx, []*discovery.TrackedAsset{node}); err != nil {
 			return err
 		}
