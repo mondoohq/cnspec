@@ -502,12 +502,13 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 
 		if len(connected.Children) > 0 {
 			// Branch node — release connection slot (children acquire their own),
-			// flush pending syncs, drain running scans, then recurse.
+			// flush pending syncs so current leaves are dispatched, then recurse.
+			// We do NOT drain running scans here — scans from sibling leaves and
+			// the new subtree run concurrently, bounded by scanSem.
 			<-sc.connSem
 			if err := sc.batcher.Flush(ctx); err != nil {
 				return err
 			}
-			sc.dispatcher.Wait()
 			if err := sc.scanSubtree(ctx, connected); err != nil {
 				return err
 			}
