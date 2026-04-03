@@ -84,14 +84,15 @@ type msgFiltered struct{ count int }
 
 // modelTodoList is the bubbletea model for the TODO-list progress UI.
 type modelTodoList struct {
-	tasks        []*task
-	taskIndex    map[string]*task
-	lock         sync.Mutex
-	startTime    time.Time
-	includeScore bool
-	spinner      spinner.Model
-	discovered   int
-	filtered     int
+	tasks          []*task
+	taskIndex      map[string]*task
+	lock           sync.Mutex
+	startTime      time.Time
+	includeScore   bool
+	spinner        spinner.Model
+	discovered     int
+	filtered       int
+	peakInProgress int // high-water mark for in-progress count; view never shrinks below this
 }
 
 func newTodoListModel(opts ...Option) *modelTodoList {
@@ -285,12 +286,15 @@ func (m *modelTodoList) View() string {
 	}
 
 	// Layout: completed (top) → in-progress → pending (bottom).
-	// Always show exactly 5 visible lines (when enough tasks exist).
-	// Completed: last 2 (drop oldest as new ones finish).
-	// Pending: fill remaining slots to reach 5 total.
-	const visibleSlots = 5
+	// The view starts at minVisibleSlots and grows to accommodate the peak
+	// number of in-progress items seen so far, but never shrinks back down.
+	const minVisibleSlots = 5
 
 	inProgressCount := len(inProgress)
+	if inProgressCount > m.peakInProgress {
+		m.peakInProgress = inProgressCount
+	}
+	visibleSlots := max(minVisibleSlots, m.peakInProgress)
 
 	var showFinished, showPending int
 	if inProgressCount >= visibleSlots {
