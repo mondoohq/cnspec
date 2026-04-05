@@ -103,10 +103,16 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 	if len(fullResult.Errors) > 0 {
 		msg := ""
 		for _, e := range fullResult.Errors {
+			// When discovering multiple assets (e.g. pods + namespaces), some may
+			// not match any policies. Only fail on unexpected errors.
+			if strings.Contains(e, "asset doesn't support any policies") {
+				continue
+			}
 			msg += e + "; "
 		}
-
-		return nil, errors.New("errors during scan: " + msg)
+		if msg != "" {
+			return nil, errors.New("errors during scan: " + msg)
+		}
 	}
 
 	reports := fullResult.Reports
