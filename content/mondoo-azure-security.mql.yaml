@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 7.3.0
+    version: 7.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -308,6 +308,17 @@ policies:
         checks:
           - uid: mondoo-azure-security-eventhubs-local-auth-disabled
           - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2
+      - title: Azure Functions
+        checks:
+          - uid: mondoo-azure-security-function-app-https-only
+          - uid: mondoo-azure-security-function-app-client-cert-required
+          - uid: mondoo-azure-security-function-app-managed-identity
+      - title: Azure DNS
+        checks:
+          - uid: mondoo-azure-security-private-dns-no-auto-registration
+      - title: Azure Front Door
+        checks:
+          - uid: mondoo-azure-security-frontdoor-origin-https
     scoring_system: highest impact
 queries:
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
@@ -31349,4 +31360,476 @@ queries:
     mql: |
       azure.subscription.eventHub.namespaces.all(
         minimumTlsVersion == "1.2"
+      )
+  - uid: mondoo-azure-security-function-app-https-only
+    title: Ensure Function Apps enforce HTTPS-only traffic
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-azure-security-function-app-https-only-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check ensures that Azure Function Apps are configured to accept only HTTPS traffic, rejecting any unencrypted HTTP requests.
+
+        **Why this matters**
+
+        - HTTP traffic is transmitted in plaintext, making it vulnerable to eavesdropping, man-in-the-middle attacks, and data tampering.
+        - Enforcing HTTPS ensures all data in transit between clients and the Function App is encrypted with TLS.
+        - Many regulatory frameworks (PCI DSS, HIPAA, NIST) require encryption of data in transit.
+        - Azure Function Apps support HTTPS by default but can be configured to allow HTTP, which should be explicitly disabled.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Function Apps** in the Azure Portal.
+        2. Select a function app.
+        3. Go to **Configuration** under **Settings**.
+        4. Verify that **HTTPS Only** is set to **On**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az functionapp show --name <FunctionAppName> --resource-group-name <ResourceGroupName> --query "httpsOnly"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To enforce HTTPS-only traffic on a Function App:
+
+            1. Navigate to **Function Apps** in the Azure Portal.
+            2. Select the function app.
+            3. Go to **Configuration** under **Settings**.
+            4. Set **HTTPS Only** to **On**.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            ```bash
+            az functionapp update --name <FunctionAppName> --resource-group-name <ResourceGroupName> --set httpsOnly=true
+            ```
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "azurerm_linux_function_app" "example" {
+              name                = "example-function"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              service_plan_id     = azurerm_service_plan.example.id
+              storage_account_name       = azurerm_storage_account.example.name
+              storage_account_access_key = azurerm_storage_account.example.primary_access_key
+
+              https_only = true
+
+              site_config {}
+            }
+            ```
+        - id: bicep
+          desc: |
+            ```bicep
+            resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+              name: 'example-function'
+              location: resourceGroup().location
+              kind: 'functionapp,linux'
+              properties: {
+                httpsOnly: true
+                serverFarmId: appServicePlan.id
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/app-service/configure-ssl-bindings
+        title: Enforce HTTPS in Azure App Service
+  - uid: mondoo-azure-security-function-app-https-only-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.functions.functionApps.all(
+        httpsOnly == true
+      )
+  - uid: mondoo-azure-security-function-app-client-cert-required
+    title: Ensure Function Apps require client certificates
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/soc2-2017: soc2-control-cc6-1-4
+    variants:
+      - uid: mondoo-azure-security-function-app-client-cert-required-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check ensures that Azure Function Apps are configured to require client certificates (mutual TLS), adding an additional layer of authentication at the transport level.
+
+        **Why this matters**
+
+        - Client certificate authentication (mutual TLS) provides two-way authentication, verifying both the server and client identity.
+        - Without client certificates, any client that can reach the Function App endpoint can attempt to invoke it, relying solely on application-level authentication.
+        - Setting the client certificate mode to "Required" ensures that all incoming requests must present a valid client certificate before the request reaches application code.
+        - This is especially important for Function Apps that process sensitive data or serve as backend APIs for other services.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Function Apps** in the Azure Portal.
+        2. Select a function app.
+        3. Go to **Configuration** under **Settings**.
+        4. Under **Incoming client certificates**, verify that the mode is set to **Require**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az functionapp show --name <FunctionAppName> --resource-group-name <ResourceGroupName> --query "{clientCertEnabled: clientCertEnabled, clientCertMode: clientCertMode}"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To require client certificates on a Function App:
+
+            1. Navigate to **Function Apps** in the Azure Portal.
+            2. Select the function app.
+            3. Go to **Configuration** under **Settings**.
+            4. Under **Incoming client certificates**, set the mode to **Require**.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            ```bash
+            az functionapp update --name <FunctionAppName> --resource-group-name <ResourceGroupName> --set clientCertEnabled=true clientCertMode=Required
+            ```
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "azurerm_linux_function_app" "example" {
+              name                = "example-function"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              service_plan_id     = azurerm_service_plan.example.id
+              storage_account_name       = azurerm_storage_account.example.name
+              storage_account_access_key = azurerm_storage_account.example.primary_access_key
+
+              client_certificate_enabled = true
+              client_certificate_mode    = "Required"
+
+              site_config {}
+            }
+            ```
+        - id: bicep
+          desc: |
+            ```bicep
+            resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+              name: 'example-function'
+              location: resourceGroup().location
+              kind: 'functionapp,linux'
+              properties: {
+                clientCertEnabled: true
+                clientCertMode: 'Required'
+                serverFarmId: appServicePlan.id
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/app-service/app-service-web-configure-tls-mutual-auth
+        title: Configure TLS mutual authentication for Azure App Service
+  - uid: mondoo-azure-security-function-app-client-cert-required-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.functions.functionApps.all(
+        clientCertEnabled == true && clientCertMode == "Required"
+      )
+  - uid: mondoo-azure-security-function-app-managed-identity
+    title: Ensure Function Apps use managed identity
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-azure-security-function-app-managed-identity-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check ensures that Azure Function Apps have a managed identity assigned, enabling secure, credential-free authentication to other Azure services.
+
+        **Why this matters**
+
+        - Managed identities eliminate the need to store credentials (such as connection strings, API keys, or service principal secrets) in application code or configuration.
+        - Credential leakage through code repositories, configuration files, or environment variables is a leading cause of cloud security breaches.
+        - Managed identities are automatically managed by Azure, including credential rotation, reducing operational overhead and human error.
+        - Azure RBAC can be used to grant managed identities precisely scoped access to downstream resources, following the principle of least privilege.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Function Apps** in the Azure Portal.
+        2. Select a function app.
+        3. Go to **Identity** under **Settings**.
+        4. Verify that either **System assigned** is set to **On** or a **User assigned** identity is configured.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az functionapp identity assign --name <FunctionAppName> --resource-group-name <ResourceGroupName>
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To assign a managed identity to a Function App:
+
+            1. Navigate to **Function Apps** in the Azure Portal.
+            2. Select the function app.
+            3. Go to **Identity** under **Settings**.
+            4. On the **System assigned** tab, set **Status** to **On**.
+            5. Click **Save**.
+        - id: cli
+          desc: |
+            ```bash
+            az functionapp identity assign --name <FunctionAppName> --resource-group-name <ResourceGroupName>
+            ```
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "azurerm_linux_function_app" "example" {
+              name                = "example-function"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              service_plan_id     = azurerm_service_plan.example.id
+              storage_account_name       = azurerm_storage_account.example.name
+              storage_account_access_key = azurerm_storage_account.example.primary_access_key
+
+              identity {
+                type = "SystemAssigned"
+              }
+
+              site_config {}
+            }
+            ```
+        - id: bicep
+          desc: |
+            ```bicep
+            resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+              name: 'example-function'
+              location: resourceGroup().location
+              kind: 'functionapp,linux'
+              identity: {
+                type: 'SystemAssigned'
+              }
+              properties: {
+                serverFarmId: appServicePlan.id
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/app-service/overview-managed-identity
+        title: Managed identities for Azure App Service and Azure Functions
+  - uid: mondoo-azure-security-function-app-managed-identity-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.functions.functionApps.all(
+        managedServiceIdentityId != ""
+      )
+  - uid: mondoo-azure-security-private-dns-no-auto-registration
+    title: Ensure private DNS zones restrict auto-registration
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    variants:
+      - uid: mondoo-azure-security-private-dns-no-auto-registration-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check ensures that virtual network links to Azure private DNS zones have auto-registration disabled, preventing virtual machines from automatically registering DNS records.
+
+        **Why this matters**
+
+        - When auto-registration is enabled, every virtual machine in the linked virtual network automatically creates a DNS record in the private DNS zone, which can lead to DNS namespace pollution.
+        - Unauthorized or unexpected DNS records can facilitate lateral movement by providing attackers with a map of internal resources.
+        - Disabling auto-registration ensures that DNS records are explicitly managed, providing better control over internal name resolution and reducing the risk of DNS-based reconnaissance.
+        - Organizations should use explicit DNS record management to maintain an accurate and auditable inventory of internal DNS entries.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Private DNS zones** in the Azure Portal.
+        2. Select a private DNS zone.
+        3. Go to **Virtual network links** under **Settings**.
+        4. For each link, verify that **Auto-registration** is set to **Disabled**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az network private-dns link vnet list --resource-group <ResourceGroupName> --zone-name <ZoneName> --query "[].{name:name, registrationEnabled:registrationEnabled}"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable auto-registration on a virtual network link:
+
+            1. Navigate to **Private DNS zones** in the Azure Portal.
+            2. Select the private DNS zone.
+            3. Go to **Virtual network links** under **Settings**.
+            4. Select the virtual network link.
+            5. Set **Auto-registration** to **Disabled**.
+            6. Click **Save**.
+        - id: cli
+          desc: |
+            ```bash
+            az network private-dns link vnet update --name <LinkName> --resource-group <ResourceGroupName> --zone-name <ZoneName> --registration-enabled false
+            ```
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "azurerm_private_dns_zone_virtual_network_link" "example" {
+              name                  = "example-link"
+              resource_group_name   = azurerm_resource_group.example.name
+              private_dns_zone_name = azurerm_private_dns_zone.example.name
+              virtual_network_id    = azurerm_virtual_network.example.id
+              registration_enabled  = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            ```bicep
+            resource vnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = {
+              parent: privateDnsZone
+              name: 'example-link'
+              location: 'global'
+              properties: {
+                registrationEnabled: false
+                virtualNetwork: {
+                  id: virtualNetwork.id
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/dns/private-dns-virtual-network-links
+        title: What is a virtual network link?
+      - url: https://learn.microsoft.com/en-us/azure/dns/private-dns-autoregistration
+        title: Azure DNS private zone auto-registration
+  - uid: mondoo-azure-security-private-dns-no-auto-registration-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.dns.privateZones.all(
+        virtualNetworkLinks.all(registrationEnabled == false)
+      )
+  - uid: mondoo-azure-security-frontdoor-origin-https
+    title: Ensure Front Door origins use HTTPS only
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-azure-security-frontdoor-origin-https-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check ensures that Azure Front Door origin servers are configured to serve traffic only over HTTPS, preventing unencrypted HTTP connections between Front Door and the origin.
+
+        **Why this matters**
+
+        - Front Door terminates TLS at the edge, but traffic between Front Door and the origin can be sent over HTTP if the origin allows it, creating an unencrypted hop in the request path.
+        - An attacker with access to the network path between Front Door and the origin could intercept or tamper with unencrypted HTTP traffic.
+        - Configuring origins with only an HTTPS port (and no HTTP port) ensures end-to-end encryption from client to origin.
+        - Many compliance frameworks require encryption of data in transit across all network segments, not just the client-facing edge.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Front Door and CDN profiles** in the Azure Portal.
+        2. Select a Front Door profile.
+        3. Go to **Origin groups** under **Settings**.
+        4. For each origin group, select the origin and verify that only the HTTPS port is configured and the HTTP port is not in use.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az afd origin list --resource-group <ResourceGroupName> --profile-name <ProfileName> --origin-group-name <OriginGroupName> --query "[].{name:name, httpPort:httpPort, httpsPort:httpsPort}"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure Front Door origins for HTTPS only:
+
+            1. Navigate to **Front Door and CDN profiles** in the Azure Portal.
+            2. Select the Front Door profile.
+            3. Go to **Origin groups** under **Settings**.
+            4. Select the origin group, then select the origin.
+            5. Set the **HTTPS port** to **443**.
+            6. Remove or disable the **HTTP port** by setting it to **0** or removing HTTP from the origin configuration.
+            7. Click **Update**.
+        - id: cli
+          desc: |
+            ```bash
+            az afd origin update --resource-group <ResourceGroupName> --profile-name <ProfileName> --origin-group-name <OriginGroupName> --origin-name <OriginName> --https-port 443 --http-port 0
+            ```
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "azurerm_cdn_frontdoor_origin" "example" {
+              name                          = "example-origin"
+              cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.example.id
+              host_name                     = "example.azurewebsites.net"
+              https_port                    = 443
+              http_port                     = 0
+              certificate_name_check_enabled = true
+            }
+            ```
+        - id: bicep
+          desc: |
+            ```bicep
+            resource origin 'Microsoft.Cdn/profiles/originGroups/origins@2024-02-01' = {
+              parent: originGroup
+              name: 'example-origin'
+              properties: {
+                hostName: 'example.azurewebsites.net'
+                httpsPort: 443
+                httpPort: 0
+                enforceCertificateNameCheck: true
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/frontdoor/origin
+        title: Origins and origin groups in Azure Front Door
+      - url: https://learn.microsoft.com/en-us/azure/frontdoor/end-to-end-tls
+        title: End-to-end TLS with Azure Front Door
+  - uid: mondoo-azure-security-frontdoor-origin-https-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.frontDoor.profiles.all(
+        originGroups.all(origins.all(httpPort == 0))
       )

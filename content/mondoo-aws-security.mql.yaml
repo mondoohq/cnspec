@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 9.1.0
+    version: 9.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -344,6 +344,7 @@ policies:
         checks:
           - uid: mondoo-aws-security-secretsmanager-rotation-enabled
           - uid: mondoo-aws-security-secretsmanager-cmk-encryption
+          - uid: mondoo-aws-security-secretsmanager-no-public-policy
       - title: IAM Access Analyzer
         checks:
           - uid: mondoo-aws-security-iam-access-analyzer-enabled
@@ -515,6 +516,31 @@ policies:
         checks:
           - uid: mondoo-aws-security-keyspaces-cmk-encryption
           - uid: mondoo-aws-security-keyspaces-pitr-enabled
+      - title: AWS Step Functions
+        checks:
+          - uid: mondoo-aws-security-sfn-logging-enabled
+          - uid: mondoo-aws-security-sfn-tracing-enabled
+          - uid: mondoo-aws-security-sfn-encryption-configured
+      - title: AWS Resource Access Manager
+        checks:
+          - uid: mondoo-aws-security-ram-no-external-principals
+          - uid: mondoo-aws-security-ram-no-wildcard-principals
+      - title: AWS Transfer Family
+        checks:
+          - uid: mondoo-aws-security-transfer-no-ftp
+          - uid: mondoo-aws-security-transfer-vpc-endpoint
+          - uid: mondoo-aws-security-transfer-logging-enabled
+          - uid: mondoo-aws-security-transfer-structured-logging
+          - uid: mondoo-aws-security-transfer-security-policy
+          - uid: mondoo-aws-security-transfer-identity-provider
+      - title: AWS App Mesh
+        checks:
+          - uid: mondoo-aws-security-appmesh-egress-filter
+      - title: AWS IAM Identity Center
+        checks:
+          - uid: mondoo-aws-security-identitycenter-session-duration
+          - uid: mondoo-aws-security-identitycenter-no-inline-policy
+          - uid: mondoo-aws-security-identitycenter-group-assignments
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -46144,3 +46170,1345 @@ queries:
         allowedPrincipals.length > 0 &&
         allowedPrincipals.none(_ == "*")
       )
+  - uid: mondoo-aws-security-sfn-logging-enabled
+    title: Ensure Step Functions state machines have logging enabled
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/bsi-c5-2022: bsi-c5-ops-10
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-8-2
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-aws-security-sfn-logging-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Step Functions state machines have logging enabled. Without logging, execution history and state transition events are not captured, making it difficult to detect failures, debug workflows, or investigate security incidents.
+
+        **Why this matters**
+
+        - Step Functions logging provides visibility into state machine executions, including input/output data and state transitions.
+        - Without logging enabled, security teams cannot detect anomalous workflow patterns or investigate unauthorized executions.
+        - Compliance frameworks including NIST SP 800-53 AU-6 and SOC 2 CC7.2 require logging of critical application workflows.
+
+        **Risk mitigation**
+
+        - **Operational visibility:** Logs capture execution details that are essential for debugging and performance analysis.
+        - **Security monitoring:** Execution logs enable detection of unauthorized or anomalous workflow invocations.
+        - **Compliance:** Satisfies audit logging requirements across multiple regulatory frameworks.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Step Functions state machines have logging enabled using the AWS Console:
+
+            1. Navigate to the **AWS Step Functions Console** and select **State machines**.
+            2. Select the state machine you want to configure.
+            3. Choose **Edit**.
+            4. Under **Logging**, set the log level to **ALL**, **ERROR**, or **FATAL**.
+            5. Select or create a CloudWatch Logs log group.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Step Functions state machines have logging enabled using the AWS CLI:
+
+            ```bash
+            aws stepfunctions update-state-machine \
+              --state-machine-arn <state-machine-arn> \
+              --logging-configuration '{"level":"ALL","includeExecutionData":true,"destinations":[{"cloudWatchLogsLogGroup":{"logGroupArn":"<log-group-arn>"}}]}'
+            ```
+        - id: terraform
+          desc: |
+            To ensure Step Functions state machines have logging enabled in Terraform:
+
+            ```hcl
+            resource "aws_sfn_state_machine" "example" {
+              name     = "example-state-machine"
+              role_arn = aws_iam_role.sfn.arn
+
+              definition = file("definition.json")
+
+              logging_configuration {
+                log_destination        = "${aws_cloudwatch_log_group.sfn.arn}:*"
+                include_execution_data = true
+                level                  = "ALL"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
+        title: AWS Documentation - Logging Step Functions using CloudWatch Logs
+  - uid: mondoo-aws-security-sfn-logging-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sfn.stateMachines.all(loggingConfiguration['level'] != "OFF")
+  - uid: mondoo-aws-security-sfn-tracing-enabled
+    title: Ensure Step Functions state machines have tracing enabled
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/bsi-c5-2022: bsi-c5-ops-10
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-8-2
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-aws-security-sfn-tracing-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Step Functions state machines have AWS X-Ray tracing enabled. X-Ray tracing provides end-to-end visibility into workflow executions, including downstream service calls, helping identify performance bottlenecks and failures.
+
+        **Why this matters**
+
+        - X-Ray tracing enables distributed tracing across Step Functions and integrated services such as Lambda, SNS, and SQS.
+        - Without tracing, it is difficult to diagnose latency issues or identify which step in a workflow is causing failures.
+        - Tracing data supports security investigations by providing a timeline of service interactions.
+
+        **Risk mitigation**
+
+        - **Observability:** Distributed tracing provides a complete picture of workflow execution across services.
+        - **Incident response:** Trace data accelerates root cause analysis during incidents.
+        - **Performance:** Identifies slow or failing steps in complex workflows.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Step Functions state machines have tracing enabled using the AWS Console:
+
+            1. Navigate to the **AWS Step Functions Console** and select **State machines**.
+            2. Select the state machine you want to configure.
+            3. Choose **Edit**.
+            4. Under **Tracing**, enable **X-Ray tracing**.
+            5. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Step Functions state machines have tracing enabled using the AWS CLI:
+
+            ```bash
+            aws stepfunctions update-state-machine \
+              --state-machine-arn <state-machine-arn> \
+              --tracing-configuration enabled=true
+            ```
+        - id: terraform
+          desc: |
+            To ensure Step Functions state machines have tracing enabled in Terraform:
+
+            ```hcl
+            resource "aws_sfn_state_machine" "example" {
+              name     = "example-state-machine"
+              role_arn = aws_iam_role.sfn.arn
+
+              definition = file("definition.json")
+
+              tracing_configuration {
+                enabled = true
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-xray-tracing.html
+        title: AWS Documentation - Tracing Step Functions with X-Ray
+  - uid: mondoo-aws-security-sfn-tracing-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sfn.stateMachines.all(tracingEnabled == true)
+  - uid: mondoo-aws-security-sfn-encryption-configured
+    title: Ensure Step Functions state machines use CMK encryption
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/bsi-c5-2022: bsi-c5-cry-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-3-11
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-sfn-encryption-configured-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Step Functions state machines are encrypted using a customer-managed KMS key rather than the default AWS-owned key. Customer-managed keys provide greater control over key lifecycle, access policies, and audit capabilities.
+
+        **Why this matters**
+
+        - Step Functions state machines can process sensitive data in execution inputs, outputs, and state transition payloads.
+        - The default AWS-owned key does not allow fine-grained access control through key policies or CloudTrail logging of key usage.
+        - Customer-managed keys enable key rotation, cross-account sharing controls, and the ability to revoke access by disabling the key.
+
+        **Risk mitigation**
+
+        - **Key control:** Full control over key lifecycle including rotation and deletion.
+        - **Audit trail:** All encryption operations are logged in CloudTrail when using a customer-managed key.
+        - **Compliance:** Satisfies encryption key management requirements in PCI DSS, HIPAA, and SOC 2.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Step Functions state machines use CMK encryption using the AWS Console:
+
+            1. Navigate to the **AWS Step Functions Console** and select **State machines**.
+            2. Select the state machine you want to configure.
+            3. Choose **Edit**.
+            4. Under **Encryption**, select **Customer managed KMS key**.
+            5. Choose or create a KMS key.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Step Functions state machines use CMK encryption using the AWS CLI:
+
+            ```bash
+            aws stepfunctions update-state-machine \
+              --state-machine-arn <state-machine-arn> \
+              --encryption-configuration '{"type":"CUSTOMER_MANAGED_KMS_KEY","kmsKeyId":"<kms-key-arn>","kmsDataKeyReusePeriodSeconds":300}'
+            ```
+        - id: terraform
+          desc: |
+            To ensure Step Functions state machines use CMK encryption in Terraform:
+
+            ```hcl
+            resource "aws_sfn_state_machine" "example" {
+              name     = "example-state-machine"
+              role_arn = aws_iam_role.sfn.arn
+
+              definition = file("definition.json")
+
+              encryption_configuration {
+                type                             = "CUSTOMER_MANAGED_KMS_KEY"
+                kms_key_id                       = aws_kms_key.sfn.arn
+                kms_data_key_reuse_period_seconds = 300
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/step-functions/latest/dg/encryption-at-rest.html
+        title: AWS Documentation - Encryption at rest for Step Functions
+  - uid: mondoo-aws-security-sfn-encryption-configured-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sfn.stateMachines.all(encryptionConfiguration['type'] != "AWS_OWNED_KEY")
+  - uid: mondoo-aws-security-ram-no-external-principals
+    title: Ensure RAM shares do not allow external principals
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-3-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    variants:
+      - uid: mondoo-aws-security-ram-no-external-principals-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Resource Access Manager (RAM) resource shares do not allow external principals. When external principals are allowed, resources can be shared with AWS accounts outside your organization, increasing the risk of unauthorized access.
+
+        **Why this matters**
+
+        - Allowing external principals enables sharing of resources such as VPC subnets, Transit Gateways, and License Manager configurations with accounts outside your AWS Organization.
+        - External sharing bypasses organizational boundaries and SCPs, potentially exposing sensitive infrastructure to unauthorized parties.
+        - Compliance frameworks including NIST SP 800-53 AC-6 and SOC 2 CC6.1 require least-privilege access controls on shared resources.
+
+        **Risk mitigation**
+
+        - **Blast radius reduction:** Restricting sharing to your organization limits exposure of critical resources.
+        - **Policy enforcement:** Organization-only sharing respects SCPs and organizational policies.
+        - **Compliance:** Satisfies access control requirements across multiple regulatory frameworks.
+      remediation:
+        - id: console
+          desc: |
+            To ensure RAM resource shares do not allow external principals using the AWS Console:
+
+            1. Navigate to the **AWS RAM Console** and select **Resource shares**.
+            2. Select the resource share you want to configure.
+            3. Choose **Modify**.
+            4. Under **Allow external principals**, uncheck the option.
+            5. Remove any external principals from the share.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure RAM resource shares do not allow external principals using the AWS CLI:
+
+            ```bash
+            aws ram update-resource-share \
+              --resource-share-arn <resource-share-arn> \
+              --no-allow-external-principals
+            ```
+        - id: terraform
+          desc: |
+            To ensure RAM resource shares do not allow external principals in Terraform:
+
+            ```hcl
+            resource "aws_ram_resource_share" "example" {
+              name                      = "example-share"
+              allow_external_principals = false
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/ram/latest/userguide/working-with-sharing.html
+        title: AWS Documentation - Sharing your AWS resources
+  - uid: mondoo-aws-security-ram-no-external-principals-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ram.resourceShares.all(allowExternalPrincipals == false)
+  - uid: mondoo-aws-security-ram-no-wildcard-principals
+    title: Ensure RAM shares do not use wildcard principals
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-3-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    variants:
+      - uid: mondoo-aws-security-ram-no-wildcard-principals-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Resource Access Manager (RAM) resource shares do not use wildcard (*) principals. Wildcard principals grant access to all AWS accounts, effectively making shared resources publicly accessible.
+
+        **Why this matters**
+
+        - A wildcard principal in a RAM resource share means any AWS account can access the shared resources.
+        - This creates a significant security risk, as sensitive infrastructure such as VPC subnets or Transit Gateways could be accessed by unknown third parties.
+        - NIST SP 800-53 AC-6 requires least-privilege access, which is violated by wildcard sharing.
+
+        **Risk mitigation**
+
+        - **Least privilege:** Replace wildcard principals with specific account IDs or organizational unit ARNs.
+        - **Access control:** Ensures only known, authorized accounts can access shared resources.
+        - **Auditability:** Specific principals enable meaningful audit trails of resource access.
+      remediation:
+        - id: console
+          desc: |
+            To ensure RAM resource shares do not use wildcard principals using the AWS Console:
+
+            1. Navigate to the **AWS RAM Console** and select **Resource shares**.
+            2. Select the resource share you want to configure.
+            3. Review the **Principals** section.
+            4. Remove any wildcard (*) principals.
+            5. Add specific AWS account IDs or organizational unit ARNs instead.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure RAM resource shares do not use wildcard principals using the AWS CLI:
+
+            ```bash
+            aws ram disassociate-resource-share \
+              --resource-share-arn <resource-share-arn> \
+              --principals "*"
+            ```
+
+            Then associate specific principals:
+
+            ```bash
+            aws ram associate-resource-share \
+              --resource-share-arn <resource-share-arn> \
+              --principals <account-id-or-ou-arn>
+            ```
+        - id: terraform
+          desc: |
+            To ensure RAM resource shares do not use wildcard principals in Terraform:
+
+            ```hcl
+            resource "aws_ram_principal_association" "example" {
+              principal          = "123456789012"
+              resource_share_arn = aws_ram_resource_share.example.arn
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/ram/latest/userguide/working-with-sharing.html
+        title: AWS Documentation - Sharing your AWS resources
+  - uid: mondoo-aws-security-ram-no-wildcard-principals-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ram.resourceShares.all(principals.none(_ == "*"))
+  - uid: mondoo-aws-security-transfer-no-ftp
+    title: Ensure Transfer Family servers do not use plain FTP
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/bsi-c5-2022: bsi-c5-cry-03
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-3-10
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission-security
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-aws-security-transfer-no-ftp-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Transfer Family servers do not use the plain FTP protocol. FTP transmits data and credentials in cleartext, making it vulnerable to interception and man-in-the-middle attacks.
+
+        **Why this matters**
+
+        - FTP transmits usernames, passwords, and file data without encryption, exposing sensitive information to network-level attackers.
+        - SFTP and FTPS provide encrypted alternatives that protect data in transit.
+        - Compliance frameworks including PCI DSS 4.2.1 and HIPAA require encryption of data in transit.
+        - AWS Transfer Family supports SFTP, FTPS, and AS2 as secure alternatives to plain FTP.
+
+        **Risk mitigation**
+
+        - **Data protection:** Encrypted protocols prevent interception of file contents and credentials.
+        - **Credential security:** SFTP and FTPS protect authentication credentials from network sniffing.
+        - **Compliance:** Meets encryption-in-transit requirements across PCI DSS, HIPAA, and SOC 2 frameworks.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Transfer Family servers do not use plain FTP using the AWS Console:
+
+            1. Navigate to the **AWS Transfer Family Console** and select **Servers**.
+            2. Select the server you want to configure.
+            3. Choose **Edit**.
+            4. Under **Protocols**, remove **FTP** and ensure only **SFTP**, **FTPS**, or **AS2** are selected.
+            5. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Transfer Family servers do not use plain FTP using the AWS CLI:
+
+            ```bash
+            aws transfer update-server \
+              --server-id <server-id> \
+              --protocols SFTP
+            ```
+        - id: terraform
+          desc: |
+            To ensure Transfer Family servers do not use plain FTP in Terraform:
+
+            ```hcl
+            resource "aws_transfer_server" "example" {
+              protocols = ["SFTP"]
+
+              endpoint_type = "VPC"
+
+              endpoint_details {
+                vpc_id = aws_vpc.example.id
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/create-server.html
+        title: AWS Documentation - Creating a Transfer Family server
+  - uid: mondoo-aws-security-transfer-no-ftp-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.servers.all(protocols.none(_ == "FTP"))
+  - uid: mondoo-aws-security-transfer-vpc-endpoint
+    title: Ensure Transfer Family servers use VPC endpoints
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/bsi-c5-2022: bsi-c5-net-02
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-12-2
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission-security
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-aws-security-transfer-vpc-endpoint-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Transfer Family servers use VPC or VPC_ENDPOINT endpoint types instead of PUBLIC endpoints. VPC endpoints keep file transfer traffic within the AWS network, reducing exposure to internet-based threats.
+
+        **Why this matters**
+
+        - PUBLIC endpoints expose Transfer Family servers directly to the internet, increasing the attack surface for brute-force and denial-of-service attacks.
+        - VPC endpoints allow access only from within the VPC or connected networks, providing network-level isolation.
+        - Security groups and NACLs can be applied to VPC endpoints for additional access control.
+        - Compliance frameworks including NIST SP 800-53 SC-7 require boundary protection for network services.
+
+        **Risk mitigation**
+
+        - **Network isolation:** VPC endpoints restrict access to trusted networks only.
+        - **Defense in depth:** Security groups and NACLs provide additional layers of access control.
+        - **Reduced attack surface:** Eliminates direct internet exposure of file transfer services.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Transfer Family servers use VPC endpoints using the AWS Console:
+
+            1. Navigate to the **AWS Transfer Family Console** and select **Servers**.
+            2. Note: Endpoint type cannot be changed after creation. Create a new server with VPC endpoint type.
+            3. Choose **Create server**.
+            4. Under **Endpoint type**, select **VPC** or **VPC endpoint**.
+            5. Configure VPC, subnets, and security groups.
+            6. Complete the server configuration and choose **Create server**.
+            7. Migrate users and workflows from the old server, then delete it.
+        - id: cli
+          desc: |
+            To ensure Transfer Family servers use VPC endpoints using the AWS CLI, create a new server with VPC endpoint type:
+
+            ```bash
+            aws transfer create-server \
+              --endpoint-type VPC \
+              --endpoint-details VpcId=<vpc-id>,SubnetIds=<subnet-id-1>,<subnet-id-2> \
+              --protocols SFTP
+            ```
+        - id: terraform
+          desc: |
+            To ensure Transfer Family servers use VPC endpoints in Terraform:
+
+            ```hcl
+            resource "aws_transfer_server" "example" {
+              endpoint_type = "VPC"
+              protocols     = ["SFTP"]
+
+              endpoint_details {
+                vpc_id     = aws_vpc.example.id
+                subnet_ids = [aws_subnet.example.id]
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/create-server-in-vpc.html
+        title: AWS Documentation - Creating a server in a VPC
+  - uid: mondoo-aws-security-transfer-vpc-endpoint-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.servers.all(endpointType == "VPC" || endpointType == "VPC_ENDPOINT")
+  - uid: mondoo-aws-security-transfer-logging-enabled
+    title: Ensure Transfer Family servers have logging enabled
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/bsi-c5-2022: bsi-c5-ops-10
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-8-2
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-aws-security-transfer-logging-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Transfer Family servers have a logging role configured. Without a logging role, file transfer activity is not logged to CloudWatch, making it impossible to audit file access or detect unauthorized transfers.
+
+        **Why this matters**
+
+        - Transfer Family logging captures file upload, download, and delete operations with user identity and timestamps.
+        - Without logging, security teams cannot detect data exfiltration or unauthorized file access.
+        - Compliance frameworks including NIST SP 800-53 AU-6 and SOC 2 CC7.2 require audit logging of data access.
+
+        **Risk mitigation**
+
+        - **Audit trail:** Logs provide a complete record of all file transfer activity.
+        - **Data loss prevention:** Log analysis can detect unusual transfer patterns indicating data exfiltration.
+        - **Compliance:** Satisfies audit logging requirements across multiple regulatory frameworks.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Transfer Family servers have logging enabled using the AWS Console:
+
+            1. Navigate to the **AWS Transfer Family Console** and select **Servers**.
+            2. Select the server you want to configure.
+            3. Choose **Edit**.
+            4. Under **CloudWatch logging**, select an IAM role with permissions to write to CloudWatch Logs.
+            5. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Transfer Family servers have logging enabled using the AWS CLI:
+
+            ```bash
+            aws transfer update-server \
+              --server-id <server-id> \
+              --logging-role <iam-role-arn>
+            ```
+        - id: terraform
+          desc: |
+            To ensure Transfer Family servers have logging enabled in Terraform:
+
+            ```hcl
+            resource "aws_transfer_server" "example" {
+              protocols    = ["SFTP"]
+              logging_role = aws_iam_role.transfer_logging.arn
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/structured-logging.html
+        title: AWS Documentation - Transfer Family logging
+  - uid: mondoo-aws-security-transfer-logging-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.servers.all(loggingRole != empty)
+  - uid: mondoo-aws-security-transfer-structured-logging
+    title: Ensure Transfer Family servers use structured logging
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-ae-3
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/bsi-c5-2022: bsi-c5-ops-10
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-8-2
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-aws-security-transfer-structured-logging-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Transfer Family servers have structured logging destinations configured. Structured logging delivers JSON-formatted log entries to CloudWatch Logs, enabling richer querying, filtering, and integration with security monitoring tools.
+
+        **Why this matters**
+
+        - Structured logs provide machine-readable JSON format that is easier to parse, query, and analyze than unstructured log data.
+        - CloudWatch Logs Insights and SIEM integrations work more effectively with structured log data.
+        - Structured logging captures additional metadata not available in basic logging, such as transfer details and error codes.
+
+        **Risk mitigation**
+
+        - **Enhanced monitoring:** Structured logs enable more precise alerting and anomaly detection.
+        - **Faster investigation:** JSON-formatted logs are easier to search and correlate during incident response.
+        - **Integration:** Structured logs integrate more easily with SIEM and log analysis platforms.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Transfer Family servers use structured logging using the AWS Console:
+
+            1. Navigate to the **AWS Transfer Family Console** and select **Servers**.
+            2. Select the server you want to configure.
+            3. Choose **Edit**.
+            4. Under **Structured logging destinations**, add a CloudWatch Logs log group ARN.
+            5. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Transfer Family servers use structured logging using the AWS CLI:
+
+            ```bash
+            aws transfer update-server \
+              --server-id <server-id> \
+              --structured-log-destinations <cloudwatch-log-group-arn>
+            ```
+        - id: terraform
+          desc: |
+            To ensure Transfer Family servers use structured logging in Terraform:
+
+            ```hcl
+            resource "aws_transfer_server" "example" {
+              protocols = ["SFTP"]
+
+              structured_log_destinations = [
+                "${aws_cloudwatch_log_group.transfer.arn}:*"
+              ]
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/structured-logging.html
+        title: AWS Documentation - Transfer Family structured logging
+  - uid: mondoo-aws-security-transfer-structured-logging-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.servers.all(structuredLogDestinations.length > 0)
+  - uid: mondoo-aws-security-transfer-security-policy
+    title: Ensure Transfer Family servers use current security policies
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/bsi-c5-2022: bsi-c5-cry-03
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-3-10
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission-security
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-aws-security-transfer-security-policy-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Transfer Family servers are not using the deprecated TransferSecurityPolicy-2018-11 security policy. This policy supports older, weaker cryptographic algorithms that are no longer considered secure.
+
+        **Why this matters**
+
+        - The 2018-11 security policy allows outdated ciphers and key exchange algorithms that are vulnerable to known attacks.
+        - Newer security policies enforce stronger cryptographic standards, including TLS 1.2+ and modern cipher suites.
+        - PCI DSS 4.2.1 and NIST SP 800-53 SC-7 require the use of strong cryptographic protocols.
+
+        **Risk mitigation**
+
+        - **Cryptographic strength:** Modern security policies enforce stronger encryption algorithms and key exchange methods.
+        - **Protocol security:** Newer policies deprecate weak protocols and cipher suites.
+        - **Compliance:** Meets cryptographic requirements across PCI DSS, HIPAA, and SOC 2 frameworks.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Transfer Family servers use current security policies using the AWS Console:
+
+            1. Navigate to the **AWS Transfer Family Console** and select **Servers**.
+            2. Select the server you want to configure.
+            3. Choose **Edit**.
+            4. Under **Security policy**, select a current policy such as **TransferSecurityPolicy-2024-01**.
+            5. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Transfer Family servers use current security policies using the AWS CLI:
+
+            ```bash
+            aws transfer update-server \
+              --server-id <server-id> \
+              --security-policy-name TransferSecurityPolicy-2024-01
+            ```
+        - id: terraform
+          desc: |
+            To ensure Transfer Family servers use current security policies in Terraform:
+
+            ```hcl
+            resource "aws_transfer_server" "example" {
+              protocols            = ["SFTP"]
+              security_policy_name = "TransferSecurityPolicy-2024-01"
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/security-policies.html
+        title: AWS Documentation - Transfer Family security policies
+  - uid: mondoo-aws-security-transfer-security-policy-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.servers.all(securityPolicyName != "TransferSecurityPolicy-2018-11")
+  - uid: mondoo-aws-security-transfer-identity-provider
+    title: Ensure Transfer Family servers use external identity providers
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-6-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-transfer-identity-provider-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Transfer Family servers use an external identity provider rather than the service-managed identity provider. External identity providers such as AWS Directory Service, API Gateway, or Lambda-based custom providers enable centralized user management and stronger authentication controls.
+
+        **Why this matters**
+
+        - Service-managed users are stored locally in Transfer Family and cannot leverage centralized identity systems or multi-factor authentication.
+        - External identity providers enable integration with corporate directories, SSO, and MFA.
+        - Centralized identity management simplifies user lifecycle management including onboarding, offboarding, and access reviews.
+
+        **Risk mitigation**
+
+        - **Centralized management:** External providers enable consistent identity governance across services.
+        - **Stronger authentication:** Supports MFA and conditional access policies.
+        - **Compliance:** Meets identity management requirements in NIST SP 800-53 AC-6, PCI DSS, and SOC 2.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Transfer Family servers use external identity providers using the AWS Console:
+
+            1. Note: Identity provider type cannot be changed after server creation. Create a new server.
+            2. Navigate to the **AWS Transfer Family Console** and choose **Create server**.
+            3. Under **Identity provider**, select **AWS Directory Service**, **Custom identity provider**, or another external option.
+            4. Configure the identity provider settings.
+            5. Complete the server configuration and choose **Create server**.
+            6. Migrate users from the old server and delete it.
+        - id: cli
+          desc: |
+            To ensure Transfer Family servers use external identity providers using the AWS CLI, create a new server with a custom identity provider:
+
+            ```bash
+            aws transfer create-server \
+              --identity-provider-type API_GATEWAY \
+              --identity-provider-details Url=<api-gateway-url>,InvocationRole=<role-arn> \
+              --protocols SFTP
+            ```
+        - id: terraform
+          desc: |
+            To ensure Transfer Family servers use external identity providers in Terraform:
+
+            ```hcl
+            resource "aws_transfer_server" "example" {
+              protocols              = ["SFTP"]
+              identity_provider_type = "API_GATEWAY"
+
+              url            = aws_api_gateway_deployment.example.invoke_url
+              invocation_role = aws_iam_role.transfer.arn
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/custom-identity-provider-users.html
+        title: AWS Documentation - Using custom identity providers
+  - uid: mondoo-aws-security-transfer-identity-provider-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.servers.all(identityProviderType != "SERVICE_MANAGED")
+  - uid: mondoo-aws-security-appmesh-egress-filter
+    title: Ensure App Mesh meshes use DROP_ALL egress filter
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/bsi-c5-2022: bsi-c5-net-02
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-12-2
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission-security
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-aws-security-appmesh-egress-filter-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS App Mesh meshes use the DROP_ALL egress filter type. The DROP_ALL filter blocks all outbound traffic from virtual services unless explicitly allowed through virtual services definitions, implementing a deny-by-default network posture.
+
+        **Why this matters**
+
+        - The default ALLOW_ALL egress filter permits all outbound traffic, which can enable data exfiltration and communication with unauthorized external services.
+        - DROP_ALL enforces explicit allowlisting of external service dependencies, reducing the attack surface.
+        - A deny-by-default network posture is a core principle of zero-trust architectures.
+        - NIST SP 800-53 SC-7 requires boundary protection that restricts outbound network traffic.
+
+        **Risk mitigation**
+
+        - **Data exfiltration prevention:** Blocks unauthorized outbound communication from mesh services.
+        - **Zero trust:** Enforces explicit allowlisting of all external service dependencies.
+        - **Blast radius reduction:** Compromised services cannot reach arbitrary external endpoints.
+      remediation:
+        - id: console
+          desc: |
+            To ensure App Mesh meshes use DROP_ALL egress filter using the AWS Console:
+
+            1. Navigate to the **AWS App Mesh Console** and select **Meshes**.
+            2. Select the mesh you want to configure.
+            3. Choose **Edit**.
+            4. Under **Egress filter**, select **DROP_ALL**.
+            5. Ensure all required external services are defined as virtual services.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure App Mesh meshes use DROP_ALL egress filter using the AWS CLI:
+
+            ```bash
+            aws appmesh update-mesh \
+              --mesh-name <mesh-name> \
+              --spec egressFilter={type=DROP_ALL}
+            ```
+        - id: terraform
+          desc: |
+            To ensure App Mesh meshes use DROP_ALL egress filter in Terraform:
+
+            ```hcl
+            resource "aws_appmesh_mesh" "example" {
+              name = "example-mesh"
+
+              spec {
+                egress_filter {
+                  type = "DROP_ALL"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/app-mesh/latest/userguide/meshes.html
+        title: AWS Documentation - App Mesh meshes
+  - uid: mondoo-aws-security-appmesh-egress-filter-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.appmesh.meshes.all(egressFilterType == "DROP_ALL")
+  - uid: mondoo-aws-security-identitycenter-session-duration
+    title: Ensure Identity Center permission sets have short sessions
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-6-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/pci-dss-4: pcidss-requirement-8-6-1
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-identitycenter-session-duration-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS IAM Identity Center permission sets have session durations of 12 hours or less. Excessively long session durations increase the risk of session hijacking and unauthorized access from stolen credentials.
+
+        **Why this matters**
+
+        - Long-lived sessions increase the window of opportunity for attackers who obtain session tokens.
+        - Permission sets with sessions exceeding 12 hours may indicate overly permissive configurations.
+        - NIST SP 800-53 AC-12 requires session termination after defined periods of inactivity or maximum duration.
+        - Shorter sessions force re-authentication, reducing the risk of stale credentials being used.
+
+        **Risk mitigation**
+
+        - **Session security:** Shorter sessions limit the impact of compromised credentials.
+        - **Re-authentication:** Forces users to re-authenticate regularly, verifying continued authorization.
+        - **Compliance:** Meets session management requirements in NIST, PCI DSS, and SOC 2.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Identity Center permission sets have reasonable session durations using the AWS Console:
+
+            1. Navigate to the **AWS IAM Identity Center Console**.
+            2. Select **Permission sets**.
+            3. Select the permission set you want to configure.
+            4. Choose **Edit**.
+            5. Under **Session duration**, set a value of 12 hours or less.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Identity Center permission sets have reasonable session durations using the AWS CLI:
+
+            ```bash
+            aws sso-admin update-permission-set \
+              --instance-arn <instance-arn> \
+              --permission-set-arn <permission-set-arn> \
+              --session-duration PT4H
+            ```
+        - id: terraform
+          desc: |
+            To ensure Identity Center permission sets have reasonable session durations in Terraform:
+
+            ```hcl
+            resource "aws_ssoadmin_permission_set" "example" {
+              name             = "example"
+              instance_arn     = data.aws_ssoadmin_instances.example.arns[0]
+              session_duration = "PT4H"
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
+        title: AWS Documentation - Permission sets
+  - uid: mondoo-aws-security-identitycenter-session-duration-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.identitycenter.instances.all(permissionSets.all(sessionDuration <= "PT12H"))
+  - uid: mondoo-aws-security-identitycenter-no-inline-policy
+    title: Ensure Identity Center permission sets use managed policies
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-6-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    variants:
+      - uid: mondoo-aws-security-identitycenter-no-inline-policy-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS IAM Identity Center permission sets use managed policies instead of inline policies. Managed policies are reusable, versioned, and easier to audit than inline policies embedded directly in permission sets.
+
+        **Why this matters**
+
+        - Inline policies are harder to discover, review, and audit compared to managed policies.
+        - Managed policies can be shared across multiple permission sets, ensuring consistent access controls.
+        - Changes to managed policies are versioned, providing a rollback mechanism and audit trail.
+        - Inline policies can lead to policy sprawl and make it difficult to maintain a least-privilege access model.
+
+        **Risk mitigation**
+
+        - **Consistency:** Managed policies ensure uniform access controls across permission sets.
+        - **Auditability:** Centralized policies are easier to review during access audits.
+        - **Governance:** Versioned managed policies provide change tracking and rollback capabilities.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Identity Center permission sets use managed policies using the AWS Console:
+
+            1. Navigate to the **AWS IAM Identity Center Console**.
+            2. Select **Permission sets**.
+            3. Select the permission set you want to configure.
+            4. Under **Inline policy**, remove any inline policy content.
+            5. Under **AWS managed policies** or **Customer managed policies**, attach the required policies.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To ensure Identity Center permission sets use managed policies using the AWS CLI, first remove the inline policy:
+
+            ```bash
+            aws sso-admin delete-inline-policy-from-permission-set \
+              --instance-arn <instance-arn> \
+              --permission-set-arn <permission-set-arn>
+            ```
+
+            Then attach a managed policy:
+
+            ```bash
+            aws sso-admin attach-managed-policy-to-permission-set \
+              --instance-arn <instance-arn> \
+              --permission-set-arn <permission-set-arn> \
+              --managed-policy-arn <policy-arn>
+            ```
+        - id: terraform
+          desc: |
+            To ensure Identity Center permission sets use managed policies in Terraform:
+
+            ```hcl
+            resource "aws_ssoadmin_permission_set" "example" {
+              name         = "example"
+              instance_arn = data.aws_ssoadmin_instances.example.arns[0]
+            }
+
+            resource "aws_ssoadmin_managed_policy_attachment" "example" {
+              instance_arn       = data.aws_ssoadmin_instances.example.arns[0]
+              managed_policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+              permission_set_arn = aws_ssoadmin_permission_set.example.arn
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
+        title: AWS Documentation - Permission sets
+  - uid: mondoo-aws-security-identitycenter-no-inline-policy-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.identitycenter.instances.all(permissionSets.all(inlinePolicy == "" || inlinePolicy == empty))
+  - uid: mondoo-aws-security-identitycenter-group-assignments
+    title: Ensure Identity Center uses group-based assignments
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-g
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-6-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    variants:
+      - uid: mondoo-aws-security-identitycenter-group-assignments-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS IAM Identity Center account assignments use groups rather than individual users. Group-based assignments are easier to manage, audit, and scale compared to user-level assignments.
+
+        **Why this matters**
+
+        - User-level assignments create management overhead and increase the risk of orphaned permissions when users leave the organization.
+        - Group-based assignments align with role-based access control (RBAC) best practices.
+        - Changes to group membership automatically propagate to all associated account assignments.
+        - Auditing access is significantly easier when permissions are managed through groups.
+
+        **Risk mitigation**
+
+        - **Scalability:** Group-based assignments scale with organizational growth without manual per-user management.
+        - **Lifecycle management:** User offboarding is simplified by removing users from groups.
+        - **Audit efficiency:** Access reviews are easier when permissions are group-based.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Identity Center uses group-based assignments using the AWS Console:
+
+            1. Navigate to the **AWS IAM Identity Center Console**.
+            2. Select **AWS accounts**.
+            3. Select the account and review its assignments.
+            4. Remove any user-level assignments.
+            5. Create groups in the Identity Center directory or your external identity provider.
+            6. Assign groups to accounts with the appropriate permission sets.
+        - id: cli
+          desc: |
+            To ensure Identity Center uses group-based assignments using the AWS CLI, create a group-based assignment:
+
+            ```bash
+            aws sso-admin create-account-assignment \
+              --instance-arn <instance-arn> \
+              --target-id <account-id> \
+              --target-type AWS_ACCOUNT \
+              --permission-set-arn <permission-set-arn> \
+              --principal-type GROUP \
+              --principal-id <group-id>
+            ```
+
+            Remove any user-level assignments:
+
+            ```bash
+            aws sso-admin delete-account-assignment \
+              --instance-arn <instance-arn> \
+              --target-id <account-id> \
+              --target-type AWS_ACCOUNT \
+              --permission-set-arn <permission-set-arn> \
+              --principal-type USER \
+              --principal-id <user-id>
+            ```
+        - id: terraform
+          desc: |
+            To ensure Identity Center uses group-based assignments in Terraform:
+
+            ```hcl
+            resource "aws_ssoadmin_account_assignment" "example" {
+              instance_arn       = data.aws_ssoadmin_instances.example.arns[0]
+              permission_set_arn = aws_ssoadmin_permission_set.example.arn
+
+              principal_id   = aws_identitystore_group.example.group_id
+              principal_type = "GROUP"
+
+              target_id   = "123456789012"
+              target_type = "AWS_ACCOUNT"
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/useraccess.html
+        title: AWS Documentation - Multi-account permissions
+  - uid: mondoo-aws-security-identitycenter-group-assignments-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.identitycenter.instances.all(accountAssignments.all(principalType == "GROUP"))
+  - uid: mondoo-aws-security-secretsmanager-no-public-policy
+    title: Ensure Secrets Manager secrets do not have public policies
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/bsi-c5-2022: bsi-c5-idm-01
+      compliance/bsi-grundschutz-sys15: false
+      compliance/cis-controls-8: cisc-3-3
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    variants:
+      - uid: mondoo-aws-security-secretsmanager-no-public-policy-aws
+        tags:
+          mondoo.com/filter-title: AWS Secretsmanager Secret
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Secrets Manager secrets do not have resource policies that grant public access. A resource policy with a wildcard principal ("*") in an Allow statement without conditions effectively makes the secret accessible to any AWS account.
+
+        **Why this matters**
+
+        - Secrets Manager resource policies with wildcard principals can expose sensitive credentials to unauthorized parties.
+        - Unlike S3 bucket policies, Secrets Manager does not have a public access block feature, making policy review the primary control.
+        - A compromised secret can lead to cascading security breaches across dependent services.
+        - NIST SP 800-53 AC-6 requires least-privilege access to sensitive information.
+
+        **Risk mitigation**
+
+        - **Least privilege:** Ensure resource policies grant access only to specific, authorized principals.
+        - **Secret protection:** Prevents unauthorized access to sensitive credentials and configuration data.
+        - **Blast radius reduction:** Restricting access limits the impact of policy misconfigurations.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Secrets Manager secrets do not have public policies using the AWS Console:
+
+            1. Navigate to the **AWS Secrets Manager Console**.
+            2. Select the secret.
+            3. Under **Resource permissions**, review the resource policy.
+            4. Remove any statements with a wildcard (*) principal.
+            5. Replace with specific AWS account IDs, IAM role ARNs, or organizational unit paths.
+            6. Choose **Save**.
+        - id: cli
+          desc: |
+            To review and update Secrets Manager resource policies using the AWS CLI:
+
+            ```bash
+            aws secretsmanager get-resource-policy \
+              --secret-id <secret-name-or-arn>
+            ```
+
+            To block public access when setting a resource policy:
+
+            ```bash
+            aws secretsmanager put-resource-policy \
+              --secret-id <secret-name-or-arn> \
+              --resource-policy file://policy.json \
+              --block-public-policy
+            ```
+
+            To remove a public resource policy entirely:
+
+            ```bash
+            aws secretsmanager delete-resource-policy \
+              --secret-id <secret-name-or-arn>
+            ```
+        - id: terraform
+          desc: |
+            To ensure Secrets Manager secrets do not have public policies in Terraform:
+
+            ```hcl
+            resource "aws_secretsmanager_secret_policy" "example" {
+              secret_arn = aws_secretsmanager_secret.example.arn
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [
+                  {
+                    Sid       = "AllowSpecificAccount"
+                    Effect    = "Allow"
+                    Principal = { AWS = "arn:aws:iam::123456789012:root" }
+                    Action    = "secretsmanager:GetSecretValue"
+                    Resource  = "*"
+                  }
+                ]
+              })
+              block_public_policy = true
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_resource-based-policies.html
+        title: AWS Documentation - Resource-based policies for Secrets Manager
+  - uid: mondoo-aws-security-secretsmanager-no-public-policy-aws
+    filters: asset.platform == "aws-secretsmanager-secret"
+    mql: |
+      if (aws.secretsmanager.secret.resourcePolicy != "" && aws.secretsmanager.secret.resourcePolicy != empty) {
+        parse.json(content: aws.secretsmanager.secret.resourcePolicy).params['Statement'].where(_['Effect'] == "Allow").all(
+          _['Principal'] != "*" && _['Principal']['AWS'] != "*"
+        )
+      }
