@@ -29,6 +29,7 @@ SERVICES = [
     "accessanalyzer",
     "acm",
     "apigateway",
+    "appmesh",
     "appstream",
     "athena",
     "autoscaling",
@@ -71,6 +72,7 @@ SERVICES = [
     "mq",
     "neptune",
     "opensearch",
+    "ram",
     "rds",
     "redshift",
     "route53",
@@ -83,8 +85,11 @@ SERVICES = [
     "sns",
     "sqs",
     "ssm",
+    "sso-admin",
+    "stepfunctions",
     "timestream-influxdb",
     "timestream-write",
+    "transfer",
     "workspaces",
 ]
 
