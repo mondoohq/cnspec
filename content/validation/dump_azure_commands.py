@@ -45,6 +45,11 @@ import json, sys
 
 sys.path.insert(0, sys.argv[1])
 
+# Pre-import requests to avoid deadlocks when Azure CLI modules
+# lazy-import it concurrently during command table loading (affects
+# containerapp and cdn modules in az CLI 2.85.0+).
+import requests  # noqa: F401
+
 from azure.cli.core import get_default_cli, MainCommandsLoader
 from azure.cli.core.commands import AzCliCommandInvoker
 from azure.cli.core.parser import AzCliCommandParser
