@@ -91,6 +91,10 @@ policies:
         filters: asset.platform == "pan-os"
         checks:
           - uid: mondoo-panos-security-default-route-exists
+          - uid: mondoo-panos-security-ospf-interface-authentication
+          - uid: mondoo-panos-security-ospf-virtual-link-authentication
+          - uid: mondoo-panos-security-ospf-no-rfc1583
+          - uid: mondoo-panos-security-ospf-reject-default-route
 queries:
   - uid: mondoo-panos-security-antivirus-content-installed
     title: Ensure antivirus content version is installed
@@ -1958,3 +1962,225 @@ queries:
     refs:
       - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/networking/static-routes
         title: Static Routes
+
+  - uid: mondoo-panos-security-ospf-interface-authentication
+    title: Ensure OSPF interfaces use authentication
+    impact: 90
+    filters: |
+      panos.virtualRouters.any(ospf.enable == true)
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/soc2-2017: false
+    mql: |
+      panos.virtualRouters.where(ospf.enable == true).
+        all(ospfAreas.all(interfaces().all(authProfile != "")))
+    docs:
+      desc: |
+        This check verifies that all OSPF interfaces have an authentication profile configured. OSPF authentication prevents unauthorized routers from injecting malicious routing information into the network.
+
+        **Why this matters**
+
+        Without authentication, any device on a shared network segment can participate in OSPF and inject arbitrary routes. An attacker who gains access to a network segment running OSPF can:
+
+        - Inject false routes to redirect traffic through attacker-controlled systems for interception.
+        - Advertise more-specific routes to black-hole traffic, causing denial of service.
+        - Manipulate routing tables to bypass security zones and firewall policies.
+        - Perform man-in-the-middle attacks by rerouting traffic through a compromised host.
+
+        Configuring OSPF authentication ensures that only authorized routers can exchange routing information, protecting the integrity of the routing domain.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Virtual Routers**
+            2. Select the virtual router running OSPF
+            3. Go to the **OSPF** tab and select **Areas**
+            4. Select the area containing the interface
+            5. Select the interface and configure an **Auth Profile** using MD5 or SHA authentication
+            6. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure an authentication profile on an OSPF interface:
+
+            ```
+            set network virtual-router <vr-name> protocol ospf area <area-id> interface <interface-name> authentication auth-profile <profile-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/networking/ospf
+        title: OSPF Configuration
+
+  - uid: mondoo-panos-security-ospf-virtual-link-authentication
+    title: Ensure OSPF virtual links use authentication
+    impact: 85
+    filters: |
+      panos.virtualRouters.any(ospf.enable == true && ospfAreas.any(virtualLinks().length > 0))
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/soc2-2017: false
+    mql: |
+      panos.virtualRouters.where(ospf.enable == true).
+        all(ospfAreas.all(virtualLinks().all(authProfile != "")))
+    docs:
+      desc: |
+        This check verifies that all OSPF virtual links have an authentication profile configured. Virtual links connect non-contiguous OSPF areas through a transit area, and without authentication they are vulnerable to route manipulation.
+
+        **Why this matters**
+
+        OSPF virtual links traverse non-backbone areas to maintain connectivity with Area 0. Because they pass through intermediate areas, they are particularly exposed to attack:
+
+        - An attacker in the transit area can spoof virtual link packets to inject routes into the backbone.
+        - Unauthenticated virtual links allow unauthorized adjacency formation, enabling route poisoning.
+        - Compromised routing in the backbone area (Area 0) affects the entire OSPF domain.
+        - Virtual link spoofing can be used to partition the network, causing widespread routing failures.
+
+        Authentication on virtual links ensures that only trusted routers can form adjacencies across transit areas, protecting the backbone from unauthorized route injection.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Virtual Routers**
+            2. Select the virtual router running OSPF
+            3. Go to the **OSPF** tab and select **Areas**
+            4. Select the area containing the virtual link
+            5. Select the virtual link and configure an **Auth Profile** using MD5 or SHA authentication
+            6. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure an authentication profile on an OSPF virtual link:
+
+            ```
+            set network virtual-router <vr-name> protocol ospf area <area-id> virtual-link <link-name> authentication auth-profile <profile-name>
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/networking/ospf
+        title: OSPF Configuration
+
+  - uid: mondoo-panos-security-ospf-no-rfc1583
+    title: Ensure OSPF RFC 1583 compatibility is disabled
+    impact: 70
+    filters: |
+      panos.virtualRouters.any(ospf.enable == true)
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/soc2-2017: false
+    mql: |
+      panos.virtualRouters.where(ospf.enable == true).
+        all(ospf.rfc1583 == false)
+    docs:
+      desc: |
+        This check verifies that OSPF RFC 1583 compatibility mode is disabled on all virtual routers. RFC 1583 has known deficiencies in external route preference calculation that were corrected in RFC 2328.
+
+        **Why this matters**
+
+        RFC 1583 compatibility mode uses an older algorithm for selecting among multiple AS-external LSA routes to the same destination. This can be exploited to cause security issues:
+
+        - An attacker advertising external routes can exploit the weaker path selection to redirect traffic through a malicious router.
+        - The RFC 1583 algorithm can create forwarding loops when multiple ASBR routers advertise routes to the same external destination.
+        - Routing loops can be leveraged to cause denial of service or to intercept traffic.
+        - Mixed RFC 1583 and RFC 2328 behavior in the same OSPF domain causes unpredictable route selection.
+
+        Disabling RFC 1583 compatibility ensures the firewall uses the more secure RFC 2328 route selection algorithm, reducing the risk of route manipulation attacks.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Virtual Routers**
+            2. Select the virtual router running OSPF
+            3. Go to the **OSPF** tab
+            4. Uncheck **RFC 1583** in the OSPF configuration
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Disable RFC 1583 compatibility on OSPF:
+
+            ```
+            set network virtual-router <vr-name> protocol ospf rfc1583 no
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/networking/ospf
+        title: OSPF Configuration
+
+  - uid: mondoo-panos-security-ospf-reject-default-route
+    title: Ensure OSPF rejects default routes from neighbors
+    impact: 80
+    filters: |
+      panos.virtualRouters.any(ospf.enable == true)
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: false
+    mql: |
+      panos.virtualRouters.where(ospf.enable == true).
+        all(ospf.rejectDefaultRoute == true)
+    docs:
+      desc: |
+        This check verifies that OSPF is configured to reject default routes learned from OSPF neighbors. A firewall should use explicitly configured default routes rather than accepting them dynamically via OSPF.
+
+        **Why this matters**
+
+        Accepting a default route via OSPF means any OSPF neighbor can advertise itself as the gateway of last resort, potentially hijacking all traffic that does not match a more specific route:
+
+        - A compromised or rogue router can advertise a default route to redirect all traffic through attacker-controlled infrastructure.
+        - An accidental default route advertisement from a misconfigured neighbor can cause traffic to flow through an unintended path, bypassing security controls.
+        - Accepting dynamic default routes undermines the principle of explicit routing, where the firewall administrator controls the forwarding path for unknown destinations.
+        - Traffic redirected via a spoofed default route can be intercepted, modified, or dropped.
+
+        Rejecting default routes via OSPF ensures the firewall only uses administratively configured default routes, maintaining control over the forwarding path for traffic to unknown destinations.
+      remediation:
+        - id: console
+          desc: |
+            **Using the PAN-OS Web Interface**
+
+            1. Navigate to **Network → Virtual Routers**
+            2. Select the virtual router running OSPF
+            3. Go to the **OSPF** tab
+            4. Check **Reject Default Route** in the OSPF configuration
+            5. Click **OK** and commit the configuration
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure OSPF to reject default routes:
+
+            ```
+            set network virtual-router <vr-name> protocol ospf reject-default-route yes
+            commit
+            ```
+
+    refs:
+      - url: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/networking/ospf
+        title: OSPF Configuration
