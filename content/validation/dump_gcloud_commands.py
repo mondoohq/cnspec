@@ -2,8 +2,9 @@
 # Copyright Mondoo, Inc. 2024, 2026
 # SPDX-License-Identifier: BUSL-1.1
 #
-# Dumps all valid gcloud CLI subcommands and their flags. Reads from the
-# pre-built static completion tree bundled with the Google Cloud SDK.
+# Dumps all valid gcloud CLI subcommands and their flags for services used
+# in the GCP security policy. Reads from the pre-built static completion
+# tree bundled with the Google Cloud SDK.
 #
 # Output is a JSON file mapping:
 #   { "compute": ["instances", "networks", ...],
@@ -24,6 +25,35 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUTPUT = SCRIPT_DIR / "cmd_data" / "gcloud_commands.json"
 GCLOUD_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-gcp-security.mql.yaml"
+
+
+def detect_services_from_policy() -> list[str]:
+    """Auto-detect gcloud services used in the policy file.
+
+    Scans `gcloud <service> ...` commands in bash code blocks within cli
+    remediation sections and returns the unique set of top-level service
+    names.
+    """
+    if not GCLOUD_POLICY_FILE.exists():
+        print(
+            f"Warning: Policy file not found: {GCLOUD_POLICY_FILE}\n"
+            f"Cannot auto-detect services.",
+            file=sys.stderr,
+        )
+        return []
+
+    content = GCLOUD_POLICY_FILE.read_text()
+    services = set()
+    for match in re.finditer(r"```bash\s*\n(.*?)```", content, re.DOTALL):
+        block = match.group(1)
+        joined = re.sub(r"\\\s*\n\s*", " ", block)
+        for line in joined.split("\n"):
+            line = line.strip()
+            if line.startswith("gcloud "):
+                parts = line.split()
+                if len(parts) >= 2 and not parts[1].startswith("-"):
+                    services.add(parts[1])
+    return sorted(services)
 
 
 def find_gcloud_completions_path() -> str:
@@ -174,6 +204,18 @@ def main():
     )
     args = parser.parse_args()
 
+    services = detect_services_from_policy()
+    if not services:
+        print(
+            "Error: No gcloud services detected from policy file.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(
+        f"Detected services from policy: {', '.join(services)}",
+        file=sys.stderr,
+    )
+
     completions_dir = find_gcloud_completions_path()
     print(f"Using completions from: {completions_dir}", file=sys.stderr)
 
@@ -188,8 +230,18 @@ def main():
     # Extract global flags from the root node
     global_flags = sorted(tree.get("flags", {}).keys())
 
-    # Walk the entire completion tree
-    commands = walk_tree(tree, "")
+    # Walk only the services used in the policy
+    commands = {}
+    all_commands = tree.get("commands", {})
+    for svc in services:
+        if svc in all_commands:
+            svc_node = all_commands[svc]
+            commands.update(walk_tree({"commands": {svc: svc_node}}, ""))
+        else:
+            print(
+                f"Warning: service '{svc}' not found in gcloud CLI",
+                file=sys.stderr,
+            )
 
     # Add global flags to every leaf command entry
     for key, value in commands.items():
