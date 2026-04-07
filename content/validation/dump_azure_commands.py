@@ -77,7 +77,9 @@ for cmd_name in sorted(cmd_table.keys()):
         for name, arg in cmd.arguments.items():
             opts = arg.type.settings.get("options_list", [])
             flags.extend([o for o in opts if o.startswith("--")])
-        result[cmd_name] = sorted(set(flags))
+        result[cmd_name] = sorted(
+            f for f in set(flags) if not f.endswith("-")
+        )
     except Exception:
         errors += 1
         result[cmd_name] = []
@@ -237,7 +239,10 @@ def main():
         except Exception:
             help_flags = []
         api_flags = commands.get(cmd_name, [])
-        merged = sorted(set(api_flags + help_flags + GLOBAL_FLAGS))
+        merged = sorted(
+            f for f in set(api_flags + help_flags + GLOBAL_FLAGS)
+            if not f.endswith("-")
+        )
         return cmd_name, merged
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
