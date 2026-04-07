@@ -905,9 +905,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        Cloud Storage offers two systems for granting users permission to access your buckets and objects: IAM and Access Control Lists (ACLs). These systems act in parallel - in order for a user to access a Cloud Storage resource, only one of the systems needs to grant the user permission. IAM is used throughout Google Cloud and allows you to grant a variety of permissions at the bucket and project levels. ACLs are used only by Cloud Storage and have limited permission options, but they allow you to grant permissions on a per-object basis.
+        Cloud Storage supports two parallel access-control systems: IAM and object-level ACLs. When both are active, a user only needs permission from one system to access a resource. This creates shadow permissions -- an object-level ACL can grant access that an IAM deny policy explicitly prohibits, allowing an attacker to bypass IAM controls and reach objects they should not be able to read or modify.
 
-        It is recommended to enable uniform bucket-level access on Cloud Storage buckets. Uniform bucket-level access is used to unify and simplify how you grant access to your Cloud Storage resources by disabling ACLs and relying solely on IAM for access control.
+        Enable uniform bucket-level access to disable ACLs entirely and enforce IAM as the single source of truth. This eliminates inconsistent per-object permissions that are difficult to audit and easy for attackers to exploit.
       remediation:
         - id: terraform
           desc: |
@@ -1338,13 +1338,13 @@ queries:
         **Why this matters**
 
         BigQuery datasets often contain sensitive business data, customer information, analytics, or financial records. Public access to these datasets can have severe consequences:
-          - Any user on the internet (with `allUsers`) or any Google account holder (with `allAuthenticatedUsers`) can query the data, leading to data breaches.
-          - Publicly accessible datasets can incur unexpected query costs if external parties run expensive queries against your data.
+          - An attacker can enumerate all tables and bulk-export the entire dataset without any credentials (with `allUsers`) or with any Google account (with `allAuthenticatedUsers`).
+          - Exposed PII, financial records, or proprietary business intelligence can be harvested for identity theft, fraud, or competitive advantage.
           - Compliance frameworks such as PCI DSS, HIPAA, SOC 2, and GDPR require strict access controls on data stores containing sensitive information.
 
         Without restricting public access:
-          - Sensitive data such as PII, financial records, or proprietary business intelligence may be exposed.
-          - Query costs can escalate as unauthorized users run queries against the dataset.
+          - Any anonymous user on the internet can discover and exfiltrate the full contents of the dataset.
+          - Sensitive data exposure may go undetected since no authentication is required.
           - The organization may fail compliance audits and face regulatory penalties.
       remediation:
         - id: terraform
@@ -2100,9 +2100,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        Assigning public IP addresses to Cloud SQL MySQL instances expands the potential attack surface, making databases accessible from the public internet and increasing security risks.
+        Assigning public IP addresses to Cloud SQL MySQL instances exposes the database to the entire internet, enabling brute-force credential attacks, exploitation of unpatched MySQL CVEs, and direct SQL injection from outside any trust boundary.
 
-        The recommended practice is to configure instances exclusively with private IP addresses. This enhances security by isolating the database within your VPC network and can reduce latency for internal applications. Be aware that removing a public IP will disrupt existing connections that depend on it; establish and test private connectivity paths before making the change.
+        Configure instances exclusively with private IP addresses to isolate the database within your VPC network, removing it from internet-wide scanners and automated exploit frameworks. Be aware that removing a public IP will disrupt existing connections that depend on it; establish and test private connectivity paths before making the change.
       audit: |
         **Using Google Cloud Console**
 
@@ -4369,9 +4369,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        Assigning public IP addresses to Cloud SQL PostgreSQL instances expands the potential attack surface, making databases accessible from the public internet and increasing security risks.
+        Assigning public IP addresses to Cloud SQL PostgreSQL instances exposes the database to the entire internet, enabling brute-force credential attacks, exploitation of unpatched PostgreSQL CVEs, and direct SQL injection from outside any trust boundary.
 
-        The recommended practice is to configure instances exclusively with private IP addresses. This enhances security by isolating the database within your VPC network and can reduce latency for internal applications. Be aware that removing a public IP will disrupt existing connections that depend on it; establish and test private connectivity paths before making the change. This applies to Second Generation instances.
+        Configure instances exclusively with private IP addresses to isolate the database within your VPC network, removing it from internet-wide scanners and automated exploit frameworks. Be aware that removing a public IP will disrupt existing connections that depend on it; establish and test private connectivity paths before making the change. This applies to Second Generation instances.
       audit: |
         **Using Google Cloud Console**
 
@@ -4522,9 +4522,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        Assigning public IP addresses to Cloud SQL for SQL Server instances expands the potential attack surface, making databases accessible from the public internet and increasing security risks.
+        Assigning public IP addresses to Cloud SQL for SQL Server instances exposes the database to the entire internet, enabling sa account brute-force attacks, exploitation of unpatched SQL Server CVEs, and potential OS command execution through features like xp_cmdshell.
 
-        The recommended practice is to configure instances exclusively with private IP addresses. This enhances security by isolating the database within your VPC network and can reduce latency for internal applications. Be aware that removing a public IP will disrupt existing connections that depend on it; establish and test private connectivity paths before making the change. This applies to Second Generation instances.
+        Configure instances exclusively with private IP addresses to isolate the database within your VPC network, removing it from internet-wide scanners and automated exploit frameworks. Be aware that removing a public IP will disrupt existing connections that depend on it; establish and test private connectivity paths before making the change. This applies to Second Generation instances.
       audit: |
         **Using Google Cloud Console**
 
@@ -5272,20 +5272,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Google Cloud KMS crypto keys have a destroy scheduled duration of at least 24 hours. When a crypto key version is scheduled for destruction, the destroy scheduled duration determines how long it remains in the DESTROY_SCHEDULED state before being permanently destroyed. A minimum of 24 hours provides a safety window to recover keys that were accidentally scheduled for destruction.
+        This check ensures that Google Cloud KMS crypto keys have a destroy scheduled duration of at least 24 hours. When a crypto key version is scheduled for destruction, the destroy scheduled duration determines how long it remains in the DESTROY_SCHEDULED state before being permanently destroyed. A minimum of 24 hours provides a safety window to recover keys that were scheduled for destruction maliciously or by mistake.
 
         **Why this matters**
 
-        Crypto key destruction is an irreversible operation. Once a key version is permanently destroyed, any data encrypted with that key version becomes unrecoverable. The destroy scheduled duration provides a critical safety net:
-          - Accidental key destruction can be reversed during the scheduled destruction window.
-          - Security teams have time to review and approve key destruction requests.
-          - Automated processes that inadvertently trigger key destruction can be caught before permanent data loss occurs.
+        An attacker with brief IAM access can schedule key destruction with a short window, causing irrecoverable data loss before the action is detected. Crypto key destruction is irreversible -- once a key version is permanently destroyed, all data encrypted with it is lost forever:
+          - A compromised account can schedule key destruction as a sabotage vector; a longer window gives defenders time to detect and cancel it.
+          - Security teams need time to review destruction requests and verify they are legitimate.
+          - Automated processes or scripts with overly broad permissions can inadvertently trigger destruction.
 
         If the destroy scheduled duration is too short, it can lead to:
-          - Permanent, unrecoverable data loss if a key is accidentally destroyed before the error is detected.
+          - Permanent data loss from malicious key destruction before security teams can respond.
           - Inability to decrypt data that was encrypted with the destroyed key version.
           - Compliance violations, as many regulatory frameworks require data retention capabilities that depend on encryption key availability.
-          - Operational disruptions if applications lose access to required encryption keys.
 
         **Risk mitigation**
           - Set the destroy scheduled duration to at least 24 hours (86400 seconds) for all crypto keys.
@@ -5521,16 +5520,15 @@ queries:
 
         **Why this matters**
 
-        Symmetric encryption keys (ENCRYPT_DECRYPT purpose) support automatic rotation in Cloud KMS. When automatic rotation is configured, KMS creates a new primary key version on the specified schedule, and new encryption requests automatically use the new version. Without automatic rotation:
-          - Key material may remain static indefinitely, increasing the window of exposure if a key is compromised.
-          - Organizations must rely on manual processes to rotate keys, which are error-prone and often neglected.
-          - The volume of data encrypted under a single key version grows continuously, increasing the impact of a potential key compromise.
+        A compromised encryption key without rotation remains valid indefinitely, giving an attacker persistent access to decrypt all data protected by that key. Automatic rotation limits the blast radius of a key compromise:
+          - Without rotation, a stolen key can decrypt every object encrypted since the key was created, potentially spanning years of data.
+          - Regular rotation ensures that even if a key version is compromised, only data encrypted during that rotation period is affected.
+          - Manual rotation processes are error-prone and often neglected, leaving keys static for far longer than intended.
 
         If automatic rotation is not configured for ENCRYPT_DECRYPT keys, it can lead to:
-          - Extended use of the same key material, violating the principle of cryptographic key hygiene.
-          - Increased risk if a key version is compromised, as all data encrypted since the last rotation is affected.
+          - Unlimited exposure window -- an attacker with a compromised key can decrypt all data ever encrypted with it.
+          - Growing blast radius as more data accumulates under a single key version.
           - Non-compliance with security frameworks such as CIS Google Cloud Platform Foundations Benchmark, NIST 800-57, and PCI DSS which require regular key rotation.
-          - Operational overhead from manual key rotation processes.
 
         **Risk mitigation**
           - Enable automatic rotation for all ENCRYPT_DECRYPT crypto keys with a rotation period of 90 days or less.
@@ -5654,7 +5652,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        Cloud DNS with DNSSEC provides a secure, reliable, and cost-effective domain name system. DNSSEC protects domains from hijacking and man-in-the-middle attacks by cryptographically signing DNS records, ensuring the authenticity of DNS responses. This prevents attackers from redirecting users to malicious sites through fake DNS lookups.
+        Without DNSSEC, an attacker can forge DNS responses (cache poisoning) to redirect users to attacker-controlled infrastructure for credential theft, malware delivery, or session hijacking. DNSSEC cryptographically signs DNS records so resolvers can verify authenticity, preventing DNS spoofing and man-in-the-middle attacks that silently redirect traffic.
       audit: |
         **Using Google Cloud Console**
 
@@ -8078,19 +8076,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        VPC Flow Logs record a sample of network flows sent from and received by VM instances, including traffic between VMs in the same VPC. Flow logs can be used for network monitoring, forensic analysis, real-time security analysis, and expense optimization.
+        VPC Flow Logs record a sample of network flows sent from and received by VM instances, including traffic between VMs in the same VPC. Flow logs are critical for detecting attacker activity and performing forensic analysis after a breach.
 
         **Why this matters**
 
-        VPC Flow Logs are essential for network security monitoring and incident response:
-          - Flow logs provide visibility into network traffic patterns, enabling detection of anomalous communication between resources.
-          - Security teams can use flow logs for forensic analysis during incident investigation to understand the scope and timeline of a breach.
-          - Network-level threats such as data exfiltration, lateral movement, and command-and-control traffic can be identified through flow log analysis.
+        Without flow logs, lateral movement, command-and-control (C2) beaconing, and data exfiltration are invisible to defenders:
+          - An attacker who compromises a single VM can move laterally across the VPC undetected when no flow logs exist to reveal anomalous internal traffic.
+          - C2 channels and data exfiltration to external IPs cannot be identified without network flow records.
+          - Forensic investigation of breaches lacks critical evidence needed to determine scope, timeline, and affected systems.
           - Compliance frameworks such as CIS GCP Benchmark, PCI DSS, and NIST 800-53 require network traffic logging.
 
         Without VPC Flow Logs:
-          - Network-level security incidents may go undetected.
-          - Forensic investigation of security breaches lacks critical network traffic data.
+          - Attackers operate with no network-level detection, increasing dwell time significantly.
+          - Incident response teams cannot reconstruct attacker movement or identify compromised resources.
           - The organization cannot meet compliance requirements for network traffic monitoring.
       remediation:
         - id: terraform
@@ -8546,19 +8544,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that user-managed service account keys are not created in the Google Cloud project. User-managed keys are a significant security risk because they can be leaked, are difficult to track, and do not expire by default. Google-managed keys or Workload Identity Federation should be used instead.
+        This check ensures that user-managed service account keys are not created in the Google Cloud project. User-managed keys are long-lived static credentials that, once leaked, give an attacker persistent and hard-to-revoke access. Google-managed keys or Workload Identity Federation should be used instead.
 
         **Why this matters**
 
-        User-managed service account keys are long-lived credentials that are stored outside of Google Cloud infrastructure:
-          - Keys can be accidentally committed to source code repositories, shared in emails, or stored in insecure locations.
-          - Unlike Google-managed keys, user-managed keys do not automatically rotate and have no built-in expiration.
-          - Compromised keys grant full access to all resources the service account can access, often for extended periods before detection.
-          - Managing key lifecycle across teams and environments creates significant operational overhead and increases the risk of security gaps.
+        User-managed service account keys are stored outside Google Cloud infrastructure and are a primary target for credential theft:
+          - Keys leaked via source code repositories, container images, CI/CD logs, or error messages give attackers persistent access without needing to compromise a user account.
+          - Unlike Google-managed keys, user-managed keys do not automatically rotate and have no built-in expiration, so a stolen key remains valid indefinitely.
+          - Compromised keys grant full access to all resources the service account can access, and revocation requires discovering every copy of the key.
+          - Keys are frequently shared across teams and environments, multiplying the number of locations where they can be exfiltrated.
 
         If user-managed service account keys are in use, it can lead to:
-          - Credential leakage through insecure storage, version control, or lateral sharing.
-          - Persistent unauthorized access if keys are compromised but not detected or rotated.
+          - Credential leakage through insecure storage, version control, or lateral sharing, giving attackers a foothold.
+          - Persistent unauthorized access that is difficult to detect since key-based authentication looks identical to legitimate use.
           - Non-compliance with security frameworks such as CIS GCP Foundations Benchmark, NIST 800-53, and ISO 27001.
           - Difficult-to-audit access patterns, as key usage is harder to trace than federated identity.
 
@@ -9512,18 +9510,18 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Pub/Sub subscriptions have an expiration policy configured to prevent orphaned subscriptions from accumulating indefinitely. Subscriptions without expiration policies can persist after their consumers are decommissioned, creating unnecessary resource overhead and potential data access points.
+        This check ensures that Pub/Sub subscriptions have an expiration policy configured to prevent orphaned subscriptions from persisting indefinitely. A forgotten subscription gives an attacker who gains access to it a retroactive window into message history, since unacknowledged messages accumulate and remain readable.
 
         **Why this matters**
 
-        Orphaned subscriptions that remain active without consumers can create security and operational risks:
-          - Unused subscriptions still have access to topic messages and may retain unacknowledged messages.
-          - Accumulated orphaned subscriptions increase the attack surface and complicate access auditing.
-          - Without expiration, manual cleanup is required to identify and remove stale subscriptions.
+        Orphaned subscriptions that remain active without consumers create exploitable data access points:
+          - An attacker who discovers or compromises an abandoned subscription can read all unacknowledged messages, potentially spanning weeks or months of sensitive data.
+          - Accumulated orphaned subscriptions expand the attack surface and are often overlooked during access reviews.
+          - Without expiration, stale subscriptions with overly permissive IAM bindings persist as dormant access paths.
 
         **Risk mitigation**
-          - Configure expiration policies on all subscriptions to automatically clean up inactive ones.
-          - The default expiration is 31 days of inactivity; adjust based on operational requirements.
+          - Configure expiration policies on all subscriptions to automatically remove inactive ones before messages accumulate.
+          - The default expiration is 31 days of inactivity; adjust based on data sensitivity requirements.
           - Regularly audit subscription usage to identify and remove unused subscriptions.
       remediation:
         - id: terraform
@@ -9616,15 +9614,15 @@ queries:
         **Why this matters**
 
         Pub/Sub topics often carry sensitive application data, event streams, and inter-service messages:
-          - Granting `allUsers` access allows anyone on the internet to publish or subscribe to the topic without authentication.
-          - Granting `allAuthenticatedUsers` access allows any Google account holder to access the topic, regardless of organization membership.
-          - Publicly accessible topics can be exploited for data exfiltration, message injection, or denial-of-service attacks.
-          - Unauthorized publishers can inject malicious messages into processing pipelines.
+          - Any internet user can inject malicious messages into processing pipelines when `allUsers` has publisher access, potentially triggering code execution, data corruption, or privilege escalation in downstream consumers.
+          - Granting `allAuthenticatedUsers` access allows any Google account holder to read or publish to the topic, regardless of organization membership.
+          - An attacker with subscriber access can exfiltrate sensitive event data, inter-service messages, and PII flowing through the topic.
+          - Message injection can exploit deserialization vulnerabilities in consumers that trust topic messages implicitly.
 
         If Pub/Sub topics are publicly accessible, it can lead to:
           - Exposure of sensitive business data, PII, or system events to unauthorized parties.
-          - Injection of malicious or malformed messages that disrupt downstream consumers.
-          - Increased costs from unauthorized message publishing.
+          - Injection of malicious or malformed messages that compromise downstream services.
+          - Data exfiltration through unauthorized subscriptions to the topic.
           - Non-compliance with data protection regulations that require access controls on data in transit.
 
         **Risk mitigation**
@@ -10084,20 +10082,20 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Cloud Functions have a VPC connector configured to enable secure communication with resources in a VPC network. Without a VPC connector, functions can only reach internal resources through public internet paths, increasing exposure and latency.
+        This check ensures that Cloud Functions have a VPC connector configured to enable secure communication with resources in a VPC network. Without a VPC connector, functions must route traffic through the public internet to reach internal services, exposing that traffic to interception and man-in-the-middle attacks.
 
         **Why this matters**
 
         A VPC connector enables Cloud Functions to access resources using internal IP addresses:
-          - Functions without VPC connectors must route traffic through the public internet to reach VPC resources like databases, caches, or internal APIs.
-          - Internal traffic routing reduces exposure to network-based attacks and eavesdropping.
-          - VPC connectors enable network-level access controls through firewall rules and VPC Service Controls.
+          - Functions without VPC connectors must expose internal services (databases, caches, APIs) to the public internet or rely on public paths susceptible to eavesdropping and MITM attacks.
+          - Traffic traversing the public internet can be intercepted, revealing sensitive data such as database credentials, API tokens, or application data.
+          - VPC connectors enable network-level access controls through firewall rules and VPC Service Controls, restricting the blast radius if a function is compromised.
           - Private connectivity is essential for compliance with data protection requirements that mandate encrypted internal communication paths.
 
         **Risk mitigation**
           - Configure a Serverless VPC Access connector for each function that accesses VPC resources.
           - Use VPC connector egress settings to control which traffic routes through the connector.
-          - Monitor connector throughput and scale as needed.
+          - Apply firewall rules to limit connector traffic to only required destinations.
       remediation:
         - id: terraform
           desc: |
@@ -10312,21 +10310,20 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Cloud Run services are not configured with ingress set to INGRESS_TRAFFIC_ALL, which allows traffic from the public internet. Services should restrict ingress to internal traffic or internal traffic with Cloud Load Balancing to reduce the attack surface.
+        This check ensures that Cloud Run services are not configured with ingress set to INGRESS_TRAFFIC_ALL, which allows unauthenticated traffic from the entire internet. Unrestricted ingress exposes internal APIs to direct exploitation by any attacker on the internet.
 
         **Why this matters**
 
         Cloud Run services with unrestricted ingress accept HTTP requests from any source on the internet:
-          - Publicly accessible services are exposed to unauthorized access attempts, brute-force attacks, and exploitation of application vulnerabilities.
-          - Services handling sensitive data or performing privileged operations should not be directly reachable from the internet.
+          - Attackers can directly probe and exploit application vulnerabilities, authentication bypasses, and API logic flaws without any network-level barrier.
+          - Services handling sensitive data or performing privileged operations become targets for unauthorized access and data exfiltration.
           - Restricting ingress to internal traffic ensures that only requests from within the VPC or through Google Cloud Load Balancing can reach the service.
           - Using Cloud Armor with internal ingress and load balancing provides DDoS protection and WAF capabilities.
 
         If Cloud Run services allow all ingress, it can lead to:
-          - Unauthorized access to internal APIs or services.
+          - Unauthenticated internet access to internal APIs, enabling data theft or privilege escalation.
           - Data exfiltration through publicly accessible endpoints.
-          - Increased attack surface for application-level exploits.
-          - Unexpected costs from malicious or abusive traffic.
+          - Direct exploitation of application-level vulnerabilities by external attackers.
 
         **Risk mitigation**
           - Set ingress to INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER.
@@ -10675,20 +10672,20 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Cloud Run services have VPC access configured to enable secure communication with resources in a VPC network. Without VPC access, services can only reach internal resources through public internet paths, increasing exposure and latency.
+        This check ensures that Cloud Run services have VPC access configured to enable secure communication with resources in a VPC network. Without VPC access, service-to-service communication traverses the public internet, exposing it to interception and man-in-the-middle attacks.
 
         **Why this matters**
 
         VPC access enables Cloud Run services to communicate with internal resources using private IP addresses:
-          - Services without VPC access must route traffic through the public internet to reach VPC resources like databases, caches, or internal APIs.
-          - Internal traffic routing reduces exposure to network-based attacks and eavesdropping.
-          - VPC access enables network-level access controls through firewall rules and VPC Service Controls.
+          - Services without VPC access must route traffic through the public internet to reach VPC resources like databases, caches, or internal APIs, where it can be intercepted.
+          - Public internet paths expose database credentials, API tokens, and application data to eavesdropping and traffic manipulation.
+          - VPC access enables network-level access controls through firewall rules and VPC Service Controls, limiting the blast radius of a compromised service.
           - Private connectivity is essential for compliance with data protection requirements that mandate encrypted internal communication paths.
 
         **Risk mitigation**
           - Configure VPC access for Cloud Run services that communicate with internal resources.
           - Use Direct VPC egress or a Serverless VPC Access connector.
-          - Configure egress settings to control which traffic routes through the VPC.
+          - Apply firewall rules to limit egress traffic to only required destinations.
       remediation:
         - id: terraform
           desc: |
@@ -12625,19 +12622,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Cloud Memorystore for Redis instances are using the Standard HA tier, which provides automatic failover and replication for high availability and data durability.
+        This check ensures that Cloud Memorystore for Redis instances are using the Standard HA tier, which provides automatic failover and replication. Redis instances frequently store security-sensitive data such as session tokens, authentication state, and rate-limiting counters that must remain available to maintain application security.
 
         **Why this matters**
 
-        The Basic tier does not provide data replication or automatic failover:
-          - A Basic tier instance failure results in complete data loss since there is no replica.
-          - Standard HA tier provides cross-zone replication with automatic failover, minimizing downtime.
-          - Applications relying on Redis for caching, session management, or data storage need reliable availability.
-          - Data loss from a Basic tier failure can impact application state, user sessions, and business operations.
+        The Basic tier does not provide data replication or automatic failover, making it a single point of failure for security-critical data:
+          - An attacker can DoS a Basic tier Redis instance to destroy all session tokens at once, forcing mass re-authentication and enabling session fixation attacks during the recovery window.
+          - Loss of rate-limiting state opens the door to brute-force attacks, credential stuffing, and API abuse that Redis was protecting against.
+          - Cache stampede after data loss can overload backend authentication services, creating secondary denial-of-service conditions.
+          - Without replication, a single instance failure eliminates security controls that depend on Redis state.
 
         **Risk mitigation**
-          - Use Standard HA tier for all production Redis instances.
-          - Reserve Basic tier only for development or testing environments where data loss is acceptable.
+          - Use Standard HA tier for all production Redis instances, especially those storing session tokens, auth state, or rate-limiting data.
+          - Reserve Basic tier only for development or testing environments where data loss has no security impact.
           - Monitor Redis instance health and configure alerts for failover events.
       remediation:
         - id: terraform
@@ -12840,25 +12837,24 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that deletion protection is enabled on Cloud Memorystore for Redis Cluster instances. Deletion protection prevents accidental or malicious deletion of the cluster, safeguarding data availability and service continuity.
+        This check ensures that deletion protection is enabled on Cloud Memorystore for Redis Cluster instances. Deletion protection prevents a compromised principal from destroying the cluster as a sabotage attack, which would instantly eliminate session tokens, cached secrets, and security-critical state.
 
         **Why this matters**
 
         Without deletion protection, a Redis Cluster can be deleted by any user or service account with sufficient IAM permissions:
-          - Accidental deletion by an administrator can cause immediate data loss and service outages.
-          - A compromised service account could be used to destroy critical infrastructure.
-          - Automated tooling or scripts with overly broad permissions could inadvertently delete production clusters.
+          - A compromised service account or malicious insider can delete the cluster to destroy session tokens, authentication cache, and rate-limiting state as a sabotage attack.
+          - Cluster deletion causes immediate loss of all cached security data, potentially forcing applications into insecure fallback modes.
+          - Automated tooling or scripts with overly broad permissions could inadvertently delete production clusters, creating the same security impact.
 
         Enabling deletion protection provides:
-          - A safeguard against accidental cluster deletion, requiring explicit disabling before deletion can proceed.
-          - An additional layer of defense against malicious actors who gain administrative access.
-          - Protection for production workloads that depend on the cluster for caching or session management.
-          - Alignment with operational best practices for critical infrastructure protection.
+          - A safeguard requiring explicit two-step action (disable protection, then delete), giving defenders time to detect and block malicious deletion attempts.
+          - An additional layer of defense against attackers who gain administrative access but cannot disable protection without triggering alerts.
+          - Protection for security-critical data (sessions, auth state, rate limits) that applications depend on.
 
         **Risk mitigation**
           - Enable deletion protection on all production Cloud Memorystore for Redis Cluster instances.
           - Use IAM policies to restrict who can disable deletion protection.
-          - Implement change management processes for any modifications to deletion protection settings.
+          - Monitor and alert on deletion protection changes to detect potential sabotage attempts.
       remediation:
         - id: terraform
           desc: |
@@ -15249,15 +15245,15 @@ queries:
           mondoo.com/filter-icon: gcp
     docs:
       desc: |
-        This check ensures that self-managed SSL certificates registered with Google Cloud are not expired or nearing expiration (within 30 days). Expired certificates cause service outages and security warnings for users. This check applies only to self-managed certificates, as Google-managed certificates are automatically renewed.
+        This check ensures that self-managed SSL certificates registered with Google Cloud are not expired or nearing expiration (within 30 days). Expired certificates enable man-in-the-middle attacks -- when users encounter certificate errors, they may accept fraudulent certificates, and automated systems may fall back to insecure connections. This check applies only to self-managed certificates, as Google-managed certificates are automatically renewed.
 
         **Why this matters**
 
-        Expired or soon-to-expire SSL certificates pose operational and security risks:
-          - Expired certificates cause browsers to display security warnings, eroding user trust.
-          - Services behind expired certificates may become inaccessible as clients refuse to connect.
-          - Certificate expiration indicates a gap in lifecycle management and operational readiness.
-          - Proactively monitoring certificate expiration prevents unplanned outages.
+        Expired or soon-to-expire SSL certificates create exploitable security gaps:
+          - An expired certificate creates a window where an attacker can present a fraudulent certificate that users or systems accept because they are already accustomed to certificate warnings.
+          - Clients trained to click through certificate warnings become vulnerable to MITM attacks on any connection.
+          - Automated systems may silently downgrade to unencrypted connections when certificate validation fails, exposing sensitive data in transit.
+          - Certificate expiration gaps indicate weak lifecycle management that attackers can predict and exploit.
           - Self-managed certificates require manual renewal, making them more prone to oversight.
       remediation:
         - id: terraform
@@ -16739,16 +16735,16 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that GKE cluster node pools have an upgrade strategy explicitly configured. An upgrade strategy (such as SURGE or BLUE_GREEN) controls how node pool upgrades are performed, ensuring that workloads remain available during the upgrade process and that security patches are applied safely.
+        This check ensures that GKE cluster node pools have an upgrade strategy explicitly configured. An upgrade strategy (such as SURGE or BLUE_GREEN) controls how node pool upgrades are performed, ensuring that security patches are applied safely without disrupting security controls.
 
         **Why this matters**
 
-        - Without a configured upgrade strategy, node pools use default upgrade behavior which may not provide adequate availability guarantees for production workloads.
-        - Teams that lack confidence in the upgrade process tend to defer upgrades, leaving nodes running with known vulnerabilities for longer than necessary.
-        - The SURGE strategy allows you to control how many additional nodes are created during upgrades, balancing speed against resource cost.
-        - The BLUE_GREEN strategy creates a complete replacement node pool before draining the old one, providing zero-downtime upgrades for critical workloads.
-        - Unexpected workload disruption during uncontrolled upgrade processes further discourages regular patching.
-        - Inconsistent upgrade behavior across different node pools in the same cluster makes outcomes unpredictable.
+        - Without a controlled upgrade strategy, upgrades may simultaneously drain all nodes, temporarily removing security controls such as network policies, admission controllers, and pod security enforcement.
+        - Teams that lack confidence in the upgrade process tend to defer upgrades, leaving nodes running with known vulnerabilities that attackers can exploit.
+        - The SURGE strategy maintains a minimum number of healthy nodes at all times, ensuring security agents, network policies, and admission webhooks remain active throughout the upgrade.
+        - The BLUE_GREEN strategy validates the new node pool before draining the old one, preventing windows where security controls are absent.
+        - Uncontrolled upgrades that cause disruption discourage regular patching, extending the window of exposure to known CVEs.
+        - Inconsistent upgrade behavior across node pools creates unpredictable gaps in security posture.
       remediation:
         - id: terraform
           desc: |
@@ -18604,13 +18600,13 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that GKE node pools have automatic repair enabled. Node auto-repair monitors node health and automatically recreates unhealthy nodes, improving cluster reliability and security posture.
+        This check ensures that GKE node pools have automatic repair enabled. Node auto-repair monitors node health and automatically recreates unhealthy nodes, replacing them with fresh instances that have intact security controls.
 
         **Why this matters**
 
-        - **Unhealthy nodes:** Nodes that fail health checks may have corrupted state, degraded networking, or other issues that affect workload security.
-        - **Availability:** Automated repair reduces the time unhealthy nodes remain in the cluster.
-        - **Security:** Unhealthy nodes may fail to apply security patches or run security agents correctly; auto-repair improves operational resilience by replacing them with fresh instances from the current node image, which indirectly supports security posture.
+        - **Compromised security controls:** An unhealthy node may have disabled or degraded security mechanisms such as AppArmor profiles, seccomp filters, or security agents, creating an environment where container escapes and privilege escalation are easier to achieve.
+        - **Attacker exploitation:** An attacker can deliberately trigger node instability (e.g., resource exhaustion) to force a node into an unhealthy state where security controls no longer function, then exploit the weakened node for container escape or lateral movement.
+        - **Patch integrity:** Auto-repair replaces unhealthy nodes with fresh instances from the current node image, ensuring the latest security patches and hardened configurations are restored automatically.
       remediation:
         - id: console
           desc: |
@@ -19396,13 +19392,13 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the `log_lock_waits` database flag is set to `on` for Cloud SQL PostgreSQL instances. When enabled, this setting logs a message whenever a session waits longer than `deadlock_timeout` to acquire a lock, providing visibility into lock contention issues.
+        This check ensures that the `log_lock_waits` database flag is set to `on` for Cloud SQL PostgreSQL instances. When enabled, this setting logs a message whenever a session waits longer than `deadlock_timeout` to acquire a lock, providing visibility into potential attacks that use lock contention as a vector.
 
         **Why this matters**
 
-        - **Performance diagnosis:** Lock wait logging helps identify queries and transactions that cause contention, which can indicate performance issues or denial-of-service conditions.
-        - **Security monitoring:** Unusual lock wait patterns can indicate SQL injection attacks, unauthorized bulk operations, or denial-of-service attempts against the database.
-        - **Operational visibility:** Without lock wait logging, database administrators have limited visibility into contention that affects application performance.
+        - **Denial-of-service detection:** An attacker can deliberately hold exclusive locks on critical tables to block all other transactions, effectively taking the database offline. Lock wait logs are the primary signal that reveals this attack pattern.
+        - **SQL injection forensics:** Slow SQL injection attacks that acquire and hold locks create distinctive lock wait patterns that help identify the attack queries and affected tables.
+        - **Threat hunting:** Without lock wait logging, defenders cannot distinguish between normal contention and deliberate lock-based attacks, allowing attackers to cause sustained database degradation undetected.
       remediation:
         - id: console
           desc: |
@@ -20186,7 +20182,7 @@ queries:
       - url: https://cloud.google.com/vpc-service-controls/docs/overview
         title: VPC Service Controls overview
       - url: https://cloud.google.com/vpc-service-controls/docs/create-access-levels
-        title: Create an access policy
+        title: Create access levels
   - uid: mondoo-gcp-security-vpc-sc-access-policies-defined-gcp
     filters: asset.platform == 'gcp'
     mql: |

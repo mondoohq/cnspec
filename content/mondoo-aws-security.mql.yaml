@@ -1695,23 +1695,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that IAM groups in AWS have at least one assigned user. IAM groups help manage permissions efficiently by allowing administrators to assign policies at the group level instead of managing permissions for individual IAM users. If IAM groups exist without any users, it indicates potential misconfigurations or unused access controls.
+        This check ensures that IAM groups in AWS have at least one assigned user. Empty IAM groups with attached policies represent a privilege escalation risk: an attacker with `iam:AddUserToGroup` permissions can add themselves or a compromised user to an empty group and instantly inherit all of its permissions without creating new policies that would be more visible in audit logs.
 
         **Why this matters**
 
-        IAM groups simplify access management by allowing permissions to be applied collectively to users rather than individually. This reduces administrative overhead, enforces consistency, and minimizes the risk of misconfigured permissions. If IAM groups exist but have no users assigned, it may indicate:
+        Empty IAM groups with policies attached are a latent privilege escalation path:
 
-        - Poor permission management practices.
-        - Orphaned groups that should be removed or repurposed.
-        - A failure to follow the principle of least privilege, leading to excessive permissions being granted to individual users.
-
-        By ensuring that IAM groups are properly utilized, organizations can improve security, maintain structured access controls, and reduce human errors in permission assignments.
+        - An attacker with `iam:AddUserToGroup` permissions can silently escalate privileges by joining an empty group, inheriting its policies without triggering policy-creation alerts.
+        - Empty groups are often overlooked during access reviews because they appear unused, making them ideal hiding spots for pre-staged permissions.
+        - Groups created for former roles or projects may retain broad permissions that exceed what current workloads require, providing excessive access if exploited.
 
         **Risk mitigation**
 
-        - Reduces the risk of misconfigured permissions by enforcing structured access control.
-        - Simplifies permission management by grouping users with similar roles.
-        - Aligns with security best practices and compliance frameworks such as CIS AWS Foundations Benchmark, NIST, ISO 27001, and SOC 2.
+        - **Privilege escalation prevention:** Removing empty groups eliminates pre-staged permission sets that an attacker could exploit with a single API call.
+        - **Access review accuracy:** Ensures all groups with permissions are actively used and reviewed, closing blind spots in security audits.
+        - **Attack surface reduction:** Reduces the number of permission paths an attacker can exploit after initial credential compromise.
       remediation:
         - id: console
           desc: |
@@ -2021,23 +2019,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that AWS IAM users do not have directly attached policies and instead receive permissions exclusively through IAM groups. Assigning permissions via groups simplifies access management, enforces least privilege principles, and reduces the risk of misconfigured permissions at the individual user level.
+        This check ensures that AWS IAM users do not have directly attached inline or managed policies and instead receive permissions exclusively through IAM groups. Inline policies attached directly to users are hiding spots for persistent backdoor permissions that are invisible to bulk policy reviews and difficult to discover during security audits.
 
         **Why this matters**
 
-        IAM users should not have inline or managed policies attached directly to their accounts. Instead, permissions should be granted via IAM groups to:
+        Inline policies on IAM users create security blind spots:
 
-        - Ensure consistent and scalable permission management
-        - Reduce the risk of excessive privileges assigned to individual users
-        - Improve auditability and compliance with security frameworks such as CIS AWS Foundations Benchmark, NIST, ISO 27001, and SOC 2
-
-        By enforcing group-based access control, administrators can efficiently manage role-based permissions and prevent overly permissive access for individual IAM users.
+        - An attacker who gains IAM write access can attach an inline policy to a user as a persistent backdoor, granting themselves access that survives password rotations and access key changes.
+        - Inline policies do not appear in the IAM policy list and require per-user enumeration to discover, making them significantly harder to detect during access reviews.
+        - Directly attached policies bypass group-based access control, allowing individual users to accumulate excessive privileges that are not visible when reviewing group permissions.
 
         **Risk mitigation**
 
-        - Reduces administrative overhead by managing permissions collectively
-        - Prevents privilege creep by enforcing structured access control
-        - Enhances security posture by ensuring users inherit only necessary permissions
+        - **Backdoor detection:** Eliminates inline policies as a hiding spot for attacker-planted persistent permissions.
+        - **Audit visibility:** Ensures all permissions are managed through groups where they are visible to bulk access reviews and automated compliance scanning.
+        - **Privilege creep prevention:** Group-based assignment makes it easier to detect and revoke excessive permissions across multiple users simultaneously.
       remediation:
         - id: console
           desc: |
@@ -3683,23 +3679,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that AWS Lambda functions are configured with function-level concurrent execution limits to prevent excessive resource consumption and throttle protection at the account level. By default, Lambda functions share the account-level concurrency limit, which can lead to resource exhaustion, affecting other critical workloads if a single function consumes too many concurrent executions.
+        This check ensures that AWS Lambda functions are configured with function-level concurrent execution limits. Without these limits, an attacker who can trigger a Lambda function through a controlled event source (such as a public API endpoint, S3 bucket, or SQS queue) can cause unbounded parallel executions that exhaust the account-level concurrency pool, effectively denying service to all other Lambda functions in the account.
 
         **Why this matters**
 
         Without function-level concurrency limits:
 
-        - A single function with high invocation rates can consume all available concurrency for an AWS account, causing throttling for other functions.
-        - Unintentional denial-of-service (DoS) scenarios may occur due to unbounded parallel executions.
-        - Compliance frameworks such as CIS AWS Foundations Benchmark, PCI DSS, and ISO 27001 recommend enforcing concurrency controls to mitigate resource exhaustion risks.
-
-        Enforcing function-level concurrency limits ensures fair resource distribution and prevents overuse of compute resources by a single Lambda function.
+        - An attacker triggering a single function can exhaust the entire account's concurrency pool, causing a denial-of-service for all other Lambda-backed services (denial-of-wallet and service disruption).
+        - Unbounded executions from a compromised or abused event source can generate massive compute charges as a financial attack vector.
+        - Other security-critical Lambda functions (such as incident response automations or security event processors) can be throttled and unable to execute during an attack.
 
         **Risk mitigation**
 
-        - Prevents resource starvation by limiting the number of concurrent executions per function.
-        - Improves application stability by preventing accidental or intentional excessive execution.
-        - Enhances security and compliance by enforcing workload isolation.
+        - **Blast radius containment:** Limits the impact of a single compromised or abused function to its reserved concurrency, protecting other functions from starvation.
+        - **Denial-of-wallet prevention:** Caps the compute a single function can consume, limiting the financial damage from event-source abuse.
+        - **Workload isolation:** Ensures security-critical functions retain available concurrency even when other functions are under attack.
       remediation:
         - id: console
           desc: |
@@ -5419,19 +5413,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon Elastic Block Store (EBS) volumes attached to EC2 instances are configured to be automatically deleted when the instance is terminated. When an EBS volume is created and attached to an instance, the `DeleteOnTermination` attribute determines whether the volume persists after instance termination.
+        This check ensures that Amazon Elastic Block Store (EBS) volumes attached to EC2 instances are configured to be automatically deleted when the instance is terminated. When volumes persist after instance termination, they become orphaned resources that an attacker with EC2 permissions can discover, attach to their own instance, and mount to access any sensitive data they contain.
 
         **Why this matters**
 
-        By default, EBS volumes persist even after the associated EC2 instance is terminated, which can lead to orphaned volumes accumulating over time. These orphaned volumes not only increase storage costs but can also pose a security risk if they contain sensitive data and are left unmonitored.
+        Orphaned EBS volumes are a significant data exposure risk:
 
-        Setting the `DeleteOnTermination` flag ensures that unused EBS volumes do not persist beyond the lifecycle of the EC2 instance, reducing the risk of unauthorized access, data leaks, and unnecessary storage costs. This is particularly important in dynamic cloud environments where instances are frequently created and terminated.
+        - An attacker with `ec2:DescribeVolumes` and `ec2:AttachVolume` permissions can find unattached volumes and mount them to extract sensitive data such as credentials, database files, application secrets, or customer data.
+        - Orphaned volumes are often overlooked during security reviews because they are not associated with running instances, making them a low-visibility attack surface.
+        - In dynamic environments where instances are frequently created and terminated, orphaned volumes accumulate rapidly, expanding the window of exposure.
 
-        **Risk Mitigation**
+        **Risk mitigation**
 
-        - **Cost Optimization:** Prevents unnecessary storage costs by ensuring that unused volumes do not persist.
-        - **Security and Compliance:** Reduces the risk of orphaned volumes containing sensitive data.
-        - **Operational Efficiency:** Prevents clutter and improves resource management in AWS environments.
+        - **Data exposure prevention:** Ensures volumes containing sensitive data are destroyed with the instance, eliminating the orphaned volume attack surface.
+        - **Attack surface reduction:** Reduces the number of discoverable resources an attacker with compromised IAM credentials can exploit.
+        - **Security hygiene:** Prevents accumulation of unmonitored volumes that may contain unencrypted sensitive data.
       remediation:
         - id: console
           desc: |
@@ -7252,23 +7248,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that AWS Application Load Balancers (ALBs) have deletion protection enabled to prevent accidental or unauthorized deletion. Deleting a load balancer without proper authorization or by mistake can result in application downtime, traffic disruption, and loss of critical configurations.
+        This check ensures that AWS Application Load Balancers (ALBs) have deletion protection enabled. An attacker with compromised IAM credentials can delete unprotected load balancers as a destructive sabotage action, immediately severing all traffic to backend applications and destroying security configurations such as WAF associations and access logging settings.
 
         **Why this matters**
 
-        By default, deletion protection is disabled for Application Load Balancers, making them susceptible to accidental removal. If an ALB is deleted:
+        Without deletion protection, ALBs are vulnerable to intentional destruction:
 
-        - All traffic routing is disrupted, causing application downtime.
-        - Reconfiguration is required, leading to potential misconfigurations or longer recovery times.
-        - Security policies and access control settings are lost, which may expose applications to threats.
-
-        Enabling deletion protection ensures that ALBs cannot be deleted without explicitly disabling this setting first, providing an additional layer of protection against human errors and misconfigurations.
+        - An attacker with `elasticloadbalancing:DeleteLoadBalancer` permissions can destroy the load balancer in a single API call, causing immediate service disruption.
+        - WAF rules, authentication configurations, and access logging settings attached to the ALB are lost, removing security controls and forensic data sources.
+        - Rebuilding the ALB with identical security configurations is error-prone and time-consuming, extending the window of exposure during incident response.
 
         **Risk mitigation**
 
-        - Prevents accidental deletions that could cause service outages.
-        - Ensures operational stability by enforcing change control processes.
-        - Reduces misconfigurations and security risks associated with unintended deletions.
+        - **Destructive attack prevention:** Requires an attacker to make two API calls (disable protection, then delete), increasing detection opportunity.
+        - **Security configuration preservation:** Protects WAF associations, TLS settings, and logging configurations from being destroyed.
+        - **Defense in depth:** Complements IAM policies by adding resource-level protection against credential compromise scenarios.
       remediation:
         - id: console
           desc: |
@@ -9700,21 +9694,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that AWS X-Ray tracing is enabled on Amazon API Gateway REST APIs. X-Ray provides end-to-end visibility into requests as they travel through your API, helping with debugging, performance optimization, and security analysis.
+        This check ensures that AWS X-Ray tracing is enabled on Amazon API Gateway REST APIs. X-Ray tracing provides request-level visibility that enables detection of API attacks including injection attempts, brute-force authentication attacks, and API enumeration by revealing abnormal request patterns, elevated error rates, and unusual downstream call chains.
 
         **Why this matters**
 
-        Without X-Ray tracing:
+        Without X-Ray tracing, API attacks are difficult to detect and investigate:
 
-        - **Limited observability:** Difficulty in understanding request flows and identifying bottlenecks.
-        - **Slower troubleshooting:** Increased time to diagnose and resolve issues.
-        - **Security blind spots:** Reduced ability to detect and investigate anomalous behavior.
+        - **Injection attack detection:** X-Ray traces reveal abnormal downstream call patterns and error rates that indicate SQL injection, command injection, or other payload-based attacks against backend services.
+        - **Brute-force visibility:** Authentication brute-force attacks and credential stuffing produce distinctive trace patterns (high error rates on auth endpoints) that are visible in X-Ray but invisible in aggregate metrics alone.
+        - **API enumeration detection:** Attackers probing API endpoints to discover undocumented functionality generate trace patterns that reveal systematic endpoint scanning.
 
         **Risk mitigation**
 
-        - Provides detailed insights into API request processing.
-        - Enables faster identification and resolution of performance issues.
-        - Supports security monitoring and anomaly detection.
+        - **Attack pattern detection:** Enables identification of injection, brute-force, and enumeration attacks through abnormal request trace analysis.
+        - **Incident investigation:** Provides request-level forensic data showing exactly which backend services were affected during an attack.
+        - **Anomaly baselining:** Establishes normal API call patterns so that attacker-driven deviations can trigger alerts.
       remediation:
         - id: console
           desc: |
@@ -13830,22 +13824,22 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon EKS clusters have deletion protection enabled. Deletion protection prevents accidental or unauthorized deletion of EKS clusters, which would result in the loss of all running workloads, configurations, and associated resources.
+        This check ensures that Amazon EKS clusters have deletion protection enabled. An attacker with compromised IAM credentials can delete unprotected EKS clusters to destroy Kubernetes infrastructure, eliminating all running workloads, RBAC configurations, network policies, and security controls in a single API call.
 
         **Why this matters**
 
         Without deletion protection:
 
-        - An EKS cluster can be deleted with a single API call or console action, destroying all running workloads.
-        - Accidental deletion during infrastructure changes or automation errors can cause significant downtime.
-        - Malicious actors with sufficient IAM permissions could delete clusters as part of an attack.
-        - Recovery requires rebuilding the cluster and redeploying all workloads, which can take hours or days.
+        - An attacker with `eks:DeleteCluster` permissions can destroy the entire Kubernetes control plane, immediately terminating all workloads and severing service connectivity.
+        - Cluster deletion destroys RBAC policies, network policies, service meshes, and security admission controllers, removing all in-cluster security controls simultaneously.
+        - EKS cluster recovery requires rebuilding from scratch and redeploying all workloads, creating an extended outage window that an attacker can exploit for further damage.
+        - Targeted infrastructure destruction is a common post-compromise action to cover tracks or maximize business impact.
 
         **Risk mitigation**
 
-        - **Accidental deletion prevention:** Requires explicit disabling of the protection before a cluster can be deleted.
-        - **Operational safety:** Provides a safeguard against automation errors and human mistakes.
-        - **Change control:** Adds an additional step that encourages proper change management processes.
+        - **Destructive attack prevention:** Requires an attacker to make two API calls (disable protection, then delete), creating an additional detection opportunity via CloudTrail.
+        - **Security control preservation:** Protects RBAC, network policies, and admission controllers from being destroyed in a single action.
+        - **Incident response window:** The additional step buys time for automated alerting to detect unauthorized modification attempts before the cluster is destroyed.
       remediation:
         - id: console
           desc: |
@@ -15791,20 +15785,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that SQS queues have a dead letter queue (DLQ) configured. A DLQ captures messages that cannot be processed successfully, preventing message loss and enabling investigation of processing failures.
+        This check ensures that SQS queues have a dead letter queue (DLQ) configured. Without a DLQ, an attacker can send malformed or malicious messages to a queue that silently fail processing and are discarded, causing security-relevant events, notifications, or workflow triggers to be permanently lost without any trace.
 
         **Known limitation:** This check requires all SQS queues to have a DLQ, but queues that are themselves acting as dead-letter queues should not have their own DLQ. Accounts that use DLQs may see false positives on the DLQ queues themselves. To suppress these findings, apply an exception for queues that serve as dead-letter targets.
 
         **Why this matters**
 
-        - Without a DLQ, failed messages are silently discarded after the maximum receive count.
-        - DLQs enable forensic analysis of failed messages to identify processing issues.
-        - Lost messages can lead to data inconsistency and missed security events.
+        - An attacker with `sqs:SendMessage` permissions can inject malformed messages that cause processing failures, silently dropping security-relevant events such as CloudTrail notifications, GuardDuty alerts, or incident response triggers.
+        - Without a DLQ, failed messages are silently discarded after the maximum receive count, leaving no forensic evidence of the attack or the lost events.
+        - SQS queues used in security pipelines (such as S3 event notifications triggering security scans, or SNS-to-SQS alert routing) become single points of failure when malformed messages can silently disrupt processing.
 
         **Risk mitigation**
 
-        - **Message preservation:** Failed messages are retained for investigation rather than lost.
-        - **Reliability:** Prevents silent data loss from processing failures.
+        - **Security event preservation:** Failed messages are retained in the DLQ for investigation, ensuring security-relevant events are not silently lost.
+        - **Attack detection:** DLQ message accumulation serves as an alert signal that messages are being rejected, potentially indicating injection of malicious payloads.
+        - **Forensic evidence:** Retained failed messages provide evidence for investigating whether processing failures were caused by attacker activity.
       remediation:
         - id: console
           desc: |
@@ -16801,18 +16796,19 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon Redshift clusters use enhanced VPC routing. With enhanced VPC routing, Redshift forces all COPY and UNLOAD traffic between your cluster and data repositories through your VPC, allowing you to use VPC security features such as security groups, network ACLs, and VPC endpoints.
+        This check ensures that Amazon Redshift clusters use enhanced VPC routing. Without enhanced VPC routing, Redshift COPY and UNLOAD operations route data through the public internet, where it is susceptible to network interception and completely bypasses VPC-level security monitoring such as flow logs, security groups, and network ACLs.
 
         **Why this matters**
 
-        - Without enhanced VPC routing, Redshift routes traffic through the internet, bypassing VPC security controls.
-        - Enhanced VPC routing enables monitoring and control of data movement with VPC flow logs.
-        - AWS Security Hub control Redshift.2 requires enhanced VPC routing.
+        - COPY and UNLOAD operations without enhanced VPC routing traverse the internet, exposing sensitive query results and loaded data to network-level interception by attackers positioned along the route.
+        - Internet-routed data transfers bypass all VPC security controls, meaning security groups, NACLs, and VPC endpoints cannot restrict or monitor data movement, creating a blind spot for data exfiltration detection.
+        - An attacker who compromises Redshift credentials can exfiltrate data via UNLOAD to external S3 buckets over internet routes that are invisible to VPC flow logs, leaving no network-level forensic evidence.
 
         **Risk mitigation**
 
-        - **Network control:** Forces data transfer traffic through VPC for security group and NACL enforcement.
-        - **Visibility:** Enables VPC flow log monitoring of data movement.
+        - **Data interception prevention:** Forces all COPY and UNLOAD traffic through the VPC, eliminating internet-routed data exposure.
+        - **Exfiltration detection:** VPC flow logs capture all data transfer traffic, enabling detection of unauthorized UNLOAD operations to external destinations.
+        - **Network policy enforcement:** Security groups and NACLs can restrict which destinations Redshift can transfer data to, limiting an attacker's ability to exfiltrate data to attacker-controlled storage.
       remediation:
         - id: console
           desc: |
@@ -17755,21 +17751,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon CloudWatch log groups have a defined retention period. Without a retention period, log groups retain data indefinitely by default, which can lead to uncontrolled storage costs and make it harder to manage log data lifecycle. Conversely, organizations need to ensure logs are retained long enough to support security investigations, forensic analysis, and compliance requirements.
+        This check ensures that Amazon CloudWatch log groups have a defined retention period. Without explicit retention, log groups may be manually purged or left in an ambiguous state, destroying forensic evidence needed to detect attackers who persist in an environment for weeks or months before discovery. A defined retention period ensures logs survive long enough to support threat hunting and incident investigation.
 
         **Why this matters**
 
-        Undefined log retention periods create security and operational risks:
+        Undefined log retention periods create critical gaps in attack detection and forensic capability:
 
-        - **Forensic gaps:** Without explicit retention, log groups may be manually purged or left in an ambiguous state, which could result in the loss of critical data needed for incident investigation.
-        - **Compliance requirements:** Security frameworks such as PCI DSS, HIPAA, and SOC 2 require defined log retention periods (often 90 days to 1 year minimum).
-        - **Cost management:** Indefinite retention leads to unbounded storage costs that grow over time.
+        - **Attacker persistence detection:** Advanced attackers often maintain access for months before discovery. Without sufficient log retention, evidence of initial compromise, lateral movement, and data exfiltration is lost before investigators can analyze it.
+        - **Forensic evidence preservation:** Incident response teams need historical logs to reconstruct attack timelines, identify compromised resources, and determine the scope of a breach.
+        - **Compliance requirements:** Security frameworks such as PCI DSS, HIPAA, and SOC 2 require defined log retention periods (often 90 days to 1 year minimum) specifically to support security investigations.
 
         **Risk mitigation**
 
-        - **Incident response:** Ensures logs are available for a defined period to support security investigations.
+        - **Incident response capability:** Ensures logs are available for the duration needed to detect and investigate long-running compromises.
+        - **Forensic completeness:** Preserves evidence of attacker activity across the full dwell time of a breach.
         - **Regulatory compliance:** Meets log retention requirements mandated by security frameworks.
-        - **Operational hygiene:** Establishes a clear data lifecycle policy for log data.
       remediation:
         - id: console
           desc: |
@@ -18867,21 +18863,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that customer-managed AWS KMS keys use `AWS_KMS` as their key material origin rather than `EXTERNAL` (imported key material) or `AWS_CLOUDHSM`. When the origin is `AWS_KMS`, AWS generates and manages the key material within its hardened infrastructure, providing automatic security guarantees.
+        This check ensures that customer-managed AWS KMS keys use `AWS_KMS` as their key material origin rather than `EXTERNAL` (imported key material) or `AWS_CLOUDHSM`. When key material is externally managed, a compromise of the external key material gives an attacker the ability to decrypt all data encrypted with that key indefinitely, with no AWS-side detection mechanism or automatic rotation to limit the exposure window.
 
         **Why this matters**
 
-        - Keys with `EXTERNAL` origin require manual key material import and management. If the imported key material is lost or deleted, all data encrypted with the key becomes permanently unrecoverable.
-        - Externally imported keys do not support automatic key rotation. You must manually rotate by creating new keys and re-encrypting data, which increases operational risk.
-        - The security of externally imported key material depends entirely on the customer's key management practices, including secure generation, transport, and storage of the key material outside of AWS.
-        - Keys with `AWS_CLOUDHSM` origin require a functioning AWS CloudHSM cluster. If the cluster becomes unavailable, the KMS key cannot be used.
+        - An attacker who compromises externally managed key material (stored outside AWS) can decrypt all data encrypted with that key without any interaction with AWS services, making the decryption completely invisible to CloudTrail, GuardDuty, and all AWS-side monitoring.
+        - Externally imported keys do not support automatic key rotation, meaning a compromised key remains valid indefinitely unless the customer manually rotates it and re-encrypts all data -- a process that is complex and rarely performed promptly.
+        - The security of externally imported key material depends entirely on the customer's external key management practices. Weaknesses in generation, transport, storage, or access control of external key material create encryption bypass opportunities that AWS cannot detect or prevent.
+        - Keys with `AWS_CLOUDHSM` origin require a functioning AWS CloudHSM cluster. If the cluster becomes unavailable, the KMS key cannot be used, and an attacker who compromises the HSM cluster gains access to all associated key material.
 
         **Risk mitigation**
 
-        - **Automatic key rotation:** AWS_KMS origin keys support automatic annual rotation, reducing cryptographic risk without operational overhead.
-        - **Durability:** AWS manages key material availability and durability, eliminating the risk of key material loss.
-        - **Simplified operations:** No need to manage key material lifecycle, transport, or external storage.
-        - **Consistent security posture:** AWS_KMS origin ensures all keys benefit from the same hardened infrastructure and security controls.
+        - **Cryptographic containment:** AWS_KMS origin keys never leave AWS hardened infrastructure, meaning an attacker must interact with AWS APIs (which are logged and monitored) to use the key.
+        - **Automatic key rotation:** AWS_KMS origin keys support automatic annual rotation, limiting the exposure window if key material is compromised.
+        - **Detection capability:** All key usage is logged in CloudTrail, enabling detection of unauthorized decryption attempts that would be invisible with externally managed keys.
+        - **Tamper resistance:** AWS manages key material within FIPS 140-2 validated HSMs, providing stronger protection than most customer-managed external key storage.
 
         **Important caveats:**
 
@@ -21063,14 +21059,14 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check ensures that all EKS cluster add-ons are in an ACTIVE status. Degraded or failed add-ons can indicate security vulnerabilities, missing patches, or operational issues that affect cluster security.
+        This check ensures that all EKS cluster add-ons are in an ACTIVE status. Degraded add-ons directly undermine cluster security controls: a degraded VPC CNI plugin can break network policy enforcement, enabling lateral movement between pods. A degraded kube-proxy can bypass network policies entirely, and unhealthy CoreDNS can disrupt DNS-based security controls.
 
         **Why this matters**
 
-        - **Security patching**: Add-ons like CoreDNS, kube-proxy, and VPC CNI include important security patches. Unhealthy add-ons may be running outdated versions.
-        - **Cluster reliability**: Failed or degraded add-ons can impact cluster networking, DNS resolution, and pod scheduling.
-        - **Operational visibility**: Monitoring add-on health ensures that critical cluster components are functioning correctly.
-        - **Compliance alignment**: Maintaining healthy infrastructure components is a requirement of most security frameworks.
+        - **Network policy bypass:** A degraded VPC CNI plugin can fail to enforce network policies, allowing pods to communicate freely and enabling lateral movement from a compromised container to other workloads in the cluster.
+        - **kube-proxy security bypass:** A failed or degraded kube-proxy can cause network policy enforcement to stop functioning, removing pod-level network segmentation that prevents attackers from reaching sensitive services.
+        - **Security patch gaps:** Unhealthy add-ons may be running outdated versions with known vulnerabilities that attackers can exploit for container escape or privilege escalation.
+        - **DNS manipulation risk:** Degraded CoreDNS can fail to resolve security-critical endpoints (such as OIDC providers or admission webhook services), bypassing authentication and admission controls.
       remediation:
         - id: console
           desc: |
@@ -21151,14 +21147,14 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon ECS clusters have Container Insights enabled. Container Insights collects, aggregates, and summarizes metrics and logs from containerized applications and microservices.
+        This check ensures that Amazon ECS clusters have Container Insights enabled. Without Container Insights, attacks against containerized workloads -- including cryptomining, data exfiltration via abnormal egress traffic, and unauthorized container execution -- are invisible to security monitoring because there is no container-level metrics collection to detect anomalous behavior.
 
         **Why this matters**
 
-        - **Security monitoring**: Container Insights provides visibility into container-level metrics that can help detect anomalous behavior.
-        - **Operational visibility**: Collects CPU, memory, disk, and network metrics at the task and service level.
-        - **Incident response**: Detailed metrics and logs facilitate faster identification and resolution of security incidents.
-        - **Compliance alignment**: Logging and monitoring of container workloads is required by many security frameworks.
+        - **Cryptomining detection:** Cryptomining in compromised containers produces distinctive CPU usage patterns that Container Insights can detect. Without these metrics, cryptomining can run undetected, consuming resources and indicating a broader compromise.
+        - **Data exfiltration detection:** Abnormal network egress patterns from containers (such as large data transfers to unexpected destinations) are only visible through Container Insights metrics, which provide task-level network monitoring.
+        - **Unauthorized container activity:** Container Insights reveals unexpected container launches, resource consumption spikes, and task-level anomalies that indicate an attacker has deployed malicious containers or compromised existing ones.
+        - **Incident response capability:** Without container-level metrics, security teams cannot determine which specific tasks or containers were involved in a breach, significantly slowing incident response and scope assessment.
       remediation:
         - id: console
           desc: |
@@ -23188,19 +23184,19 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that no Amazon Route 53 health checks are in a disabled state. Disabled health checks do not monitor endpoint availability, which can leave DNS failover routing non-functional and cause traffic to be directed to unhealthy or offline endpoints.
+        This check ensures that no Amazon Route 53 health checks are in a disabled state. An attacker who compromises an endpoint can disable its health check to prevent Route 53 from failing over to a healthy endpoint, ensuring that traffic continues to flow to the attacker-controlled or compromised resource.
 
         **Why this matters**
 
-        - Disabled health checks silently break DNS failover configurations, meaning traffic may continue to route to degraded or unreachable endpoints without triggering a failover.
-        - If a health check associated with a failover or weighted routing policy is disabled, Route 53 considers the endpoint healthy by default, defeating the purpose of health-based routing.
-        - Disabled health checks create a false sense of security, as monitoring dashboards may not clearly indicate that checks are not running.
+        - An attacker who has compromised an endpoint and has `route53:UpdateHealthCheck` permissions can disable the health check, preventing automatic failover and ensuring traffic continues to reach the compromised resource.
+        - Disabled health checks cause Route 53 to treat the endpoint as healthy by default, meaning traffic will not fail away from a compromised or malicious endpoint even if it is serving manipulated responses.
+        - Attackers can use this technique to maintain persistent traffic interception, serving phishing content or capturing credentials without triggering DNS-level remediation.
 
         **Risk mitigation**
 
-        - **Availability:** Ensures DNS failover routing works correctly by keeping health checks active.
-        - **Visibility:** Maintains accurate health status for all monitored endpoints.
-        - **Reliability:** Prevents routing traffic to unhealthy endpoints due to disabled monitoring.
+        - **Compromised endpoint detection:** Active health checks enable automatic failover away from compromised endpoints that stop responding correctly.
+        - **Attack persistence prevention:** Ensures that DNS failover cannot be silently disabled to maintain traffic flow to attacker-controlled resources.
+        - **Monitoring integrity:** Maintains accurate health status so that compromised endpoints are detected and isolated through DNS routing changes.
       remediation:
         - id: console
           desc: |
@@ -30311,33 +30307,10 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure SageMaker training jobs have network isolation enabled in Terraform, ensure SageMaker training jobs have network isolation enabled:
-
-            ```hcl
-            resource "aws_sagemaker_training_job" "example" {
-              training_job_name = "isolated-training-job"
-              role_arn          = aws_iam_role.sagemaker.arn
-              enable_network_isolation = true
-
-              algorithm_specification {
-                training_image     = "<image-uri>"
-                training_input_mode = "File"
-              }
-
-              resource_config {
-                instance_type  = "ml.m5.large"
-                instance_count = 1
-                volume_size    = 50
-              }
-
-              stopping_condition {
-                max_runtime_in_seconds = 3600
-              }
-            }
-            ```
+            SageMaker training jobs are ephemeral and created via the `CreateTrainingJob` API. There is no corresponding Terraform resource type. Use the AWS CLI or SDK to configure network isolation when creating training jobs.
         - id: cloudformation
           desc: |
-            To ensure SageMaker training jobs have network isolation enabled in CloudFormation, sageMaker training jobs are created via the `CreateTrainingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure network isolation when creating training jobs.
+            SageMaker training jobs are created via the `CreateTrainingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure network isolation when creating training jobs.
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/mkt-algo-model-internet-free.html
         title: Amazon SageMaker - Network Isolation
@@ -30404,33 +30377,10 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure SageMaker training jobs encrypt inter-container traffic in Terraform, ensure SageMaker training jobs have inter-container traffic encryption:
-
-            ```hcl
-            resource "aws_sagemaker_training_job" "example" {
-              training_job_name = "encrypted-training-job"
-              role_arn          = aws_iam_role.sagemaker.arn
-              enable_inter_container_traffic_encryption = true
-
-              algorithm_specification {
-                training_image     = "<image-uri>"
-                training_input_mode = "File"
-              }
-
-              resource_config {
-                instance_type  = "ml.m5.large"
-                instance_count = 2
-                volume_size    = 50
-              }
-
-              stopping_condition {
-                max_runtime_in_seconds = 3600
-              }
-            }
-            ```
+            SageMaker training jobs are ephemeral and created via the `CreateTrainingJob` API. There is no corresponding Terraform resource type. Use the AWS CLI or SDK to enable inter-container traffic encryption when creating training jobs.
         - id: cloudformation
           desc: |
-            To ensure SageMaker training jobs encrypt inter-container traffic in CloudFormation, sageMaker training jobs are created via the `CreateTrainingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to enable inter-container traffic encryption when creating training jobs.
+            SageMaker training jobs are created via the `CreateTrainingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to enable inter-container traffic encryption when creating training jobs.
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/train-encrypt.html
         title: Amazon SageMaker - Protect Communications Between ML Compute Instances
@@ -30497,37 +30447,10 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure SageMaker training jobs are deployed within a VPC in Terraform, ensure SageMaker training jobs are deployed within a VPC:
-
-            ```hcl
-            resource "aws_sagemaker_training_job" "example" {
-              training_job_name = "vpc-training-job"
-              role_arn          = aws_iam_role.sagemaker.arn
-
-              vpc_config {
-                security_group_ids = [aws_security_group.sagemaker.id]
-                subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
-              }
-
-              algorithm_specification {
-                training_image     = "<image-uri>"
-                training_input_mode = "File"
-              }
-
-              resource_config {
-                instance_type  = "ml.m5.large"
-                instance_count = 1
-                volume_size    = 50
-              }
-
-              stopping_condition {
-                max_runtime_in_seconds = 3600
-              }
-            }
-            ```
+            SageMaker training jobs are ephemeral and created via the `CreateTrainingJob` API. There is no corresponding Terraform resource type. Use the AWS CLI or SDK to configure VPC settings when creating training jobs.
         - id: cloudformation
           desc: |
-            To ensure SageMaker training jobs are deployed within a VPC in CloudFormation, sageMaker training jobs are created via the `CreateTrainingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure VPC settings when creating training jobs.
+            SageMaker training jobs are created via the `CreateTrainingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure VPC settings when creating training jobs.
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/train-vpc.html
         title: Amazon SageMaker - Give SageMaker Training Jobs Access to Resources in Your VPC
@@ -30591,33 +30514,10 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure SageMaker processing jobs have network isolation enabled in Terraform, ensure SageMaker processing jobs have network isolation enabled:
-
-            ```hcl
-            resource "aws_sagemaker_processing_job" "example" {
-              processing_job_name = "isolated-processing-job"
-              role_arn            = aws_iam_role.sagemaker.arn
-
-              network_config {
-                enable_network_isolation = true
-              }
-
-              app_specification {
-                image_uri = "<image-uri>"
-              }
-
-              processing_resources {
-                cluster_config {
-                  instance_type  = "ml.m5.large"
-                  instance_count = 1
-                  volume_size    = 50
-                }
-              }
-            }
-            ```
+            SageMaker processing jobs are ephemeral and created via the `CreateProcessingJob` API. There is no corresponding Terraform resource type. Use the AWS CLI or SDK to configure network isolation when creating processing jobs.
         - id: cloudformation
           desc: |
-            To ensure SageMaker processing jobs have network isolation enabled in CloudFormation, sageMaker processing jobs are created via the `CreateProcessingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure network isolation when creating processing jobs.
+            SageMaker processing jobs are created via the `CreateProcessingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure network isolation when creating processing jobs.
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/mkt-algo-model-internet-free.html
         title: Amazon SageMaker - Network Isolation
@@ -30680,33 +30580,10 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure SageMaker processing jobs encrypt inter-container traffic in Terraform, ensure SageMaker processing jobs have inter-container traffic encryption:
-
-            ```hcl
-            resource "aws_sagemaker_processing_job" "example" {
-              processing_job_name = "encrypted-processing-job"
-              role_arn            = aws_iam_role.sagemaker.arn
-
-              network_config {
-                enable_inter_container_traffic_encryption = true
-              }
-
-              app_specification {
-                image_uri = "<image-uri>"
-              }
-
-              processing_resources {
-                cluster_config {
-                  instance_type  = "ml.m5.large"
-                  instance_count = 2
-                  volume_size    = 50
-                }
-              }
-            }
-            ```
+            SageMaker processing jobs are ephemeral and created via the `CreateProcessingJob` API. There is no corresponding Terraform resource type. Use the AWS CLI or SDK to enable inter-container traffic encryption when creating processing jobs.
         - id: cloudformation
           desc: |
-            To ensure SageMaker processing jobs encrypt inter-container traffic in CloudFormation, sageMaker processing jobs are created via the `CreateProcessingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to enable inter-container traffic encryption when creating processing jobs.
+            SageMaker processing jobs are created via the `CreateProcessingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to enable inter-container traffic encryption when creating processing jobs.
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/train-encrypt.html
         title: Amazon SageMaker - Protect Communications Between ML Compute Instances
@@ -30770,36 +30647,10 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure SageMaker processing jobs are deployed within a VPC in Terraform, ensure SageMaker processing jobs are deployed within a VPC:
-
-            ```hcl
-            resource "aws_sagemaker_processing_job" "example" {
-              processing_job_name = "vpc-processing-job"
-              role_arn            = aws_iam_role.sagemaker.arn
-
-              network_config {
-                vpc_config {
-                  security_group_ids = [aws_security_group.sagemaker.id]
-                  subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
-                }
-              }
-
-              app_specification {
-                image_uri = "<image-uri>"
-              }
-
-              processing_resources {
-                cluster_config {
-                  instance_type  = "ml.m5.large"
-                  instance_count = 1
-                  volume_size    = 50
-                }
-              }
-            }
-            ```
+            SageMaker processing jobs are ephemeral and created via the `CreateProcessingJob` API. There is no corresponding Terraform resource type. Use the AWS CLI or SDK to configure VPC settings when creating processing jobs.
         - id: cloudformation
           desc: |
-            To ensure SageMaker processing jobs are deployed within a VPC in CloudFormation, sageMaker processing jobs are created via the `CreateProcessingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure VPC settings when creating processing jobs.
+            SageMaker processing jobs are created via the `CreateProcessingJob` API and do not have a corresponding CloudFormation resource type. Use the AWS CLI or SDK to configure VPC settings when creating processing jobs.
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/process-vpc.html
         title: Amazon SageMaker - Give SageMaker Processing Jobs Access to Resources in Your VPC
@@ -34948,23 +34799,23 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        SSL/TLS certificates stored in AWS IAM that have passed their expiration date should be removed promptly. Expired certificates can no longer be used to establish trusted TLS connections, and their continued presence in IAM increases the risk of accidental use or confusion during incident response.
+        SSL/TLS certificates stored in AWS IAM that have passed their expiration date should be removed promptly. Expired certificates represent an expanded attack surface: their corresponding private keys may have been extracted, backed up, or compromised over time, and an attacker possessing these keys can impersonate the associated services. Forgotten expired certificates also indicate gaps in certificate lifecycle management that may extend to active certificates.
 
         **Why this matters**
 
-        Expired certificates stored in IAM can:
+        Expired certificates stored in IAM create security risks:
 
-        - Be accidentally associated with services, causing TLS handshake failures and service outages.
-        - Indicate a failure in certificate lifecycle management, which may mean other certificates are also unmanaged.
-        - Trigger compliance findings under frameworks such as PCI DSS, NIST SP 800-53, and ISO 27001 that require active management of cryptographic material.
+        - Private keys associated with long-lived or expired certificates have had extended exposure time, increasing the likelihood they have been compromised, backed up insecurely, or accessed by former employees.
+        - An attacker with a compromised private key can perform service impersonation or man-in-the-middle attacks against clients that do not perform strict certificate validation.
+        - Expired certificates that remain in IAM indicate a failure in certificate lifecycle management, suggesting that active certificates may also lack proper rotation, increasing the window for key compromise across the organization.
 
         AWS Certificate Manager (ACM) is the recommended service for managing certificates, but some legacy integrations still use IAM-stored certificates.
 
         **Risk mitigation**
 
-        - Prevents accidental use of expired certificates that would cause TLS negotiation failures.
-        - Reduces the certificate inventory to only valid, actively managed credentials.
-        - Supports compliance with certificate and credential lifecycle management requirements.
+        - **Attack surface reduction:** Removing expired certificates and rotating their associated keys eliminates potential impersonation vectors from compromised private keys.
+        - **Credential hygiene:** Reduces the inventory to only valid, actively managed certificates, ensuring that compromised legacy keys cannot be used for impersonation.
+        - **Lifecycle management:** Enforcing certificate cleanup drives adoption of proper rotation practices that limit key exposure time.
       remediation:
         - id: console
           desc: |
@@ -35034,23 +34885,23 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        AWS recommends creating a dedicated IAM role or group with the AWSSupportAccess managed policy attached to manage interactions with AWS Support. This ensures that support access is granted through a traceable, auditable IAM identity rather than relying on root account credentials.
+        AWS recommends creating a dedicated IAM role or group with the AWSSupportAccess managed policy attached to manage interactions with AWS Support. Without a dedicated support role, operators are forced to use the root account for support interactions, expanding the blast radius of root credential compromise and eliminating forensic traceability for post-breach investigations.
 
         **Why this matters**
 
         Without a dedicated support role:
 
-        - Operators may use the root account to interact with AWS Support, increasing the risk of root credential exposure.
-        - There is no clear accountability for who opens or manages support cases on behalf of the organization.
-        - Compliance frameworks such as CIS AWS Foundations Benchmark require a designated support role as part of access control best practices.
+        - Root account usage for support interactions increases exposure of root credentials, which provide unrestricted access to the entire AWS account and cannot be scoped with IAM policies.
+        - If the root account is compromised, there is no way to distinguish attacker-initiated support cases from legitimate ones, complicating incident response and forensic investigation.
+        - Post-breach forensics require attributing actions to specific identities. Root account actions lack granular attribution, making it impossible to determine whether support interactions during a breach were legitimate or attacker-initiated.
 
         Assigning the AWSSupportAccess policy to a specific role, group, or user ensures that support interactions are performed with least-privilege credentials that can be audited.
 
         **Risk mitigation**
 
-        - Avoids the need to use root account credentials for AWS Support interactions.
-        - Creates a clear, auditable identity for support case management.
-        - Aligns with CIS AWS Foundations Benchmark and least-privilege access control requirements.
+        - **Root credential protection:** Eliminates a reason to use root credentials, reducing exposure of the most privileged account in the environment.
+        - **Forensic traceability:** Creates attributable, auditable identities for support interactions that can be distinguished from attacker activity during incident investigation.
+        - **Blast radius containment:** Ensures support access is scoped to a dedicated role with limited permissions rather than the unrestricted root account.
       remediation:
         - id: console
           desc: |
@@ -37473,21 +37324,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Redis ElastiCache clusters have automatic backup (snapshot) retention configured. Automatic backups protect against data loss and enable point-in-time recovery.
+        This check ensures that Redis ElastiCache clusters have automatic backup (snapshot) retention configured. Without backups, an attacker with compromised credentials can flush or destroy cache data with no recovery path, and ransomware-style attacks targeting cloud data stores rely on the absence of backups to maximize damage and leverage.
 
         **Why this matters**
 
-        Without backup retention, data in ElastiCache Redis clusters is at risk of permanent loss:
+        Without backup retention, ElastiCache Redis clusters have no recovery path from adversarial data destruction:
 
-        - **Data loss:** Hardware failures, software bugs, or accidental deletions can result in irrecoverable data loss without backups.
-        - **Recovery capability:** Backups are essential for disaster recovery and restoring data to a known good state.
-        - **Compliance:** Many regulatory frameworks require backup and recovery capabilities for data stores.
+        - An attacker with `elasticache:ModifyCacheCluster` or direct Redis access can flush all data, and without backups, recovery is impossible.
+        - Ransomware-style attacks increasingly target cloud-managed data stores, destroying data to pressure organizations into paying ransoms.
+        - Cache data often includes session tokens, authentication state, and application configuration that, if destroyed without backups, can cause cascading authentication failures and service outages.
 
         **Risk mitigation**
 
-        - **Data protection:** Ensures regular snapshots are taken and retained for recovery purposes.
-        - **Business continuity:** Enables rapid recovery from data loss scenarios.
-        - **Compliance:** Meets regulatory requirements for data backup and retention.
+        - **Ransomware resilience:** Backups ensure data can be restored after adversarial destruction, removing the attacker's leverage.
+        - **Incident recovery:** Enables restoration to a known-good state after a cache poisoning or data destruction attack.
+        - **Compliance:** Meets regulatory requirements for data backup and recovery capabilities.
       remediation:
         - id: console
           desc: |
@@ -37612,21 +37463,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon RDS DB instances have automated backup retention configured. Automated backups allow point-in-time recovery and are essential for data protection and disaster recovery.
+        This check ensures that Amazon RDS DB instances have automated backup retention configured. Without backups, an attacker who compromises database credentials can destroy or corrupt data with no recovery path, and ransomware-style attacks targeting cloud databases rely on the absence of backups to maximize damage.
 
         **Why this matters**
 
-        RDS instances without backup retention are at risk of permanent data loss:
+        RDS instances without backup retention have no recovery path from adversarial data destruction:
 
-        - **No recovery options:** Without automated backups, there is no way to restore data to a specific point in time after an incident.
-        - **Compliance violations:** Most regulatory frameworks require data backup and recovery capabilities.
-        - **Operational risk:** Accidental deletions, corruption, or application bugs can cause irreversible data loss.
+        - An attacker with database-level access can DROP tables, corrupt data, or encrypt records as ransomware, and without backups the damage is permanent.
+        - Ransomware attacks increasingly target cloud-managed databases, deleting or encrypting data to pressure organizations into paying ransoms.
+        - Without point-in-time recovery, even detecting the exact moment of compromise is insufficient because there is no backup to restore from.
 
         **Risk mitigation**
 
-        - **Data protection:** Ensures automated backups are taken daily and retained for the configured period.
-        - **Point-in-time recovery:** Enables restoration of the database to any point within the retention window.
-        - **Compliance:** Meets regulatory requirements for data backup and retention.
+        - **Ransomware resilience:** Automated backups ensure data can be restored after adversarial destruction, removing the attacker's leverage.
+        - **Point-in-time recovery:** Enables restoration to the moment before an attack, minimizing data loss from SQL injection, insider threats, or credential compromise.
+        - **Forensic capability:** Backup snapshots can be used to compare pre-attack and post-attack database states during incident investigation.
       remediation:
         - id: console
           desc: |
@@ -37749,21 +37600,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon RDS DB instances have Performance Insights enabled. Performance Insights helps monitor and troubleshoot database performance issues by providing a dashboard that visualizes database load and helps identify bottlenecks.
+        This check ensures that Amazon RDS DB instances have Performance Insights enabled. Performance Insights provides detailed query-level and wait-event analysis that can detect active attacks against the database, including SQL injection attempts (abnormal query patterns), bulk data exfiltration (unusual read volumes), and cryptomining abuse (excessive CPU from unauthorized workloads).
 
         **Why this matters**
 
-        Without Performance Insights, database performance issues can be difficult to diagnose:
+        Without Performance Insights, database attacks are difficult to detect:
 
-        - **Limited visibility:** Without detailed performance data, identifying the root cause of performance degradation is time-consuming and error-prone.
-        - **Reactive troubleshooting:** Lack of historical performance data means issues can only be investigated in real time.
-        - **Operational impact:** Unresolved performance issues can lead to application slowdowns, outages, and degraded user experience.
+        - **SQL injection blind spots:** Abnormal query patterns from SQL injection attacks are invisible without query-level performance data, allowing attackers to extract data undetected.
+        - **Data exfiltration detection:** Bulk SELECT operations or unusual data transfer volumes that indicate exfiltration are only visible through detailed performance metrics.
+        - **Cryptomining and abuse:** Unauthorized compute-intensive workloads running against the database (such as cryptomining queries) appear as unexplained CPU spikes that require Performance Insights to diagnose.
 
         **Risk mitigation**
 
-        - **Proactive monitoring:** Enables early detection of performance trends before they impact applications.
-        - **Faster resolution:** Provides detailed wait event and SQL-level analysis for rapid root cause identification.
-        - **Capacity planning:** Historical data supports informed decisions about instance sizing and optimization.
+        - **Attack detection:** Enables identification of SQL injection, data exfiltration, and unauthorized workloads through abnormal query patterns and resource consumption.
+        - **Forensic analysis:** Historical performance data supports post-incident investigation by preserving evidence of attacker activity.
+        - **Anomaly baselining:** Establishes normal query patterns so that deviations from attacker activity can be identified and alerted on.
       remediation:
         - id: console
           desc: |
@@ -37890,21 +37741,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon RDS DB instances have deletion protection enabled. Deletion protection prevents accidental or unauthorized deletion of RDS instances, which could result in permanent data loss.
+        This check ensures that Amazon RDS DB instances have deletion protection enabled. An attacker with compromised IAM credentials can delete unprotected database instances as a ransomware-style destructive action, causing permanent data loss if backups are insufficient or also compromised.
 
         **Why this matters**
 
-        Without deletion protection, RDS instances can be deleted by any user with sufficient IAM permissions:
+        Without deletion protection, RDS instances are vulnerable to intentional destruction:
 
-        - **Accidental deletion:** Human error during infrastructure changes can lead to unintended deletion of production databases.
-        - **Unauthorized deletion:** Compromised credentials could be used to delete critical database instances.
-        - **Data loss:** Deleted RDS instances without final snapshots result in permanent data loss.
+        - An attacker with `rds:DeleteDBInstance` permissions can permanently destroy production databases in a single API call, with the option to skip final snapshots.
+        - Ransomware-style attacks increasingly target cloud databases for destruction, leveraging compromised credentials to maximize business impact.
+        - Even with backups, the recovery window creates extended downtime that an attacker can exploit for further lateral movement or data exfiltration.
 
         **Risk mitigation**
 
-        - **Accidental deletion prevention:** Adds a safety mechanism that requires explicit disabling before an instance can be deleted.
-        - **Defense in depth:** Complements IAM policies by adding an instance-level protection.
-        - **Operational safety:** Protects against mistakes during infrastructure automation and maintenance.
+        - **Destructive attack prevention:** Requires an attacker to make two API calls (disable protection, then delete), creating an additional detection opportunity via CloudTrail.
+        - **Defense in depth:** Complements IAM policies by adding instance-level protection that survives credential compromise.
+        - **Incident response window:** The additional step buys time for automated alerting to detect and respond to unauthorized modification attempts.
       remediation:
         - id: console
           desc: |
@@ -38027,21 +37878,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon RDS DB clusters (Aurora) have deletion protection enabled. Deletion protection prevents accidental or unauthorized deletion of Aurora clusters, which could result in permanent data loss.
+        This check ensures that Amazon RDS DB clusters (Aurora) have deletion protection enabled. An attacker with compromised IAM credentials can delete unprotected Aurora clusters as a ransomware-style destructive action, permanently destroying all cluster data and associated read replicas in a single operation.
 
         **Why this matters**
 
-        Without deletion protection, RDS clusters can be deleted by any user with sufficient IAM permissions:
+        Without deletion protection, RDS clusters are vulnerable to intentional destruction:
 
-        - **Accidental deletion:** Human error during infrastructure changes can lead to unintended deletion of production database clusters.
-        - **Unauthorized deletion:** Compromised credentials could be used to delete critical Aurora clusters.
-        - **Data loss:** Deleted clusters without final snapshots result in permanent data loss.
+        - An attacker with `rds:DeleteDBCluster` permissions can destroy an entire Aurora cluster and all its instances in a single API call, with the option to skip final snapshots.
+        - Cluster deletion is particularly devastating because it destroys all read replicas and failover instances simultaneously, eliminating redundancy.
+        - Ransomware-style attacks targeting cloud infrastructure use database destruction as leverage, and unprotected clusters are trivial to destroy with compromised credentials.
 
         **Risk mitigation**
 
-        - **Accidental deletion prevention:** Adds a safety mechanism that requires explicit disabling before a cluster can be deleted.
-        - **Defense in depth:** Complements IAM policies by adding a cluster-level protection.
-        - **Operational safety:** Protects against mistakes during infrastructure automation and maintenance.
+        - **Destructive attack prevention:** Requires an attacker to make two API calls (disable protection, then delete), creating an additional detection opportunity via CloudTrail.
+        - **Defense in depth:** Complements IAM policies by adding cluster-level protection that survives credential compromise.
+        - **Incident response window:** The additional step buys time for automated alerting to detect and respond to unauthorized modification attempts.
       remediation:
         - id: console
           desc: |
@@ -38305,21 +38156,21 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon Neptune DB clusters have audit log export to CloudWatch Logs enabled. Exporting Neptune audit logs to CloudWatch enables centralized monitoring, analysis, and alerting on database activities.
+        This check ensures that Amazon Neptune DB clusters have audit log export to CloudWatch Logs enabled. Without exported audit logs, attacks against the graph database -- including unauthorized graph traversal to map relationships between entities, authentication brute-force attempts, and privilege abuse by over-permissioned users -- are invisible to security monitoring and incident response teams.
 
         **Why this matters**
 
-        Without audit log export, database activity monitoring is limited:
+        Without audit log export, Neptune database attacks cannot be detected or investigated:
 
-        - **Limited visibility:** Audit logs are essential for tracking database queries, authentication attempts, and administrative actions.
-        - **Incident response:** Without centralized logs, investigating security incidents involving the database becomes significantly more difficult.
-        - **Compliance:** Many regulatory frameworks require audit logging and centralized log management for database services.
+        - **Unauthorized graph traversal:** Attackers can traverse the graph to map sensitive relationships (such as organizational hierarchies, access paths, or data lineage) without any record of the queries they executed.
+        - **Authentication brute force:** Failed authentication attempts against the Neptune cluster are not visible to centralized security monitoring, allowing credential attacks to proceed undetected.
+        - **Privilege abuse:** Over-permissioned users or compromised service accounts can execute unauthorized queries or administrative actions without leaving a forensic trail outside the cluster.
 
         **Risk mitigation**
 
-        - **Monitoring:** Enables real-time monitoring of database activities through CloudWatch.
-        - **Forensics:** Provides audit trails for security investigations and compliance audits.
-        - **Alerting:** Enables automated alerting on suspicious database activities.
+        - **Attack detection:** Enables real-time alerting on suspicious query patterns, failed authentication attempts, and unauthorized administrative actions through CloudWatch.
+        - **Forensic investigation:** Provides audit trails that allow security teams to reconstruct attacker activity, identify compromised accounts, and determine the scope of data exposure.
+        - **Anomaly detection:** Centralized logs enable baselining of normal query patterns so that unauthorized graph traversal or bulk data extraction can be identified.
       remediation:
         - id: console
           desc: |
@@ -40851,16 +40702,15 @@ queries:
 
         **Why this matters**
 
-        - **Modern TLS enforcement:** SNI-only ensures all connecting clients use modern TLS stacks that support SNI, which correlates with better security defaults, stronger cipher suites, and more recent protocol versions.
-        - **Legacy infrastructure risk:** Dedicated-IP SSL may indicate legacy infrastructure that has not been modernized. Environments retaining dedicated-IP configurations often have other outdated security practices.
-        - **Client compatibility:** Dedicated-IP SSL exists only to support very old clients that do not support SNI. All modern browsers and HTTP clients support SNI.
-        - **Cost:** As a secondary benefit, dedicated-IP SSL incurs significant additional charges ($600/month per distribution) compared to SNI-only which is included at no extra cost.
+        - **Weak cipher exposure:** Dedicated-IP SSL exists to support legacy clients that lack SNI support. These legacy clients typically also lack support for modern TLS versions and strong cipher suites, meaning dedicated-IP configurations may negotiate weaker cryptographic parameters that are vulnerable to interception or downgrade attacks.
+        - **Legacy infrastructure risk:** Dedicated-IP SSL may indicate legacy infrastructure that has not been modernized. Environments retaining dedicated-IP configurations often have other outdated security practices that expand the overall attack surface.
+        - **TLS version enforcement:** SNI-only ensures all connecting clients use modern TLS stacks, which correlates with stronger cipher suites, more recent protocol versions, and better security defaults that resist known cryptographic attacks.
 
         **Risk mitigation**
 
-        - Switch CloudFront distributions to use SNI-only SSL.
-        - Verify that all clients accessing the distribution support SNI (virtually all modern clients do).
-        - Monitor access logs for any client compatibility issues after the switch.
+        - **Stronger cryptographic baseline:** Eliminates connections from legacy clients that would negotiate weak ciphers or outdated TLS versions vulnerable to known attacks.
+        - **Attack surface reduction:** Removes support for legacy TLS stacks that may be susceptible to downgrade attacks or known protocol vulnerabilities.
+        - **Security posture consistency:** Ensures all client connections meet a minimum TLS capability baseline, simplifying security monitoring and compliance.
       remediation:
         - id: console
           desc: |
@@ -42247,19 +42097,19 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon Keyspaces tables have point-in-time recovery (PITR) enabled. PITR provides continuous backups of Keyspaces table data, allowing restoration to any point in time within the last 35 days.
+        This check ensures that Amazon Keyspaces tables have point-in-time recovery (PITR) enabled. Without PITR, an attacker who gains access to Keyspaces can perform ransomware-style data destruction by deleting or overwriting table data, and there is no recovery path. PITR provides continuous backups that allow restoration to any point within the last 35 days, removing the attacker's leverage.
 
         **Why this matters**
 
-        - Without PITR, recovering from accidental writes, deletes, or application bugs that corrupt data requires manual backups that may not reflect the most recent state of the table.
-        - PITR is a zero-impact operation that does not consume table throughput and does not require additional configuration beyond enabling the feature.
-        - Data recovery capabilities are a key requirement in business continuity and disaster recovery frameworks, including NIST SP 800-53 CP-9 and SOC 2 Availability criteria.
+        - An attacker with Keyspaces write access can destroy or encrypt table data as a ransomware-style attack, and without PITR the damage is permanent.
+        - Ransomware attacks targeting cloud-managed data stores rely on the absence of recovery mechanisms to maximize pressure on victims. PITR eliminates this leverage.
+        - PITR is a zero-impact operation that does not consume table throughput, making it a low-cost defense against data destruction attacks.
 
         **Risk mitigation**
 
-        - **Data recovery:** PITR enables restoration to any second within the recovery window, minimizing data loss.
-        - **Resilience:** Protects critical application data from application-level bugs, operator errors, and data destruction.
-        - **Compliance:** Satisfies data backup and recovery requirements in multiple regulatory and security frameworks.
+        - **Ransomware resilience:** PITR enables restoration to any second within the recovery window, ensuring data can be recovered after adversarial destruction.
+        - **Attack recovery:** Enables restoration to the moment before a data destruction or corruption attack, minimizing data loss from compromised credentials or insider threats.
+        - **Forensic comparison:** PITR snapshots can be used to compare pre-attack and post-attack table states during incident investigation.
       remediation:
         - id: console
           desc: |
@@ -44380,19 +44230,20 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check ensures that AWS Transfer Family servers use an external identity provider rather than the service-managed identity provider. External identity providers such as AWS Directory Service, API Gateway, or Lambda-based custom providers enable centralized user management and stronger authentication controls.
+        This check ensures that AWS Transfer Family servers use an external identity provider rather than the service-managed identity provider. Service-managed users authenticate with static passwords that are prime targets for credential stuffing attacks, cannot be protected with MFA, and cannot be centrally revoked when compromised.
 
         **Why this matters**
 
-        - Service-managed users are stored locally in Transfer Family and cannot leverage centralized identity systems or multi-factor authentication.
-        - External identity providers enable integration with corporate directories, SSO, and MFA.
-        - Centralized identity management simplifies user lifecycle management including onboarding, offboarding, and access reviews.
+        - Service-managed Transfer Family passwords are static credentials vulnerable to credential stuffing, brute-force attacks, and password spraying, with no MFA to provide a second authentication factor.
+        - When service-managed credentials are compromised, there is no centralized revocation mechanism. Each server's users must be individually managed, delaying incident response and leaving compromised access active on overlooked servers.
+        - Service-managed users bypass corporate identity systems, meaning compromised credentials are invisible to centralized security monitoring, SIEM alert rules, and identity threat detection systems.
+        - Without integration into a corporate identity provider, user offboarding is easily missed, leaving dormant accounts that attackers can exploit.
 
         **Risk mitigation**
 
-        - **Centralized management:** External providers enable consistent identity governance across services.
-        - **Stronger authentication:** Supports MFA and conditional access policies.
-        - **Compliance:** Meets identity management requirements in NIST SP 800-53 AC-6, PCI DSS, and SOC 2.
+        - **Credential stuffing defense:** External identity providers support MFA, conditional access, and anomaly detection that static service-managed passwords cannot provide.
+        - **Centralized revocation:** Compromised identities can be disabled across all services simultaneously through the external provider, eliminating the delay of per-server user management.
+        - **Security monitoring integration:** External providers feed authentication events into centralized logging and SIEM systems, enabling detection of brute-force attacks and anomalous access patterns.
       remediation:
         - id: console
           desc: |
@@ -44618,20 +44469,20 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check ensures that AWS IAM Identity Center permission sets use managed policies instead of inline policies. Managed policies are reusable, versioned, and easier to audit than inline policies embedded directly in permission sets.
+        This check ensures that AWS IAM Identity Center permission sets use managed policies instead of inline policies. Inline policies embedded in permission sets are hiding spots for backdoor permissions that are significantly harder to detect during access reviews, allowing an attacker with Identity Center administrative access to plant persistent, stealthy access across multiple AWS accounts.
 
         **Why this matters**
 
-        - Inline policies are harder to discover, review, and audit compared to managed policies.
-        - Managed policies can be shared across multiple permission sets, ensuring consistent access controls.
-        - Changes to managed policies are versioned, providing a rollback mechanism and audit trail.
-        - Inline policies can lead to policy sprawl and make it difficult to maintain a least-privilege access model.
+        - Inline policies are not visible in centralized policy listings and require per-permission-set inspection to discover, making them ideal hiding spots for attacker-planted backdoor permissions.
+        - An attacker with `sso:PutInlinePolicyToPermissionSet` access can embed broad permissions (such as `*:*`) in a permission set's inline policy, granting persistent cross-account access that survives credential rotation.
+        - Inline policies bypass the change tracking and version history provided by managed policies, making it harder to detect when unauthorized permissions were added or by whom.
+        - Policy sprawl from inline policies makes it difficult to maintain least-privilege, increasing the permissions available for an attacker to exploit after initial compromise.
 
         **Risk mitigation**
 
-        - **Consistency:** Managed policies ensure uniform access controls across permission sets.
-        - **Auditability:** Centralized policies are easier to review during access audits.
-        - **Governance:** Versioned managed policies provide change tracking and rollback capabilities.
+        - **Backdoor detection:** Managed policies are centrally visible and auditable, eliminating inline policies as a hiding spot for attacker-planted permissions.
+        - **Change tracking:** Versioned managed policies provide audit trails that reveal when permissions were modified, supporting detection of unauthorized changes.
+        - **Access review accuracy:** Centralized policies are discoverable by automated compliance tools, ensuring all permissions are included in access reviews.
       remediation:
         - id: console
           desc: |
@@ -44709,20 +44560,20 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check ensures that AWS IAM Identity Center account assignments use groups rather than individual users. Group-based assignments are easier to manage, audit, and scale compared to user-level assignments.
+        This check ensures that AWS IAM Identity Center account assignments use groups rather than individual users. Direct user-level assignments are a stealthy persistence mechanism: an attacker with Identity Center administrative access can grant a compromised user direct account access that is invisible to group-based access reviews, surviving group membership cleanup during incident response.
 
         **Why this matters**
 
-        - User-level assignments create management overhead and increase the risk of orphaned permissions when users leave the organization.
-        - Group-based assignments align with role-based access control (RBAC) best practices.
-        - Changes to group membership automatically propagate to all associated account assignments.
-        - Auditing access is significantly easier when permissions are managed through groups.
+        - Direct user-level assignments bypass group-based access reviews, meaning an attacker-granted assignment will not be discovered when reviewing group memberships during incident response or routine audits.
+        - An attacker can plant persistent access by assigning a compromised user directly to high-privilege permission sets across multiple AWS accounts, creating backdoor access that survives group-level remediation.
+        - User-level assignments increase the risk of orphaned permissions when users change roles or leave, creating dormant access that can be exploited if the user's identity is later compromised.
+        - Auditing individual user assignments requires inspecting each account separately, making it significantly harder to detect unauthorized cross-account access grants.
 
         **Risk mitigation**
 
-        - **Scalability:** Group-based assignments scale with organizational growth without manual per-user management.
-        - **Lifecycle management:** User offboarding is simplified by removing users from groups.
-        - **Audit efficiency:** Access reviews are easier when permissions are group-based.
+        - **Persistence detection:** Group-based assignments ensure all access is visible in group membership reviews, eliminating user-level assignments as a hiding spot for attacker-planted access.
+        - **Incident response completeness:** Removing a compromised user from all groups revokes all access when assignments are group-based, preventing persistence through direct assignments.
+        - **Access review coverage:** Group-based access is discoverable by automated compliance tools, ensuring all assignments are included in access reviews and no stealthy user-level grants are missed.
       remediation:
         - id: console
           desc: |
