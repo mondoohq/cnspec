@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-unifi-security
     name: Mondoo Ubiquiti UniFi Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -44,12 +44,21 @@ policies:
           - uid: mondoo-unifi-security-wlans-wpa3-enabled
           - uid: mondoo-unifi-security-wlans-pmf-enabled
           - uid: mondoo-unifi-security-guest-wlans-isolated
+          - uid: mondoo-unifi-security-wlans-strong-encryption-cipher
+          - uid: mondoo-unifi-security-wlans-group-rekey-interval
+          - uid: mondoo-unifi-security-guest-wlans-l2-isolation
       - title: Threat Management
         filters: asset.platform == "unifi"
         checks:
           - uid: mondoo-unifi-security-ips-enabled
           - uid: mondoo-unifi-security-dns-filtering-enabled
           - uid: mondoo-unifi-security-honeypot-enabled
+      - title: VPN Security
+        filters: asset.platform == "unifi"
+        checks:
+          - uid: mondoo-unifi-security-vpn-servers-modern-protocol
+          - uid: mondoo-unifi-security-vpn-tunnels-active
+          - uid: mondoo-unifi-security-vpn-clients-modern-protocol
       - title: Gateway Security
         filters: asset.platform == "unifi"
         checks:
@@ -62,6 +71,7 @@ policies:
         checks:
           - uid: mondoo-unifi-security-dhcp-snooping-enabled
           - uid: mondoo-unifi-security-stp-enabled
+          - uid: mondoo-unifi-security-unused-ports-disabled
       - title: Management & Controller
         filters: asset.platform == "unifi"
         checks:
@@ -71,12 +81,15 @@ policies:
           - uid: mondoo-unifi-security-autobackup-enabled
           - uid: mondoo-unifi-security-auto-upgrade-enabled
           - uid: mondoo-unifi-security-analytics-disabled
+          - uid: mondoo-unifi-security-devices-firmware-uptodate
           - uid: mondoo-unifi-security-remote-syslog-enabled
       - title: Network Segmentation
         filters: asset.platform == "unifi"
         checks:
           - uid: mondoo-unifi-security-no-port-forwards-to-mgmt
           - uid: mondoo-unifi-security-dns-over-https-enabled
+          - uid: mondoo-unifi-security-guest-network-isolation
+          - uid: mondoo-unifi-security-igmp-snooping-enabled
     scoring_system: highest impact
 queries:
   # ─── Wireless Security ───────────────────────────────────────────────────────
@@ -227,6 +240,114 @@ queries:
         2. Select each wireless network.
         3. Under advanced settings, set **PMF** to **Optional** or **Required**.
         4. Note: Setting PMF to **Required** may cause connectivity issues with older clients that do not support 802.11w.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-wlans-strong-encryption-cipher
+    title: Ensure WLANs use strong WPA encryption ciphers
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      unifi.wlans.where(enabled == true && security != "open").all(wpaEnc == "ccmp" || wpaEnc == "gcmp256")
+    docs:
+      desc: |
+        This check ensures that all secured wireless networks use strong WPA encryption ciphers such as AES-CCMP or GCMP-256.
+
+        **Why this matters**
+
+        The encryption cipher determines the strength of the actual data encryption on the wireless network:
+          - TKIP is a legacy cipher with known weaknesses and has been deprecated by the Wi-Fi Alliance.
+          - AES-CCMP is the standard cipher for WPA2 and provides strong 128-bit encryption.
+          - GCMP-256 is used with WPA3 and provides 256-bit encryption for the highest level of protection.
+          - Using weak ciphers undermines the security provided by WPA2/WPA3, even with a strong passphrase.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select each wireless network.
+        3. Under advanced settings, ensure the encryption cipher is set to **CCMP** (AES) or **GCMP-256**.
+        4. Avoid selecting TKIP or mixed-mode cipher configurations.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-wlans-group-rekey-interval
+    title: Ensure WPA group rekey interval is configured
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      unifi.wlans.where(enabled == true && security != "open").all(groupRekeyInterval > 0 && groupRekeyInterval <= 3600)
+    docs:
+      desc: |
+        This check ensures that the WPA group temporal key (GTK) rekey interval is set to 3600 seconds (1 hour) or less on all secured wireless networks.
+
+        **Why this matters**
+
+        The group temporal key encrypts broadcast and multicast traffic on a wireless network. Regular rekeying limits the exposure window if a key is compromised:
+          - A longer rekey interval means a compromised key can be used to decrypt broadcast traffic for a longer period.
+          - Regular rekeying limits the amount of data encrypted under a single key, reducing the value of a captured key.
+          - Industry best practice recommends a rekey interval of 3600 seconds or less.
+          - A value of 0 disables rekeying entirely, which is a security risk.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select each wireless network.
+        3. Under advanced settings, set the **Group Rekey Interval** to **3600** seconds or less.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/205231710
+        title: UniFi wireless network configuration
+
+  - uid: mondoo-unifi-security-guest-wlans-l2-isolation
+    title: Ensure L2 isolation is enabled on guest WLANs
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      unifi.wlans.where(enabled == true && isGuest == true).all(l2Isolation == true)
+    docs:
+      desc: |
+        This check ensures that Layer 2 client isolation is enabled on all guest wireless networks, preventing direct communication between wireless clients.
+
+        **Why this matters**
+
+        Without L2 isolation, clients on the same wireless network can communicate directly at the data link layer:
+          - Attackers on a guest network can ARP spoof other clients to intercept their traffic.
+          - Direct client-to-client communication enables lateral movement and network scanning.
+          - Compromised devices can attack other guests via protocols that operate at Layer 2.
+          - Guest mode alone restricts access to internal networks but does not prevent guest-to-guest attacks.
+
+        L2 isolation ensures:
+          - All client traffic is forced through the gateway, enabling firewall inspection.
+          - Clients cannot discover or communicate with each other directly.
+          - ARP spoofing and other Layer 2 attacks between clients are prevented.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > WiFi**.
+        2. Select each guest wireless network.
+        3. Under advanced settings, enable **L2 Isolation** (Client Isolation).
     refs:
       - url: https://help.ui.com/hc/en-us/articles/205231710
         title: UniFi wireless network configuration
@@ -920,3 +1041,268 @@ queries:
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360052224054
         title: UniFi DNS settings
+
+  - uid: mondoo-unifi-security-guest-network-isolation
+    title: Ensure network isolation is enabled on guest networks
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      unifi.networks.where(name == /guest|iot/i).all(networkIsolationEnabled == true)
+    docs:
+      desc: |
+        This check ensures that network isolation is enabled on all networks with "guest" or "iot" in the name, preventing inter-VLAN routing to other network segments.
+
+        **Why this matters**
+
+        Without network isolation, devices on guest and IoT networks can route traffic to other VLANs on the network:
+          - Compromised IoT devices can be used as a pivot point to reach corporate resources.
+          - Guest users can scan and access services on internal network segments.
+          - IoT devices with known vulnerabilities become a direct threat to sensitive systems.
+
+        Network isolation ensures:
+          - Traffic from guest and IoT networks cannot reach other VLANs.
+          - Compromised devices are contained within their own network segment.
+          - Defense-in-depth is maintained even if firewall rules are misconfigured.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Networks**.
+        2. Select each guest or IoT network.
+        3. Enable **Network Isolation** to prevent inter-VLAN routing.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi network settings
+
+  - uid: mondoo-unifi-security-igmp-snooping-enabled
+    title: Ensure IGMP snooping is enabled on LAN networks
+    impact: 40
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      unifi.networks.where(networkGroup == "LAN").all(igmpSnooping == true)
+    docs:
+      desc: |
+        This check ensures that IGMP snooping is enabled on all LAN networks to control multicast traffic flooding.
+
+        **Why this matters**
+
+        Without IGMP snooping, multicast traffic is flooded to all ports on a VLAN like broadcast traffic:
+          - Multicast flooding wastes bandwidth and can degrade network performance.
+          - Attackers can use multicast flooding for reconnaissance by observing which hosts respond to multicast groups.
+          - Excessive multicast traffic can cause denial-of-service conditions on low-powered devices.
+          - mDNS and other multicast-based discovery protocols leak information across the entire VLAN.
+
+        IGMP snooping ensures:
+          - Multicast traffic is only forwarded to ports with hosts that have joined the multicast group.
+          - Network bandwidth is conserved by eliminating unnecessary multicast flooding.
+          - The attack surface for multicast-based reconnaissance is reduced.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > Networks**.
+        2. Select each LAN network.
+        3. Under advanced settings, enable **IGMP Snooping**.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360042281174
+        title: UniFi switch configuration
+
+  # ─── VPN Security ─────────────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-vpn-servers-modern-protocol
+    title: Ensure VPN servers use modern protocols
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      unifi.vpnServers.where(enabled == true).all(protocol == "wireguard" || protocol == "ipsec")
+    docs:
+      desc: |
+        This check ensures that all enabled VPN servers use modern protocols such as WireGuard or IPsec rather than legacy protocols.
+
+        **Why this matters**
+
+        The VPN protocol determines the strength of the encrypted tunnel protecting site-to-site and remote access traffic:
+          - OpenVPN, while widely supported, requires careful configuration to avoid weak cipher suites and has a larger attack surface.
+          - WireGuard uses modern, audited cryptographic primitives (ChaCha20, Curve25519) and has a minimal codebase, reducing the risk of vulnerabilities.
+          - IPsec with IKEv2 provides strong encryption and is well-suited for site-to-site tunnels.
+          - Legacy VPN protocols may use deprecated ciphers or have known implementation weaknesses.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > VPN > VPN Server**.
+        2. Select each VPN server configuration.
+        3. Set the protocol to **WireGuard** or **IPsec**.
+        4. Migrate any existing OpenVPN tunnels to a modern protocol.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115005445768
+        title: UniFi VPN configuration
+
+  - uid: mondoo-unifi-security-vpn-tunnels-active
+    title: Ensure enabled VPN tunnels are connected
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/soc2-2017: soc2-control-cc7-2-1
+    mql: |
+      unifi.vpnClients.where(enabled == true).all(status != "disconnected")
+    docs:
+      desc: |
+        This check ensures that all enabled VPN client tunnels (typically site-to-site connections) are not in a disconnected state.
+
+        **Why this matters**
+
+        A VPN tunnel that is configured and enabled but disconnected indicates a connectivity failure that may create security blind spots:
+          - Site-to-site tunnels carry traffic that is expected to be encrypted; a disconnected tunnel may cause traffic to be dropped or routed unencrypted.
+          - Security monitoring and logging that depends on VPN connectivity will have gaps during disconnection.
+          - Persistent disconnection may indicate misconfiguration, credential expiration, or an active attack disrupting the tunnel.
+          - Stale VPN configurations that are enabled but non-functional should be investigated and remediated.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > VPN > VPN Client**.
+        2. Review VPN client tunnels that are enabled but disconnected.
+        3. Verify the remote endpoint is reachable and credentials are valid.
+        4. Check firewall rules on both ends to ensure VPN traffic is permitted.
+        5. Disable any VPN client configurations that are no longer needed.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115005445768
+        title: UniFi VPN configuration
+
+  - uid: mondoo-unifi-security-vpn-clients-modern-protocol
+    title: Ensure VPN clients use modern protocols
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      unifi.vpnClients.where(enabled == true).all(protocol == "wireguard" || protocol == "ipsec")
+    docs:
+      desc: |
+        This check ensures that all enabled VPN client connections use modern protocols such as WireGuard or IPsec.
+
+        **Why this matters**
+
+        VPN client connections to remote sites must use strong encryption to protect data in transit:
+          - The same protocol risks that apply to VPN servers apply equally to client connections.
+          - A VPN client using a weak protocol exposes traffic to interception at any point along the tunnel path.
+          - WireGuard and IPsec provide authenticated encryption with modern ciphers and smaller attack surfaces.
+          - Standardizing on modern protocols across both server and client configurations ensures consistent security posture.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Settings > VPN > VPN Client**.
+        2. Select each VPN client configuration.
+        3. Set the protocol to **WireGuard** or **IPsec**.
+        4. Coordinate with the remote site to ensure protocol compatibility.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115005445768
+        title: UniFi VPN configuration
+
+  # ─── Device Hardening ─────────────────────────────────────────────────────────
+  - uid: mondoo-unifi-security-devices-firmware-uptodate
+    title: Ensure all devices are running latest firmware
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+    mql: |
+      unifi.devices.all(upgradable == false)
+    docs:
+      desc: |
+        This check ensures that all adopted UniFi devices are running the latest available firmware with no pending upgrades.
+
+        **Why this matters**
+
+        Devices with pending firmware upgrades may be missing critical security patches:
+          - Ubiquiti regularly releases firmware updates that address known vulnerabilities.
+          - Network devices are high-value targets because compromising them provides access to all traffic passing through.
+          - Even with automatic upgrades enabled, devices may fail to update due to connectivity issues or adoption problems.
+          - This check verifies the actual device state rather than just the auto-upgrade setting.
+
+        Keeping firmware current ensures:
+          - Known vulnerabilities are patched promptly.
+          - Devices have the latest security features and hardening improvements.
+          - The network is not exposed to publicly disclosed exploits targeting older firmware.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Devices** and review devices showing available updates.
+        2. Click **Update** on each device with a pending firmware upgrade.
+        3. If devices fail to update, verify they are properly adopted and can reach the update servers.
+        4. Enable **Auto Update** under **Settings > System > Firmware** to prevent future drift.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204911424
+        title: UniFi firmware management
+
+  - uid: mondoo-unifi-security-unused-ports-disabled
+    title: Ensure unused switch ports are disabled
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/soc2-2017: soc2-control-cc6-8-1
+    mql: |
+      unifi.devices.where(type == "usw").all(ports.where(isUplink == false && up == false && enabled == true).length == 0)
+    docs:
+      desc: |
+        This check ensures that switch ports without an active link are administratively disabled on UniFi switches, reducing the physical attack surface.
+
+        **Why this matters**
+
+        Enabled but unused switch ports allow anyone with physical access to connect a device to the network:
+          - An attacker can plug into an unused port to gain network access without any authentication.
+          - Rogue devices connected to open ports can perform network reconnaissance, MITM attacks, or data exfiltration.
+          - Disabling unused ports is a fundamental network access control measure required by most security frameworks.
+          - This check excludes uplink ports, which must remain enabled for switch interconnection.
+
+        Disabling unused ports ensures:
+          - Only authorized ports with active connections are operational.
+          - Physical access alone is not sufficient to gain network connectivity.
+          - Unauthorized device connections are prevented at the switch level.
+      remediation: |
+        **Using UniFi Network Console**
+
+        1. Go to **Devices** and select the switch.
+        2. Click on the **Ports** tab.
+        3. For each port that does not have an active device connected, disable the port.
+        4. Re-enable ports only when a device is being connected.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360042281174
+        title: UniFi switch configuration
