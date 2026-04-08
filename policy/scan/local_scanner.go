@@ -1125,8 +1125,6 @@ func filterPolicyMrns(b *policy.Bundle, filters []string) []string {
 }
 
 func (s *localAssetScanner) prepareAsset() error {
-	var hub policy.PolicyHub = s.services
-
 	// if we are using upstream we get the bundle from there, no need to check for a bundle here
 	if !s.job.UpstreamConfig.Incognito {
 		return nil
@@ -1150,9 +1148,27 @@ func (s *localAssetScanner) prepareAsset() error {
 		return errors.New("no bundle provided to run")
 	}
 
-	// set the bundle in local store
-	_, err := hub.SetBundle(s.job.Ctx, s.job.Bundle)
+	// Ensure any required providers declared in the bundle are installed
+	// before we try to compile it. This handles bundles with Require metadata.
+	if s.job.Bundle.HasRequirements() {
+		if err := s.job.Bundle.EnsureRequirements(true); err != nil {
+			log.Warn().Err(err).Msg("failed to ensure some policy requirements, continuing with available providers")
+		}
+	}
+
+	// Compile the bundle tolerating queries for unavailable providers.
+	// The upstream bundle may contain queries for all providers in the space,
+	// but we only need the ones relevant to this asset's platform.
+	conf := s.services.NewCompilerConfig()
+	bundleMap, err := s.job.Bundle.CompileExt(s.job.Ctx, policy.BundleCompileConf{
+		CompilerConfig: conf,
+		Library:        s.services.DataLake,
+		RemoveFailing:  true,
+	})
 	if err != nil {
+		return err
+	}
+	if err := s.services.SetBundleMap(s.job.Ctx, bundleMap); err != nil {
 		return err
 	}
 
