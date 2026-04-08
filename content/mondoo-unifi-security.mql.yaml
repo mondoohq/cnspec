@@ -71,7 +71,7 @@ policies:
         checks:
           - uid: mondoo-unifi-security-dhcp-snooping-enabled
           - uid: mondoo-unifi-security-stp-enabled
-          - uid: mondoo-unifi-security-unused-ports-disabled
+
       - title: Management & Controller
         filters: asset.platform == "unifi"
         checks:
@@ -1054,20 +1054,22 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-4
     mql: |
-      unifi.networks.where(name == /guest|iot/i).all(networkIsolationEnabled == true)
+      unifi.networks.where(purpose == "guest").all(networkIsolationEnabled == true)
     docs:
       desc: |
-        This check ensures that network isolation is enabled on all networks with "guest" or "iot" in the name, preventing inter-VLAN routing to other network segments.
+        This check ensures that network isolation is enabled on all networks with a guest purpose, preventing inter-VLAN routing to other network segments.
+
+        **Note:** This check identifies guest networks by the `purpose` attribute set in the UniFi controller, not by network name. IoT and other sensitive networks should also have isolation enabled; consider adding a custom check for your environment's IoT network naming convention.
 
         **Why this matters**
 
-        Without network isolation, devices on guest and IoT networks can route traffic to other VLANs on the network:
-          - Compromised IoT devices can be used as a pivot point to reach corporate resources.
+        Without network isolation, devices on guest networks can route traffic to other VLANs on the network:
           - Guest users can scan and access services on internal network segments.
+          - Compromised devices on guest networks can be used as a pivot point to reach corporate resources.
           - IoT devices with known vulnerabilities become a direct threat to sensitive systems.
 
         Network isolation ensures:
-          - Traffic from guest and IoT networks cannot reach other VLANs.
+          - Traffic from guest networks cannot reach other VLANs.
           - Compromised devices are contained within their own network segment.
           - Defense-in-depth is maintained even if firewall rules are misconfigured.
       remediation: |
@@ -1167,10 +1169,10 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
       compliance/soc2-2017: soc2-control-cc7-2-1
     mql: |
-      unifi.vpnClients.where(enabled == true).all(status != "disconnected")
+      unifi.vpnClients.where(enabled == true).all(status == "connected")
     docs:
       desc: |
-        This check ensures that all enabled VPN client tunnels (typically site-to-site connections) are not in a disconnected state.
+        This check ensures that all enabled VPN client tunnels (typically site-to-site connections) have a connected status. Tunnels in error, connecting, or disconnected states will fail this check.
 
         **Why this matters**
 
@@ -1267,42 +1269,4 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/204911424
         title: UniFi firmware management
 
-  - uid: mondoo-unifi-security-unused-ports-disabled
-    title: Ensure unused switch ports are disabled
-    impact: 50
-    tags:
-      compliance/iso-27001-2022: iso-27001-2022-a-8-9
-      compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-ps-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/soc2-2017: soc2-control-cc6-8-1
-    mql: |
-      unifi.devices.where(type == "usw").all(ports.where(isUplink == false && up == false && enabled == true).length == 0)
-    docs:
-      desc: |
-        This check ensures that switch ports without an active link are administratively disabled on UniFi switches, reducing the physical attack surface.
 
-        **Why this matters**
-
-        Enabled but unused switch ports allow anyone with physical access to connect a device to the network:
-          - An attacker can plug into an unused port to gain network access without any authentication.
-          - Rogue devices connected to open ports can perform network reconnaissance, MITM attacks, or data exfiltration.
-          - Disabling unused ports is a fundamental network access control measure required by most security frameworks.
-          - This check excludes uplink ports, which must remain enabled for switch interconnection.
-
-        Disabling unused ports ensures:
-          - Only authorized ports with active connections are operational.
-          - Physical access alone is not sufficient to gain network connectivity.
-          - Unauthorized device connections are prevented at the switch level.
-      remediation: |
-        **Using UniFi Network Console**
-
-        1. Go to **Devices** and select the switch.
-        2. Click on the **Ports** tab.
-        3. For each port that does not have an active device connected, disable the port.
-        4. Re-enable ports only when a device is being connected.
-    refs:
-      - url: https://help.ui.com/hc/en-us/articles/360042281174
-        title: UniFi switch configuration
