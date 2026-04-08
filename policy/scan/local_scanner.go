@@ -394,6 +394,24 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		if err != nil {
 			return nil, err
 		}
+
+		// Fetch server-controlled scan parameters before scanning. Server-enabled
+		// features are layered on top of any features already set on the context
+		// by local config — we never replace or disable what the user asked for.
+		resp, err := services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
+		if err != nil {
+			log.Warn().Err(err).Msg("could not get server scan parameters")
+		} else if len(resp.EnabledFeatures) > 0 {
+			log.Info().Strs("features", resp.EnabledFeatures).Msg("server activated features")
+			for _, name := range resp.EnabledFeatures {
+				f, ok := mql.FeaturesValue[name]
+				if !ok {
+					log.Warn().Str("feature", name).Msg("unknown server feature, ignoring")
+					continue
+				}
+				ctx = mql.WithFeature(ctx, f)
+			}
+		}
 	}
 
 	parallelism := int(job.Parallelism)
