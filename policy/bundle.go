@@ -1627,8 +1627,8 @@ func (c *bundleCache) compileRisk(risk *RiskFactor, policy *Policy) error {
 		_, err := check.RefreshChecksumAndType(c.lookupQuery, mqlc.EmptyPropsHandler, c.conf.CompilerConfig)
 		if err != nil {
 			if c.conf.RemoveFailing {
-				panic("REMOVE FAILING risk factors")
-				// c.removeQueries[check.Mrn] = struct{}{}
+				log.Warn().Err(err).Str("mrn", check.Mrn).Msg("failed to compile risk factor, skipping")
+				c.removeQueries[check.Mrn] = struct{}{}
 			} else {
 				c.errors = append(c.errors, multierr.Wrap(err, "failed to validate query '"+check.Mrn+"'"))
 			}
