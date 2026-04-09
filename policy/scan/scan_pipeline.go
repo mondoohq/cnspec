@@ -1,4 +1,4 @@
-// Copyright Mondoo, Inc. 2026
+// Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
 package scan
@@ -23,7 +23,7 @@ import (
 
 const (
 	maxConnections = 50 // max assets connected (with runtimes open) at a time
-	syncBatchSize  = 10 // how many assets to batch for upstream sync calls
+	syncBatchSize  = 5  // how many assets to batch for upstream sync calls
 )
 
 // ---------------------------------------------------------------------------
@@ -154,17 +154,26 @@ func newScanDispatcher(
 	}
 }
 
-// Submit dispatches a single asset for scanning. It blocks if all worker
-// slots are currently occupied. The asset's connSem slot is released after
-// the scan completes and the asset is closed.
+// Submit queues an asset for scanning. It returns immediately — the
+// goroutine waits for a worker slot (scanSem) internally. This lets
+// the batcher and tree walker continue without blocking on worker
+// availability. The asset's connSem slot is released after the scan
+// completes and the asset is closed.
 func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedAsset) {
-	d.scanSem <- struct{}{} // acquire scan slot
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		defer func() { <-d.scanSem }()
 		defer func() { <-d.connSem }()
 		defer d.reportPanic(tracked)
+
+		d.scanSem <- struct{}{} // acquire worker slot (blocks until one is free)
+		defer func() { <-d.scanSem }()
+
+		// Mark asset as in-progress as soon as we pick it up, not when
+		// the first query result comes back.
+		if len(tracked.Asset.PlatformIds) > 0 {
+			d.multiprogress.OnProgress(tracked.Asset.PlatformIds[0], 0)
+		}
 
 		d.scanSingleAsset(ctx, tracked)
 	}()

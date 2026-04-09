@@ -692,6 +692,15 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 		vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
 	}
 
+	// Mark the asset as completed in the progress bar only after all
+	// post-scan work (report collection, vuln report fetch) is done so
+	// the visual state accurately reflects when the worker slot is freed.
+	if results != nil && results.Report != nil && results.Report.Score.Rating().Text() == policy.ScoreRatingTextUnrated {
+		job.ProgressReporter.NotApplicable()
+	} else {
+		job.ProgressReporter.Completed()
+	}
+
 	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
 	// such that it is visible from the logs.
 	if s.disableProgressBar {
@@ -912,11 +921,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return ar, err
 	}
 	s.ProgressReporter.Score(report.Score.Rating().Text())
-	if report.Score.Rating().Text() == policy.ScoreRatingTextUnrated {
-		s.ProgressReporter.NotApplicable()
-	} else {
-		s.ProgressReporter.Completed()
-	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("scan complete")
 	ar.Report = report
