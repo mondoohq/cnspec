@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-proxmox-security
     name: Mondoo Proxmox VE Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -342,7 +342,24 @@ queries:
       - title: Proxmox VE Certificate Management
         url: https://pve.proxmox.com/wiki/Certificate_Management
     mql: |
-      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -issuer").stdout.contains("Proxmox") == false
+      command("bash -c 'openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -issuer -subject | sed -e s/^issuer=// -e s/^subject=// | sort -u | wc -l'").stdout.trim == "2"
+    docs:
+      desc: |
+        A self-signed certificate has identical issuer and subject distinguished
+        names. This check extracts both fields, strips the `issuer=` / `subject=`
+        prefix, and verifies they differ (the deduplicated result has two lines).
+
+        Default Proxmox installations ship a self-signed certificate issued by
+        the cluster-internal CA. Replace with a certificate from a trusted
+        public CA (for example via ACME/Let's Encrypt) for production
+        environments.
+      remediation:
+        - id: cli
+          desc: |
+            Configure ACME/Let's Encrypt:
+
+                pvenode acme account register default <email>
+                pvenode acme cert order
 
   - uid: mondoo-proxmox-security-cert-is-not-expiring
     title: Ensure TLS certificate does not expire within 30 days
@@ -351,7 +368,7 @@ queries:
       - title: CWE-298 Improper Validation of Certificate Expiration
         url: https://cwe.mitre.org/data/definitions/298.html
     mql: |
-      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -checkend 2592000 && echo valid || echo expiring").stdout.trim == "valid"
+      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout >/dev/null 2>&1 && echo valid || echo expiring").stdout.trim == "valid"
 
   # =================================================================
   # LXC Container Security
@@ -369,8 +386,24 @@ queries:
         url: https://csrc.nist.gov/publications/detail/sp/800-190/final
     mql: |
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
-        file(_.path).content.contains("unprivileged: 0") == false
+        file(_.path).content.contains("unprivileged: 1")
       )
+    docs:
+      desc: |
+        In Proxmox VE, LXC containers are **privileged by default** when the
+        `unprivileged:` directive is missing from the configuration file. This
+        check requires the explicit presence of `unprivileged: 1` in every
+        container config under `/etc/pve/lxc/`.
+
+        Privileged containers run with host-level root capabilities. The LXC
+        project considers privileged containers unsafe.
+      remediation:
+        - id: cli
+          desc: |
+            Recreate privileged containers as unprivileged:
+
+                vzdump <ctid> --storage local --compress zstd
+                pct restore <new-ctid> <backup> --unprivileged 1
 
   - uid: mondoo-proxmox-security-ct-nesting-is-disabled
     title: Ensure container nesting is disabled
@@ -491,8 +524,22 @@ queries:
         url: https://cwe.mitre.org/data/definitions/319.html
     mql: |
       file("/etc/pve/datacenter.cfg").content.contains("type=secure") ||
-      file("/etc/pve/datacenter.cfg").content.contains("migration: secure") ||
-      file("/etc/pve/datacenter.cfg").content.contains("migration:") == false
+      file("/etc/pve/datacenter.cfg").content.contains("migration: secure")
+    docs:
+      desc: |
+        Live migration sends VM memory contents over the network. It must be
+        transmitted via an encrypted SSH tunnel (`migration: type=secure`).
+
+        This check requires explicit configuration of `migration: type=secure`
+        in `/etc/pve/datacenter.cfg`. While PVE 8+ uses secure migration by
+        default when the setting is absent, PVE 7.x does not. Require explicit
+        configuration for consistency across versions.
+      remediation:
+        - id: cli
+          desc: |
+            Enable encrypted migration:
+
+                pvesh set /cluster/options --migration type=secure
 
   # =================================================================
   # Network Segmentation
@@ -675,13 +722,20 @@ queries:
       - title: CWE-262 Not Using Password Aging
         url: https://cwe.mitre.org/data/definitions/262.html
     mql: |
-      logindefs.params { _['PASS_MAX_DAYS'] == /^([1-9]|[1-9][0-9]|[1-2][0-9][0-9]|3[0-5][0-9]|36[0-5])$/ }
+      logindefs.params["PASS_MAX_DAYS"].trim == /^\s*([1-9][0-9]?|[1-2][0-9]{2}|3[0-5][0-9]|36[0-5])\s*$/
+    docs:
+      desc: |
+        The `PASS_MAX_DAYS` setting in `/etc/login.defs` defines the maximum
+        age of a password. Values over 365 days (Debian default is 99999,
+        meaning never expire) allow stale credentials to persist indefinitely.
+
+        Expected: 1-365 days.
 
   - uid: mondoo-proxmox-security-login-defs-pass-min-days
     title: Ensure minimum days between password changes is 1 or more
     impact: 50
     mql: |
-      logindefs.params { _['PASS_MIN_DAYS'] == /^[1-9][0-9]*$/ }
+      logindefs.params["PASS_MIN_DAYS"].trim == /^\s*[1-9][0-9]*\s*$/
 
   - uid: mondoo-proxmox-security-login-defs-encrypt-method
     title: Ensure password hashing algorithm is SHA-512 or YESCRYPT
@@ -690,7 +744,8 @@ queries:
       - title: CWE-916 Use of Password Hash With Insufficient Computational Effort
         url: https://cwe.mitre.org/data/definitions/916.html
     mql: |
-      logindefs.params { _['ENCRYPT_METHOD'] == "SHA512" || _['ENCRYPT_METHOD'] == "YESCRYPT" }
+      logindefs.params["ENCRYPT_METHOD"].trim == "SHA512" ||
+      logindefs.params["ENCRYPT_METHOD"].trim == "YESCRYPT"
 
   # =================================================================
   # Cron Security
