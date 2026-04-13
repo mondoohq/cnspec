@@ -1,0 +1,737 @@
+# Copyright Mondoo, Inc. 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-proxmox-security
+    name: Mondoo Proxmox VE Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: linux,debian,proxmox
+    authors:
+      - name: Nico Pfeifer
+        email: 99395643+langen1x@users.noreply.github.com
+    require:
+      - provider: os
+    summary: Secure Proxmox Virtual Environment hypervisor, VM, and container configurations
+    docs:
+      desc: |
+        The Mondoo Proxmox VE Security policy provides security checks for Proxmox Virtual Environment hypervisors. The policy validates hypervisor configuration, VM and LXC container settings, cluster security, network segmentation, storage encryption, and kernel hardening that is specific to virtualization.
+
+        This policy is designed to run alongside the [Mondoo Linux Security](mondoo-linux-security.mql.yaml) policy, which covers the underlying Debian OS hardening. Checks already covered by the Linux baseline (SSH hardening, CIS kernel sysctls, auditd basics, file permissions, unnecessary services) are deliberately NOT duplicated here.
+
+        This policy covers the following critical security areas:
+
+        - **Proxmox Access Control**: Two-factor authentication, Administrator role assignment, user.cfg permissions, Proxmox-adapted SSH root login
+        - **Account Security**: Empty password detection, UID 0 account validation
+        - **Proxmox Firewall**: Cluster firewall enablement, default DROP policy, per-node firewall, rule presence
+        - **TLS Certificates**: Self-signed certificate detection, expiration monitoring
+        - **LXC Container Security**: Unprivileged containers, nesting, AppArmor, per-interface firewall, mknod/FUSE restrictions, resource limits
+        - **QEMU/KVM VM Security**: Spectre/Meltdown mitigations, per-interface firewall, raw QEMU argument restrictions
+        - **Cluster & Migration**: Corosync encryption, live migration encryption
+        - **Network Segmentation**: VLAN usage across VMs and containers
+        - **Storage & Backup Encryption**: Proxmox Backup Server encryption, master key configuration
+        - **Proxmox-specific Hardening**: KSM disable, PCI ACS override prevention, IOMMU, auditd watches on /etc/pve/
+        - **ANSSI-BP-028 Kernel Hardening**: Unprivileged BPF, kexec_load, perf_event_paranoid, TTY line discipline autoload, TCP RFC1337, user namespaces
+        - **Password Policy**: login.defs extensions (PASS_MAX_DAYS, PASS_MIN_DAYS, ENCRYPT_METHOD)
+        - **Cron Security**: Permissions on /etc/crontab, /etc/cron.d, /etc/cron.hourly
+
+        ## Scan a Proxmox VE host
+
+        Install cnspec on the Proxmox VE node, then scan locally:
+
+        ```bash
+        cnspec scan local --policy mondoo-proxmox-security --policy mondoo-linux-security
+        ```
+
+        ## References
+
+        - [CIS Debian Linux Benchmark](https://www.cisecurity.org/benchmark/debian_linux)
+        - [ANSSI-BP-028 Linux Hardening Guide](https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf)
+        - [BSI SYS.1.5 Virtualisation](https://www.bsi.bund.de/)
+        - [Proxmox VE Administration Guide](https://pve.proxmox.com/pve-docs/pve-admin-guide.html)
+        - [Proxmox VE Firewall Documentation](https://pve.proxmox.com/wiki/Firewall)
+    scoring_system: highest impact
+
+    groups:
+      - title: "Proxmox Access Control"
+        filters: |
+          file("/etc/pve/datacenter.cfg").exists
+        checks:
+          - uid: mondoo-proxmox-security-tfa-is-configured
+          - uid: mondoo-proxmox-security-admin-role-is-not-overused
+          - uid: mondoo-proxmox-security-user-cfg-permissions
+          - uid: mondoo-proxmox-security-ssh-root-login-is-key-only
+          - uid: mondoo-proxmox-security-ssh-password-auth-is-disabled
+
+      - title: "Account Security"
+        filters: |
+          file("/etc/shadow").exists
+        checks:
+          - uid: mondoo-proxmox-security-no-uid-zero-aside-from-root
+          - uid: mondoo-proxmox-security-no-empty-passwords
+
+      - title: "Proxmox Firewall"
+        filters: |
+          file("/etc/pve/datacenter.cfg").exists
+        checks:
+          - uid: mondoo-proxmox-security-cluster-firewall-is-enabled
+          - uid: mondoo-proxmox-security-firewall-default-policy-is-drop
+          - uid: mondoo-proxmox-security-node-firewall-is-enabled
+          - uid: mondoo-proxmox-security-firewall-has-rules
+
+      - title: "Proxmox TLS Certificates"
+        filters: |
+          file("/etc/pve/local/pve-ssl.pem").exists
+        checks:
+          - uid: mondoo-proxmox-security-cert-is-not-selfsigned
+          - uid: mondoo-proxmox-security-cert-is-not-expiring
+
+      - title: "LXC Container Security"
+        filters: |
+          file("/etc/pve/lxc").exists
+        checks:
+          - uid: mondoo-proxmox-security-ct-all-unprivileged
+          - uid: mondoo-proxmox-security-ct-nesting-is-disabled
+          - uid: mondoo-proxmox-security-ct-apparmor-is-enforced
+          - uid: mondoo-proxmox-security-ct-firewall-is-enabled
+          - uid: mondoo-proxmox-security-ct-no-mknod
+          - uid: mondoo-proxmox-security-ct-no-fuse
+          - uid: mondoo-proxmox-security-ct-memory-limit-is-set
+
+      - title: "QEMU/KVM VM Security"
+        filters: |
+          file("/etc/pve/qemu-server").exists
+        checks:
+          - uid: mondoo-proxmox-security-vm-spectre-mitigations
+          - uid: mondoo-proxmox-security-vm-firewall-is-enabled
+          - uid: mondoo-proxmox-security-vm-no-raw-qemu-args
+
+      - title: "Cluster & Migration"
+        filters: |
+          file("/etc/pve/corosync.conf").exists
+        checks:
+          - uid: mondoo-proxmox-security-corosync-is-encrypted
+          - uid: mondoo-proxmox-security-migration-is-encrypted
+
+      - title: "Network Segmentation"
+        filters: |
+          file("/etc/pve/qemu-server").exists || file("/etc/pve/lxc").exists
+        checks:
+          - uid: mondoo-proxmox-security-vlans-are-in-use
+
+      - title: "Storage & Backup Encryption"
+        filters: |
+          file("/etc/pve/storage.cfg").exists
+        checks:
+          - uid: mondoo-proxmox-security-pbs-encryption-is-enabled
+          - uid: mondoo-proxmox-security-pbs-master-key-is-configured
+
+      - title: "Proxmox-specific Hardening"
+        filters: |
+          file("/etc/pve/datacenter.cfg").exists
+        checks:
+          - uid: mondoo-proxmox-security-ksm-is-disabled
+          - uid: mondoo-proxmox-security-no-pci-acs-override
+          - uid: mondoo-proxmox-security-iommu-is-enabled
+          - uid: mondoo-proxmox-security-auditd-watches-pve-directory
+          - uid: mondoo-proxmox-security-update-repo-is-configured
+          - uid: mondoo-proxmox-security-automatic-updates-are-enabled
+
+      - title: "ANSSI-BP-028 Kernel Hardening"
+        filters: |
+          file("/etc/pve/datacenter.cfg").exists
+        checks:
+          - uid: mondoo-proxmox-security-unprivileged-bpf-disabled
+          - uid: mondoo-proxmox-security-kexec-load-disabled
+          - uid: mondoo-proxmox-security-perf-event-paranoid
+          - uid: mondoo-proxmox-security-tty-ldisc-autoload-disabled
+          - uid: mondoo-proxmox-security-tcp-rfc1337-enabled
+          - uid: mondoo-proxmox-security-user-namespace-unprivileged
+
+      - title: "Password Policy"
+        filters: |
+          file("/etc/login.defs").exists
+        checks:
+          - uid: mondoo-proxmox-security-login-defs-pass-max-days
+          - uid: mondoo-proxmox-security-login-defs-pass-min-days
+          - uid: mondoo-proxmox-security-login-defs-encrypt-method
+
+      - title: "Cron Security"
+        filters: |
+          file("/etc/crontab").exists
+        checks:
+          - uid: mondoo-proxmox-security-crontab-permissions
+          - uid: mondoo-proxmox-security-cron-d-permissions
+          - uid: mondoo-proxmox-security-cron-hourly-permissions
+
+queries:
+  # =================================================================
+  # Proxmox Access Control
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-tfa-is-configured
+    title: Ensure two-factor authentication is configured
+    impact: 90
+    refs:
+      - title: CWE-308 Use of Single-factor Authentication
+        url: https://cwe.mitre.org/data/definitions/308.html
+      - title: Proxmox VE Two-Factor Authentication
+        url: https://pve.proxmox.com/wiki/User_Management#pveum_tfa_auth
+    mql: |
+      ["/etc/pve/priv/tfa.cfg"].where(file(_).exists) {
+        file(_).size > 10
+      }
+      file("/etc/pve/priv/tfa.cfg").exists
+    docs:
+      desc: |
+        Two-factor authentication (TOTP, WebAuthn, YubiKey) should be configured
+        for all administrative users. Proxmox stores TFA data in
+        `/etc/pve/priv/tfa.cfg`.
+
+        Expected: file exists and size > 10 bytes
+      remediation:
+        - id: cli
+          desc: |
+            Enforce TFA realm-wide:
+
+                pveum realm modify pam --tfa type=totp
+
+  - uid: mondoo-proxmox-security-admin-role-is-not-overused
+    title: Ensure the Administrator role is assigned sparingly
+    impact: 70
+    refs:
+      - title: CWE-269 Improper Privilege Management
+        url: https://cwe.mitre.org/data/definitions/269.html
+      - title: Proxmox VE User Management
+        url: https://pve.proxmox.com/wiki/User_Management
+    mql: |
+      file("/etc/pve/user.cfg").content.lines.where(_ == /Administrator/).length <= 3
+    docs:
+      desc: |
+        The `Administrator` role grants unrestricted access. Use least-privilege
+        roles such as `PVEAdmin`, `PVEVMAdmin`, `PVEAuditor`.
+
+        Expected: <= 3 Administrator role assignments in /etc/pve/user.cfg
+
+  - uid: mondoo-proxmox-security-user-cfg-permissions
+    title: Ensure /etc/pve/user.cfg is not world-readable
+    impact: 70
+    refs:
+      - title: CWE-732 Incorrect Permission Assignment for Critical Resource
+        url: https://cwe.mitre.org/data/definitions/732.html
+    mql: |
+      file("/etc/pve/user.cfg") {
+        permissions.other_readable == false
+      }
+
+  - uid: mondoo-proxmox-security-ssh-root-login-is-key-only
+    title: Ensure SSH root login is key-only (Proxmox-adapted)
+    impact: 95
+    refs:
+      - title: CWE-522 Insufficiently Protected Credentials
+        url: https://cwe.mitre.org/data/definitions/522.html
+      - title: Proxmox VE Cluster SSH Requirements
+        url: https://pve.proxmox.com/wiki/Cluster_Manager#_preparation
+    mql: |
+      sshd.config.params["PermitRootLogin"] == "prohibit-password" ||
+      sshd.config.params["PermitRootLogin"] == "without-password" ||
+      sshd.config.params["PermitRootLogin"] == "forced-commands-only"
+    docs:
+      desc: |
+        Proxmox VE requires root SSH access for cluster operations and live
+        migration. The Linux baseline check `ssh-root-login-is-disabled`
+        requires `PermitRootLogin no` which BREAKS PVE clusters.
+
+        This PVE-adapted check accepts `prohibit-password` as the correct value.
+
+        Expected value: `prohibit-password`
+
+  - uid: mondoo-proxmox-security-ssh-password-auth-is-disabled
+    title: Ensure SSH password authentication is disabled
+    impact: 85
+    refs:
+      - title: CWE-521 Weak Password Requirements
+        url: https://cwe.mitre.org/data/definitions/521.html
+    mql: |
+      sshd.config.params["PasswordAuthentication"] == "no"
+
+  # =================================================================
+  # Account Security
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-no-uid-zero-aside-from-root
+    title: Ensure root is the only UID 0 account
+    impact: 100
+    refs:
+      - title: CWE-250 Execution with Unnecessary Privileges
+        url: https://cwe.mitre.org/data/definitions/250.html
+    mql: |
+      users.where(uid == 0).list.all(name == "root")
+
+  - uid: mondoo-proxmox-security-no-empty-passwords
+    title: Ensure no password field is empty in /etc/shadow
+    impact: 100
+    refs:
+      - title: CWE-258 Empty Password in Configuration File
+        url: https://cwe.mitre.org/data/definitions/258.html
+    mql: |
+      file("/etc/shadow").content.lines.where(_ == /^[^:]+::/).length == 0
+
+  # =================================================================
+  # Proxmox Firewall
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-cluster-firewall-is-enabled
+    title: Ensure cluster firewall is enabled
+    impact: 95
+    refs:
+      - title: CWE-693 Protection Mechanism Failure
+        url: https://cwe.mitre.org/data/definitions/693.html
+      - title: Proxmox VE Firewall
+        url: https://pve.proxmox.com/wiki/Firewall
+    mql: |
+      ["/etc/pve/firewall/cluster.fw"].where(file(_).exists) {
+        file(_).content.lines.where(_ == /^enable:\s*1/).length > 0
+      }
+      file("/etc/pve/firewall/cluster.fw").exists
+    docs:
+      remediation:
+        - id: cli
+          desc: pvesh set /cluster/firewall/options --enable 1
+
+  - uid: mondoo-proxmox-security-firewall-default-policy-is-drop
+    title: Ensure firewall default input policy is DROP
+    impact: 90
+    refs:
+      - title: CWE-284 Improper Access Control
+        url: https://cwe.mitre.org/data/definitions/284.html
+    mql: |
+      ["/etc/pve/firewall/cluster.fw"].where(file(_).exists) {
+        file(_).content.lines.where(_ == /^policy_in:\s*DROP/).length > 0
+      }
+      file("/etc/pve/firewall/cluster.fw").exists
+
+  - uid: mondoo-proxmox-security-node-firewall-is-enabled
+    title: Ensure host firewall is enabled on each node
+    impact: 85
+    mql: |
+      files.find(from: "/etc/pve/nodes", regex: "host.fw$", type: "file").list.all(
+        file(_.path).content.lines.where(_ == /^enable:\s*1/).length > 0
+      )
+
+  - uid: mondoo-proxmox-security-firewall-has-rules
+    title: Ensure at least one firewall rule is configured
+    impact: 75
+    mql: |
+      ["/etc/pve/firewall/cluster.fw"].where(file(_).exists) {
+        file(_).content.lines.where(_ == /^(IN|OUT|GROUP)/).length > 0
+      }
+      file("/etc/pve/firewall/cluster.fw").exists
+
+  # =================================================================
+  # Proxmox TLS Certificates
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-cert-is-not-selfsigned
+    title: Ensure PVE does not use self-signed certificates
+    impact: 70
+    refs:
+      - title: CWE-295 Improper Certificate Validation
+        url: https://cwe.mitre.org/data/definitions/295.html
+      - title: Proxmox VE Certificate Management
+        url: https://pve.proxmox.com/wiki/Certificate_Management
+    mql: |
+      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -issuer").stdout.contains("Proxmox") == false
+
+  - uid: mondoo-proxmox-security-cert-is-not-expiring
+    title: Ensure TLS certificate does not expire within 30 days
+    impact: 95
+    refs:
+      - title: CWE-298 Improper Validation of Certificate Expiration
+        url: https://cwe.mitre.org/data/definitions/298.html
+    mql: |
+      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -checkend 2592000 && echo valid || echo expiring").stdout.trim == "valid"
+
+  # =================================================================
+  # LXC Container Security
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-ct-all-unprivileged
+    title: Ensure all LXC containers are unprivileged
+    impact: 90
+    refs:
+      - title: CWE-250 Execution with Unnecessary Privileges
+        url: https://cwe.mitre.org/data/definitions/250.html
+      - title: Proxmox VE Linux Container Security
+        url: https://pve.proxmox.com/wiki/Linux_Container#_security_considerations
+      - title: NIST SP 800-190 Container Security
+        url: https://csrc.nist.gov/publications/detail/sp/800-190/final
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.contains("unprivileged: 0") == false
+      )
+
+  - uid: mondoo-proxmox-security-ct-nesting-is-disabled
+    title: Ensure container nesting is disabled
+    impact: 70
+    refs:
+      - title: CWE-653 Improper Isolation or Compartmentalization
+        url: https://cwe.mitre.org/data/definitions/653.html
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.contains("nesting=1") == false
+      )
+
+  - uid: mondoo-proxmox-security-ct-apparmor-is-enforced
+    title: Ensure containers do not disable AppArmor
+    impact: 85
+    refs:
+      - title: CWE-653 Improper Isolation or Compartmentalization
+        url: https://cwe.mitre.org/data/definitions/653.html
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.contains("apparmor.profile: unconfined") == false
+      )
+
+  - uid: mondoo-proxmox-security-ct-firewall-is-enabled
+    title: Ensure container network interfaces have firewall enabled
+    impact: 75
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.lines.where(_ == /^net[0-9]+:/).all(_.contains("firewall=1"))
+      )
+
+  - uid: mondoo-proxmox-security-ct-no-mknod
+    title: Ensure containers do not allow mknod
+    impact: 65
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.contains("mknod=1") == false
+      )
+
+  - uid: mondoo-proxmox-security-ct-no-fuse
+    title: Ensure containers do not allow FUSE mounts
+    impact: 60
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.contains("fuse=1") == false
+      )
+
+  - uid: mondoo-proxmox-security-ct-memory-limit-is-set
+    title: Ensure all containers have a memory limit
+    impact: 65
+    refs:
+      - title: CWE-400 Uncontrolled Resource Consumption
+        url: https://cwe.mitre.org/data/definitions/400.html
+    mql: |
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.lines.where(_ == /^memory:/).length > 0
+      )
+
+  # =================================================================
+  # QEMU/KVM VM Security
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-vm-spectre-mitigations
+    title: Ensure VMs have Spectre/Meltdown CPU mitigations
+    impact: 80
+    refs:
+      - title: CVE-2017-5753 Spectre Variant 1
+        url: https://nvd.nist.gov/vuln/detail/CVE-2017-5753
+      - title: CVE-2017-5715 Spectre Variant 2
+        url: https://nvd.nist.gov/vuln/detail/CVE-2017-5715
+      - title: CVE-2018-3639 Speculative Store Bypass
+        url: https://nvd.nist.gov/vuln/detail/CVE-2018-3639
+    mql: |
+      files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.lines.where(_ == /^cpu:/).all(
+          _.contains("host") || _.contains("spec-ctrl")
+        )
+      )
+
+  - uid: mondoo-proxmox-security-vm-firewall-is-enabled
+    title: Ensure VM network interfaces have firewall enabled
+    impact: 75
+    mql: |
+      files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.lines.where(_ == /^net[0-9]+:/).all(_.contains("firewall=1"))
+      )
+
+  - uid: mondoo-proxmox-security-vm-no-raw-qemu-args
+    title: Ensure VMs do not use raw QEMU arguments
+    impact: 70
+    refs:
+      - title: CWE-94 Improper Control of Generation of Code
+        url: https://cwe.mitre.org/data/definitions/94.html
+    mql: |
+      files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
+        file(_.path).content.lines.where(_ == /^args:/).length == 0
+      )
+
+  # =================================================================
+  # Cluster & Migration
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-corosync-is-encrypted
+    title: Ensure Corosync cluster communication is encrypted
+    impact: 85
+    refs:
+      - title: CWE-319 Cleartext Transmission of Sensitive Information
+        url: https://cwe.mitre.org/data/definitions/319.html
+    mql: |
+      file("/etc/pve/corosync.conf").content.contains("transport: knet") ||
+      file("/etc/pve/corosync.conf").content.contains("secauth: on")
+
+  - uid: mondoo-proxmox-security-migration-is-encrypted
+    title: Ensure live migration traffic is encrypted
+    impact: 80
+    refs:
+      - title: CWE-319 Cleartext Transmission of Sensitive Information
+        url: https://cwe.mitre.org/data/definitions/319.html
+    mql: |
+      file("/etc/pve/datacenter.cfg").content.contains("type=secure") ||
+      file("/etc/pve/datacenter.cfg").content.contains("migration: secure") ||
+      file("/etc/pve/datacenter.cfg").content.contains("migration:") == false
+
+  # =================================================================
+  # Network Segmentation
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-vlans-are-in-use
+    title: Ensure VLAN segmentation is used
+    impact: 75
+    refs:
+      - title: CWE-923 Improper Restriction of Communication Channel
+        url: https://cwe.mitre.org/data/definitions/923.html
+      - title: BSI SYS.1.5 Virtualisation
+        url: https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/Grundschutz/IT-GS-Kompendium/IT_Grundschutz_Kompendium_Edition2023.pdf
+    mql: |
+      files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.any(
+        file(_.path).content.contains("tag=")
+      ) ||
+      files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.any(
+        file(_.path).content.contains("tag=")
+      )
+
+  # =================================================================
+  # Storage & Backup Encryption
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-pbs-encryption-is-enabled
+    title: Ensure PBS backups are encrypted
+    impact: 80
+    refs:
+      - title: CWE-311 Missing Encryption of Sensitive Data
+        url: https://cwe.mitre.org/data/definitions/311.html
+      - title: Proxmox Backup Server Encryption
+        url: https://pbs.proxmox.com/docs/backup-client.html#encryption
+    mql: |
+      file("/etc/pve/storage.cfg").content.contains("pbs:") == false ||
+      files.find(from: "/etc/pve/priv/storage", regex: ".enc$", type: "file").list.length > 0
+
+  - uid: mondoo-proxmox-security-pbs-master-key-is-configured
+    title: Ensure PBS master key is configured
+    impact: 65
+    mql: |
+      file("/etc/pve/storage.cfg").content.contains("pbs:") == false ||
+      files.find(from: "/etc/pve/priv/storage", regex: ".master.pem$", type: "file").list.length > 0
+
+  # =================================================================
+  # Proxmox-specific Hardening
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-ksm-is-disabled
+    title: Ensure Kernel Samepage Merging (KSM) is disabled
+    impact: 60
+    refs:
+      - title: CWE-200 Exposure of Sensitive Information
+        url: https://cwe.mitre.org/data/definitions/200.html
+      - title: Side-channel attacks on KSM
+        url: https://www.usenix.org/system/files/conference/usenixsecurity15/sec15-paper-razavi.pdf
+    mql: |
+      file("/sys/kernel/mm/ksm/run").content.trim == "0"
+    docs:
+      desc: |
+        KSM enables memory deduplication across VMs, which exposes a
+        side-channel attack surface in multi-tenant hypervisor environments.
+
+  - uid: mondoo-proxmox-security-no-pci-acs-override
+    title: Ensure PCI ACS override is not enabled
+    impact: 95
+    refs:
+      - title: CWE-284 Improper Access Control
+        url: https://cwe.mitre.org/data/definitions/284.html
+      - title: Proxmox PCI Passthrough IOMMU Groups
+        url: https://pve.proxmox.com/wiki/PCI_Passthrough#_verify_iommu_isolation
+    mql: |
+      file("/proc/cmdline").content.contains("pcie_acs_override") == false
+    docs:
+      desc: |
+        `pcie_acs_override` breaks IOMMU group isolation, allowing cross-VM
+        memory access via DMA. Never use in production.
+
+  - uid: mondoo-proxmox-security-iommu-is-enabled
+    title: Ensure IOMMU is enabled for PCI passthrough isolation
+    impact: 75
+    mql: |
+      file("/proc/cmdline").content.contains("intel_iommu=on") ||
+      file("/proc/cmdline").content.contains("amd_iommu=on") ||
+      file("/proc/cmdline").content.contains("iommu=pt")
+
+  - uid: mondoo-proxmox-security-auditd-watches-pve-directory
+    title: Ensure audit rules monitor /etc/pve/ changes
+    impact: 70
+    props:
+      - uid: mondooProxmoxSecurityAuditFiles
+        title: Return the content from all /etc/audit/rules.d and /etc/audit/audit.rules
+        mql: |
+          mondooProxmoxSecurityAuditFiles = files.find(from: "/etc/audit/rules.d", regex: '.*\.rules$', type: "file").list.map(path) + ["/etc/audit/audit.rules"]
+          return mondooProxmoxSecurityAuditFiles.where(file(_).exists).map(file(_).content.lines.where(_ == /^[^#]/))
+    mql: |
+      props.mondooProxmoxSecurityAuditFiles.any(_.contains(/^(\s+)?\-w\s+\/etc\/pve/))
+
+  - uid: mondoo-proxmox-security-update-repo-is-configured
+    title: Ensure a PVE update repository is configured
+    impact: 55
+    mql: |
+      file("/etc/apt/sources.list.d/pve-enterprise.list").exists ||
+      file("/etc/apt/sources.list.d/pve-no-subscription.list").exists
+
+  - uid: mondoo-proxmox-security-automatic-updates-are-enabled
+    title: Ensure unattended-upgrades is installed
+    impact: 65
+    mql: |
+      package("unattended-upgrades").installed
+
+  # =================================================================
+  # ANSSI-BP-028 Kernel Hardening
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-unprivileged-bpf-disabled
+    title: Ensure unprivileged BPF is disabled
+    impact: 70
+    refs:
+      - title: ANSSI-BP-028 R9 Linux Hardening
+        url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
+      - title: CVE-2021-4204 eBPF privilege escalation
+        url: https://nvd.nist.gov/vuln/detail/CVE-2021-4204
+      - title: CVE-2022-23222 eBPF privilege escalation
+        url: https://nvd.nist.gov/vuln/detail/CVE-2022-23222
+    mql: |
+      kernel.parameters["kernel.unprivileged_bpf_disabled"] == 1 ||
+      kernel.parameters["kernel.unprivileged_bpf_disabled"] == 2
+
+  - uid: mondoo-proxmox-security-kexec-load-disabled
+    title: Ensure kexec_load is disabled
+    impact: 70
+    refs:
+      - title: ANSSI-BP-028 R5 Linux Hardening
+        url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
+    mql: |
+      kernel.parameters["kernel.kexec_load_disabled"] == 1
+
+  - uid: mondoo-proxmox-security-perf-event-paranoid
+    title: Ensure perf_event_paranoid is at least 2
+    impact: 60
+    refs:
+      - title: ANSSI-BP-028 R10 Linux Hardening
+        url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
+    mql: |
+      kernel.parameters["kernel.perf_event_paranoid"] >= 2
+
+  - uid: mondoo-proxmox-security-tty-ldisc-autoload-disabled
+    title: Ensure TTY line discipline autoload is disabled
+    impact: 50
+    refs:
+      - title: ANSSI-BP-028 R12 Linux Hardening
+        url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
+    mql: |
+      kernel.parameters["dev.tty.ldisc_autoload"] == 0
+
+  - uid: mondoo-proxmox-security-tcp-rfc1337-enabled
+    title: Ensure TCP RFC1337 protection is enabled
+    impact: 50
+    mql: |
+      kernel.parameters["net.ipv4.tcp_rfc1337"] == 1
+    docs:
+      desc: |
+        Protects against TIME-WAIT assassination hazards.
+
+  - uid: mondoo-proxmox-security-user-namespace-unprivileged
+    title: Ensure unprivileged user namespaces setting is explicit
+    impact: 40
+    mql: |
+      kernel.parameters["kernel.unprivileged_userns_clone"] != null
+
+  # =================================================================
+  # Password Policy
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-login-defs-pass-max-days
+    title: Ensure password expiration is 365 days or less
+    impact: 60
+    refs:
+      - title: CWE-262 Not Using Password Aging
+        url: https://cwe.mitre.org/data/definitions/262.html
+    mql: |
+      logindefs.params { _['PASS_MAX_DAYS'] == /^([1-9]|[1-9][0-9]|[1-2][0-9][0-9]|3[0-5][0-9]|36[0-5])$/ }
+
+  - uid: mondoo-proxmox-security-login-defs-pass-min-days
+    title: Ensure minimum days between password changes is 1 or more
+    impact: 50
+    mql: |
+      logindefs.params { _['PASS_MIN_DAYS'] == /^[1-9][0-9]*$/ }
+
+  - uid: mondoo-proxmox-security-login-defs-encrypt-method
+    title: Ensure password hashing algorithm is SHA-512 or YESCRYPT
+    impact: 80
+    refs:
+      - title: CWE-916 Use of Password Hash With Insufficient Computational Effort
+        url: https://cwe.mitre.org/data/definitions/916.html
+    mql: |
+      logindefs.params { _['ENCRYPT_METHOD'] == "SHA512" || _['ENCRYPT_METHOD'] == "YESCRYPT" }
+
+  # =================================================================
+  # Cron Security
+  # =================================================================
+
+  - uid: mondoo-proxmox-security-crontab-permissions
+    title: Ensure permissions on /etc/crontab are configured
+    impact: 60
+    refs:
+      - title: CWE-732 Incorrect Permission Assignment for Critical Resource
+        url: https://cwe.mitre.org/data/definitions/732.html
+    mql: |
+      file("/etc/crontab") {
+        user.name == "root"
+        group.name == "root"
+        permissions.group_readable == false
+        permissions.group_writeable == false
+        permissions.group_executable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+      }
+
+  - uid: mondoo-proxmox-security-cron-d-permissions
+    title: Ensure permissions on /etc/cron.d are configured
+    impact: 60
+    mql: |
+      file("/etc/cron.d") {
+        permissions.group_writeable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+      }
+
+  - uid: mondoo-proxmox-security-cron-hourly-permissions
+    title: Ensure permissions on /etc/cron.hourly are configured
+    impact: 60
+    mql: |
+      file("/etc/cron.hourly") {
+        permissions.group_writeable == false
+        permissions.other_readable == false
+        permissions.other_writeable == false
+        permissions.other_executable == false
+      }
