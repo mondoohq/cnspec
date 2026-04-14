@@ -489,7 +489,12 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 
 		// Acquire a connection slot before connecting. This limits the
 		// total number of assets with open runtimes/gRPC connections.
-		sc.connSem <- struct{}{}
+		select {
+		case sc.connSem <- struct{}{}:
+		case <-ctx.Done():
+			sc.multiprogress.Close()
+			return ctx.Err()
+		}
 
 		connected, err := sc.explorer.Connect(child)
 		if err != nil {
@@ -544,7 +549,12 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	// concurrently with any still-running child scans — no need to wait
 	// for children to finish first.
 	if len(node.Asset.PlatformIds) > 0 {
-		sc.connSem <- struct{}{}
+		select {
+		case sc.connSem <- struct{}{}:
+		case <-ctx.Done():
+			sc.multiprogress.Close()
+			return ctx.Err()
+		}
 		if err := sc.batcher.Add(ctx, node); err != nil {
 			return err
 		}
@@ -676,6 +686,20 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 
 	job.Reporter.AddReport(job.Asset, results)
 
+	// Mark the asset as completed in the progress bar after all post-scan
+	// work finishes. Deferred so early returns (e.g. vuln report fetch
+	// failure) still mark the asset as done — the scan itself succeeded.
+	defer func() {
+		if results != nil && results.Report != nil && results.Report.Score.Rating().Text() == policy.ScoreRatingTextUnrated {
+			job.ProgressReporter.NotApplicable()
+		} else {
+			job.ProgressReporter.Completed()
+		}
+		if s.disableProgressBar {
+			log.Info().Msgf("scan for asset %s completed", job.Asset.HumanName())
+		}
+	}()
+
 	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
 	// The vuln report is relevant only when we have an aggregate reporter
 	if vulnReporter, isAggregateReporter := job.Reporter.(VulnReporter); upstream != nil && isAggregateReporter {
@@ -691,21 +715,6 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 			return
 		}
 		vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
-	}
-
-	// Mark the asset as completed in the progress bar only after all
-	// post-scan work (report collection, vuln report fetch) is done so
-	// the visual state accurately reflects when the worker slot is freed.
-	if results != nil && results.Report != nil && results.Report.Score.Rating().Text() == policy.ScoreRatingTextUnrated {
-		job.ProgressReporter.NotApplicable()
-	} else {
-		job.ProgressReporter.Completed()
-	}
-
-	// When the progress bar is disabled there's no feedback when an asset is done scanning. Adding this message
-	// such that it is visible from the logs.
-	if s.disableProgressBar {
-		log.Info().Msgf("scan for asset %s completed", job.Asset.HumanName())
 	}
 }
 
