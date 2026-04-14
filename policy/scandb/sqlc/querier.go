@@ -17,7 +17,7 @@ type Querier interface {
 	GetScore(ctx context.Context, qrID string) (Score, error)
 	// Data operations
 	InsertData(ctx context.Context, arg InsertDataParams) error
-	// Copyright (c) Mondoo, Inc.
+	// Copyright Mondoo, Inc. 2024, 2026
 	// SPDX-License-Identifier: BUSL-1.1
 	// Metadata operations
 	InsertMetadata(ctx context.Context, arg InsertMetadataParams) error

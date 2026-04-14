@@ -84,14 +84,15 @@ type msgFiltered struct{ count int }
 
 // modelTodoList is the bubbletea model for the TODO-list progress UI.
 type modelTodoList struct {
-	tasks        []*task
-	taskIndex    map[string]*task
-	lock         sync.Mutex
-	startTime    time.Time
-	includeScore bool
-	spinner      spinner.Model
-	discovered   int
-	filtered     int
+	tasks          []*task
+	taskIndex      map[string]*task
+	lock           sync.Mutex
+	startTime      time.Time
+	includeScore   bool
+	spinner        spinner.Model
+	discovered     int
+	filtered       int
+	peakInProgress int // high-water mark for in-progress count; view never shrinks below this
 }
 
 func newTodoListModel(opts ...Option) *modelTodoList {
@@ -285,21 +286,30 @@ func (m *modelTodoList) View() string {
 	}
 
 	// Layout: completed (top) → in-progress → pending (bottom).
-	// Always show exactly 5 visible lines (when enough tasks exist).
-	// Completed: last 2 (drop oldest as new ones finish).
-	// Pending: fill remaining slots to reach 5 total.
-	const visibleSlots = 5
+	// The view starts at minVisibleSlots and grows to accommodate the peak
+	// number of in-progress items seen so far, but never shrinks back down.
+	const minVisibleSlots = 5
 
 	inProgressCount := len(inProgress)
-	// Start with base 2 finished slots, then fill remaining with pending.
-	// If pending can't fill its slots, give them back to finished.
-	showFinished := min(len(finished), 2)
-	showPending := min(len(pending), visibleSlots-showFinished-inProgressCount)
-	if showPending < 0 {
-		showPending = 0
+	if inProgressCount > m.peakInProgress {
+		m.peakInProgress = inProgressCount
 	}
-	// Expand finished into any unused slots so the list stays at 5.
-	showFinished = min(len(finished), visibleSlots-showPending-inProgressCount)
+	visibleSlots := max(minVisibleSlots, m.peakInProgress)
+
+	var showFinished, showPending int
+	if inProgressCount >= visibleSlots {
+		// More in-progress items than visible slots — show them all,
+		// hide finished and pending until in-progress count drops.
+		showFinished = 0
+		showPending = 0
+	} else {
+		// Start with base 2 finished slots, then fill remaining with pending.
+		// If pending can't fill its slots, give them back to finished.
+		showFinished = min(len(finished), 2)
+		showPending = min(len(pending), visibleSlots-showFinished-inProgressCount)
+		// Expand finished into any unused slots so the list stays at 5.
+		showFinished = min(len(finished), visibleSlots-showPending-inProgressCount)
+	}
 
 	// Finished tasks on top (most recent 2)
 	for _, t := range finished[len(finished)-showFinished:] {
