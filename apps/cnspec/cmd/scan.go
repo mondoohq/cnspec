@@ -79,7 +79,7 @@ func init() {
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
 	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report. Currently only supports AWS SQS topic URLs and local files")
-	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel (requires ParallelScanning feature flag)")
+	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel. A value of 0 or 1 means sequential")
 }
 
 var scanCmd = &cobra.Command{
