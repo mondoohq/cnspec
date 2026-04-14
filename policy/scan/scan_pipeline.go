@@ -90,6 +90,12 @@ func (sb *syncBatcher) Flush(ctx context.Context) error {
 
 	if len(readyToSync) > 0 {
 		if err := syncBatchWithUpstream(ctx, readyToSync, sb.services, sb.spaceMrn, sb.recording); err != nil {
+			for _, tracked := range batch {
+				if closeErr := sb.dispatcher.explorer.CloseAsset(tracked); closeErr != nil {
+					log.Error().Err(closeErr).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+				}
+				<-sb.dispatcher.connSem
+			}
 			return err
 		}
 	}
@@ -166,8 +172,16 @@ func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedA
 		defer func() { <-d.connSem }()
 		defer d.reportPanic(tracked)
 
-		d.scanSem <- struct{}{} // acquire worker slot (blocks until one is free)
-		defer func() { <-d.scanSem }()
+		// Acquire worker slot, respecting context cancellation.
+		select {
+		case d.scanSem <- struct{}{}:
+			defer func() { <-d.scanSem }()
+		case <-ctx.Done():
+			if err := d.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+			}
+			return
+		}
 
 		// Mark asset as in-progress as soon as we pick it up, not when
 		// the first query result comes back.
