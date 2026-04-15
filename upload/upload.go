@@ -1,4 +1,4 @@
-// Copyright Mondoo, Inc. 2026
+// Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
 package upload
@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-// FileToSignedURL uploads a file to a pre-signed URL via HTTP PUT.
+// UploadFile uploads a file to a pre-signed URL via HTTP PUT.
 // It sets the provided headers and Content-Type to application/octet-stream.
 // The caller is responsible for checking the response status code and closing
 // the response body.
