@@ -16,6 +16,7 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb"
+	"go.mondoo.com/cnspec/v13/upload"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
@@ -105,35 +106,7 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 	headers := uploadUrl.Headers
 	url := uploadUrl.Url
 
-	// Open the scan database file
-	file, err := os.Open(scanDataPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Create HTTP request for upload
-	req, err := http.NewRequestWithContext(ctx, "PUT", url, file)
-	if err != nil {
-		return err
-	}
-
-	// Set required headers from the signed URL
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	// Add file size header
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	req.ContentLength = fileInfo.Size()
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	// Perform the upload
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := upload.UploadFile(ctx, url, headers, scanDataPath, "application/octet-stream")
 	if err != nil {
 		return err
 	}
