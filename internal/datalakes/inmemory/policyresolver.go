@@ -479,6 +479,29 @@ func (db *Db) GetReport(ctx context.Context, assetMrn string, qrID string) (*pol
 		return nil, err
 	}
 
+	if risks != nil && resolvedPolicy.CollectorJob.RiskDataQueries != nil {
+		for _, risk := range risks.Items {
+			info, ok := resolvedPolicy.CollectorJob.RiskDataQueries[risk.Mrn]
+			if !ok || len(info.DatapointChecksums) == 0 {
+				continue
+			}
+
+			riskData := make(map[string]*llx.Result, len(info.DatapointChecksums))
+			for queryMrn, checksum := range info.DatapointChecksums {
+				d, err := db.writer.GetData(ctx, assetMrn, checksum)
+				if err != nil {
+					continue
+				}
+				if d != nil {
+					riskData[queryMrn] = d
+				}
+			}
+			if len(riskData) > 0 {
+				risk.Data = riskData
+			}
+		}
+	}
+
 	res := policy.Report{
 		EntityMrn:             assetMrn,
 		ScoringMrn:            qrID,

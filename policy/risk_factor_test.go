@@ -48,6 +48,12 @@ func genRiskFactor1() RiskFactor {
 				Mql: "2 == 2",
 			},
 		},
+		Queries: []*Mquery{
+			{
+				Mrn: "//some/query/1",
+				Mql: "asset.name",
+			},
+		},
 		Scope: ScopeType_SOFTWARE_AND_RESOURCE,
 		Magnitude: &RiskMagnitude{
 			Value:   0.5,
@@ -153,6 +159,16 @@ func TestRiskFactor_Checksums(t *testing.T) {
 		// 6
 		func(rf RiskFactor) RiskFactor {
 			rf.Action = Action_DEACTIVATE
+			return rf
+		},
+		// 7 - removing data queries changes execution checksum
+		func(rf RiskFactor) RiskFactor {
+			rf.Queries = nil
+			return rf
+		},
+		// 8 - changing data query MQL changes execution checksum
+		func(rf RiskFactor) RiskFactor {
+			rf.Queries[0].Mql = "asset.version"
 			return rf
 		},
 	}

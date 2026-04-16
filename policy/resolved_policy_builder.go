@@ -42,17 +42,18 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		bundleMrn:            bundleMrn,
 		bundleMap:            bundleMap,
 		assetFilters:         assetFilterMap,
-		nodes:                map[string]rpBuilderNode{},
-		reportsToEdges:       map[string][]string{},
-		reportsFromEdges:     map[string][]edgeImpact{},
-		policyScoringSystems: map[string]ScoringSystem{},
-		actionOverrides:      map[string]Action{},
-		impactOverrides:      map[string]*Impact{},
-		riskMagnitudes:       map[string]*RiskMagnitude{},
-		propsCache:           NewPropsCache(),
-		queryTypes:           map[string]queryType{},
-		now:                  now,
-		disabledQuery:        disabledQuery,
+		nodes:                    map[string]rpBuilderNode{},
+		reportsToEdges:           map[string][]string{},
+		reportsFromEdges:         map[string][]edgeImpact{},
+		policyScoringSystems:     map[string]ScoringSystem{},
+		actionOverrides:          map[string]Action{},
+		impactOverrides:          map[string]*Impact{},
+		riskMagnitudes:           map[string]*RiskMagnitude{},
+		propsCache:               NewPropsCache(),
+		queryTypes:               map[string]queryType{},
+		now:                      now,
+		disabledQuery:            disabledQuery,
+		riskDataQueryInfos:       map[string][]riskDataQueryRef{},
 	}
 
 	builder.gatherGlobalInfoFromPolicy(policyObj)
@@ -83,12 +84,13 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 			Queries:  map[string]*ExecutionQuery{},
 		},
 		CollectorJob: &CollectorJob{
-			Checksum:         "",
-			ReportingJobs:    map[string]*ReportingJob{},
-			ReportingQueries: map[string]*StringArray{},
-			Datapoints:       map[string]*DataQueryInfo{},
-			RiskMrns:         map[string]*StringArray{},
-			RiskFactors:      map[string]*RiskFactor{},
+			Checksum:           "",
+			ReportingJobs:      map[string]*ReportingJob{},
+			ReportingQueries:   map[string]*StringArray{},
+			Datapoints:         map[string]*DataQueryInfo{},
+			RiskMrns:           map[string]*StringArray{},
+			RiskFactors:        map[string]*RiskFactor{},
+			RiskDataQueries:  map[string]*RiskDataInfo{},
 		},
 		Filters:                assetFilters,
 		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
@@ -135,6 +137,28 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 	for _, n := range nonPrunables {
 		if err := walk(n); err != nil {
 			return nil, err
+		}
+	}
+
+	// Populate RiskDataQueries after all nodes are built, since execution query
+	// nodes may be built after their sibling risk factor node during graph walk.
+	for riskMrn, queryRefs := range builder.riskDataQueryInfos {
+		info := &RiskDataInfo{DatapointChecksums: map[string]string{}}
+		for _, ref := range queryRefs {
+			eq, ok := resolvedPolicy.ExecutionJob.Queries[ref.codeId]
+			if !ok {
+				continue
+			}
+			// Pick the entrypoint datapoint — the primary result of the query
+			entrypoints := eq.Code.CodeV2.Entrypoints()
+			if len(entrypoints) == 0 {
+				continue
+			}
+			checksum := eq.Code.CodeV2.Checksums[entrypoints[0]]
+			info.DatapointChecksums[ref.queryMrn] = checksum
+		}
+		if len(info.DatapointChecksums) > 0 {
+			resolvedPolicy.CollectorJob.RiskDataQueries[riskMrn] = info
 		}
 	}
 
@@ -239,6 +263,14 @@ type resolvedPolicyBuilder struct {
 	// a query because there is a bug in the clients that expects those reporting jobs to be connected
 	// to a query that runs
 	disabledQuery *Mquery
+	// riskDataQueryInfos maps risk factor MRN → list of data query refs.
+	// Populated during addRiskFactor, consumed after graph walk to build RiskDataQueries.
+	riskDataQueryInfos map[string][]riskDataQueryRef
+}
+
+type riskDataQueryRef struct {
+	codeId   string
+	queryMrn string
 }
 
 type edgeImpact struct {
@@ -486,6 +518,7 @@ func (n *rpBuilderRiskFactorNode) build(rp *ResolvedPolicy, data *rpBuilderData)
 		}
 		rp.CollectorJob.RiskMrns[uuid].Items = append(rp.CollectorJob.RiskMrns[uuid].Items, risk.Mrn)
 	}
+
 	return nil
 }
 
@@ -574,6 +607,9 @@ func (b *resolvedPolicyBuilder) collectQueryTypes(policyMrn string, acc map[stri
 	for _, r := range policy.RiskFactors {
 		for _, c := range r.Checks {
 			accumulate(c.Mrn, queryTypeScoring)
+		}
+		for _, q := range r.Queries {
+			accumulate(q.Mrn, queryTypeData)
 		}
 	}
 }
@@ -863,7 +899,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 
 	hasMatchingRiskFactor := false
 	for _, r := range policy.RiskFactors {
-		if len(r.Checks) == 0 {
+		if len(r.Checks) == 0 && len(r.Queries) == 0 {
 			continue
 		}
 
@@ -993,11 +1029,36 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 		// }
 	}
 
-	if len(selectedCodeIds) == 0 {
+	selectedDataQueryRefs := make([]riskDataQueryRef, 0, len(riskFactor.Queries))
+	for _, q := range riskFactor.Queries {
+		if len(q.Variants) != 0 {
+			return false, fmt.Errorf("risk factor data queries cannot have variants")
+		}
+		if !b.anyFilterMatches(q.Filters) {
+			continue
+		}
+
+		b.propsCache.Add(q.Props...)
+
+		b.addNode(&rpBuilderExecutionQueryNode{query: q})
+		b.addEdge(q.CodeId, riskFactor.Mrn, &Impact{Scoring: ScoringSystem_IGNORE_SCORE, Action: Action_IGNORE})
+
+		selectedDataQueryRefs = append(selectedDataQueryRefs, riskDataQueryRef{codeId: q.CodeId, queryMrn: q.Mrn})
+	}
+
+	if len(selectedCodeIds) == 0 && len(selectedDataQueryRefs) == 0 {
 		return false, nil
 	}
 
-	b.addNode(&rpBuilderRiskFactorNode{riskFactor: riskFactor, magnitude: b.riskMagnitudes[riskFactor.Mrn], selectedCodeIds: selectedCodeIds})
+	if len(selectedDataQueryRefs) > 0 {
+		b.riskDataQueryInfos[riskFactor.Mrn] = selectedDataQueryRefs
+	}
+
+	b.addNode(&rpBuilderRiskFactorNode{
+		riskFactor:      riskFactor,
+		magnitude:       b.riskMagnitudes[riskFactor.Mrn],
+		selectedCodeIds: selectedCodeIds,
+	})
 
 	return true, nil
 }
