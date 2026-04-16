@@ -42,18 +42,18 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		bundleMrn:            bundleMrn,
 		bundleMap:            bundleMap,
 		assetFilters:         assetFilterMap,
-		nodes:                    map[string]rpBuilderNode{},
-		reportsToEdges:           map[string][]string{},
-		reportsFromEdges:         map[string][]edgeImpact{},
-		policyScoringSystems:     map[string]ScoringSystem{},
-		actionOverrides:          map[string]Action{},
-		impactOverrides:          map[string]*Impact{},
-		riskMagnitudes:           map[string]*RiskMagnitude{},
-		propsCache:               NewPropsCache(),
-		queryTypes:               map[string]queryType{},
-		now:                      now,
-		disabledQuery:            disabledQuery,
-		riskDataQueryInfos:       map[string][]riskDataQueryRef{},
+		nodes:                map[string]rpBuilderNode{},
+		reportsToEdges:       map[string][]string{},
+		reportsFromEdges:     map[string][]edgeImpact{},
+		policyScoringSystems: map[string]ScoringSystem{},
+		actionOverrides:      map[string]Action{},
+		impactOverrides:      map[string]*Impact{},
+		riskMagnitudes:       map[string]*RiskMagnitude{},
+		propsCache:           NewPropsCache(),
+		queryTypes:           map[string]queryType{},
+		now:                  now,
+		disabledQuery:        disabledQuery,
+		riskDataQueryInfos:   map[string][]riskDataQueryRef{},
 	}
 
 	builder.gatherGlobalInfoFromPolicy(policyObj)
@@ -84,12 +84,12 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 			Queries:  map[string]*ExecutionQuery{},
 		},
 		CollectorJob: &CollectorJob{
-			Checksum:           "",
-			ReportingJobs:      map[string]*ReportingJob{},
-			ReportingQueries:   map[string]*StringArray{},
-			Datapoints:         map[string]*DataQueryInfo{},
-			RiskMrns:           map[string]*StringArray{},
-			RiskFactors:        map[string]*RiskFactor{},
+			Checksum:         "",
+			ReportingJobs:    map[string]*ReportingJob{},
+			ReportingQueries: map[string]*StringArray{},
+			Datapoints:       map[string]*DataQueryInfo{},
+			RiskMrns:         map[string]*StringArray{},
+			RiskFactors:      map[string]*RiskFactor{},
 			RiskDataQueries:  map[string]*RiskDataInfo{},
 		},
 		Filters:                assetFilters,
@@ -899,7 +899,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 
 	hasMatchingRiskFactor := false
 	for _, r := range policy.RiskFactors {
-		if len(r.Checks) == 0 && len(r.Queries) == 0 {
+		if len(r.Checks) == 0 {
 			continue
 		}
 
