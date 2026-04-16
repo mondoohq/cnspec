@@ -1789,10 +1789,14 @@ policies:
           - uid: sshd-service-running
             mql: 1 == 1
         queries:
-          - uid: data-query-string
+          - uid: data-query-name
             mql: asset.name
           - uid: data-query-int
             mql: return 42
+          - uid: data-query-title
+            mql: asset.title
+          - uid: data-query-family
+            mql: asset.family
 `)
 
 	_, err = srv.SetBundle(ctx, b)
@@ -1815,11 +1819,16 @@ policies:
 
 	// Verify resolution produced the expected risk data query mappings
 	riskMrn := riskFactorMrn("sshd-service")
-	stringQueryMrn := queryMrn("data-query-string")
-	intQueryMrn := queryMrn("data-query-int")
 	require.Contains(t, rp.CollectorJob.RiskDataQueries, riskMrn)
-	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, stringQueryMrn)
-	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, intQueryMrn)
+	dpChecksums := rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums
+	nameQueryMrn := queryMrn("data-query-name")
+	require.Contains(t, dpChecksums, nameQueryMrn)
+	intQueryMrn := queryMrn("data-query-int")
+	require.Contains(t, dpChecksums, intQueryMrn)
+	titleQueryMrn := queryMrn("data-query-title")
+	require.Contains(t, dpChecksums, titleQueryMrn)
+	familyQueryMrn := queryMrn("data-query-family")
+	require.Contains(t, dpChecksums, familyQueryMrn)
 
 	// Execute: MQL runs against the mock runtime, BufferedCollector stores
 	// data and risks via StoreResults automatically
@@ -1846,16 +1855,31 @@ policies:
 			found = true
 			require.True(t, risk.IsDetected)
 			require.NotNil(t, risk.Data)
-			require.Len(t, risk.Data, 2)
+			require.Len(t, risk.Data, 4)
 
 			// asset.name returns "arch" from the LinuxMock recording
-			require.Contains(t, risk.Data, stringQueryMrn)
-			assert.Equal(t, "arch", string(risk.Data[stringQueryMrn].Data.Value))
+			require.Contains(t, risk.Data, nameQueryMrn)
+			assert.Equal(t, "arch", string(risk.Data[nameQueryMrn].Data.Value))
 
-			// return 42 produces an int
+			// return 42 produces a hardcoded int
 			require.Contains(t, risk.Data, intQueryMrn)
 			assert.Equal(t, llx.IntPrimitive(42).Type, risk.Data[intQueryMrn].Data.Type)
 			assert.Equal(t, llx.IntPrimitive(42).Value, risk.Data[intQueryMrn].Data.Value)
+
+			// asset.title returns the full title including kind
+			require.Contains(t, risk.Data, titleQueryMrn)
+			assert.Equal(t, "Arch Linux, Bare metal system", string(risk.Data[titleQueryMrn].Data.Value))
+
+			// asset.family returns ["arch", "linux", "unix", "os"]
+			require.Contains(t, risk.Data, familyQueryMrn)
+			familyData := risk.Data[familyQueryMrn].Data
+			require.NotNil(t, familyData)
+			require.NotNil(t, familyData.Array)
+			familyValues := make([]string, len(familyData.Array))
+			for i, p := range familyData.Array {
+				familyValues[i] = string(p.Value)
+			}
+			assert.Equal(t, []string{"arch", "linux", "unix", "os"}, familyValues)
 			break
 		}
 	}
