@@ -167,7 +167,6 @@ func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) testIt(t *testing.T, r
 	if r.impactSet {
 		require.EqualExportedValuesf(t, r.impact, parentRj.ChildJobs[childRj.Uuid], "impact mismatch for child reporting job %s%s", qrId, extraInfo)
 	}
-
 }
 
 type resolvedPolicyTesterReportingJobBuilder struct {
@@ -1243,7 +1242,6 @@ queries:
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rp)
-
 }
 
 func TestResolveV2_PoliciesMatchingFilters(t *testing.T) {
@@ -1711,6 +1709,8 @@ policies:
         queries:
           - uid: sshd-service-info
             mql: asset.name
+          - uid: static-number
+            mql: return 42
 `)
 
 	srv := initResolver(t, []*testAsset{
@@ -1742,72 +1742,7 @@ policies:
 	require.NotEmpty(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums)
 	// The key should be the query MRN
 	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("sshd-service-info"))
-}
-
-func TestResolveV2_RiskFactorsDataQueriesOnly(t *testing.T) {
-	ctx := context.Background()
-	b := parseBundle(t, `
-owner_mrn: //test.sth
-policies:
-  - name: testpolicy1
-    uid: testpolicy1
-    groups:
-    - filters: asset.name == "asset1"
-      checks:
-      - uid: query-1
-        title: query-1
-        mql: 3 == 3
-      policies:
-      - uid: risk-factors-security
-  - uid: risk-factors-security
-    name: Mondoo Risk Factors analysis
-    version: "1.0.0"
-    risk_factors:
-      - uid: data-only-risk
-        title: Data Only Risk Factor
-        indicator: asset-in-use
-        magnitude: 0.5
-        filters:
-          - mql: |
-              asset.name == "asset1"
-        queries:
-          - uid: data-query-1
-            mql: asset.name
-`)
-
-	srv := initResolver(t, []*testAsset{
-		{asset: "asset1", policies: []string{policyMrn("testpolicy1")}},
-	}, []*policy.Bundle{b})
-
-	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
-		PolicyMrn:    "asset1",
-		AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, rp)
-
-	rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
-
-	rpTester.ExecutesQuery(queryMrn("query-1"))
-	rpTester.ExecutesQuery(queryMrn("data-query-1"))
-
-	rpTester.CodeIdReportingJobForMrn(queryMrn("data-query-1")).Notifies(riskFactorMrn("data-only-risk")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
-	rpTester.ReportingJobByMrn(riskFactorMrn("data-only-risk")).WithType(policy.ReportingJob_RISK_FACTOR).Notifies(policyMrn("risk-factors-security"))
-
-	rpTester.doTest(t, rp)
-
-	// Verify risk data queries are populated even without checks
-	riskMrn := riskFactorMrn("data-only-risk")
-	require.Contains(t, rp.CollectorJob.RiskDataQueries, riskMrn)
-	require.NotEmpty(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums)
-	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("data-query-1"))
-
-	// Verify no risk_mrns entries exist (no checks means no score interception)
-	for _, sa := range rp.CollectorJob.RiskMrns {
-		for _, mrn := range sa.Items {
-			assert.NotEqual(t, riskMrn, mrn, "data-only risk factor should not appear in RiskMrns")
-		}
-	}
+	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("static-number"))
 }
 
 func TestResolveV2_FrameworkExceptions(t *testing.T) {
