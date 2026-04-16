@@ -1797,6 +1797,23 @@ policies:
             mql: asset.title
           - uid: data-query-family
             mql: asset.family
+      - uid: platform-eol
+        title: Platform approaching end of life
+        indicator: asset-in-use
+        magnitude: 0.4
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: platform-eol-check
+            mql: 1 == 1
+        queries:
+          - uid: data-query-platform
+            mql: asset.platform
+          - uid: data-query-version
+            mql: asset.version
+          - uid: data-query-arch
+            mql: asset.arch
 `)
 
 	_, err = srv.SetBundle(ctx, b)
@@ -1817,18 +1834,41 @@ policies:
 	require.NoError(t, err)
 	require.NotNil(t, rp)
 
-	// Verify resolution produced the expected risk data query mappings
-	riskMrn := riskFactorMrn("sshd-service")
-	require.Contains(t, rp.CollectorJob.RiskDataQueries, riskMrn)
-	dpChecksums := rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums
+	// Verify resolution produced the expected risk data query mappings for both risk factors
+	sshdRiskMrn := riskFactorMrn("sshd-service")
+	require.Contains(t, rp.CollectorJob.RiskDataQueries, sshdRiskMrn)
+	sshdChecksums := rp.CollectorJob.RiskDataQueries[sshdRiskMrn].DatapointChecksums
+
 	nameQueryMrn := queryMrn("data-query-name")
-	require.Contains(t, dpChecksums, nameQueryMrn)
+	require.Contains(t, sshdChecksums, nameQueryMrn)
+
 	intQueryMrn := queryMrn("data-query-int")
-	require.Contains(t, dpChecksums, intQueryMrn)
+	require.Contains(t, sshdChecksums, intQueryMrn)
+
 	titleQueryMrn := queryMrn("data-query-title")
-	require.Contains(t, dpChecksums, titleQueryMrn)
+	require.Contains(t, sshdChecksums, titleQueryMrn)
+
 	familyQueryMrn := queryMrn("data-query-family")
-	require.Contains(t, dpChecksums, familyQueryMrn)
+	require.Contains(t, sshdChecksums, familyQueryMrn)
+
+	eolRiskMrn := riskFactorMrn("platform-eol")
+	require.Contains(t, rp.CollectorJob.RiskDataQueries, eolRiskMrn)
+	eolChecksums := rp.CollectorJob.RiskDataQueries[eolRiskMrn].DatapointChecksums
+
+	platformQueryMrn := queryMrn("data-query-platform")
+	require.Contains(t, eolChecksums, platformQueryMrn)
+
+	versionQueryMrn := queryMrn("data-query-version")
+	require.Contains(t, eolChecksums, versionQueryMrn)
+
+	archQueryMrn := queryMrn("data-query-arch")
+	require.Contains(t, eolChecksums, archQueryMrn)
+
+	// Verify no cross-contamination between risk factors
+	require.NotContains(t, sshdChecksums, platformQueryMrn)
+	require.NotContains(t, sshdChecksums, versionQueryMrn)
+	require.NotContains(t, eolChecksums, nameQueryMrn)
+	require.NotContains(t, eolChecksums, intQueryMrn)
 
 	// Execute: MQL runs against the mock runtime, BufferedCollector stores
 	// data and risks via StoreResults automatically
@@ -1848,11 +1888,11 @@ policies:
 	require.NotNil(t, report)
 	require.NotNil(t, report.Risks)
 
-	// Verify the risk factor data contains actual MQL results
-	var found bool
+	// Verify the sshd-service risk factor data
+	var foundSshd bool
 	for _, risk := range report.Risks.Items {
-		if risk.Mrn == riskMrn {
-			found = true
+		if risk.Mrn == sshdRiskMrn {
+			foundSshd = true
 			require.True(t, risk.IsDetected)
 			require.NotNil(t, risk.Data)
 			require.Len(t, risk.Data, 4)
@@ -1880,10 +1920,43 @@ policies:
 				familyValues[i] = string(p.Value)
 			}
 			assert.Equal(t, []string{"arch", "linux", "unix", "os"}, familyValues)
+
+			// sshd-service must NOT contain platform-eol's queries
+			assert.NotContains(t, risk.Data, platformQueryMrn)
+			assert.NotContains(t, risk.Data, versionQueryMrn)
+			assert.NotContains(t, risk.Data, archQueryMrn)
 			break
 		}
 	}
-	require.True(t, found, "scored risk factor %s not found in report", riskMrn)
+	require.True(t, foundSshd, "scored risk factor %s not found in report", sshdRiskMrn)
+
+	// Verify the platform-eol risk factor data
+	var foundEol bool
+	for _, risk := range report.Risks.Items {
+		if risk.Mrn == eolRiskMrn {
+			foundEol = true
+			require.True(t, risk.IsDetected)
+			require.NotNil(t, risk.Data)
+			require.Len(t, risk.Data, 3)
+
+			require.Contains(t, risk.Data, platformQueryMrn)
+			assert.Equal(t, "arch", string(risk.Data[platformQueryMrn].Data.Value))
+
+			require.Contains(t, risk.Data, versionQueryMrn)
+			assert.Equal(t, "rolling", string(risk.Data[versionQueryMrn].Data.Value))
+
+			require.Contains(t, risk.Data, archQueryMrn)
+			assert.Equal(t, "x86_64", string(risk.Data[archQueryMrn].Data.Value))
+
+			// platform-eol must NOT contain sshd-service's queries
+			assert.NotContains(t, risk.Data, nameQueryMrn)
+			assert.NotContains(t, risk.Data, intQueryMrn)
+			assert.NotContains(t, risk.Data, titleQueryMrn)
+			assert.NotContains(t, risk.Data, familyQueryMrn)
+			break
+		}
+	}
+	require.True(t, foundEol, "scored risk factor %s not found in report", eolRiskMrn)
 }
 
 func TestResolveV2_FrameworkExceptions(t *testing.T) {
