@@ -1041,7 +1041,6 @@ func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, err
 		b.propsCache.Add(q.Props...)
 
 		b.addNode(&rpBuilderExecutionQueryNode{query: q})
-		b.addEdge(q.CodeId, riskFactor.Mrn, &Impact{Scoring: ScoringSystem_IGNORE_SCORE, Action: Action_IGNORE})
 
 		selectedDataQueryRefs = append(selectedDataQueryRefs, riskDataQueryRef{codeId: q.CodeId, queryMrn: q.Mrn})
 	}

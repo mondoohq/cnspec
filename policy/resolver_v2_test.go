@@ -12,8 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/executor"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
 func collectQueriesFromRiskFactors(p *policy.Policy, query map[string]*policy.Mquery) {
@@ -1729,9 +1733,10 @@ policies:
 	rpTester.ExecutesQuery(queryMrn("query-1"))
 	rpTester.ExecutesQuery(queryMrn("sshd-service-running"))
 	rpTester.ExecutesQuery(queryMrn("sshd-service-info"))
+	rpTester.ExecutesQuery(queryMrn("static-number"))
 
 	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
-	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-info")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
+	// Data queries are not children of the risk factor reporting job — they produce data (not scores for detection) and are linked via RiskDataQueries instead.
 	rpTester.ReportingJobByMrn(riskFactorMrn("sshd-service")).WithType(policy.ReportingJob_RISK_FACTOR).Notifies(policyMrn("risk-factors-security"))
 
 	rpTester.doTest(t, rp)
@@ -1743,6 +1748,118 @@ policies:
 	// The key should be the query MRN
 	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("sshd-service-info"))
 	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("static-number"))
+}
+
+// TestResolveV2_RiskFactorDataInReport runs the full pipeline: resolve → execute
+// MQL via mock runtime → collector stores results → GetReport enriches risk
+// factor data. No manual StoreResults — the executor drives everything.
+func TestResolveV2_RiskFactorDataInReport(t *testing.T) {
+	ctx := context.Background()
+
+	// The LinuxMock runtime has asset.name == "arch"
+	runtime := testutils.LinuxMock()
+	_, srv, err := inmemory.NewServices(runtime)
+	require.NoError(t, err)
+
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+  - name: testpolicy1
+    uid: testpolicy1
+    groups:
+    - filters: asset.name == "asset1"
+      checks:
+      - uid: query-1
+        title: query-1
+        mql: 3 == 3
+      policies:
+      - uid: risk-factors-security
+  - uid: risk-factors-security
+    name: Mondoo Risk Factors analysis
+    version: "1.0.0"
+    risk_factors:
+      - uid: sshd-service
+        title: SSHd Service running
+        indicator: asset-in-use
+        magnitude: 0.6
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: sshd-service-running
+            mql: 1 == 1
+        queries:
+          - uid: data-query-string
+            mql: asset.name
+          - uid: data-query-int
+            mql: return 42
+`)
+
+	_, err = srv.SetBundle(ctx, b)
+	require.NoError(t, err)
+
+	_, err = srv.Assign(ctx, &policy.PolicyAssignment{
+		AssetMrn:   "asset1",
+		PolicyMrns: []string{policyMrn("testpolicy1")},
+	})
+	require.NoError(t, err)
+
+	assetFilters := []*policy.Mquery{{Mql: "asset.name == \"asset1\""}}
+
+	rp, err := srv.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
+		AssetMrn:     "asset1",
+		AssetFilters: assetFilters,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	// Verify resolution produced the expected risk data query mappings
+	riskMrn := riskFactorMrn("sshd-service")
+	stringQueryMrn := queryMrn("data-query-string")
+	intQueryMrn := queryMrn("data-query-int")
+	require.Contains(t, rp.CollectorJob.RiskDataQueries, riskMrn)
+	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, stringQueryMrn)
+	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, intQueryMrn)
+
+	// Execute: MQL runs against the mock runtime, BufferedCollector stores
+	// data and risks via StoreResults automatically
+	err = executor.ExecuteResolvedPolicy(ctx, runtime, srv, "asset1", rp, mql.DefaultFeatures, nil)
+	require.NoError(t, err)
+
+	// Wait for all scores to be computed
+	_, err = policy.WaitUntilDone(srv, "asset1", "asset1", 1*time.Second)
+	require.NoError(t, err)
+
+	// GetReport enriches ScoredRiskFactor.Data from RiskDataQueries mappings
+	report, err := srv.GetReport(ctx, &policy.EntityScoreReq{
+		EntityMrn: "asset1",
+		ScoreMrn:  "asset1",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	require.NotNil(t, report.Risks)
+
+	// Verify the risk factor data contains actual MQL results
+	var found bool
+	for _, risk := range report.Risks.Items {
+		if risk.Mrn == riskMrn {
+			found = true
+			require.True(t, risk.IsDetected)
+			require.NotNil(t, risk.Data)
+			require.Len(t, risk.Data, 2)
+
+			// asset.name returns "arch" from the LinuxMock recording
+			require.Contains(t, risk.Data, stringQueryMrn)
+			assert.Equal(t, "arch", string(risk.Data[stringQueryMrn].Data.Value))
+
+			// return 42 produces an int
+			require.Contains(t, risk.Data, intQueryMrn)
+			assert.Equal(t, llx.IntPrimitive(42).Type, risk.Data[intQueryMrn].Data.Type)
+			assert.Equal(t, llx.IntPrimitive(42).Value, risk.Data[intQueryMrn].Data.Value)
+			break
+		}
+	}
+	require.True(t, found, "scored risk factor %s not found in report", riskMrn)
 }
 
 func TestResolveV2_FrameworkExceptions(t *testing.T) {
