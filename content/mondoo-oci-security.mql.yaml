@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 3.1.0
+    version: 4.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -2305,7 +2305,7 @@ queries:
     mql: |
       oci.identity.users.all(
         authTokens.where(state == "ACTIVE").all(
-          expires != null && expires - created <= 90 * time.day
+          expires != null && created != null && expires - created <= 90 * time.day
         )
       )
     docs:
@@ -2367,7 +2367,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-3
     mql: |
       oci.identity.groups.where(
-        name.downcase == /admin|root|tenancy.?admin|super.?user/
+        name.downcase == /^admins?$|^administrators?$|^tenancy[-_]?admins?$|^root[-_]?admins?$|^super[-_]?users?$/
       ).all(members.length <= 5)
     docs:
       desc: |
@@ -2596,18 +2596,22 @@ queries:
     mql: |
       oci.compute.instances.all(
         metadata.keys.none(
-          _.downcase == /aws_access_key_id|aws_secret_access_key|aws_session_token|oci_api_key|oci_secret|api_token|bearer_token/
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$/
         ) &&
         metadata.values.none(
-          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
         )
       )
     docs:
       desc: |
-        This check flags OCI compute instances whose `metadata` key-value pairs look like they carry credentials. Two patterns are detected:
+        This check flags OCI compute instances whose `metadata` key-value pairs look like they carry credentials. Four patterns are detected:
 
-        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `api_token`, `bearer_token` (case-insensitive).
-        2. **Access key IDs in values** — matches the documented AWS access-key-ID prefixes (`AKIA…`, `ASIA…`, etc.).
+        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `api_token`, `bearer_token`, `db_password`, `private_key` (case-insensitive, exact match).
+        2. **AWS access key IDs in values** — matches the documented AWS access-key-ID prefixes (`AKIA…`, `ASIA…`, etc.).
+        3. **PEM private keys in values** — values containing `-----BEGIN` and `PRIVATE KEY-----` markers.
+        4. **JWT tokens in values** — three base64url segments separated by dots, starting with `eyJ` (the base64 encoding of `{"`).
 
         Instance `metadata` is readable by anyone with `compute-instance:read` permission and by every process running on the instance via the IMDS endpoints — it is the OCI analog of AWS's EC2 user-data leak pattern.
 
@@ -2726,7 +2730,7 @@ queries:
     mql: |
       oci.loadBalancer.loadBalancers.all(
         listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
-          sslCipherSuiteName.downcase == /oci-modern|oci-tls-1-2|oci-tls-1-3|oci-default-ssl-cipher-suite-v1/
+          sslCipherSuiteName.downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
         )
       )
     docs:
@@ -3298,18 +3302,22 @@ queries:
     mql: |
       oci.functions.applications.all(
         config.keys.none(
-          _.downcase == /aws_access_key_id|aws_secret_access_key|aws_session_token|oci_api_key|oci_secret|db_password|api_token|bearer_token|private_key/
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$/
         ) &&
         config.values.none(
-          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
         )
       )
     docs:
       desc: |
-        This check flags OCI Functions applications whose `config` environment variables look like they carry credentials. Two patterns are detected:
+        This check flags OCI Functions applications whose `config` environment variables look like they carry credentials. Four patterns are detected:
 
-        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `db_password`, `api_token`, `bearer_token`, `private_key` (case-insensitive).
-        2. **Access key IDs in values** — strings matching the documented AWS access-key-ID prefixes.
+        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `db_password`, `api_token`, `bearer_token`, `private_key` (case-insensitive, exact match).
+        2. **AWS access key IDs in values** — strings matching the documented AWS access-key-ID prefixes.
+        3. **PEM private keys in values** — values containing `-----BEGIN` and `PRIVATE KEY-----` markers.
+        4. **JWT tokens in values** — three base64url segments separated by dots, starting with `eyJ`.
 
         Function configuration is passed to every function invocation as environment variables and is readable by anyone with `functions-application:read` permission.
 
