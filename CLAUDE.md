@@ -304,7 +304,7 @@ policies:
 
 When adding or changing compliance tags, follow this process for **each** framework the policy already tags:
 
-1. **Read the authoritative control text.** Open the framework definition for each framework (`<framework>.mql.yaml`, e.g., `iso-27001-2022.mql.yaml`, `soc2-2017.mql.yaml`, `nist-sp-800-53-rev5.mql.yaml`). Each control has a `uid`, `title`, and usually `docs.desc`. Ask the user where the framework definitions live if you don't already know; if they're not available, stop and tell the user — do not guess.
+1. **Read the authoritative control text.** Open the framework definition in `cnspec-enterprise-policies/frameworks/<framework>.mql.yaml` (e.g., `iso-27001-2022.mql.yaml`, `soc2-2017.mql.yaml`, `nist-sp-800-53-rev5.mql.yaml`). Each control has a `uid`, `title`, and usually `docs.desc`. Ask the user where their clone lives if you don't already know; if the files aren't available, stop and tell the user — do not guess.
 2. **State in one sentence what the check actually enforces.** If the check is about identity proofing, say so; if it's about encryption-at-rest, say so. Do not let the check's *title* mislead you — read the MQL.
 3. **Find the single best-matching control** by scanning control titles and descriptions for language that covers the enforced behavior. Strict fit only: MFA, password policy, and session-timeout controls are *not* acceptable stand-ins for identity-proofing, encryption, network-isolation, etc.
 4. **If no control fits, tag it `false`.** This is an established pattern in this repo (grep for `compliance/.*: false`). A missing mapping is strictly better than a wrong one — wrong mappings get caught in compliance audits and create trust debt.
