@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 7.0.0
+    version: 8.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -61,6 +61,8 @@ policies:
           - uid: mondoo-gcp-security-cloud-storage-bucket-public-access-prevention
           - uid: mondoo-gcp-security-cloud-storage-bucket-cmek-encryption
           - uid: mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked
+          - uid: mondoo-gcp-security-cloud-storage-bucket-soft-delete-enabled
+          - uid: mondoo-gcp-security-cloud-storage-bucket-object-retention-locked
       - title: BigQuery
         checks:
           - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible
@@ -76,6 +78,7 @@ policies:
           - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration
           - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location
           - uid: mondoo-gcp-security-cloud-kms-encrypt-decrypt-keys-rotation-configured
+          - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict
       - title: Cloud DNS
         checks:
           - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled
@@ -112,6 +115,8 @@ policies:
           - uid: mondoo-gcp-security-compute-network-not-legacy
           - uid: mondoo-gcp-security-compute-network-default-deleted
           - uid: mondoo-gcp-security-compute-network-dns-logging-enabled
+          - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets
+          - uid: mondoo-gcp-security-compute-service-attachment-consumer-reviewed
       - title: Compute Subnetwork
         checks:
           - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled
@@ -148,6 +153,9 @@ policies:
           - uid: mondoo-gcp-security-gke-cos-node-image
           - uid: mondoo-gcp-security-gke-metadata-concealment-enabled
           - uid: mondoo-gcp-security-gke-control-plane-private-endpoint
+          - uid: mondoo-gcp-security-gke-network-policy-provider-specified
+          - uid: mondoo-gcp-security-gke-notification-topic-same-project
+          - uid: mondoo-gcp-security-gke-backup-plan-exists
       - title: Cloud SQL
         checks:
           - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
@@ -169,6 +177,7 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled
           - uid: mondoo-gcp-security-cloud-sql-sqlserver-contained-db-auth-disabled
           - uid: mondoo-gcp-security-cloud-sql-postgres-log-lock-waits-enabled
+          - uid: mondoo-gcp-security-cloud-sql-users-use-iam-auth
       - title: Memorystore for Redis / Redis Cluster
         checks:
           - uid: mondoo-gcp-security-cloud-redis-auth-enabled
@@ -240,6 +249,7 @@ policies:
           - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2
           - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile
           - uid: mondoo-gcp-security-ssl-certificate-not-expired
+          - uid: mondoo-gcp-security-target-ssl-proxy-has-explicit-policy
       - title: Cloud NAT
         checks:
           - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping
@@ -280,12 +290,21 @@ policies:
           - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network
           - uid: mondoo-gcp-security-vertexai-pipeline-job-no-default-service-account
           - uid: mondoo-gcp-security-vertexai-feature-online-store-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-index-endpoint-not-public
+          - uid: mondoo-gcp-security-vertexai-custom-job-has-explicit-service-account
       - title: VPC Service Controls
         checks:
           - uid: mondoo-gcp-security-vpc-sc-access-policies-defined
           - uid: mondoo-gcp-security-vpc-sc-service-perimeters
           - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced
           - uid: mondoo-gcp-security-vpc-sc-access-levels-defined
+      - title: Cloud IAP
+        checks:
+          - uid: mondoo-gcp-security-iap-tunnel-dest-group-no-broad-cidr
+      - title: Cloud DLP
+        checks:
+          - uid: mondoo-gcp-security-dlp-job-trigger-healthy
+          - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -20491,3 +20510,863 @@ queries:
     filters: asset.platform == 'gcp'
     mql: |
       gcp.organization.accessPolicies.any(accessLevels.length > 0)
+  - uid: mondoo-gcp-security-cloud-storage-bucket-soft-delete-enabled
+    title: Ensure Cloud Storage buckets have soft delete retention enabled
+    impact: 75
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/soc2-2017: false
+    mql: |
+      gcp.project.storageService.buckets.all(
+        softDeletePolicy != null &&
+        softDeletePolicy['retentionDurationSeconds'] != null &&
+        softDeletePolicy['retentionDurationSeconds'].to_int > 0
+      )
+    docs:
+      desc: |
+        This check verifies that every Cloud Storage bucket has soft delete retention configured. Soft delete retains deleted objects for a configurable period during which they can be restored, providing a recovery window against ransomware, malicious insiders, and accidental deletion.
+
+        **Why this matters**
+
+        Without soft delete, a successful ransomware operation or hostile admin can permanently destroy bucket contents in a single `objects.delete` call per object:
+
+        - Ransomware playbooks target backup and archive buckets specifically, deleting before or after encryption to eliminate recovery options.
+        - A compromised service account or misconfigured IaC pipeline can accidentally wipe a production bucket with no chance of restoration.
+        - Object versioning alone does not protect against hard deletes; soft delete is the dedicated recovery window.
+        - Short retention (<7 days) doesn't cover most detection-and-response windows; 14-30 days is a common minimum.
+
+        **Risk mitigation**
+
+        - Provides a time-bounded recovery path for deleted objects.
+        - Covers both accidental and malicious deletions with the same control.
+        - Requires minimal operational overhead — no replica infrastructure needed.
+      remediation:
+        - id: console
+          desc: |
+            Enable soft delete on the bucket:
+
+            1. Open **Cloud Storage** → **Buckets** → select the bucket → **Protection**.
+            2. Under **Soft delete**, set a retention duration (default is 7 days; consider 14-30 days for production buckets).
+            3. Save. Deleted objects are retained for the configured duration before permanent removal.
+        - id: cli
+          desc: |
+            Enable soft delete via `gcloud`:
+
+            ```bash
+            gcloud storage buckets update gs://<bucket> --soft-delete-duration=14d
+            ```
+    refs:
+      - url: https://cloud.google.com/storage/docs/soft-delete
+        title: Cloud Storage - Soft delete
+  - uid: mondoo-gcp-security-cloud-storage-bucket-object-retention-locked
+    title: Ensure Cloud Storage buckets with object retention have it locked
+    impact: 75
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/soc2-2017: false
+    mql: |
+      gcp.project.storageService.buckets.where(objectRetentionMode != "").all(
+        objectRetentionMode == "Enabled"
+      )
+    docs:
+      desc: |
+        This check verifies that every Cloud Storage bucket with an `objectRetentionMode` set has that mode locked (`Enabled`). An unlocked object-retention configuration can be removed by anyone with bucket-admin permissions, defeating the WORM (write-once-read-many) guarantee the bucket advertises.
+
+        Scope note: buckets that never enable object retention (empty `objectRetentionMode`) pass vacuously — this check validates that *enabled* retention is not left in a mode that allows removal. If you require all backup/archive buckets to enable object retention, pair with a tag-based policy that enforces presence.
+
+        **Why this matters**
+
+        Object retention exists specifically to survive admin-tier compromise:
+
+        - Ransomware actors routinely escalate to bucket-admin, then delete retention settings before destroying data.
+        - A regulatory retention commitment implemented only as "metadata flag" can be edited away by the same principal that can delete objects.
+        - Locked retention is enforced by the service and cannot be shortened or removed even with full admin rights.
+        - Unlocked retention provides only procedural, not technical, WORM — useful for soft compliance, useless against active attackers.
+
+        **Risk mitigation**
+
+        - Makes object retention enforceable against compromise of the bucket's admin plane.
+        - Satisfies regulatory WORM requirements (SEC 17a-4, HIPAA backup integrity).
+        - Creates a concrete ransomware-recovery guarantee.
+      remediation:
+        - id: console
+          desc: |
+            Enable and lock object retention at bucket creation time (object retention cannot be added to an existing bucket):
+
+            1. Create a replacement bucket with **Object retention** enabled.
+            2. Migrate objects via `gcloud storage cp -r gs://<old>/* gs://<new>/`.
+            3. Lock the retention via the API (locked retention cannot be shortened or disabled).
+            4. Delete the old bucket once traffic has cut over.
+        - id: cli
+          desc: |
+            Create a bucket with object retention enabled:
+
+            ```bash
+            gcloud storage buckets create gs://<bucket> --enable-per-object-retention
+            ```
+    refs:
+      - url: https://cloud.google.com/storage/docs/object-lock
+        title: Cloud Storage - Object retention (Bucket Lock)
+  - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict
+    title: Ensure KMS key access justifications exclude customer-initiated support
+    impact: 65
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      gcp.project.kmsService.keyrings.all(
+        cryptokeys.all(
+          keyAccessJustificationsPolicy == null ||
+          keyAccessJustificationsPolicy['allowedAccessReasons'] == null ||
+          keyAccessJustificationsPolicy['allowedAccessReasons'].none(_ == "CUSTOMER_INITIATED_SUPPORT")
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that no KMS crypto key allows `CUSTOMER_INITIATED_SUPPORT` in its Key Access Justifications (KAJ) policy. KAJ requires every access to a key to be tagged with a business reason; including `CUSTOMER_INITIATED_SUPPORT` means Google support staff can access keyed data when the customer has opened a support case, without a more specific per-request justification.
+
+        **Why this matters**
+
+        Key Access Justifications is the primary control preventing Google employees from decrypting customer data:
+
+        - `CUSTOMER_INITIATED_SUPPORT` is the broadest allowed reason; many orgs want no implicit grant and prefer case-by-case approval via `CUSTOMER_INITIATED_ACCESS`.
+        - Leaving support as an allowed reason means that during any support case, Google engineers can theoretically access the key material without the customer being aware of the specific decryption.
+        - Regulatory contexts (HIPAA, GDPR, EU sovereignty) often prohibit third-party key access outside of explicit, per-request approval.
+        - Removing the reason does not prevent Google from offering support; it just requires an explicit, logged approval when key access is genuinely needed.
+
+        **Risk mitigation**
+
+        - Ensures every key access attempt is matched to a narrow, auditable reason.
+        - Forces support escalations that need key access to go through explicit customer approval.
+        - Aligns KMS posture with data sovereignty and regulatory commitments.
+      remediation:
+        - id: console
+          desc: |
+            Remove `CUSTOMER_INITIATED_SUPPORT` from the key's allowed access reasons:
+
+            1. Open **Security** → **Key Management** → select the keyring → the crypto key.
+            2. **Edit key** → **Access justifications policy**.
+            3. Remove `CUSTOMER_INITIATED_SUPPORT` from the allowed list. Retain only reasons your governance model pre-approves (typically `CUSTOMER_INITIATED_ACCESS` and `GOOGLE_INITIATED_SYSTEM_OPERATION`).
+            4. Save.
+        - id: cli
+          desc: |
+            Update a KMS key's access justifications policy:
+
+            ```bash
+            gcloud kms keys update <key> \
+              --keyring=<keyring> \
+              --location=<region> \
+              --allowed-access-reasons=CUSTOMER_INITIATED_ACCESS,GOOGLE_INITIATED_SYSTEM_OPERATION
+            ```
+    refs:
+      - url: https://cloud.google.com/kms/docs/key-access-justifications
+        title: Cloud KMS - Key Access Justifications
+  - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets
+    title: Ensure no custom routes send 0.0.0.0/0 to the default internet gateway
+    impact: 70
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      gcp.project.computeService.routes.where(destRange == "0.0.0.0/0").all(
+        nextHopGateway == "" || nextHopGateway == null
+      )
+    docs:
+      desc: |
+        This check flags custom routes in any VPC that send `0.0.0.0/0` traffic to the `default-internet-gateway` next hop. Default internet gateway routes are created automatically on every VPC; additional *custom* `0.0.0.0/0 → default-internet-gateway` routes are typically a configuration mistake or a deliberate egress bypass that attackers plant to exfiltrate data around NAT / Cloud NAT logging.
+
+        **Why this matters**
+
+        Egress paths are security-critical, especially in VPCs that host sensitive workloads:
+
+        - A custom internet-gateway route added to a subnet with private-only workloads gives those workloads a direct, unlogged egress path that bypasses Cloud NAT, VPC flow logs for NAT, and any egress-inspecting firewall.
+        - Attackers with IAM permissions to manage routes can add such a route to exfiltrate data, bypassing detection that only watches the intended egress path.
+        - Extra internet-gateway routes accumulate during incident response and never get cleaned up, creating persistent egress holes.
+
+        This check intentionally flags all custom `0.0.0.0/0 → default-internet-gateway` routes. The default system-generated route is not returned by the list API and does not match; only custom routes are evaluated.
+
+        **Risk mitigation**
+
+        - Eliminates unlogged, hard-to-monitor egress paths.
+        - Forces egress traffic through approved paths (Cloud NAT with logging, managed proxy).
+        - Removes a common persistence primitive used by egress-based attackers.
+      remediation:
+        - id: console
+          desc: |
+            Remove redundant or attacker-planted internet-gateway routes:
+
+            1. Open **VPC network** → **Routes**.
+            2. Filter by **Destination IP range** = `0.0.0.0/0`.
+            3. For each non-system route whose **Next hop** is **Default internet gateway**, review whether it is legitimately required. If not, delete it.
+            4. Where internet egress is required, route through a **Cloud NAT** gateway with logging enabled instead.
+        - id: cli
+          desc: |
+            Delete a custom default-gateway route:
+
+            ```bash
+            gcloud compute routes delete <route-name>
+            ```
+    refs:
+      - url: https://cloud.google.com/vpc/docs/routes
+        title: GCP VPC Routes
+  - uid: mondoo-gcp-security-compute-service-attachment-consumer-reviewed
+    title: Ensure PSC service attachments do not accept connections automatically
+    impact: 80
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      gcp.project.computeService.serviceAttachments.all(
+        connectionPreference == "ACCEPT_MANUAL" ||
+        consumerAcceptLists.length > 0
+      )
+    docs:
+      desc: |
+        This check verifies that every Private Service Connect (PSC) service attachment either requires manual connection approval (`connectionPreference == "ACCEPT_MANUAL"`) or restricts the consumers who can attach via an explicit `consumerAcceptLists`. A service attachment that automatically accepts connections with no consumer allowlist is reachable by any consumer project in the GCP organization — effectively a public-on-GCP endpoint for the backing service.
+
+        **Why this matters**
+
+        PSC service attachments publish internal services to consumer networks:
+
+        - `ACCEPT_AUTOMATIC` + empty `consumerAcceptLists` means any project that knows the attachment's target can consume it, with no producer-side review.
+        - The backing service (often a database, API, or internal tool) may have been designed assuming consumer identities are known in advance.
+        - Organizations that segment by environment or tenant rely on the allowlist to enforce that segmentation; an automatic-accept attachment bypasses that.
+
+        **Risk mitigation**
+
+        - Forces producer-side review of every new consumer connection.
+        - Maintains consumer identity as a security boundary.
+        - Prevents accidental cross-project / cross-tenant data access via PSC.
+      remediation:
+        - id: console
+          desc: |
+            Tighten the service attachment's consumer policy:
+
+            1. Open **Network services** → **Private Service Connect** → **Published services**.
+            2. Edit the service attachment.
+            3. Set **Connection preference** to **Accept connections for selected projects and networks** and populate the accept list with specific consumer project IDs / networks, **OR** set it to **Accept manual connections** to require per-connection approval.
+        - id: cli
+          desc: |
+            Switch an existing service attachment to manual-accept:
+
+            ```bash
+            gcloud compute service-attachments update <attachment> \
+              --region=<region> \
+              --connection-preference=ACCEPT_MANUAL
+            ```
+    refs:
+      - url: https://cloud.google.com/vpc/docs/private-service-connect
+        title: Private Service Connect
+  - uid: mondoo-gcp-security-cloud-sql-users-use-iam-auth
+    title: Ensure Cloud SQL users authenticate via Cloud IAM, not built-in passwords
+    impact: 70
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      gcp.project.sqlService.instances.all(
+        users.all(type != "BUILT_IN" || name == "root" || name == "postgres" || name == "sqlserver")
+      )
+    docs:
+      desc: |
+        This check verifies that Cloud SQL instance user accounts authenticate via Cloud IAM (`CLOUD_IAM_USER`, `CLOUD_IAM_SERVICE_ACCOUNT`, `CLOUD_IAM_GROUP_*`) rather than with built-in password authentication. The check permits the engine-managed system accounts (`root`, `postgres`, `sqlserver`) to remain built-in since they exist by default, but any additional user accounts should be created as IAM-backed.
+
+        **Why this matters**
+
+        Built-in Cloud SQL users are long-lived static credentials:
+
+        - Passwords rarely rotate; once leaked, they remain valid until an operator manually changes them.
+        - Built-in users are invisible to IAM audit logs and organization policies like `iam.disableServiceAccountKeyCreation`.
+        - Offboarding an employee requires coordinated credential revocation at the Cloud SQL layer, which is routinely missed.
+        - IAM-backed Cloud SQL users inherit IAM short-lived tokens, automatic key rotation, and centralized access review — none of which apply to built-in passwords.
+
+        **Risk mitigation**
+
+        - Tracks DB access through the same IAM pipeline as every other GCP resource.
+        - Eliminates long-lived static DB passwords.
+        - Integrates with organization-wide access reviews and IAM Recommender.
+      remediation:
+        - id: console
+          desc: |
+            Replace built-in users with IAM users:
+
+            1. Open **Cloud SQL** → the instance → **Users**.
+            2. For each non-system built-in user, create an equivalent IAM user (`Add user account` → **Cloud IAM**) and grant it the appropriate DB-level roles.
+            3. Migrate application connections to use the IAM-authenticated user (typically via the Cloud SQL Auth Proxy in IAM auth mode).
+            4. Delete the built-in user once the new IAM user is confirmed working.
+        - id: cli
+          desc: |
+            Add a Cloud IAM user and delete the built-in replacement:
+
+            ```bash
+            gcloud sql users create <iam-user>@<project>.iam \
+              --instance=<instance> \
+              --type=CLOUD_IAM_USER
+
+            gcloud sql users delete <legacy-user> --instance=<instance>
+            ```
+    refs:
+      - url: https://cloud.google.com/sql/docs/mysql/iam-authentication
+        title: Cloud SQL - IAM database authentication
+  - uid: mondoo-gcp-security-target-ssl-proxy-has-explicit-policy
+    title: Ensure Target SSL proxies have an explicit SSL policy attached
+    impact: 70
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      gcp.project.computeService.targetSslProxies.all(sslPolicyUrl != "")
+    docs:
+      desc: |
+        This check verifies that every Target SSL Proxy has an explicit SSL policy attached. Target SSL proxies without an attached SSL policy fall back to GCP's default `COMPATIBLE` profile, which permits TLS 1.0 and 1.1. The existing checks on SSL policies (`ssl-policy-min-tls-1-2`, `ssl-policy-modern-or-restricted-profile`) only inspect *defined* SSL policies — they do not catch proxies that have no policy at all and therefore inherit the weak default.
+
+        **Why this matters**
+
+        The default GCP TLS profile is intentionally permissive for compatibility:
+
+        - `COMPATIBLE` allows TLS 1.0, TLS 1.1, and cipher suites that include 3DES and CBC-only algorithms.
+        - Target SSL proxies front internet traffic; weak TLS at the edge invites downgrade attacks and fails PCI DSS 3.2+.
+        - The attached SSL policy is the only way to enforce a specific minimum TLS version or profile; relying on the default is equivalent to accepting the weakest settings GCP offers.
+
+        **Risk mitigation**
+
+        - Ensures every target SSL proxy enforces a deliberate TLS profile.
+        - Combines with the existing SSL-policy checks to guarantee end-to-end strong TLS.
+        - Eliminates the "default is weak" configuration gap.
+      remediation:
+        - id: console
+          desc: |
+            Attach a strong SSL policy to the proxy:
+
+            1. Open **Network services** → **Load balancing** → locate the SSL proxy.
+            2. Edit the proxy's frontend configuration.
+            3. Under **SSL policy**, select or create a policy with `MODERN` or `RESTRICTED` profile and minimum TLS version `TLS_1_2`.
+            4. Save.
+        - id: cli
+          desc: |
+            Attach an SSL policy to an existing target SSL proxy:
+
+            ```bash
+            gcloud compute target-ssl-proxies update <proxy> --ssl-policy=<policy>
+            ```
+    refs:
+      - url: https://cloud.google.com/load-balancing/docs/ssl-policies-concepts
+        title: GCP - SSL policies
+  - uid: mondoo-gcp-security-gke-network-policy-provider-specified
+    title: Ensure GKE network policy has a provider specified
+    impact: 70
+    filters: asset.platform == "gcp-gke-cluster"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    mql: |
+      gcp.project.gkeService.cluster.networkPolicy == null ||
+      gcp.project.gkeService.cluster.networkPolicy.enabled == false ||
+      gcp.project.gkeService.cluster.networkPolicy.provider != "PROVIDER_UNSPECIFIED"
+    docs:
+      desc: |
+        This check verifies that every GKE cluster with network policy enabled also has a concrete network-policy provider specified. The existing `gke-cluster-network-policy-enabled` check confirms that the add-on is not disabled, but a cluster can have `networkPolicy.enabled == true` with `networkPolicy.provider == "PROVIDER_UNSPECIFIED"` — in which case no policy enforcement actually happens. This leaves pod-to-pod traffic unrestricted despite the cluster appearing to have network policy on.
+
+        **Why this matters**
+
+        Network policies are the primary pod-to-pod segmentation control in GKE:
+
+        - Without a concrete provider (typically `CALICO`), NetworkPolicy resources in the cluster are accepted by the API server but never enforced.
+        - Lateral movement from a compromised pod to any other pod in the cluster is trivial without enforced network policy.
+        - The mismatch between "enabled=true" and "provider=PROVIDER_UNSPECIFIED" is easy to miss in dashboards that only check the enabled flag.
+
+        **Risk mitigation**
+
+        - Guarantees pod-to-pod network segmentation is actually enforced, not just administratively enabled.
+        - Closes a silent-failure gap in the existing network-policy check.
+      remediation:
+        - id: console
+          desc: |
+            Enable network policy with Calico as the provider:
+
+            1. Open **Kubernetes Engine** → **Clusters** → select the cluster → **Edit**.
+            2. Under **Networking** → **Network policy**, select **Calico (Kubernetes network policy)** as the provider.
+            3. Save. The add-on will be deployed and enforcement starts immediately.
+        - id: cli
+          desc: |
+            Update the cluster to use Calico for network policy enforcement:
+
+            ```bash
+            gcloud container clusters update <cluster> \
+              --zone=<zone> \
+              --enable-network-policy
+            ```
+    refs:
+      - url: https://cloud.google.com/kubernetes-engine/docs/how-to/network-policy
+        title: GKE - Configuring network policy
+  - uid: mondoo-gcp-security-gke-notification-topic-same-project
+    title: Ensure GKE notification topic is in the same project as the cluster
+    impact: 60
+    filters: asset.platform == "gcp-gke-cluster"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      gcp.project.gkeService.cluster.notificationConfig == null ||
+      gcp.project.gkeService.cluster.notificationConfig.pubsubEnabled == false ||
+      gcp.project.gkeService.cluster.notificationConfig.topic == null ||
+      gcp.project.gkeService.cluster.notificationConfig.topic.projectId == gcp.project.gkeService.cluster.projectId
+    docs:
+      desc: |
+        This check verifies that, when GKE cluster notifications are enabled, the Pub/Sub topic receiving them lives in the same GCP project as the cluster. A notification topic pointed at a different project ships cluster events — control-plane upgrades, node pool changes, security bulletins — to a project outside this cluster's administrative boundary, producing a cross-project log leak or an unauthorized data flow.
+
+        **Why this matters**
+
+        GKE notifications contain operationally and security-relevant events:
+
+        - Security bulletins announce CVEs that affect the cluster's node images.
+        - Upgrade-available events expose control-plane version information.
+        - Cross-project shipping of these events expands the set of principals who see the cluster's security posture.
+        - An attacker with access to the destination project can use the event stream to time attacks around upgrades.
+
+        **Risk mitigation**
+
+        - Keeps cluster event data within the project's administrative boundary.
+        - Prevents accidental information leak to less-trusted projects.
+        - Simplifies IAM review — the topic's viewers are the cluster's viewers.
+      remediation:
+        - id: console
+          desc: |
+            Point notifications at a topic in the cluster's own project:
+
+            1. Create a Pub/Sub topic in the same project as the cluster.
+            2. Open **Kubernetes Engine** → the cluster → **Edit** → **Cluster notifications**.
+            3. Set the topic to the newly-created in-project topic.
+            4. Save.
+        - id: cli
+          desc: |
+            Update the cluster's notification config to an in-project topic:
+
+            ```bash
+            gcloud container clusters update <cluster> \
+              --zone=<zone> \
+              --notification-config=pubsub=ENABLED,pubsub-topic=projects/<project>/topics/<topic>
+            ```
+    refs:
+      - url: https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-notifications
+        title: GKE - Cluster notifications
+  - uid: mondoo-gcp-security-gke-backup-plan-exists
+    title: Ensure every GKE cluster is protected by at least one backup plan
+    impact: 75
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/soc2-2017: false
+    mql: |
+      gcp.project.gkeService.clusters.length == 0 ||
+      gcp.project.gkeBackupService.backupPlans.where(
+        deactivated == false && state == "READY"
+      ).length > 0
+    docs:
+      desc: |
+        This check verifies that every GKE cluster in the project is referenced by at least one active (`state == "READY"`, not deactivated) GKE Backup plan. Clusters with no backup plan cannot be restored after ransomware, accidental namespace deletion, or cluster compromise — the workloads and etcd state are gone for good.
+
+        **Why this matters**
+
+        GKE Backup is the built-in disaster-recovery control for Kubernetes workloads:
+
+        - Ransomware operators increasingly target Kubernetes clusters because compromising the control plane compromises every workload at once.
+        - A cluster without a backup plan cannot be rebuilt to a known-good state — the restore path doesn't exist.
+        - IaC (Terraform / Helm) gives you back the cluster shape but not the live application state (PVs, config maps, secrets as they existed pre-incident).
+        - GKE Backup captures both the API objects and the underlying PVs, producing a restorable snapshot.
+
+        **Risk mitigation**
+
+        - Ensures every production cluster has an offline recovery path.
+        - Covers both control-plane and data-plane state in a single plan.
+        - Protects against both ransomware and large-scale operator error.
+      remediation:
+        - id: console
+          desc: |
+            Create a backup plan for each unprotected cluster:
+
+            1. Open **Kubernetes Engine** → **Backup for GKE** → **Backup plans** → **Create**.
+            2. Select the target cluster and backup scope (All namespaces, or a curated list of namespaces).
+            3. Configure the schedule (daily is a common baseline) and retention (at least 30 days for ransomware recovery headroom).
+            4. Save. The first backup runs at the next scheduled time; trigger manually via **Run a backup now** if needed.
+        - id: cli
+          desc: |
+            Create a GKE backup plan for a cluster:
+
+            ```bash
+            gcloud beta container backup-restore backup-plans create <plan> \
+              --project=<project> \
+              --location=<region> \
+              --cluster=projects/<project>/locations/<zone>/clusters/<cluster> \
+              --all-namespaces \
+              --include-volume-data \
+              --cron-schedule="0 3 * * *" \
+              --backup-retain-days=30
+            ```
+    refs:
+      - url: https://cloud.google.com/kubernetes-engine/docs/add-on/backup-for-gke/concepts/backup-for-gke
+        title: Backup for GKE overview
+  - uid: mondoo-gcp-security-vertexai-index-endpoint-not-public
+    title: Ensure Vertex AI index endpoints are not publicly accessible
+    impact: 85
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      gcp.project.vertexaiService.indexEndpoints.all(
+        publicEndpointEnabled == false
+      )
+    docs:
+      desc: |
+        This check verifies that every Vertex AI index endpoint has its public endpoint disabled. Vertex AI Matching Engine / Vector Search index endpoints hold the embedding-based search index of whatever text, image, or multimodal content the organization has loaded — exposing one publicly makes that entire embedding space queryable by anyone on the internet.
+
+        **Why this matters**
+
+        Index endpoints serve nearest-neighbor queries over learned embeddings:
+
+        - Embeddings leak information about the source data: carefully-crafted queries can reconstruct or enumerate the underlying documents.
+        - A public endpoint allows attackers to harvest the entire embedding space, which can be used to mount membership-inference attacks on the source training data.
+        - For indexes built from PII or confidential documents, a public endpoint is equivalent to publishing those documents through an indirect channel.
+        - Vertex AI supports private Service-Connect endpoints; there is almost always a valid private alternative.
+
+        **Risk mitigation**
+
+        - Keeps embedding-based search internal to the project's VPC.
+        - Prevents embedding-inversion and membership-inference attacks.
+        - Aligns ML infrastructure with the same network-boundary posture as production databases.
+      remediation:
+        - id: console
+          desc: |
+            Redeploy the index endpoint as private:
+
+            1. Open **Vertex AI** → **Vector Search** → **Index endpoints**.
+            2. Delete the public endpoint (the `publicEndpointEnabled` flag is set at creation and cannot be changed in place).
+            3. **Create index endpoint** with **Access type: Private Service Connect** or **Enable VPC Peering** and attach to a private VPC.
+            4. Redeploy the index on the new private endpoint.
+        - id: cli
+          desc: |
+            Create a private index endpoint:
+
+            ```bash
+            gcloud ai index-endpoints create \
+              --region=<region> \
+              --display-name=<name> \
+              --network=projects/<project>/global/networks/<vpc>
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/vector-search/setup/setup-index-endpoint
+        title: Vertex AI - Setup index endpoint
+  - uid: mondoo-gcp-security-vertexai-custom-job-has-explicit-service-account
+    title: Ensure Vertex AI custom jobs run under an explicit service account
+    impact: 80
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      gcp.project.vertexaiService.customJobs.where(
+        state == "JOB_STATE_RUNNING" || state == "JOB_STATE_PENDING" || state == "JOB_STATE_QUEUED"
+      ).all(
+        jobSpec['serviceAccount'] != null && jobSpec['serviceAccount'] != ""
+      )
+    docs:
+      desc: |
+        This check verifies that every running, pending, or queued Vertex AI custom job has an explicit service account configured in its `jobSpec`. Custom jobs without an explicit `serviceAccount` inherit the project's default Compute Engine service account, which is over-privileged by default and carries permissions far beyond what most training jobs actually need.
+
+        **Why this matters**
+
+        Custom jobs run arbitrary training code that can pull third-party packages, Git repos, and containers:
+
+        - A supply-chain compromise in any dependency executes under the job's service account; the default Compute SA has broad project access by default.
+        - Using a scoped service account limits the blast radius if the training code is poisoned or the training container is tampered with.
+        - Explicit service accounts also enable per-job IAM audit review and rotation independent of project-default SA changes.
+
+        **Risk mitigation**
+
+        - Limits the blast radius of a compromised training container.
+        - Decouples Vertex AI workloads from the overly-permissive default Compute SA.
+        - Enables per-workload IAM audit and separation of duties between ML workloads.
+      remediation:
+        - id: console
+          desc: |
+            Configure a dedicated service account for Vertex AI custom jobs:
+
+            1. Create a service account scoped to only the GCS buckets, Vertex AI resources, and Cloud Storage objects the training code needs.
+            2. When launching custom jobs, set **Service account** in the advanced options to the dedicated SA.
+            3. Update any SDK-based submissions to pass `service_account` explicitly in the `worker_pool_specs`.
+        - id: cli
+          desc: |
+            Submit a custom job with an explicit service account:
+
+            ```bash
+            gcloud ai custom-jobs create \
+              --region=<region> \
+              --display-name=<job> \
+              --service-account=<sa>@<project>.iam.gserviceaccount.com \
+              --config=config.yaml
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/custom-service-account
+        title: Vertex AI - Use a custom service account
+  - uid: mondoo-gcp-security-iap-tunnel-dest-group-no-broad-cidr
+    title: Ensure IAP tunnel destination groups do not use overly broad CIDR ranges
+    impact: 75
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      gcp.project.iapService.tunnelDestGroups.all(
+        cidrs.none(_ == /\/([0-9]|1[0-5])$/)
+      )
+    docs:
+      desc: |
+        This check verifies that no Identity-Aware Proxy (IAP) tunnel destination group carries a CIDR of `/15` or larger (fewer bits than `/16`). IAP tunnels let an authorized user reach internal resources via a bastion-like path; a tunnel destination group with a `/8` or `/10` CIDR authorizes that user to reach an entire wide range of private IPs, well beyond the specific hosts any individual workflow should need.
+
+        **Why this matters**
+
+        IAP destination groups define the scope of a tunnel grant:
+
+        - Granting `10.0.0.0/8` in a destination group effectively authorizes tunnel traffic to every private IP in the enterprise VPC fabric.
+        - Any IAP user who phishes a valid session inherits that broad reach; attackers love wide-range destination groups.
+        - Narrow CIDRs scoped to specific bastion or jump-host subnets are the standard pattern and keep IAP's useful-purpose (emergency admin access) without enabling lateral movement.
+
+        **Risk mitigation**
+
+        - Constrains IAP tunnel reach to specific, documented destinations.
+        - Prevents IAP from silently becoming a broad VPN replacement with no ingress review.
+        - Forces deliberate scope expansion, rather than "let's just use /8 for convenience".
+      remediation:
+        - id: console
+          desc: |
+            Narrow the destination group's CIDR list:
+
+            1. Open **Security** → **Identity-Aware Proxy** → **TCP forwarding** → **Destination groups**.
+            2. Edit the destination group.
+            3. Remove any CIDR of `/15` or larger. Replace with specific subnets (ideally `/24` or smaller) that match the intended hosts.
+            4. Save. Existing sessions to removed ranges drop immediately.
+        - id: cli
+          desc: |
+            Replace an IAP destination group's CIDRs with narrow ranges:
+
+            ```bash
+            gcloud iap tcp dest-groups update <group> \
+              --region=<region> \
+              --ip-range-list=10.20.5.0/24,10.20.6.0/24
+            ```
+    refs:
+      - url: https://cloud.google.com/iap/docs/tcp-by-host
+        title: IAP - TCP forwarding with destination groups
+  - uid: mondoo-gcp-security-dlp-job-trigger-healthy
+    title: Ensure Cloud DLP job triggers are healthy and not stale
+    impact: 70
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-12
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/soc2-2017: false
+    mql: |
+      gcp.project.dlpService.jobTriggers.none(
+        status != "HEALTHY" ||
+        updated == null ||
+        time.now - updated > 30 * time.day
+      )
+    docs:
+      desc: |
+        This check verifies that every Cloud DLP job trigger is in `HEALTHY` status and has run within the last 30 days. DLP job triggers scan BigQuery tables, Cloud Storage buckets, and Datastore kinds on a schedule to identify PII, credentials, and other sensitive data classes. A paused trigger or a trigger that has silently stopped running means the scan is not happening — sensitive data is accumulating without classification.
+
+        **Why this matters**
+
+        DLP scanning pipelines are the primary automated control for finding unclassified sensitive data:
+
+        - A `PAUSED` trigger was usually paused "temporarily" for a reason that is now forgotten; it never gets resumed.
+        - A `CANCELLED` trigger may have been killed by an IAM change or a quota failure.
+        - A `HEALTHY` trigger whose `updated` timestamp is months stale indicates the trigger is configured but not actually executing (often a schedule-evaluation bug or an IAM removal upstream).
+        - Each of these states means new PII / secrets in the target bucket or table pile up without classification, weakening downstream controls that depend on classification.
+
+        **Risk mitigation**
+
+        - Ensures sensitive-data classification keeps pace with data volume growth.
+        - Detects silent failures in the scanning pipeline.
+        - Keeps DLP findings current for downstream security workflows.
+      remediation:
+        - id: console
+          desc: |
+            Investigate and resume the flagged trigger:
+
+            1. Open **Security** → **Sensitive Data Protection** → **Inspection** → **Job triggers**.
+            2. Select the flagged trigger.
+            3. If status is `PAUSED`, review why it was paused and either resume via **Resume** or delete it if no longer needed.
+            4. If status is `HEALTHY` but `updated` is stale, check the trigger's schedule and IAM bindings on the target bucket / dataset; a missing `dlp.jobs.create` permission will silently prevent runs.
+            5. Use **Run now** to verify the trigger executes end-to-end.
+        - id: cli
+          desc: |
+            Resume a paused DLP job trigger via the REST API (DLP has no gcloud CLI surface):
+
+            ```bash
+            curl -X PATCH \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              -d '{"jobTrigger":{"status":"HEALTHY"},"updateMask":"status"}' \
+              "https://dlp.googleapis.com/v2/projects/<project>/jobTriggers/<trigger-id>"
+            ```
+    refs:
+      - url: https://cloud.google.com/sensitive-data-protection/docs/creating-job-triggers
+        title: DLP - Creating job triggers
+  - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types
+    title: Ensure DLP inspect templates include common credential info types
+    impact: 70
+    filters: asset.platform == 'gcp'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-12
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/soc2-2017: false
+    mql: |
+      gcp.project.dlpService.inspectTemplates.all(
+        inspectConfig != null &&
+        inspectConfig['infoTypes'] != null &&
+        inspectConfig['infoTypes'].any(_['name'] == "AWS_CREDENTIALS") &&
+        inspectConfig['infoTypes'].any(_['name'] == "GCP_CREDENTIALS") &&
+        inspectConfig['infoTypes'].any(_['name'] == "JSON_WEB_TOKEN") &&
+        inspectConfig['infoTypes'].any(_['name'] == "BASIC_AUTH_HEADER")
+      )
+    docs:
+      desc: |
+        This check verifies that every Cloud DLP inspect template includes the common credential detectors: `AWS_CREDENTIALS`, `GCP_CREDENTIALS`, `JSON_WEB_TOKEN`, and `BASIC_AUTH_HEADER`. DLP templates that scan for PII but omit these credential detectors miss the single highest-impact class of sensitive data — live secrets that grant attackers immediate access.
+
+        **Why this matters**
+
+        Credential leaks in storage produce more impact per finding than most PII:
+
+        - An `AKIA…` key in a BigQuery table or Cloud Storage object gives an attacker cross-cloud access the moment they read it.
+        - A leaked GCP service-account key is a tenant-admin-level credential; missing it in scanning is a high-magnitude blind spot.
+        - JWTs and Basic Auth headers in logs and backups commonly grant access to internal services.
+        - These info types are free built-in detectors; omitting them is purely configuration neglect.
+
+        **Risk mitigation**
+
+        - Ensures leaked credentials are flagged alongside traditional PII.
+        - Covers the most common accidental-leak formats.
+        - Adds no performance cost — DLP built-in detectors run in the same pass.
+      remediation:
+        - id: console
+          desc: |
+            Add credential detectors to existing inspect templates:
+
+            1. Open **Security** → **Sensitive Data Protection** → **Inspection** → **Templates**.
+            2. Edit each template.
+            3. Under **InfoTypes**, add `AWS_CREDENTIALS`, `GCP_CREDENTIALS`, `JSON_WEB_TOKEN`, and `BASIC_AUTH_HEADER` (plus any cloud-specific ones like `AZURE_AUTH_TOKEN`).
+            4. Save.
+        - id: cli
+          desc: |
+            Update a DLP inspect template to include credential detectors via the REST API (DLP has no gcloud CLI surface). Save the template body as `inspect-template.json`:
+
+            ```json
+            {
+              "inspectTemplate": {
+                "inspectConfig": {
+                  "infoTypes": [
+                    {"name": "AWS_CREDENTIALS"},
+                    {"name": "GCP_CREDENTIALS"},
+                    {"name": "JSON_WEB_TOKEN"},
+                    {"name": "BASIC_AUTH_HEADER"}
+                  ]
+                }
+              },
+              "updateMask": "inspectConfig.infoTypes"
+            }
+            ```
+
+            Then PATCH it:
+
+            ```bash
+            curl -X PATCH \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              -d @inspect-template.json \
+              "https://dlp.googleapis.com/v2/projects/<project>/inspectTemplates/<template-id>"
+            ```
+    refs:
+      - url: https://cloud.google.com/sensitive-data-protection/docs/infotypes-reference
+        title: DLP - InfoTypes reference
