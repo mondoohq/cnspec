@@ -128,6 +128,7 @@ policies:
           - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled
           - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk
           - uid: mondoo-aws-security-s3-mfa-delete
+          - uid: mondoo-aws-security-s3-ownership-controls-enforced
       - title: AWS Security Group
         checks:
           - uid: mondoo-aws-security-secgroup-restricted-ssh
@@ -214,6 +215,9 @@ policies:
           - uid: mondoo-aws-security-ec2-launch-config-encrypted-volumes
           - uid: mondoo-aws-security-ec2-launch-config-no-public-ip
           - uid: mondoo-aws-security-ec2-launch-config-imdsv2
+          - uid: mondoo-aws-security-ec2-serial-console-disabled
+          - uid: mondoo-aws-security-ec2-ami-block-public-access
+          - uid: mondoo-aws-security-ec2-launch-template-imdsv2
       - title: Amazon ECR
         checks:
           - uid: mondoo-aws-security-ecr-image-scan-on-push
@@ -329,6 +333,7 @@ policies:
           - uid: mondoo-aws-security-cloudtrail-s3-bucket-logging
           - uid: mondoo-aws-security-cloudtrail-cloudwatch-integration
           - uid: mondoo-aws-security-cloudtrail-is-logging
+          - uid: mondoo-aws-security-cloudtrail-insights-enabled
       - title: Amazon EKS Cluster
         checks:
           - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -347,6 +352,7 @@ policies:
       - title: AWS Security Hub
         checks:
           - uid: mondoo-aws-security-securityhub-enabled
+          - uid: mondoo-aws-security-securityhub-standards-enabled
       - title: AWS Config
         checks:
           - uid: mondoo-aws-security-config-recorder-enabled
@@ -366,6 +372,7 @@ policies:
           - uid: mondoo-aws-security-sns-topic-encrypted
           - uid: mondoo-aws-security-sns-topic-signature-version
           - uid: mondoo-aws-security-sns-subscription-https
+          - uid: mondoo-aws-security-sns-no-public-access
       - title: Amazon SQS
         checks:
           - uid: mondoo-aws-security-sqs-queue-encrypted
@@ -419,6 +426,8 @@ policies:
       - title: AWS Elastic Disaster Recovery (DRS)
         checks:
           - uid: mondoo-aws-security-drs-replication-ebs-encrypted
+          - uid: mondoo-aws-security-drs-private-replication
+          - uid: mondoo-aws-security-drs-no-public-recovery-ip
       - title: Amazon Timestream
         checks:
           - uid: mondoo-aws-security-timestream-database-encrypted
@@ -45294,3 +45303,510 @@ queries:
         aws.secretsmanager.secret.resourcePolicy != /"Effect"\s*:\s*"Allow"[\s\S]*?"Principal"\s*:\s*"\*"/
         aws.secretsmanager.secret.resourcePolicy != /"Effect"\s*:\s*"Allow"[\s\S]*?"Principal"\s*:\s*\{\s*"AWS"\s*:\s*"\*"\s*\}/
       }
+  - uid: mondoo-aws-security-ec2-serial-console-disabled
+    title: Ensure EC2 serial console access is disabled
+    impact: 80
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ac-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-aws-security-ec2-serial-console-disabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that EC2 serial console access is disabled across all regions. The EC2 serial console provides text-based access to an instance's serial port, which can be used to troubleshoot boot and network issues. However, if enabled, it can provide an additional attack vector for accessing instances.
+
+        **Why this matters**
+
+        - Serial console access bypasses normal network-based access controls and SSH key requirements.
+        - An attacker with IAM credentials to connect to the serial console could access instances even if network security groups block all inbound traffic.
+        - Serial console access is not needed for normal operations and should be disabled when not actively troubleshooting.
+        - CIS AWS Foundations Benchmark recommends disabling serial console access.
+      remediation:
+        - id: console
+          desc: |
+            To disable EC2 serial console access using the AWS Console:
+
+            1. Navigate to the **EC2 Dashboard**.
+            2. Under **Account attributes**, select **EC2 Serial Console**.
+            3. Select **Manage**.
+            4. Uncheck **Allow** to disable serial console access.
+            5. Save the changes.
+            6. Repeat for each region.
+        - id: cli
+          desc: |
+            To disable EC2 serial console access using the AWS CLI:
+
+            ```bash
+            aws ec2 disable-serial-console-access --region REGION
+            ```
+
+            Run this command for each active region.
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-access-to-serial-console.html
+        title: Configure access to the EC2 Serial Console
+  - uid: mondoo-aws-security-ec2-serial-console-disabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.serialConsoleAccessEnabled.length > 0 &&
+      aws.ec2.serialConsoleAccessEnabled.values.none(_ == true)
+  - uid: mondoo-aws-security-ec2-ami-block-public-access
+    title: Ensure AMI block public access is enabled
+    impact: 80
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ac-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-aws-security-ec2-ami-block-public-access-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AMI block public access is enabled across all regions. When enabled, this setting prevents AMIs from being publicly shared, protecting against accidental exposure of machine images that may contain sensitive configurations, credentials, or proprietary software.
+
+        **Why this matters**
+
+        - Publicly shared AMIs can expose sensitive data, credentials, or proprietary application code to anyone with an AWS account.
+        - AMIs may contain hardcoded secrets, private keys, or internal network configurations.
+        - Block public access for AMIs prevents accidental public sharing that could lead to data exposure.
+        - This is a preventive control that stops the problem at the source rather than detecting it after the fact.
+      remediation:
+        - id: console
+          desc: |
+            To enable AMI block public access using the AWS Console:
+
+            1. Navigate to the **EC2 Dashboard**.
+            2. Under **Account attributes**, select **AMI block public access**.
+            3. Select **Manage**.
+            4. Enable **Block new public sharing**.
+            5. Save the changes.
+            6. Repeat for each region.
+        - id: cli
+          desc: |
+            To enable AMI block public access using the AWS CLI:
+
+            ```bash
+            aws ec2 enable-image-block-public-access --image-block-public-access-state block-new-sharing --region REGION
+            ```
+
+            Run this command for each active region.
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/sharingamis-intro.html
+        title: Block public access for AMIs
+  - uid: mondoo-aws-security-ec2-ami-block-public-access-aws
+    filters: asset.platform == "aws"
+    mql: aws.ec2.imageBlockPublicAccess.values.all(_ == "block-new-sharing")
+  - uid: mondoo-aws-security-ec2-launch-template-imdsv2
+    title: Ensure EC2 launch templates require IMDSv2
+    impact: 80
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ac-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-aws-security-ec2-launch-template-imdsv2-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that EC2 launch templates are configured to require Instance Metadata Service Version 2 (IMDSv2). IMDSv2 uses session-oriented authentication that requires a PUT request to obtain a token before metadata can be accessed, preventing SSRF attacks from extracting instance credentials.
+
+        **Why this matters**
+
+        - IMDSv1 allows unauthenticated GET requests to retrieve instance metadata, including IAM role credentials.
+        - SSRF vulnerabilities in applications running on EC2 instances can be exploited to steal IAM credentials via IMDSv1.
+        - Launch templates define the configuration for new instances, so enforcing IMDSv2 in templates ensures all new instances are protected.
+        - IMDSv2 is recommended by AWS and required by CIS AWS Foundations Benchmark.
+      remediation:
+        - id: console
+          desc: |
+            To require IMDSv2 in EC2 launch templates using the AWS Console:
+
+            1. Navigate to the **EC2 Dashboard > Launch Templates**.
+            2. Select the launch template and choose **Modify template (Create new version)**.
+            3. Under **Advanced details > Metadata accessible**, set to **Enabled**.
+            4. Set **Metadata version** to **V2 only (token required)**.
+            5. Set **Metadata response hop limit** to **1** (recommended).
+            6. Create the new template version and set it as the default.
+        - id: cli
+          desc: |
+            To require IMDSv2 in EC2 launch templates using the AWS CLI:
+
+            ```bash
+            aws ec2 create-launch-template-version \
+              --launch-template-id lt-XXXXX \
+              --source-version '$Default' \
+              --launch-template-data '{"MetadataOptions":{"HttpTokens":"required","HttpEndpoint":"enabled","HttpPutResponseHopLimit":1}}'
+            ```
+        - id: terraform
+          desc: |
+            To require IMDSv2 in EC2 launch templates using Terraform:
+
+            ```hcl
+            resource "aws_launch_template" "example" {
+              name = "example"
+
+              metadata_options {
+                http_tokens                 = "required"
+                http_endpoint               = "enabled"
+                http_put_response_hop_limit = 1
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
+        title: Configure the instance metadata service
+  - uid: mondoo-aws-security-ec2-launch-template-imdsv2-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.launchTemplates.all(
+        metadataOptions['HttpTokens'] == "required"
+      )
+  - uid: mondoo-aws-security-s3-ownership-controls-enforced
+    title: Ensure S3 buckets enforce bucket owner ownership
+    impact: 70
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ac-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-aws-security-s3-ownership-controls-enforced-aws
+        tags:
+          mondoo.com/filter-title: AWS S3 Bucket
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that S3 buckets have ownership controls set to BucketOwnerEnforced. This setting disables ACLs on the bucket, meaning all objects are owned by the bucket owner regardless of who uploaded them. This simplifies access management by ensuring that only IAM policies and bucket policies control access.
+
+        **Why this matters**
+
+        - S3 ACLs are a legacy access control mechanism that can grant unintended permissions alongside bucket and IAM policies.
+        - With ACLs enabled, objects uploaded by other accounts may not be accessible to the bucket owner.
+        - BucketOwnerEnforced ensures all access control is managed through IAM and bucket policies, providing a single source of truth.
+        - AWS recommends disabling ACLs for most use cases as a security best practice.
+      remediation:
+        - id: console
+          desc: |
+            To enforce bucket owner ownership using the AWS Console:
+
+            1. Navigate to the **S3** console and select the bucket.
+            2. Go to the **Permissions** tab.
+            3. Under **Object Ownership**, select **Edit**.
+            4. Choose **ACLs disabled (recommended)** which sets BucketOwnerEnforced.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To enforce bucket owner ownership using the AWS CLI:
+
+            ```bash
+            aws s3api put-bucket-ownership-controls \
+              --bucket BUCKET_NAME \
+              --ownership-controls='Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
+            ```
+        - id: terraform
+          desc: |
+            To enforce bucket owner ownership using Terraform:
+
+            ```hcl
+            resource "aws_s3_bucket_ownership_controls" "example" {
+              bucket = aws_s3_bucket.example.id
+
+              rule {
+                object_ownership = "BucketOwnerEnforced"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
+        title: Controlling ownership of objects and disabling ACLs
+  - uid: mondoo-aws-security-s3-ownership-controls-enforced-aws
+    filters: asset.platform == "aws-s3-bucket"
+    mql: aws.s3.bucket.ownershipControls == "BucketOwnerEnforced"
+  - uid: mondoo-aws-security-cloudtrail-insights-enabled
+    title: Ensure CloudTrail Insights is enabled
+    impact: 60
+    tags:
+      compliance/nist-csf-2: nist-csf-2-de-ae-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+    variants:
+      - uid: mondoo-aws-security-cloudtrail-insights-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS CloudTrail Trail
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that CloudTrail trails have Insights enabled. CloudTrail Insights automatically analyzes management events to detect unusual API activity patterns, such as spikes in resource provisioning, bursts of IAM actions, or gaps in periodic maintenance activity.
+
+        **Why this matters**
+
+        - CloudTrail Insights detects anomalous API call patterns that may indicate account compromise or misconfiguration.
+        - Without Insights, detecting unusual activity requires manual analysis of CloudTrail logs or custom anomaly detection.
+        - Insights generates findings for unusual write management events (ApiCallRateInsight) and API error rates (ApiErrorRateInsight).
+        - Automated anomaly detection reduces mean time to detect security incidents.
+      remediation:
+        - id: console
+          desc: |
+            To enable CloudTrail Insights using the AWS Console:
+
+            1. Navigate to the **CloudTrail** console.
+            2. Select the trail to configure.
+            3. Under **Insights events**, select **Edit**.
+            4. Enable both **API call rate** and **API error rate** insights.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To enable CloudTrail Insights using the AWS CLI:
+
+            ```bash
+            aws cloudtrail put-insight-selectors \
+              --trail-name TRAIL_NAME \
+              --insight-selectors '[{"InsightType":"ApiCallRateInsight"},{"InsightType":"ApiErrorRateInsight"}]'
+            ```
+        - id: terraform
+          desc: |
+            To enable CloudTrail Insights using Terraform:
+
+            ```hcl
+            resource "aws_cloudtrail" "example" {
+              name           = "example-trail"
+              s3_bucket_name = aws_s3_bucket.trail.id
+
+              insight_selector {
+                insight_type = "ApiCallRateInsight"
+              }
+
+              insight_selector {
+                insight_type = "ApiErrorRateInsight"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/logging-insights-events-with-cloudtrail.html
+        title: Logging Insights events
+  - uid: mondoo-aws-security-cloudtrail-insights-enabled-aws
+    filters: asset.platform == "aws-cloudtrail-trail"
+    mql: |
+      aws.cloudtrail.trail.insightSelectors.any(_['InsightType'] == "ApiCallRateInsight") &&
+      aws.cloudtrail.trail.insightSelectors.any(_['InsightType'] == "ApiErrorRateInsight")
+  - uid: mondoo-aws-security-securityhub-standards-enabled
+    title: Ensure Security Hub has standards enabled
+    impact: 70
+    tags:
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+    variants:
+      - uid: mondoo-aws-security-securityhub-standards-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Security Hub has at least one security standard enabled. Security standards (such as AWS Foundational Security Best Practices, CIS AWS Foundations Benchmark, or PCI DSS) provide automated security checks against AWS resources.
+
+        **Why this matters**
+
+        - Security Hub without enabled standards provides no automated security checks, making it ineffective.
+        - Standards provide continuously evaluated security controls that detect misconfigurations as they occur.
+        - AWS Foundational Security Best Practices is the recommended baseline standard for all AWS accounts.
+        - Compliance frameworks require continuous monitoring of security controls, which standards automate.
+      remediation:
+        - id: console
+          desc: |
+            To enable Security Hub standards using the AWS Console:
+
+            1. Navigate to the **Security Hub** console.
+            2. Select **Security standards** from the navigation.
+            3. Enable at least one standard (AWS Foundational Security Best Practices recommended).
+            4. Review and acknowledge the pricing implications.
+        - id: cli
+          desc: |
+            To enable Security Hub standards using the AWS CLI:
+
+            ```bash
+            aws securityhub batch-enable-standards \
+              --standards-subscription-requests '[{"StandardsArn":"arn:aws:securityhub:::ruleset/aws-foundational-security-best-practices/v/1.0.0"}]'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-standards.html
+        title: Security standards in AWS Security Hub
+  - uid: mondoo-aws-security-securityhub-standards-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.securityhub.hubs.length > 0 &&
+      aws.securityhub.hubs.all(
+        enabledStandards.length > 0
+      )
+  - uid: mondoo-aws-security-sns-no-public-access
+    title: Ensure SNS topics do not allow public access
+    impact: 80
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ac-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-aws-security-sns-no-public-access-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that SNS topic access policies do not grant public access. An SNS topic with a policy that allows Principal "*" without conditions enables any AWS account or unauthenticated user to publish or subscribe to the topic.
+
+        **Why this matters**
+
+        - Public SNS topics can be abused to send unauthorized notifications or subscribe to receive sensitive messages.
+        - Attackers can publish messages to public topics, potentially triggering downstream Lambda functions or other integrations.
+        - Unauthorized subscribers can receive sensitive data published to the topic.
+        - SNS topic policies should follow the principle of least privilege, restricting access to specific accounts and services.
+      remediation:
+        - id: console
+          desc: |
+            To restrict SNS topic access using the AWS Console:
+
+            1. Navigate to the **SNS** console and select the topic.
+            2. Select **Edit**.
+            3. Under **Access policy**, review the JSON policy.
+            4. Remove any statements with `"Principal": "*"` that lack restrictive conditions.
+            5. Restrict access to specific AWS accounts, services, or VPC endpoints.
+            6. Save the changes.
+        - id: cli
+          desc: |
+            To restrict SNS topic access using the AWS CLI, first get the current policy:
+
+            ```bash
+            aws sns get-topic-attributes --topic-arn TOPIC_ARN --query 'Attributes.Policy'
+            ```
+
+            Then update the policy to remove public access:
+
+            ```bash
+            aws sns set-topic-attributes \
+              --topic-arn TOPIC_ARN \
+              --attribute-name Policy \
+              --attribute-value file://restricted-policy.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sns/latest/dg/sns-access-policy-use-cases.html
+        title: Amazon SNS access policy use cases
+  - uid: mondoo-aws-security-sns-no-public-access-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sns.topics.all(
+        policy == empty || policy['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" || _['Principal']['AWS'] == "*" || _['Principal']['AWS'].contains("*")
+        )
+      )
+  - uid: mondoo-aws-security-drs-private-replication
+    title: Ensure DRS uses private IP for data replication
+    impact: 70
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-6
+    variants:
+      - uid: mondoo-aws-security-drs-private-replication-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Elastic Disaster Recovery (DRS) replication configurations use private IP addresses for data plane routing. When set to PUBLIC_IP, replication data traverses the public internet, increasing exposure to interception and eavesdropping.
+
+        **Why this matters**
+
+        - Replication data sent over public IPs traverses the public internet, even if encrypted in transit.
+        - Private IP replication keeps data within the AWS network, reducing the attack surface.
+        - Using private IP routing is required for environments with strict network isolation requirements.
+        - Compliance frameworks require data in transit to use private network paths where available.
+      remediation:
+        - id: console
+          desc: |
+            To configure private IP replication using the AWS Console:
+
+            1. Navigate to the **AWS Elastic Disaster Recovery** console.
+            2. Select **Source servers**.
+            3. Choose the source server and go to **Replication Settings**.
+            4. Set **Data routing** to **Private IP**.
+            5. Ensure VPN or Direct Connect is configured for private connectivity.
+            6. Save the changes.
+        - id: cli
+          desc: |
+            To configure private IP replication using the AWS CLI:
+
+            ```bash
+            aws drs update-replication-configuration \
+              --source-server-id SOURCE_SERVER_ID \
+              --data-plane-routing PRIVATE_IP
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/drs/latest/userguide/replication-settings.html
+        title: AWS DRS Replication Settings
+  - uid: mondoo-aws-security-drs-private-replication-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.drs.sourceServers.all(
+        replicationConfiguration.dataPlaneRouting == "PRIVATE_IP"
+      )
+  - uid: mondoo-aws-security-drs-no-public-recovery-ip
+    title: Ensure DRS recovery instances have no public IPs
+    impact: 70
+    tags:
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-6
+    variants:
+      - uid: mondoo-aws-security-drs-no-public-recovery-ip-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS Elastic Disaster Recovery (DRS) replication configurations do not create public IP addresses for recovery instances. Recovery instances with public IPs are directly accessible from the internet, increasing the attack surface during disaster recovery scenarios.
+
+        **Why this matters**
+
+        - Recovery instances with public IPs are exposed to the internet, making them targets for attacks during already-stressful DR events.
+        - DR instances may not have the same hardening as production instances, making public exposure especially risky.
+        - Private-only recovery instances require VPN or Direct Connect for access, ensuring controlled access paths.
+        - During failover, security controls should remain as strict as production environments.
+      remediation:
+        - id: console
+          desc: |
+            To disable public IP creation for recovery instances using the AWS Console:
+
+            1. Navigate to the **AWS Elastic Disaster Recovery** console.
+            2. Select **Source servers**.
+            3. Choose the source server and go to **Replication Settings**.
+            4. Disable **Create public IP** for the recovery instance.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To disable public IP creation for recovery instances using the AWS CLI:
+
+            ```bash
+            aws drs update-replication-configuration \
+              --source-server-id SOURCE_SERVER_ID \
+              --no-create-public-ip
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/drs/latest/userguide/replication-settings.html
+        title: AWS DRS Replication Settings
+  - uid: mondoo-aws-security-drs-no-public-recovery-ip-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.drs.sourceServers.all(
+        replicationConfiguration.createPublicIP != true
+      )
