@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 3.0.0
+    version: 3.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -40,6 +40,8 @@ policies:
           - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
           - uid: mondoo-oci-security-iam-stale-active-users
           - uid: mondoo-oci-security-iam-no-broad-compartment-policies
+          - uid: mondoo-oci-security-iam-auth-tokens-short-lived
+          - uid: mondoo-oci-security-iam-admin-group-membership-limited
       - title: Object Storage
         checks:
           - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
@@ -48,6 +50,8 @@ policies:
           - uid: mondoo-oci-security-object-storage-buckets-customer-managed-encryption
           - uid: mondoo-oci-security-object-storage-buckets-replication-enabled
           - uid: mondoo-oci-security-object-storage-archive-buckets-versioning
+          - uid: mondoo-oci-security-object-storage-retention-rules-locked
+          - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum
       - title: Virtual Cloud Network
         checks:
           - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols
@@ -58,9 +62,38 @@ policies:
           - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress
           - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet
           - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports
+          - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
+          - uid: mondoo-oci-security-public-vnic-has-nsg
       - title: Compute
         checks:
           - uid: mondoo-oci-security-compute-instance-tagging
+          - uid: mondoo-oci-security-compute-imds-v2-only
+          - uid: mondoo-oci-security-compute-metadata-no-secrets
+      - title: Load Balancer
+        checks:
+          - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2
+          - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites
+          - uid: mondoo-oci-security-loadbalancer-http-listener-has-https
+      - title: Oracle Kubernetes Engine
+        checks:
+          - uid: mondoo-oci-security-oke-public-endpoint-disabled
+          - uid: mondoo-oci-security-oke-supported-kubernetes-version
+          - uid: mondoo-oci-security-oke-image-policy-enabled
+      - title: Database
+        checks:
+          - uid: mondoo-oci-security-adb-mtls-or-restricted
+          - uid: mondoo-oci-security-dbsystem-private-subnet
+          - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
+      - title: Vault
+        checks:
+          - uid: mondoo-oci-security-vault-secrets-rotation-enabled
+          - uid: mondoo-oci-security-vault-secrets-not-expired
+      - title: Functions
+        checks:
+          - uid: mondoo-oci-security-functions-config-no-credentials
+      - title: Container Instances
+        checks:
+          - uid: mondoo-oci-security-container-instances-approved-registry
     scoring_system: highest impact
 queries:
   - uid: mondoo-oci-security-iam-mfa-enabled-for-active-users
@@ -2257,3 +2290,1246 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Tagging/Concepts/taggingoverview.htm
         title: OCI tagging documentation
+  - uid: mondoo-oci-security-iam-auth-tokens-short-lived
+    title: Ensure IAM auth tokens have an expiry no more than 90 days after creation
+    impact: 75
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      oci.identity.users.all(
+        authTokens.where(state == "ACTIVE").all(
+          expires != null && expires - created <= 90 * time.day
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that every active OCI auth token has an expiry set and the expiry is no more than 90 days after the token was created. Auth tokens authenticate to Oracle Cloud Infrastructure APIs and non-console services (Container Registry, Autonomous Database SQL Developer, etc.), and long-lived tokens behave as long-lived static credentials.
+
+        **Why this matters**
+
+        Long-lived auth tokens make credential rotation impossible in practice and extend the window in which a leaked token is useful to an attacker:
+
+        - Tokens without expiry persist until an administrator manually revokes them — easily years after they stop being needed.
+        - Offboarded employees' tokens stay valid indefinitely if not explicitly deleted.
+        - Tokens leaked into Git, CI logs, or third-party services remain usable for the entire remaining lifetime.
+        - The older the token, the more places a copy of it may exist, so the blast radius grows over time.
+
+        A bounded 90-day lifetime caps exposure and forces a regular rotation cadence.
+
+        **Risk mitigation**
+
+        - Caps the useful lifetime of any leaked or stolen token.
+        - Forces developers to rotate tokens on a predictable cadence.
+        - Reduces the window of persistence for offboarded users.
+      remediation:
+        - id: console
+          desc: |
+            Revoke and reissue long-lived tokens with an explicit expiry:
+
+            1. Open **Identity & Security** → **Users** → select the user → **Auth Tokens**.
+            2. **Delete** any token whose expiry is unset or more than 90 days out.
+            3. Generate a replacement with an **expiration date** within 90 days of today.
+            4. Distribute the new token to the owning system and verify it works before deletion.
+        - id: cli
+          desc: |
+            Delete long-lived auth tokens via the OCI CLI:
+
+            ```bash
+            oci iam auth-token delete --user-id <user-ocid> --auth-token-id <token-ocid>
+            ```
+
+            Issue a replacement with an expiry set by the admin-defined tenancy policy:
+
+            ```bash
+            oci iam auth-token create --user-id <user-ocid> --description "Rotated <date>"
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
+        title: OCI - Managing User Credentials
+  - uid: mondoo-oci-security-iam-admin-group-membership-limited
+    title: Ensure IAM groups with admin-style names have a limited number of members
+    impact: 75
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      oci.identity.groups.where(
+        name.downcase == /admin|root|tenancy.?admin|super.?user/
+      ).all(members.length <= 5)
+    docs:
+      desc: |
+        This check verifies that OCI IAM groups whose names suggest tenancy-wide privileges (matching `admin`, `root`, `tenancy-admin`, or `super-user`) contain no more than five members. OCI's default `Administrators` group, and any custom group that inherits similar privilege, should be kept small to contain the impact of a single compromised account.
+
+        **Why this matters**
+
+        Every member of a tenancy-admin-tier group can attach policies, create keys, and access every resource in the tenancy:
+
+        - A phishing or credential-theft attack against any admin member results in full tenancy compromise.
+        - Large admin groups accumulate former-employee memberships that are never cleaned up.
+        - Privilege creep: granting admin access "temporarily" rarely gets revoked.
+        - Audit trails that rely on attribution to a specific admin become hard to interpret when many admins share the privilege.
+
+        Holding the admin population to five or fewer active members keeps the exposure surface small and enforces a deliberate approval step for new admin additions.
+
+        **Risk mitigation**
+
+        - Limits the blast radius of any single compromised admin credential.
+        - Forces periodic review of who still needs tenancy-wide access.
+        - Aligns group membership with the principle of least privilege.
+      remediation:
+        - id: console
+          desc: |
+            Trim the admin group to the minimum set of required members:
+
+            1. Open **Identity & Security** → **Groups** → select the flagged group.
+            2. Review each member against a documented list of personnel who require admin access.
+            3. **Remove user from group** for every member who no longer needs the privilege.
+            4. For users who only need occasional admin access, move them to a break-glass workflow (separate account activated only when needed).
+        - id: cli
+          desc: |
+            Remove a user from an over-populated admin group:
+
+            ```bash
+            oci iam group remove-user --user-id <user-ocid> --group-id <group-ocid>
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managinggroups.htm
+        title: OCI - Managing Groups
+  - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
+    title: Ensure NSGs do not permit SSH or RDP ingress from 0.0.0.0/0
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.network.networkSecurityGroups.all(
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcpOptions'] == empty ||
+          _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22 ||
+          _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389
+        )
+      )
+    docs:
+      desc: |
+        This check extends the existing VCN security-list SSH/RDP ingress checks to Network Security Groups (NSGs). NSGs apply to individual VNICs and are the modern replacement for subnet-level security lists — misconfigured NSGs can expose instances to SSH (TCP 22) or RDP (TCP 3389) from the internet even when the subnet's security lists are locked down.
+
+        **Why this matters**
+
+        SSH and RDP exposed to `0.0.0.0/0` are the two most-targeted cloud attack surfaces:
+
+        - Automated internet-wide scans find exposed SSH/RDP within minutes of a new VNIC getting a public IP.
+        - Password spray, credential stuffing, and brute-force attacks are trivial to run at scale against internet-exposed admin ports.
+        - Unpatched SSH/RDP servers regularly have RCE-class CVEs exploited in the wild.
+        - NSGs are attached per-VNIC, so an over-permissive NSG on a single instance bypasses otherwise-strict subnet controls.
+
+        **Risk mitigation**
+
+        - Closes the most common cloud-to-VM attack surface.
+        - Forces admin access through bastion hosts, Session Manager, or VPN tunnels.
+        - Aligns NSG posture with the existing security-list ingress checks.
+      remediation:
+        - id: console
+          desc: |
+            Tighten NSG rules to remove internet-wide admin access:
+
+            1. Open **Networking** → **Network Security Groups** → select the flagged NSG.
+            2. Under **Security Rules**, select the over-permissive ingress rule (source `0.0.0.0/0`, protocol TCP, destination port 22 or 3389).
+            3. Either delete it or restrict the source to specific bastion / VPN CIDR ranges.
+            4. For administrative access, route through OCI Bastion or an approved VPN instead of opening SSH/RDP to the world.
+        - id: cli
+          desc: |
+            Remove an over-permissive ingress rule from an NSG:
+
+            ```bash
+            oci network nsg rules remove \
+              --nsg-id <nsg-ocid> \
+              --security-rule-ids '["<rule-id>"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/networksecuritygroups.htm
+        title: OCI - Network Security Groups
+      - url: https://docs.oracle.com/en-us/iaas/Content/Bastion/Concepts/bastionoverview.htm
+        title: OCI Bastion Service
+  - uid: mondoo-oci-security-public-vnic-has-nsg
+    title: Ensure compute VNICs with a public IP have at least one NSG attached
+    impact: 80
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.compute.instances.all(
+        vnics.where(publicIp != "" && publicIp != null).all(
+          nsgIds.length > 0
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that every compute VNIC with a public IP has at least one Network Security Group attached. A VNIC that is reachable from the internet with no NSG relies entirely on the subnet's security lists for ingress filtering — which, on OCI, default to very permissive rules and are often inherited from shared subnets.
+
+        **Why this matters**
+
+        A public-IP VNIC with zero NSGs provides no VNIC-level ingress control:
+
+        - Every port reachable through the subnet security list is reachable from the internet.
+        - Security teams typically treat NSG membership as the primary per-host allowlist; absence of an NSG means there is no per-host filter at all.
+        - A shared subnet with relaxed rules (common for "DMZ" networks) means every public VNIC on that subnet is exposed.
+        - The failure is silent — an operator who forgets to attach an NSG produces an internet-exposed host that passes most "VCN security list" checks.
+
+        **Risk mitigation**
+
+        - Guarantees a per-VNIC ingress filter exists for every public-facing host.
+        - Forces explicit review of which public services each host is allowed to expose.
+        - Reduces reliance on broad subnet-level security lists.
+      remediation:
+        - id: console
+          desc: |
+            Attach an NSG to the flagged VNIC:
+
+            1. Open **Compute** → **Instances** → select the instance → **Attached VNICs** → select the VNIC.
+            2. **Edit VNIC** → **Network Security Groups** → **Add Network Security Group**.
+            3. Pick an NSG whose ingress rules match the services the host should expose.
+            4. Save. If no appropriate NSG exists, create one first scoped to the workload.
+        - id: cli
+          desc: |
+            Attach an NSG to a VNIC:
+
+            ```bash
+            oci network vnic update --vnic-id <vnic-ocid> --nsg-ids '["<nsg-ocid>"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/networksecuritygroups.htm
+        title: OCI - Network Security Groups
+  - uid: mondoo-oci-security-compute-imds-v2-only
+    title: Ensure compute instances have the legacy IMDSv1 endpoints disabled
+    impact: 85
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      oci.compute.instances.all(
+        instanceOptions['areLegacyImdsEndpointsDisabled'] == true
+      )
+    docs:
+      desc: |
+        This check verifies that every OCI compute instance has the legacy Instance Metadata Service v1 (IMDSv1) endpoints disabled in its `instanceOptions`. IMDSv1 does not require the caller to prove it can receive a response, so any server-side-request-forgery (SSRF) bug in an application running on the instance can be used to read the instance principal token and any other metadata directly.
+
+        **Why this matters**
+
+        IMDSv1 is the exact same class of vulnerability that led to the Capital One / AWS IMDS breach:
+
+        - Any HTTP client running on the instance — including a vulnerable web app or a poisoned library — can fetch instance principal tokens via `169.254.169.254` without authentication.
+        - Server-side request forgery (SSRF) in the instance's applications becomes a credential-theft primitive.
+        - Legacy endpoints return values even when requests originate from application containers running inside the instance, multiplying the affected surface.
+        - IMDSv2 requires a session token obtained via PUT, which most SSRF payloads cannot produce.
+
+        Disabling IMDSv1 does not break legitimate workloads that use the OCI SDK, which uses IMDSv2 by default.
+
+        **Risk mitigation**
+
+        - Neutralizes SSRF-to-credential-theft attack chains on compute instances.
+        - Forces the instance metadata client path through the authenticated v2 API.
+        - Closes the most impactful cloud-pivot primitive that an attacker in a compromised instance process has.
+      remediation:
+        - id: console
+          desc: |
+            Disable legacy IMDS endpoints on the instance:
+
+            1. Open **Compute** → **Instances** → select the instance.
+            2. **More Actions** → **Edit** → expand **Show advanced options** → **Security**.
+            3. Set **Legacy MetaData service endpoint** to **Disabled**.
+            4. Save. The setting applies without rebooting, but reboot is required for any running application using IMDSv1 to re-initialize via IMDSv2.
+        - id: cli
+          desc: |
+            Disable legacy IMDS endpoints via the OCI CLI:
+
+            ```bash
+            oci compute instance update \
+              --instance-id <instance-ocid> \
+              --instance-options '{"areLegacyImdsEndpointsDisabled": true}'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/gettingmetadata.htm
+        title: OCI - Getting Instance Metadata (IMDS v1 and v2)
+  - uid: mondoo-oci-security-compute-metadata-no-secrets
+    title: Ensure compute instance metadata does not contain credentials
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      oci.compute.instances.all(
+        metadata.keys.none(
+          _.downcase == /aws_access_key_id|aws_secret_access_key|aws_session_token|oci_api_key|oci_secret|api_token|bearer_token/
+        ) &&
+        metadata.values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty
+        )
+      )
+    docs:
+      desc: |
+        This check flags OCI compute instances whose `metadata` key-value pairs look like they carry credentials. Two patterns are detected:
+
+        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `api_token`, `bearer_token` (case-insensitive).
+        2. **Access key IDs in values** — matches the documented AWS access-key-ID prefixes (`AKIA…`, `ASIA…`, etc.).
+
+        Instance `metadata` is readable by anyone with `compute-instance:read` permission and by every process running on the instance via the IMDS endpoints — it is the OCI analog of AWS's EC2 user-data leak pattern.
+
+        **Why this matters**
+
+        Developers frequently pass credentials via instance metadata to bootstrap applications:
+
+        - Metadata returned by `GetInstance` and the IMDS endpoints persists for the entire life of the instance.
+        - Any user with IAM read access to the compartment can retrieve the metadata with a single API call.
+        - Every process running on the instance — including any compromised application — can read metadata via `169.254.169.254`.
+        - Rotating a credential requires deleting and recreating the instance; short of that the old value stays exposed.
+
+        **Risk mitigation**
+
+        - Eliminates a well-known credential-leak channel.
+        - Forces use of Vault secrets or resource principal authentication instead of hardcoded values.
+        - Reduces the blast radius of any single-host compromise.
+      remediation:
+        - id: console
+          desc: |
+            Remove credentials from instance metadata:
+
+            1. Rotate any credentials that appeared in metadata immediately — assume they are compromised.
+            2. Open **Compute** → **Instances** → select the instance → **Metadata**.
+            3. Remove the credential key-value pair. If the metadata field cannot be cleared in place, recreate the instance without the offending metadata.
+            4. Replace the usage with Vault-backed configuration or a resource principal, neither of which leaves values visible in `GetInstance`.
+        - id: cli
+          desc: |
+            Rotate any exposed credential and remove it from metadata via instance update:
+
+            ```bash
+            oci compute instance update --instance-id <instance-ocid> --metadata '{}'
+            ```
+
+            (Passing an empty metadata map clears user-supplied keys; existing OCI-managed keys like `ssh_authorized_keys` are preserved.)
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/gettingmetadata.htm
+        title: OCI - Instance Metadata
+      - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Concepts/keyoverview.htm
+        title: OCI Vault
+  - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2
+    title: Ensure load balancer HTTPS listeners only allow TLS 1.2 or newer
+    impact: 85
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      oci.loadBalancer.loadBalancers.all(
+        listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
+          sslProtocols.none(_ == "TLSv1" || _ == "TLSv1.1" || _ == "SSLv3")
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that HTTPS and HTTP/2 listeners on every OCI load balancer only accept TLS 1.2 or TLS 1.3 connections. TLS 1.0, TLS 1.1, and anything older (SSLv3, SSLv2) have been deprecated by every major browser and are vulnerable to well-known downgrade and padding-oracle attacks.
+
+        **Why this matters**
+
+        Accepting old TLS versions at the edge undermines the entire crypto posture of services behind the load balancer:
+
+        - TLS 1.0 and 1.1 are vulnerable to BEAST, CRIME, POODLE, and LUCKY13 attacks that allow plaintext recovery from intercepted sessions.
+        - PCI DSS 3.2+ prohibits TLS < 1.2 for in-scope systems.
+        - A single listener that accepts TLS 1.0 provides a downgrade path the rest of the stack assumed was impossible.
+        - Legacy versions force support for CBC-mode cipher suites with known weaknesses.
+
+        **Risk mitigation**
+
+        - Prevents downgrade attacks from succeeding.
+        - Aligns with PCI DSS, HIPAA, and most internal crypto standards.
+        - Forces clients to use modern authenticated-encryption cipher suites.
+      remediation:
+        - id: console
+          desc: |
+            Update listener SSL configuration to require TLS 1.2+:
+
+            1. Open **Networking** → **Load Balancers** → select the load balancer → **Listeners**.
+            2. Edit the HTTPS / HTTP/2 listener → **SSL Configuration**.
+            3. In **TLS Version**, select **TLSv1.2** or higher (do not include TLSv1 or TLSv1.1).
+            4. Update. Existing connections finish, new connections are required to use TLS 1.2+.
+        - id: cli
+          desc: |
+            Update the listener's SSL configuration to TLS 1.2+:
+
+            ```bash
+            oci lb listener update \
+              --load-balancer-id <lb-ocid> \
+              --listener-name <listener-name> \
+              --protocol HTTPS \
+              --port 443 \
+              --default-backend-set-name <backend> \
+              --ssl-certificate-name <cert-name> \
+              --cipher-suite-name oci-default-ssl-cipher-suite-v1 \
+              --protocols '["TLSv1.2","TLSv1.3"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Balance/Tasks/managingsslconfigs.htm
+        title: OCI - Managing SSL Configurations
+  - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites
+    title: Ensure load balancer listeners use a modern cipher suite
+    impact: 70
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      oci.loadBalancer.loadBalancers.all(
+        listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
+          sslCipherSuiteName.downcase == /oci-modern|oci-tls-1-2|oci-tls-1-3|oci-default-ssl-cipher-suite-v1/
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that HTTPS and HTTP/2 listeners on every OCI load balancer use an Oracle-managed modern cipher suite (`oci-modern-ssl-cipher-suite-v1`, `oci-tls-1-2-*`, `oci-tls-1-3-*`, or `oci-default-ssl-cipher-suite-v1`) rather than the `oci-compatible-ssl-cipher-suite-v1` suite or a custom suite that admits weak algorithms.
+
+        **Why this matters**
+
+        The "compatible" cipher suite is designed to maximize interoperability with legacy clients and therefore admits ciphers that are known weak:
+
+        - RC4 and 3DES ciphers are vulnerable to cryptanalytic attacks (RC4 biases, Sweet32).
+        - CBC-mode ciphers without the `AEAD` extension are vulnerable to padding-oracle and length-extension attacks.
+        - Export-grade ciphers that appear in some "compatible" lists have effective key strengths below 64 bits.
+        - Clients that actually need these weak ciphers are, by 2026, running software that should be patched rather than accommodated at the edge.
+
+        **Risk mitigation**
+
+        - Eliminates known-weak cipher suites as a fallback option during negotiation.
+        - Forces forward-secret key exchange (ECDHE) and authenticated encryption (GCM/CHACHA20).
+        - Aligns with modern crypto guidance (PCI DSS, NIST SP 800-52 Rev 2).
+      remediation:
+        - id: console
+          desc: |
+            Switch the listener to a modern cipher suite:
+
+            1. Open **Networking** → **Load Balancers** → select the load balancer → **SSL Cipher Suites**.
+            2. Change the listener's cipher suite to `oci-modern-ssl-cipher-suite-v1` (or the appropriate `oci-tls-1-2-*` / `oci-tls-1-3-*` variant for your compliance context).
+            3. Test with a non-legacy client to confirm handshakes still succeed before rolling out broadly.
+        - id: cli
+          desc: |
+            Update a listener to use a modern cipher suite:
+
+            ```bash
+            oci lb listener update \
+              --load-balancer-id <lb-ocid> \
+              --listener-name <listener-name> \
+              --protocol HTTPS \
+              --port 443 \
+              --default-backend-set-name <backend> \
+              --ssl-certificate-name <cert-name> \
+              --cipher-suite-name oci-modern-ssl-cipher-suite-v1 \
+              --protocols '["TLSv1.2","TLSv1.3"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Balance/References/predefinedsslciphersuites.htm
+        title: OCI - Predefined SSL Cipher Suites
+  - uid: mondoo-oci-security-loadbalancer-http-listener-has-https
+    title: Ensure load balancers that run HTTP listeners also expose HTTPS
+    impact: 75
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      oci.loadBalancer.loadBalancers.where(
+        listeners.any(protocol == "HTTP")
+      ).all(
+        listeners.any(protocol == "HTTPS" || protocol == "HTTP2")
+      )
+    docs:
+      desc: |
+        This check flags load balancers that expose an HTTP listener but do not also expose an HTTPS / HTTP/2 listener. Pure-HTTP load balancers mean there is no TLS path to the same service, so any traffic a client is redirected to — including authenticated sessions, form posts, and cookies — travels in the clear.
+
+        **Why this matters**
+
+        A public HTTP listener with no HTTPS companion is an active risk, not a legacy compatibility artifact:
+
+        - Credentials, session cookies, and form data sent to the HTTP endpoint are recoverable by anyone on the path (coffee-shop WiFi, ISP, transit network).
+        - Redirecting HTTP → HTTPS at the application layer is impossible if no HTTPS listener exists; the load balancer cannot send a client to a URL it does not itself serve.
+        - Attackers can inject content into the HTTP response and perform classic MITM payload-injection attacks (BeEF hooks, miner scripts).
+        - Search engines and browsers increasingly flag HTTP-only endpoints, degrading user trust and SEO.
+
+        **Risk mitigation**
+
+        - Ensures every public-facing load balancer has a TLS path for the same service.
+        - Enables application-layer redirect-to-HTTPS or HSTS enforcement.
+        - Eliminates passive sniffing of authenticated sessions.
+      remediation:
+        - id: console
+          desc: |
+            Add an HTTPS listener to the load balancer:
+
+            1. Open **Networking** → **Load Balancers** → select the LB → **Listeners**.
+            2. Select **Create Listener** → **Protocol: HTTPS** → **Port: 443**.
+            3. Attach an SSL certificate (BYO certificate or Oracle Certificate Authority).
+            4. Select a modern SSL configuration (TLS 1.2+, `oci-modern-ssl-cipher-suite-v1`).
+            5. Route to the same backend set as the HTTP listener, or add an application-layer redirect to HTTPS.
+        - id: cli
+          desc: |
+            Create an HTTPS listener on the existing load balancer:
+
+            ```bash
+            oci lb listener create \
+              --load-balancer-id <lb-ocid> \
+              --name https-listener \
+              --protocol HTTPS \
+              --port 443 \
+              --default-backend-set-name <backend> \
+              --ssl-certificate-name <cert-name> \
+              --cipher-suite-name oci-modern-ssl-cipher-suite-v1 \
+              --protocols '["TLSv1.2","TLSv1.3"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Balance/Tasks/managinglisteners.htm
+        title: OCI - Managing Listeners
+  - uid: mondoo-oci-security-oke-public-endpoint-disabled
+    title: Ensure OKE cluster Kubernetes API endpoints are not exposed to the internet
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.oke.clusters.all(isPublicEndpointEnabled == false)
+    docs:
+      desc: |
+        This check verifies that every OKE (Oracle Kubernetes Engine) cluster has its Kubernetes API endpoint configured as private only. A publicly-exposed API endpoint means the cluster's control plane is reachable from the internet, making the cluster a direct target for Kubernetes CVEs, credential brute force, and scanning.
+
+        **Why this matters**
+
+        The Kubernetes API server is the single most privileged endpoint of any OKE cluster:
+
+        - A valid kubeconfig (or a working exploit against the API) grants full control of every workload in every namespace.
+        - Kubernetes CVEs — including auth bypass, SSRF, and privilege escalation bugs — regularly surface. A public endpoint turns each into a potential RCE.
+        - Even with strong authentication, continuous scanning generates alert noise and consumes control-plane capacity.
+        - Private endpoints combined with VPN / OCI Bastion keep the API reachable only from managed networks.
+
+        **Risk mitigation**
+
+        - Removes the Kubernetes API from public scanning surface.
+        - Forces administrative access through controlled network paths (VPN, bastion, Service Gateway).
+        - Significantly reduces blast radius of any future Kubernetes API CVE.
+      remediation:
+        - id: console
+          desc: |
+            Private endpoints must be configured at cluster creation — an existing public-endpoint cluster must be recreated:
+
+            1. Create a replacement OKE cluster with the same node pools but **Private API endpoint** selected under **Kubernetes API endpoint**.
+            2. Migrate workloads to the new cluster.
+            3. Delete the public-endpoint cluster once traffic has cut over.
+            4. Access the private endpoint via OCI Bastion, a VPN gateway, or a service gateway from peered VCNs.
+        - id: cli
+          desc: |
+            Create a replacement OKE cluster with a private API endpoint:
+
+            ```bash
+            oci ce cluster create \
+              --compartment-id <compartment-ocid> \
+              --name <cluster> \
+              --vcn-id <vcn-ocid> \
+              --kubernetes-version <version> \
+              --endpoint-subnet-id <private-subnet-ocid> \
+              --endpoint-public-ip-enabled false
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
+        title: OCI - OKE Network Configuration
+  - uid: mondoo-oci-security-oke-supported-kubernetes-version
+    title: Ensure OKE clusters run a supported Kubernetes version
+    impact: 75
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-21
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-id-sc-2
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc9-2-2
+    mql: |
+      oci.oke.clusters.all(availableKubernetesUpgrades.length < 3)
+    docs:
+      desc: |
+        This check flags OKE clusters with three or more available Kubernetes version upgrades pending — a proxy signal that the cluster is running a version that is two or more releases behind current. Kubernetes drops support for older releases on a fixed cadence, so a cluster with many available upgrades is probably running an EOL version with unpatched CVEs.
+
+        **Why this matters**
+
+        Oracle's OKE support policy, and Kubernetes upstream, drop security patches for old minor versions:
+
+        - Every release cycle backports a fresh batch of CVEs to the supported versions; an EOL version stays vulnerable to every CVE disclosed after its drop date.
+        - Many Kubernetes CVEs are auth-bypass or privilege-escalation class (CVE-2024-9042, CVE-2025-1974, etc.) — unpatched production clusters are direct tenant-to-tenant pivot risks.
+        - Major version skews between node pools and the control plane cause subtle feature breakage in addition to security exposure.
+        - OKE's `availableKubernetesUpgrades` field counts every patch and minor release the cluster is behind; three or more is a strong indicator of an EOL state.
+
+        **Risk mitigation**
+
+        - Ensures clusters receive ongoing security patches.
+        - Keeps the cluster within Oracle's support window.
+        - Prevents the gradual accumulation of known CVEs in the control plane.
+      remediation:
+        - id: console
+          desc: |
+            Upgrade OKE clusters to a supported version:
+
+            1. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster.
+            2. **Upgrade Available** → review the target version and upgrade path.
+            3. Upgrade the control plane first, then each node pool (recreate nodes or use blue/green rollout).
+            4. Re-run the check to confirm `availableKubernetesUpgrades` length is at most two.
+        - id: cli
+          desc: |
+            Upgrade the OKE control plane:
+
+            ```bash
+            oci ce cluster update --cluster-id <cluster-ocid> --kubernetes-version <new-version>
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengupgradingk8smasternode.htm
+        title: OCI - Upgrading Kubernetes on a Cluster
+  - uid: mondoo-oci-security-oke-image-policy-enabled
+    title: Ensure OKE clusters enable container image signature verification
+    impact: 70
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-21
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-id-sc-2
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc9-2-2
+    mql: |
+      oci.oke.clusters.all(isImagePolicyEnabled == true)
+    docs:
+      desc: |
+        This check verifies that every OKE cluster has image signature verification enabled. With the image policy enabled, OKE refuses to run container images that are not signed by a trusted key, blocking the most common supply-chain attack path — a malicious or tampered image being pulled by a cluster.
+
+        **Why this matters**
+
+        Without image policy enforcement, a cluster pulls whatever image the pod spec requests with no authenticity check:
+
+        - A compromised container registry, typo-squatted image name, or MITM in the image-pull path can substitute a malicious image.
+        - Public base images regularly get supply-chain compromised (event-stream, ua-parser-js, Codecov).
+        - An attacker who can modify a Helm chart or Kustomize overlay can swap image references without needing cluster-admin.
+        - The image policy adds a cryptographic gate that every one of these attack paths has to bypass.
+
+        **Risk mitigation**
+
+        - Blocks unsigned or unrecognized images from running in the cluster.
+        - Forces supply-chain attacks to break or steal a signing key rather than just rewrite a manifest.
+        - Aligns with NIST SP 800-204D and SLSA supply-chain guidance.
+      remediation:
+        - id: console
+          desc: |
+            Enable image policy on the cluster and configure signing keys:
+
+            1. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster → **Image Verification Policies**.
+            2. Toggle **Enable image verification**.
+            3. Add at least one **Key Management (KMS) master encryption key** from an approved signing authority.
+            4. Verify by attempting to deploy an unsigned image — OKE should reject the pod.
+        - id: cli
+          desc: |
+            Update the cluster to enable image policy and attach signing keys:
+
+            ```bash
+            oci ce cluster update \
+              --cluster-id <cluster-ocid> \
+              --image-policy-config '{"isPolicyEnabled":true,"keyDetails":[{"kmsKeyId":"<kms-key-ocid>"}]}'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengsigningimages_topic-Signing_Container_Images_Using_OCI_Registry.htm
+        title: OCI - Signing Container Images
+  - uid: mondoo-oci-security-adb-mtls-or-restricted
+    title: Ensure Autonomous Databases require mTLS or restrict access via ACL / NSG
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.database.autonomousDatabases.all(
+        isMtlsConnectionRequired == true ||
+        privateEndpointIp != "" ||
+        whitelistedIps.length > 0 ||
+        nsgIds.length > 0
+      )
+    docs:
+      desc: |
+        This check verifies that every Autonomous Database either requires mutual TLS (`isMtlsConnectionRequired == true`) or restricts access via a private endpoint, IP allowlist, or attached NSGs. An ADB reachable over the public internet with mTLS disabled and no network ACL is effectively accepting any wallet-authenticated connection from any source — a far weaker posture than Oracle's documented secure baseline.
+
+        **Why this matters**
+
+        mTLS on ADB protects the connection with client-certificate authentication on top of the usual username/password:
+
+        - Without mTLS, leaked DB credentials are sufficient for any attacker on the internet to connect.
+        - ADB wallets (`ewallet.p12`) that are required for TLS-only mode are regularly committed to repos or shared in support tickets — mTLS turns that leak into "need credentials AND need the wallet."
+        - IP ACLs (`whitelistedIps`) and NSGs provide a second-layer network gate even if credentials and wallets leak.
+        - A database that has none of (mTLS required, private endpoint, ACL, NSG) is the single weakest configuration the service allows.
+
+        **Risk mitigation**
+
+        - Closes the "credentials-only" path to the database.
+        - Forces attackers to compromise client-side wallet material in addition to any leaked password.
+        - Aligns with Oracle's recommended production posture for Autonomous Database.
+      remediation:
+        - id: console
+          desc: |
+            Harden the Autonomous Database's network posture:
+
+            1. Open **Oracle Database** → **Autonomous Database** → select the DB.
+            2. Pick the most restrictive network path that still meets application requirements:
+               - **Secure access from everywhere with mTLS**: require mTLS (`Require mutual TLS (mTLS) authentication`).
+               - **Allow secure access from specified IPs and VCNs**: configure an IP / NSG allowlist.
+               - **Private endpoint access only**: attach a private endpoint in a dedicated subnet.
+            3. Save. Applications that were relying on TLS-only mode must switch to mTLS wallets.
+        - id: cli
+          desc: |
+            Require mTLS on an existing ADB:
+
+            ```bash
+            oci db autonomous-database update \
+              --autonomous-database-id <adb-ocid> \
+              --is-mtls-connection-required true
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/network-access-types.html
+        title: OCI - Autonomous Database Network Access
+  - uid: mondoo-oci-security-dbsystem-private-subnet
+    title: Ensure DB systems are deployed in subnets that prohibit public IPs on VNICs
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.database.dbSystems.all(
+        subnet.prohibitPublicIpOnVnic == true
+      )
+    docs:
+      desc: |
+        This check verifies that every OCI DB System is deployed in a subnet that prohibits public IP assignment on VNICs. A DB system whose VNIC carries a public IP is directly reachable from the internet — this is the most exposed possible posture and conflicts with Oracle's deployment guidance.
+
+        **Why this matters**
+
+        DB systems hold the organization's most sensitive data and expect to operate behind a controlled network boundary:
+
+        - A public-IP DB listener is scanned constantly from the internet for Oracle-specific CVEs and brute-force targets.
+        - DB systems lack WAF, DDoS, and rate-limiting protections that typically front internet-facing applications.
+        - Access from applications should be via the subnet route / VCN peering, not the internet.
+        - `prohibitPublicIpOnVnic: true` on the subnet provides a structural guarantee that the DB system cannot accidentally be given a public IP.
+
+        **Risk mitigation**
+
+        - Removes internet reachability of database services.
+        - Forces application-to-DB traffic through controlled VCN paths.
+        - Prevents accidental exposure through VNIC reconfiguration.
+      remediation:
+        - id: console
+          desc: |
+            Move the DB system to a private subnet:
+
+            1. Identify or create a subnet with **Prohibit public IP on VNIC** set to **Yes**.
+            2. Since DB system subnet cannot be changed after creation, provision a replacement DB system in the private subnet.
+            3. Migrate data to the replacement via Data Pump, Data Guard, or RMAN.
+            4. Terminate the DB system in the public subnet once traffic has cut over.
+        - id: cli
+          desc: |
+            Create a private subnet that DB systems can use:
+
+            ```bash
+            oci network subnet create \
+              --compartment-id <compartment-ocid> \
+              --vcn-id <vcn-ocid> \
+              --cidr-block 10.0.10.0/24 \
+              --prohibit-public-ip-on-vnic true \
+              --display-name private-db-subnet
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Database/Concepts/databaseoverview.htm
+        title: OCI - Database Service Overview
+  - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
+    title: Ensure DB system subnets have no route to an internet gateway
+    impact: 85
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.database.dbSystems.all(
+        subnet.routeTable.routeRules.none(
+          _['destination'] == "0.0.0.0/0" && _['networkEntityId'].contains("internetgateway")
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that DB system subnets have no route rule that sends the default route (`0.0.0.0/0`) to an internet gateway. Even if the DB system has no public IP, a subnet with an IGW route means any compromise on the DB host can freely exfiltrate data to any address on the internet — the network provides no egress boundary.
+
+        **Why this matters**
+
+        Egress controls matter as much as ingress for data-storage systems:
+
+        - Attackers who gain a foothold on a DB host (via RCE in the listener, a compromised user process, or a maintenance backdoor) can stream data out to any address.
+        - Ransomware actors rely on egress to exfiltrate before encrypting, turning a backup-heavy tenancy into a "pay or we publish" scenario.
+        - A NAT gateway with audit logging is an acceptable egress path for patch downloads; a direct IGW route is not.
+        - The existence of an IGW in the subnet route table is a structural decision that outlives the current DB system and must be deliberately owned.
+
+        **Risk mitigation**
+
+        - Prevents direct data exfiltration from compromised DB hosts.
+        - Forces egress traffic through managed paths (NAT gateway with logging, service gateway for OCI services).
+        - Enables detection of unusual outbound traffic patterns.
+      remediation:
+        - id: console
+          desc: |
+            Remove the internet gateway route from the DB subnet:
+
+            1. Open **Networking** → **Virtual Cloud Networks** → the DB subnet's VCN → **Route Tables** → the route table associated with the DB subnet.
+            2. Delete any route rule whose **Destination** is `0.0.0.0/0` and whose **Target Type** is **Internet Gateway**.
+            3. If egress is required for patching or integrations, replace with a route to a NAT gateway or service gateway.
+            4. Verify the DB continues to reach OCI services through the service gateway.
+        - id: cli
+          desc: |
+            Update the route table to drop the IGW default route:
+
+            ```bash
+            oci network route-table update \
+              --rt-id <route-table-ocid> \
+              --route-rules '[{"destination":"all-<region>-services-in-oracle-services-network","destinationType":"SERVICE_CIDR_BLOCK","networkEntityId":"<service-gateway-ocid>"}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/managingroutetables.htm
+        title: OCI - Managing Route Tables
+  - uid: mondoo-oci-security-vault-secrets-rotation-enabled
+    title: Ensure OCI Vault secrets older than a year have scheduled rotation enabled
+    impact: 70
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      oci.vault.secrets.where(
+        state == "ACTIVE" &&
+        time.now - created > 365 * time.day
+      ).all(isScheduledRotationEnabled == true)
+    docs:
+      desc: |
+        This check verifies that every active OCI Vault secret older than 365 days has scheduled rotation enabled. Long-lived secrets without rotation are a classic persistent-credential risk: any leak — historical, current, or future — is effective until an operator manually rotates the secret.
+
+        **Why this matters**
+
+        Vault secrets without scheduled rotation behave like shared static passwords:
+
+        - A secret that has never rotated is as strong as its weakest moment of exposure over its entire lifetime.
+        - Offboarded employees who once had access to the plaintext retain that access implicitly.
+        - Compromised CI pipelines, development machines, and third-party tools that ever read the secret remain effective forever.
+        - Scheduled rotation flips this: any leak is useful only until the next rotation window, typically days or weeks.
+
+        **Risk mitigation**
+
+        - Caps the useful lifetime of any leaked secret.
+        - Reduces the impact of historical exposures that predate current tooling.
+        - Forces the consuming applications to stay wired to Vault instead of caching plaintext.
+      remediation:
+        - id: console
+          desc: |
+            Enable scheduled rotation on secrets that have lived for more than a year:
+
+            1. Open **Identity & Security** → **Vault** → the parent vault → **Secrets** → select the secret.
+            2. Under **Secret Generation and Rotation**, select **Edit**.
+            3. Enable **Auto-Generation** and configure **Scheduled Rotation** with an interval appropriate for the secret (P30D = 30 days for API tokens, P90D for database passwords, etc.).
+            4. Provide a rotation target (e.g., database auth function) that Vault invokes on the rotation schedule.
+        - id: cli
+          desc: |
+            Enable scheduled rotation on an existing Vault secret:
+
+            ```bash
+            oci vault secret update \
+              --secret-id <secret-ocid> \
+              --secret-rules '[{"ruleType":"SECRET_EXPIRY_RULE","secretVersionExpiryInterval":"P90D","isSecretContentRetrievalBlockedOnExpiry":true}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/managingsecrets.htm
+        title: OCI - Managing Secrets
+  - uid: mondoo-oci-security-vault-secrets-not-expired
+    title: Ensure OCI Vault active secret versions are not past their expiry time
+    impact: 65
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      oci.vault.secrets.where(state == "ACTIVE").all(
+        timeOfCurrentVersionExpiry == null ||
+        timeOfCurrentVersionExpiry > time.now
+      )
+    docs:
+      desc: |
+        This check flags active OCI Vault secrets whose current version has an expiry in the past. A secret past its `timeOfCurrentVersionExpiry` is either in an un-rotated state (the rotation schedule failed) or the consuming application is still reading a version that the operator intended to be dead — either way, an operational-turned-security problem that must be resolved.
+
+        **Why this matters**
+
+        Expired secret versions signal a broken trust assumption:
+
+        - The secret's planned rotation did not complete, leaving dependents on an out-of-policy version.
+        - Monitoring that treats "Vault has the secret" as sufficient does not notice the version drift.
+        - Applications silently continue to authenticate with the expired credential until it is forcibly invalidated, masking the problem.
+        - The intended rotation cadence — which is often designed around compliance requirements — is not being met.
+
+        **Risk mitigation**
+
+        - Surfaces broken rotation pipelines before the expired credential is abused or invalidated.
+        - Ensures the secret lifecycle reflected in Vault matches what dependents actually use.
+        - Creates a forcing function to wire rotation destinations correctly.
+      remediation:
+        - id: console
+          desc: |
+            Investigate and repair expired secret versions:
+
+            1. Open **Identity & Security** → **Vault** → the parent vault → **Secrets** → select the expired secret.
+            2. Under **Versions**, confirm which version is current and why its expiry has passed.
+            3. Trigger a rotation (either manually or by waiting for the scheduled rotation function to run).
+            4. Verify consumers pick up the new version; update downstream systems that cache the old version.
+        - id: cli
+          desc: |
+            Rotate an expired Vault secret:
+
+            ```bash
+            oci vault secret rotate --secret-id <secret-ocid>
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/rotatingsecrets.htm
+        title: OCI - Rotating Secrets
+  - uid: mondoo-oci-security-functions-config-no-credentials
+    title: Ensure OCI Functions applications do not store credentials in config env vars
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      oci.functions.applications.all(
+        config.keys.none(
+          _.downcase == /aws_access_key_id|aws_secret_access_key|aws_session_token|oci_api_key|oci_secret|db_password|api_token|bearer_token|private_key/
+        ) &&
+        config.values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty
+        )
+      )
+    docs:
+      desc: |
+        This check flags OCI Functions applications whose `config` environment variables look like they carry credentials. Two patterns are detected:
+
+        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `db_password`, `api_token`, `bearer_token`, `private_key` (case-insensitive).
+        2. **Access key IDs in values** — strings matching the documented AWS access-key-ID prefixes.
+
+        Function configuration is passed to every function invocation as environment variables and is readable by anyone with `functions-application:read` permission.
+
+        **Why this matters**
+
+        Functions `config` is a convenient but exposed location for credentials:
+
+        - The config map is returned by `GetApplication` and visible to every IAM principal with read access to the compartment.
+        - Environment variables are inherited by every function in the application, so a per-function secret requirement leaks across unrelated functions.
+        - Vault secrets accessed through the resource principal provide the same convenience with proper access logging, rotation, and KMS encryption.
+        - Credentials in env vars survive container rebuilds and are snapshotted into every logging and observability backend that captures environment metadata.
+
+        **Risk mitigation**
+
+        - Eliminates a common credential-leak channel for serverless workloads.
+        - Forces functions to authenticate via the resource principal or fetch from Vault at runtime.
+        - Provides an auditable access path (Vault + KMS + CloudTrail) for every credential read.
+      remediation:
+        - id: console
+          desc: |
+            Move credentials out of Functions application config:
+
+            1. Rotate any credentials found in `config` immediately — assume they are compromised.
+            2. Open **Developer Services** → **Functions** → the application → **Configuration**.
+            3. Remove the credential key-value pair.
+            4. In the function code, fetch the secret from Vault at startup using the function's resource principal:
+               ```python
+               import oci
+               signer = oci.auth.signers.get_resource_principals_signer()
+               vault = oci.vault.VaultsClient(config={}, signer=signer)
+               ```
+        - id: cli
+          desc: |
+            Clear a sensitive key from a Functions application config:
+
+            ```bash
+            oci fn application update --application-id <app-ocid> --config '{}'
+            ```
+
+            Repopulate with only non-sensitive keys via subsequent updates.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsusingconfigparams.htm
+        title: OCI - Passing Custom Configuration Parameters to Functions
+      - url: https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsaccessingociresources.htm
+        title: OCI - Accessing OCI Resources from Running Functions
+  - uid: mondoo-oci-security-container-instances-approved-registry
+    title: Ensure container instances pull images from the organization's OCIR registry
+    impact: 70
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-21
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-id-sc-2
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc9-2-2
+    mql: |
+      oci.containerInstances.instances.all(
+        containers.all(imageUrl.contains(".ocir.io/"))
+      )
+    docs:
+      desc: |
+        This check verifies that every container in every OCI Container Instance pulls its image from an OCIR (Oracle Cloud Infrastructure Registry) host. An `imageUrl` not pointing at `*.ocir.io` means the container is pulling from Docker Hub, GitHub Container Registry, or another external registry that the tenancy does not control — creating a direct supply-chain path into production.
+
+        **Why this matters**
+
+        External registries are outside your organization's security controls:
+
+        - A typo-squatted or maliciously-updated public image runs with whatever permissions the container instance's resource principal or injected credentials provide.
+        - Public registries have been successfully poisoned: `linuxkit/kubelet` impersonators, crypto-mining payloads in popular base images, compromised CI pipelines pushing malicious tags.
+        - OCIR supports vulnerability scanning, signing, and immutable tags; external registries may not.
+        - Pulling from external registries also couples production availability to a third party's uptime.
+
+        **Risk mitigation**
+
+        - Forces images to go through the tenancy's OCIR pipeline, which integrates with signing and vulnerability scanning.
+        - Reduces exposure to supply-chain compromises of third-party registries.
+        - Creates an auditable chain of custody for every image running in production.
+      remediation:
+        - id: console
+          desc: |
+            Mirror external images into OCIR and update container specs:
+
+            1. Mirror the required image into OCIR: `docker pull <external>:<tag> && docker tag ... <region>.ocir.io/<namespace>/<repo>:<tag> && docker push ...`.
+            2. Scan the mirrored image via OCIR's integrated vulnerability scanning.
+            3. In the container instance spec, change the `imageUrl` to the OCIR path.
+            4. Recreate the container instance with the updated spec.
+        - id: cli
+          desc: |
+            Recreate the container instance pointing at the OCIR copy:
+
+            ```bash
+            oci container-instances container-instance create \
+              --compartment-id <compartment-ocid> \
+              --display-name <name> \
+              --availability-domain <ad> \
+              --shape CI.Standard.E4.Flex \
+              --shape-config '{"ocpus":1,"memoryInGBs":2}' \
+              --containers '[{"displayName":"app","imageUrl":"<region>.ocir.io/<namespace>/<repo>:<tag>"}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/container-instances/overview.htm
+        title: OCI Container Instances Overview
+      - url: https://docs.oracle.com/en-us/iaas/Content/Registry/Concepts/registryoverview.htm
+        title: OCI Registry (OCIR)
+  - uid: mondoo-oci-security-object-storage-retention-rules-locked
+    title: Ensure object storage bucket retention rules are locked
+    impact: 80
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/soc2-2017: false
+    mql: |
+      oci.objectStorage.buckets.all(
+        retentionRules.all(timeRuleLocked != null && timeRuleLocked <= time.now)
+      )
+    docs:
+      desc: |
+        This check verifies that every retention rule on every Object Storage bucket has passed its lock time (`timeRuleLocked != null && <= now`). An unlocked retention rule can be modified or deleted by anyone with bucket-admin permissions, which means the "immutable" retention the bucket advertises is actually soft — useless against a ransomware operator or malicious insider who already has admin on the bucket.
+
+        **Why this matters**
+
+        Retention rules are the WORM (write-once-read-many) guarantee for object storage:
+
+        - The point of a retention rule is to survive a compromise of the account that stores the data; if the rule is deletable, a compromised admin can remove it before deleting the objects.
+        - Ransomware operators specifically target backup stores — their first step is often to find and delete retention controls, then encrypt or delete the data.
+        - An unlocked rule is indistinguishable at the object level from having no rule at all.
+        - Once locked, a retention rule can only be shortened, never removed, and only during a narrow review window — which is the property that makes it a real security control.
+
+        **Risk mitigation**
+
+        - Ensures retention commitments survive admin-level account compromise.
+        - Provides genuine WORM semantics for regulatory and ransomware-recovery scenarios.
+        - Removes the ability of a single malicious admin to erase the retention control before data destruction.
+      remediation:
+        - id: console
+          desc: |
+            Lock retention rules on every bucket that stores data with retention requirements:
+
+            1. Open **Storage** → **Buckets** → select the bucket → **Retention Rules**.
+            2. For each unlocked rule, select **Edit** → set **Rule Locked Time** to a date no sooner than 14 days in the future (OCI enforces a 14-day grace period before the lock takes effect).
+            3. Save. After the grace period passes, the rule becomes non-deletable for the duration of its lifetime.
+            4. Plan retention carefully — after lock, the rule can be shortened but not removed.
+        - id: cli
+          desc: |
+            Lock an existing retention rule:
+
+            ```bash
+            oci os retention-rule update \
+              --namespace-name <namespace> \
+              --bucket-name <bucket> \
+              --retention-rule-id <rule-ocid> \
+              --time-rule-locked 2026-05-01T00:00:00Z
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
+        title: OCI - Using Retention Rules
+  - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum
+    title: Ensure object storage retention rules are at least 30 days
+    impact: 65
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/soc2-2017: false
+    mql: |
+      oci.objectStorage.buckets.all(
+        retentionRules.all(
+          durationTimeUnit == "DAYS" && durationAmount >= 30 ||
+          durationTimeUnit == "YEARS" && durationAmount >= 1
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that every retention rule on every Object Storage bucket has a duration of at least 30 days (or 1 year for year-denominated rules). A retention rule with a sub-30-day duration cannot meaningfully serve as a ransomware-recovery control: most ransomware dwell times exceed 14 days, and many attackers specifically wait for short retention windows to expire before executing destructive actions.
+
+        **Why this matters**
+
+        Retention rules that are too short create a false sense of protection:
+
+        - Attackers who gain persistence often wait out short retention windows — the rule is a nuisance, not a control.
+        - Legitimate recovery scenarios (storage corruption, accidental deletion discovered late) often need more than a week's worth of backup retention to resolve.
+        - Short retention also amplifies the impact of a single bad change that corrupts objects and only gets caught after rollback is no longer possible.
+        - Most regulatory retention requirements (HIPAA, SOX, PCI) specify months-to-years retention, not days.
+
+        **Risk mitigation**
+
+        - Ensures retention windows outlast typical ransomware dwell times.
+        - Provides meaningful recovery headroom for accidental data loss.
+        - Aligns retention with common regulatory expectations.
+      remediation:
+        - id: console
+          desc: |
+            Extend short retention durations:
+
+            1. Open **Storage** → **Buckets** → select the bucket → **Retention Rules**.
+            2. Edit the rule and set **Duration** to at least 30 days (or longer per your data-retention policy).
+            3. Save and, where possible, lock the rule (`timeRuleLocked`) so the longer duration cannot be reverted.
+        - id: cli
+          desc: |
+            Extend an existing retention rule:
+
+            ```bash
+            oci os retention-rule update \
+              --namespace-name <namespace> \
+              --bucket-name <bucket> \
+              --retention-rule-id <rule-ocid> \
+              --time-amount 30 \
+              --time-unit DAYS
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
+        title: OCI - Using Retention Rules
