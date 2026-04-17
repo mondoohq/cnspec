@@ -2422,19 +2422,25 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
     mql: |
       oci.network.networkSecurityGroups.all(
-        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(_['tcpOptions'] == empty)
+        ingressSecurityRules.where(
+          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
+        ).where(_['protocol'] == "6").none(_['tcpOptions'] == empty)
         &&
-        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty).none(
+        ingressSecurityRules.where(
+          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
+        ).where(_['protocol'] == "6" && _['tcpOptions'] != empty).none(
           _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22
         )
         &&
-        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty).none(
+        ingressSecurityRules.where(
+          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
+        ).where(_['protocol'] == "6" && _['tcpOptions'] != empty).none(
           _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389
         )
       )
     docs:
       desc: |
-        This check extends the existing VCN security-list SSH/RDP ingress checks to Network Security Groups (NSGs). NSGs apply to individual VNICs and are the modern replacement for subnet-level security lists — misconfigured NSGs can expose instances to SSH (TCP 22) or RDP (TCP 3389) from the internet even when the subnet's security lists are locked down.
+        This check extends the existing VCN security-list SSH/RDP ingress checks to Network Security Groups (NSGs), and covers both IPv4 (`0.0.0.0/0`) and IPv6 (`::/0`) unrestricted sources. NSGs apply to individual VNICs and are the modern replacement for subnet-level security lists — misconfigured NSGs can expose instances to SSH (TCP 22) or RDP (TCP 3389) from the internet even when the subnet's security lists are locked down.
 
         **Why this matters**
 
@@ -2600,7 +2606,7 @@ queries:
     mql: |
       oci.compute.instances.all(
         metadata.keys.none(
-          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$/
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
         ) &&
         metadata.values.none(
           _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
@@ -2612,7 +2618,7 @@ queries:
       desc: |
         This check flags OCI compute instances whose `metadata` key-value pairs look like they carry credentials. Four patterns are detected:
 
-        1. **Suspicious key names** — `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`, `api_token`, `bearer_token`, `db_password`, `private_key` (case-insensitive, exact match).
+        1. **Suspicious key names** — cloud credential names (`aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `oci_secret`) and generic credential names (`password`, `passwd`, `secret`, `access_key`, `client_secret`, `connection_string`, `api_token`, `bearer_token`, `db_password`, `private_key`). Case-insensitive, exact match only — a key named `my_password_backup` would not match.
         2. **AWS access key IDs in values** — matches the documented AWS access-key-ID prefixes (`AKIA…`, `ASIA…`, etc.).
         3. **PEM private keys in values** — values containing `-----BEGIN` and `PRIVATE KEY-----` markers.
         4. **JWT tokens in values** — three base64url segments separated by dots, starting with `eyJ` (the base64 encoding of `{"`).
@@ -2802,6 +2808,8 @@ queries:
     docs:
       desc: |
         This check flags load balancers that expose an HTTP listener but do not also expose an HTTPS / HTTP/2 listener. Pure-HTTP load balancers mean there is no TLS path to the same service, so any traffic a client is redirected to — including authenticated sessions, form posts, and cookies — travels in the clear.
+
+        Scope note: this check confirms the LB exposes *some* HTTPS listener alongside HTTP; it does not verify that the HTTP and HTTPS listeners serve the same backend, run on paired ports (80/443), or that the HTTP listener issues a 301 redirect. A load balancer hosting an HTTP service on port 80 and an unrelated HTTPS service on port 8443 would pass this check while still leaking the port-80 service in the clear. Pair with application-layer HSTS / redirect configuration to close that gap.
 
         **Why this matters**
 
@@ -3308,7 +3316,7 @@ queries:
     mql: |
       oci.functions.applications.all(
         config.keys.none(
-          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$/
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
         ) &&
         config.values.none(
           _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
