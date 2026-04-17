@@ -30833,7 +30833,12 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check ensures that SageMaker training job hyperparameters do not contain AWS access key IDs. Hyperparameters are passed to training containers as environment variables and are stored by the SageMaker service, so any secrets embedded there are recoverable from CloudTrail, the training job description API, and any IAM principal with `sagemaker:DescribeTrainingJob`.
+        This check flags SageMaker training jobs whose hyperparameters look like they carry AWS credentials. Two patterns are detected:
+
+        1. **Suspicious key names** — a hyperparameter whose key is `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, or `aws_security_token` (case-insensitive), regardless of its value.
+        2. **Access key IDs in values** — any hyperparameter value containing an AWS access key ID (matches `AKIA…`, `ASIA…`, `AROA…`, and the other documented AWS key-ID prefixes).
+
+        Secret access keys and session-token *values* are not regex-detected directly because they have no distinguishing format; the suspicious-key-name rule is what catches those in practice. Hyperparameters are passed to training containers as environment variables and stored by the SageMaker service, so any credential embedded there is recoverable from CloudTrail, the training job description API, and any IAM principal with `sagemaker:DescribeTrainingJob`.
 
         **Why this matters**
 
@@ -30878,8 +30883,11 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.sagemaker.trainingJobs.all(
-        hyperParameters.values.all(
-          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        hyperParameters.keys.none(
+          _.downcase == /aws_access_key_id|aws_secret_access_key|aws_session_token|aws_security_token/
+        ) &&
+        hyperParameters.values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty
         )
       )
   - uid: mondoo-aws-security-sagemaker-hub-public-content-documented
