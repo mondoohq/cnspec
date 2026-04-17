@@ -176,8 +176,7 @@ type Job struct {
 	// Vault configuration + credentials query
 	// Report type configuration
 	ReportType ReportType `protobuf:"varint,22,opt,name=report_type,json=reportType,proto3,enum=cnspec.policy.scan.ReportType" json:"report_type,omitempty"`
-	// Number of assets to scan in parallel within a batch. Only used when the
-	// ParallelScanning feature flag is active. A value of 0 or 1 means sequential.
+	// Number of assets to scan in parallel. A value of 0 or 1 means sequential.
 	Parallelism   int32 `protobuf:"varint,24,opt,name=parallelism,proto3" json:"parallelism,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

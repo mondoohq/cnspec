@@ -12,14 +12,21 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/executor"
+	"go.mondoo.com/mql/v13"
+	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
 func collectQueriesFromRiskFactors(p *policy.Policy, query map[string]*policy.Mquery) {
 	for _, rf := range p.RiskFactors {
 		for _, c := range rf.Checks {
 			query[c.Mrn] = c
+		}
+		for _, q := range rf.Queries {
+			query[q.Mrn] = q
 		}
 	}
 }
@@ -164,7 +171,6 @@ func (r *resolvedPolicyTesterReportingJobNotifiesBuilder) testIt(t *testing.T, r
 	if r.impactSet {
 		require.EqualExportedValuesf(t, r.impact, parentRj.ChildJobs[childRj.Uuid], "impact mismatch for child reporting job %s%s", qrId, extraInfo)
 	}
-
 }
 
 type resolvedPolicyTesterReportingJobBuilder struct {
@@ -1240,7 +1246,6 @@ queries:
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rp)
-
 }
 
 func TestResolveV2_PoliciesMatchingFilters(t *testing.T) {
@@ -1674,6 +1679,284 @@ policies:
 	rpTester.doTest(t, rp)
 
 	require.Equal(t, float32(0.9), rp.CollectorJob.RiskFactors[riskFactorMrn("sshd-service")].Magnitude.GetValue())
+}
+
+func TestResolveV2_RiskFactorsWithDataQueries(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+  - name: testpolicy1
+    uid: testpolicy1
+    groups:
+    - filters: asset.name == "asset1"
+      checks:
+      - uid: query-1
+        title: query-1
+        mql: 3 == 3
+      policies:
+      - uid: risk-factors-security
+  - uid: risk-factors-security
+    name: Mondoo Risk Factors analysis
+    version: "1.0.0"
+    risk_factors:
+      - uid: sshd-service
+        title: SSHd Service running
+        indicator: asset-in-use
+        magnitude: 0.6
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: sshd-service-running
+            mql: 1 == 1
+        queries:
+          - uid: sshd-service-info
+            mql: asset.name
+          - uid: static-number
+            mql: return 42
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("testpolicy1")}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn:    "asset1",
+		AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+
+	rpTester.ExecutesQuery(queryMrn("query-1"))
+	rpTester.ExecutesQuery(queryMrn("sshd-service-running"))
+	rpTester.ExecutesQuery(queryMrn("sshd-service-info"))
+	rpTester.ExecutesQuery(queryMrn("static-number"))
+
+	rpTester.CodeIdReportingJobForMrn(queryMrn("sshd-service-running")).Notifies(riskFactorMrn("sshd-service")).WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
+	// Data queries are not children of the risk factor reporting job — they produce data (not scores for detection) and are linked via RiskDataQueries instead.
+	rpTester.ReportingJobByMrn(riskFactorMrn("sshd-service")).WithType(policy.ReportingJob_RISK_FACTOR).Notifies(policyMrn("risk-factors-security"))
+
+	rpTester.doTest(t, rp)
+
+	// Verify risk data queries are populated for the risk factor
+	riskMrn := riskFactorMrn("sshd-service")
+	require.Contains(t, rp.CollectorJob.RiskDataQueries, riskMrn)
+	require.NotEmpty(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums)
+	// The key should be the query MRN
+	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("sshd-service-info"))
+	require.Contains(t, rp.CollectorJob.RiskDataQueries[riskMrn].DatapointChecksums, queryMrn("static-number"))
+}
+
+// TestResolveV2_RiskFactorDataInReport runs the full pipeline: resolve → execute
+// MQL via mock runtime → collector stores results → GetReport enriches risk
+// factor data. No manual StoreResults — the executor drives everything.
+func TestResolveV2_RiskFactorDataInReport(t *testing.T) {
+	ctx := context.Background()
+
+	// The LinuxMock runtime has asset.name == "arch"
+	runtime := testutils.LinuxMock()
+	_, srv, err := inmemory.NewServices(runtime)
+	require.NoError(t, err)
+
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+  - name: testpolicy1
+    uid: testpolicy1
+    groups:
+    - filters: asset.name == "asset1"
+      checks:
+      - uid: query-1
+        title: query-1
+        mql: 3 == 3
+      policies:
+      - uid: risk-factors-security
+  - uid: risk-factors-security
+    name: Mondoo Risk Factors analysis
+    version: "1.0.0"
+    risk_factors:
+      - uid: sshd-service
+        title: SSHd Service running
+        indicator: asset-in-use
+        magnitude: 0.6
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: sshd-service-running
+            mql: 1 == 1
+        queries:
+          - uid: data-query-name
+            mql: asset.name
+          - uid: data-query-int
+            mql: return 42
+          - uid: data-query-title
+            mql: asset.title
+          - uid: data-query-family
+            mql: asset.family
+      - uid: platform-eol
+        title: Platform approaching end of life
+        indicator: asset-in-use
+        magnitude: 0.4
+        filters:
+          - mql: |
+              asset.name == "asset1"
+        checks:
+          - uid: platform-eol-check
+            mql: 1 == 1
+        queries:
+          - uid: data-query-platform
+            mql: asset.platform
+          - uid: data-query-version
+            mql: asset.version
+          - uid: data-query-arch
+            mql: asset.arch
+`)
+
+	_, err = srv.SetBundle(ctx, b)
+	require.NoError(t, err)
+
+	_, err = srv.Assign(ctx, &policy.PolicyAssignment{
+		AssetMrn:   "asset1",
+		PolicyMrns: []string{policyMrn("testpolicy1")},
+	})
+	require.NoError(t, err)
+
+	assetFilters := []*policy.Mquery{{Mql: "asset.name == \"asset1\""}}
+
+	rp, err := srv.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
+		AssetMrn:     "asset1",
+		AssetFilters: assetFilters,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	// Verify resolution produced the expected risk data query mappings for both risk factors
+	sshdRiskMrn := riskFactorMrn("sshd-service")
+	require.Contains(t, rp.CollectorJob.RiskDataQueries, sshdRiskMrn)
+	sshdChecksums := rp.CollectorJob.RiskDataQueries[sshdRiskMrn].DatapointChecksums
+
+	nameQueryMrn := queryMrn("data-query-name")
+	require.Contains(t, sshdChecksums, nameQueryMrn)
+
+	intQueryMrn := queryMrn("data-query-int")
+	require.Contains(t, sshdChecksums, intQueryMrn)
+
+	titleQueryMrn := queryMrn("data-query-title")
+	require.Contains(t, sshdChecksums, titleQueryMrn)
+
+	familyQueryMrn := queryMrn("data-query-family")
+	require.Contains(t, sshdChecksums, familyQueryMrn)
+
+	eolRiskMrn := riskFactorMrn("platform-eol")
+	require.Contains(t, rp.CollectorJob.RiskDataQueries, eolRiskMrn)
+	eolChecksums := rp.CollectorJob.RiskDataQueries[eolRiskMrn].DatapointChecksums
+
+	platformQueryMrn := queryMrn("data-query-platform")
+	require.Contains(t, eolChecksums, platformQueryMrn)
+
+	versionQueryMrn := queryMrn("data-query-version")
+	require.Contains(t, eolChecksums, versionQueryMrn)
+
+	archQueryMrn := queryMrn("data-query-arch")
+	require.Contains(t, eolChecksums, archQueryMrn)
+
+	// Verify no cross-contamination between risk factors
+	require.NotContains(t, sshdChecksums, platformQueryMrn)
+	require.NotContains(t, sshdChecksums, versionQueryMrn)
+	require.NotContains(t, eolChecksums, nameQueryMrn)
+	require.NotContains(t, eolChecksums, intQueryMrn)
+
+	// Execute: MQL runs against the mock runtime, BufferedCollector stores
+	// data and risks via StoreResults automatically
+	err = executor.ExecuteResolvedPolicy(ctx, runtime, srv, "asset1", rp, mql.DefaultFeatures, nil)
+	require.NoError(t, err)
+
+	// Wait for all scores to be computed
+	_, err = policy.WaitUntilDone(srv, "asset1", "asset1", 1*time.Second)
+	require.NoError(t, err)
+
+	// GetReport enriches ScoredRiskFactor.Data from RiskDataQueries mappings
+	report, err := srv.GetReport(ctx, &policy.EntityScoreReq{
+		EntityMrn: "asset1",
+		ScoreMrn:  "asset1",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	require.NotNil(t, report.Risks)
+
+	// Verify the sshd-service risk factor data
+	var foundSshd bool
+	for _, risk := range report.Risks.Items {
+		if risk.Mrn == sshdRiskMrn {
+			foundSshd = true
+			require.True(t, risk.IsDetected)
+			require.NotNil(t, risk.Data)
+			require.Len(t, risk.Data, 4)
+
+			// asset.name returns "arch" from the LinuxMock recording
+			require.Contains(t, risk.Data, nameQueryMrn)
+			assert.Equal(t, "arch", string(risk.Data[nameQueryMrn].Data.Value))
+
+			// return 42 produces a hardcoded int
+			require.Contains(t, risk.Data, intQueryMrn)
+			assert.Equal(t, llx.IntPrimitive(42).Type, risk.Data[intQueryMrn].Data.Type)
+			assert.Equal(t, llx.IntPrimitive(42).Value, risk.Data[intQueryMrn].Data.Value)
+
+			// asset.title returns the full title including kind
+			require.Contains(t, risk.Data, titleQueryMrn)
+			assert.Equal(t, "Arch Linux, Bare metal system", string(risk.Data[titleQueryMrn].Data.Value))
+
+			// asset.family returns ["arch", "linux", "unix", "os"]
+			require.Contains(t, risk.Data, familyQueryMrn)
+			familyData := risk.Data[familyQueryMrn].Data
+			require.NotNil(t, familyData)
+			require.NotNil(t, familyData.Array)
+			familyValues := make([]string, len(familyData.Array))
+			for i, p := range familyData.Array {
+				familyValues[i] = string(p.Value)
+			}
+			assert.Equal(t, []string{"arch", "linux", "unix", "os"}, familyValues)
+
+			// sshd-service must NOT contain platform-eol's queries
+			assert.NotContains(t, risk.Data, platformQueryMrn)
+			assert.NotContains(t, risk.Data, versionQueryMrn)
+			assert.NotContains(t, risk.Data, archQueryMrn)
+			break
+		}
+	}
+	require.True(t, foundSshd, "scored risk factor %s not found in report", sshdRiskMrn)
+
+	// Verify the platform-eol risk factor data
+	var foundEol bool
+	for _, risk := range report.Risks.Items {
+		if risk.Mrn == eolRiskMrn {
+			foundEol = true
+			require.True(t, risk.IsDetected)
+			require.NotNil(t, risk.Data)
+			require.Len(t, risk.Data, 3)
+
+			require.Contains(t, risk.Data, platformQueryMrn)
+			assert.Equal(t, "arch", string(risk.Data[platformQueryMrn].Data.Value))
+
+			require.Contains(t, risk.Data, versionQueryMrn)
+			assert.Equal(t, "rolling", string(risk.Data[versionQueryMrn].Data.Value))
+
+			require.Contains(t, risk.Data, archQueryMrn)
+			assert.Equal(t, "x86_64", string(risk.Data[archQueryMrn].Data.Value))
+
+			// platform-eol must NOT contain sshd-service's queries
+			assert.NotContains(t, risk.Data, nameQueryMrn)
+			assert.NotContains(t, risk.Data, intQueryMrn)
+			assert.NotContains(t, risk.Data, titleQueryMrn)
+			assert.NotContains(t, risk.Data, familyQueryMrn)
+			break
+		}
+	}
+	require.True(t, foundEol, "scored risk factor %s not found in report", eolRiskMrn)
 }
 
 func TestResolveV2_FrameworkExceptions(t *testing.T) {

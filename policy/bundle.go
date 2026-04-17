@@ -1635,6 +1635,31 @@ func (c *bundleCache) compileRisk(risk *RiskFactor, policy *Policy) error {
 		}
 	}
 
+	for i := range risk.Queries {
+		query := risk.Queries[i]
+
+		if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
+			c.errors = append(c.errors, errors.New("failed to compile filters for risk data query "+query.Mrn))
+			return nil
+		}
+		if query.Filters != nil {
+			for j := range query.Filters.Items {
+				filter := query.Filters.Items[j]
+				policy.ComputedFilters.Items[filter.CodeId] = filter
+			}
+		}
+
+		_, err := query.RefreshChecksumAndType(c.lookupQuery, mqlc.EmptyPropsHandler, c.conf.CompilerConfig)
+		if err != nil {
+			if c.conf.RemoveFailing {
+				log.Warn().Err(err).Str("mrn", query.Mrn).Msg("failed to compile risk factor data query, skipping")
+				c.removeQueries[query.Mrn] = struct{}{}
+			} else {
+				c.errors = append(c.errors, multierr.Wrap(err, "failed to validate query '"+query.Mrn+"'"))
+			}
+		}
+	}
+
 	return nil
 }
 

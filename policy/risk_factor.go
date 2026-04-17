@@ -57,6 +57,12 @@ func (r *RiskFactor) RefreshMRN(ownerMRN string) error {
 		}
 	}
 
+	for i := range r.Queries {
+		if err := r.Queries[i].RefreshMRN(ownerMRN); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -89,6 +95,19 @@ func (r *RiskFactor) ExecutionChecksum(ctx context.Context, conf mqlc.CompilerCo
 		}
 
 		c = c.Add(check.Checksum)
+	}
+
+	for i := range r.Queries {
+		query := r.Queries[i]
+		if err := query.RefreshChecksum(ctx, conf, nil); err != nil {
+			return c, err
+		}
+
+		if query.Checksum == "" {
+			return c, errors.New("failed to get checksum for risk data query " + query.Mrn)
+		}
+
+		c = c.Add(query.Checksum)
 	}
 
 	for i := range r.Software {

@@ -2118,6 +2118,7 @@ type RiskFactor struct {
 	Filters                 *Filters            `protobuf:"bytes,20,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
 	Checks                  []*Mquery           `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty" yaml:"checks,omitempty"`
 	Tags                    map[string]string   `protobuf:"bytes,78,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
+	Queries                 []*Mquery           `protobuf:"bytes,79,rep,name=queries,proto3" json:"queries,omitempty" yaml:"queries,omitempty"`
 	Docs                    *RiskFactorDocs     `protobuf:"bytes,25,opt,name=docs,proto3" json:"docs,omitempty" yaml:"docs,omitempty"`
 	FileContext             FileContext         `json:"-" yaml:"-"`
 	Comments                Comments            `json:"-" yaml:"-"`
