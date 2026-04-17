@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-slack-security
     name: Mondoo Slack Team Security
-    version: 1.4.1
+    version: 1.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -90,6 +90,7 @@ policies:
           - uid: mondoo-slack-security-at-least-one-workspace-internal-channel
           - uid: mondoo-slack-security-at-least-one-workspace-internal-channel-no-ext-members
           - uid: mondoo-slack-domain-allowlisting-enforced-on-internal-channels
+          - uid: mondoo-slack-security-users-email-confirmed
 queries:
   - uid: mondoo-slack-security-limit-admin-accounts
     title: Ensure that between 2 and 4 users have admin permissions
@@ -364,3 +365,54 @@ queries:
         title: Slack Workspace Administration Guide
       - url: https://slack.com/help/articles/203772216
         title: Slack Single Sign-On
+  - uid: mondoo-slack-security-users-email-confirmed
+    title: Ensure all active users have confirmed their email address
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-pr-aa-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-12
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: false
+    mql: |
+      slack.users.members
+        .where(
+          deleted == false &&
+          isInvitedUser == false &&
+          isBot == false &&
+          isConnectorBot == false &&
+          isWorkflowBot == false &&
+          id != "USLACKBOT"
+        )
+        .all(isEmailConfirmed == true)
+    docs:
+      desc: |
+        This check verifies that every active (non-bot, non-deactivated, non-pending-invite) member of the Slack workspace has a confirmed email address.
+
+        **Why this matters**
+
+        An unconfirmed email address means Slack has not verified that the person using the account actually controls the email it was registered with. That breaks a core assumption most downstream security controls depend on:
+
+          - **Account takeover via typo-squatting**: Attackers can register accounts with look-alike domains (`acme-co.com` vs. `acme.co`) and never need to prove ownership to participate in channels and DMs.
+          - **Identity spoofing**: Unconfirmed accounts can impersonate employees, partners, or executives in phishing and social-engineering attacks without being caught by email-domain controls.
+          - **Password reset pivot**: If the email was never verified, a recovery flow that emails a reset link may deliver it to an address the real user cannot access — enabling silent hijack.
+          - **Bypassing SSO / domain allowlists**: Workspaces that rely on domain-based allowlisting assume the email is real; an unconfirmed address means the allowlist is protecting a string, not a verified identity.
+          - **Audit trail integrity**: Messages, file uploads, and channel joins attributed to an unconfirmed user cannot be reliably traced back to a human.
+
+        Review every flagged account and require the user to confirm their email address, or deactivate the account if it cannot be verified.
+      remediation: |
+        Investigate each flagged user:
+
+        1. Confirm whether the account belongs to a real, current member of your organization.
+        2. For legitimate users, have them complete the email confirmation flow. Slack sends a confirmation link when the email is added or changed — users can request a new link from their [account settings](https://slack.com/account/settings).
+        3. For accounts you cannot attribute to a known person, deactivate them immediately. Read [Deactivate a member](https://slack.com/help/articles/213185747-Deactivate-a-member) in the Slack documentation.
+        4. Review your workspace invitation and sign-up settings to require SSO or a verified corporate domain so new accounts cannot be created with unverified addresses. Read [Manage sign-in options](https://slack.com/help/articles/115005206006) in the Slack documentation.
+    refs:
+      - url: https://slack.com/help/articles/360004635551
+        title: Slack Workspace Administration Guide
+      - url: https://slack.com/help/articles/213185747
+        title: Deactivate a member
+      - url: https://slack.com/help/articles/115005206006
+        title: Manage sign-in options

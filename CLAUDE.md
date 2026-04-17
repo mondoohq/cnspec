@@ -298,6 +298,22 @@ policies:
 - Check `title` fields must be 75 characters or fewer.
 - When writing CLI commands in remediation steps, verify that the subcommands and flags you use are valid by checking the reference data in `content/validation/cmd_data/` (e.g., `aws_commands.json`, `azure_commands.json`). Read the relevant JSON file and confirm the command and its flags exist before including them in remediation content.
 
+#### Compliance tags (`compliance/<framework>: <control-uid>`)
+
+**Never copy compliance tags from a neighboring check.** The nearby check was mapped for a different control objective; reusing its tags propagates a wrong mapping and misleads auditors. Two checks that both "relate to identity" can map to different controls.
+
+When adding or changing compliance tags, follow this process for **each** framework the policy already tags:
+
+1. **Read the authoritative control text.** Open the framework definition in `cnspec-enterprise-policies/frameworks/<framework>.mql.yaml` (e.g., `iso-27001-2022.mql.yaml`, `soc2-2017.mql.yaml`, `nist-sp-800-53-rev5.mql.yaml`). Each control has a `uid`, `title`, and usually `docs.desc`. Ask the user where their clone lives if you don't already know; if the files aren't available, stop and tell the user — do not guess.
+2. **State in one sentence what the check actually enforces.** If the check is about identity proofing, say so; if it's about encryption-at-rest, say so. Do not let the check's *title* mislead you — read the MQL.
+3. **Find the single best-matching control** by scanning control titles and descriptions for language that covers the enforced behavior. Strict fit only: MFA, password policy, and session-timeout controls are *not* acceptable stand-ins for identity-proofing, encryption, network-isolation, etc.
+4. **If no control fits, tag it `false`.** This is an established pattern in this repo (grep for `compliance/.*: false`). A missing mapping is strictly better than a wrong one — wrong mappings get caught in compliance audits and create trust debt.
+5. **Cite the control you chose.** When you present tags to the user, include the control title and a short quote from the control description so the user can verify.
+
+Known high-value anchors (verify before using):
+- Identity proofing / email verification: `iso-27001-2022-a-5-16` (Identity management), `nist-csf-2-pr-aa-02` ("Identities are proofed and bound to credentials"), `nist-sp-800-53-rev5-ia-12` (Identity Proofing). No direct equivalent in NIST CSF 1.x, NIST 800-171 rev2, NIS2 Article 21(2), or SOC 2 2017.
+- Authenticator / MFA strength: `iso-27001-2022-a-8-5`, `nist-csf-2-pr-aa-03`, `nist-sp-800-53-rev5-ia-2`, `soc2-control-cc6-1-4`. Do **not** reuse these for identity-proofing checks.
+
 Test policy files:
 
 ```bash
