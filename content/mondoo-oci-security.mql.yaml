@@ -2422,9 +2422,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
     mql: |
       oci.network.networkSecurityGroups.all(
-        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
-          _['tcpOptions'] == empty ||
-          _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22 ||
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(_['tcpOptions'] == empty)
+        &&
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty).none(
+          _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22
+        )
+        &&
+        ingressSecurityRules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty).none(
           _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389
         )
       )
@@ -2916,6 +2920,8 @@ queries:
       desc: |
         This check flags OKE clusters with three or more available Kubernetes version upgrades pending — a proxy signal that the cluster is running a version that is two or more releases behind current. Kubernetes drops support for older releases on a fixed cadence, so a cluster with many available upgrades is probably running an EOL version with unpatched CVEs.
 
+        The threshold of three is a heuristic, not a guarantee: Oracle occasionally ships several patch versions at once, so a freshly-patched cluster can briefly show three pending upgrades without being EOL. A more precise check would compare `kubernetesVersion` against a maintained list of Oracle-supported minor versions, which is out of scope here. Treat a failure of this check as a signal to review the cluster's version against Oracle's support matrix, not as proof the cluster is EOL.
+
         **Why this matters**
 
         Oracle's OKE support policy, and Kubernetes upstream, drop security patches for old minor versions:
@@ -3377,7 +3383,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc9-2-2
     mql: |
       oci.containerInstances.instances.all(
-        containers.all(imageUrl.contains(".ocir.io/"))
+        containers.all(imageUrl == /^[a-z0-9-]+\.ocir\.io\//)
       )
     docs:
       desc: |
@@ -3444,6 +3450,8 @@ queries:
       desc: |
         This check verifies that every retention rule on every Object Storage bucket has passed its lock time (`timeRuleLocked != null && <= now`). An unlocked retention rule can be modified or deleted by anyone with bucket-admin permissions, which means the "immutable" retention the bucket advertises is actually soft — useless against a ransomware operator or malicious insider who already has admin on the bucket.
 
+        Scope note: buckets with zero retention rules pass this check vacuously (MQL's `.all()` on an empty list is `true`). The check's job is to validate *existing* retention rules are locked; whether a particular bucket needs retention at all is a separate policy decision (an organization may legitimately not require retention on working-set buckets). If you want to ensure specific buckets *do* carry retention, pair this check with a data-classification or tag-based policy that enforces retention presence on buckets tagged as backup / archive / regulated.
+
         **Why this matters**
 
         Retention rules are the WORM (write-once-read-many) guarantee for object storage:
@@ -3503,6 +3511,8 @@ queries:
     docs:
       desc: |
         This check verifies that every retention rule on every Object Storage bucket has a duration of at least 30 days (or 1 year for year-denominated rules). A retention rule with a sub-30-day duration cannot meaningfully serve as a ransomware-recovery control: most ransomware dwell times exceed 14 days, and many attackers specifically wait for short retention windows to expire before executing destructive actions.
+
+        Scope note: buckets with zero retention rules pass this check vacuously. This check validates the duration of *existing* rules; it does not require retention to exist. Use the companion `object-storage-retention-rules-locked` check plus a tag-based policy if you need to enforce retention presence on specific bucket classes.
 
         **Why this matters**
 
