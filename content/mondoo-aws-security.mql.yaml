@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 10.0.0
+    version: 10.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -295,16 +295,24 @@ policies:
           - uid: mondoo-aws-security-sagemaker-training-job-network-isolation
           - uid: mondoo-aws-security-sagemaker-training-job-encryption
           - uid: mondoo-aws-security-sagemaker-training-job-vpc-configured
+          - uid: mondoo-aws-security-sagemaker-training-hyperparameters-no-secrets
           - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation
           - uid: mondoo-aws-security-sagemaker-processing-job-encryption
           - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured
           - uid: mondoo-aws-security-sagemaker-domain-kms-encryption
+          - uid: mondoo-aws-security-sagemaker-domain-default-role-not-admin
+          - uid: mondoo-aws-security-sagemaker-hub-public-content-documented
+          - uid: mondoo-aws-security-sagemaker-model-package-approval-validated
+          - uid: mondoo-aws-security-sagemaker-code-repository-uses-secret
+          - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config
+          - uid: mondoo-aws-security-sagemaker-job-role-not-admin
       - title: Amazon SageMaker Notebook Instance
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
           - uid: mondoo-aws-security-sagemaker-notebook-no-direct-internet
           - uid: mondoo-aws-security-sagemaker-notebook-imdsv2
           - uid: mondoo-aws-security-sagemaker-notebook-no-root-access
+          - uid: mondoo-aws-security-sagemaker-notebook-role-not-admin
       - title: Amazon CloudFront
         checks:
           - uid: mondoo-aws-security-cloudfront-viewer-policy-https
@@ -30807,6 +30815,560 @@ queries:
       cloudformation.template.resources.where(type == "AWS::SageMaker::Domain").all(
       properties['KmsKeyId'] != empty
       )
+  - uid: mondoo-aws-security-sagemaker-training-hyperparameters-no-secrets
+    title: Ensure SageMaker training hyperparameters do not contain AWS credentials
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    variants:
+      - uid: mondoo-aws-security-sagemaker-training-hyperparameters-no-secrets-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that SageMaker training job hyperparameters do not contain AWS access key IDs. Hyperparameters are passed to training containers as environment variables and are stored by the SageMaker service, so any secrets embedded there are recoverable from CloudTrail, the training job description API, and any IAM principal with `sagemaker:DescribeTrainingJob`.
+
+        **Why this matters**
+
+        Developers often paste AWS credentials into hyperparameters as a convenience to let training code pull from S3 or write to DynamoDB without configuring an instance profile:
+
+        - Hyperparameters are returned in plain text by `DescribeTrainingJob`, which is readable by many roles that would otherwise not have access to the credentials.
+        - Training job records persist long after the job finishes, so leaked credentials remain recoverable for as long as the record is retained.
+        - If the training job is shared with a SageMaker project, experiment, or model card, the credentials leak into every downstream artifact.
+        - Hardcoded credentials bypass the IAM role scoping that `iamRole` is supposed to provide, defeating least-privilege.
+
+        **Risk mitigation**
+
+        - Remove every AWS access key pattern from hyperparameters.
+        - Use the training job's `iamRole` (instance profile) for all AWS access.
+        - Rotate any credentials that have ever appeared in a hyperparameter — consider them compromised.
+      remediation:
+        - id: console
+          desc: |
+            Credentials in hyperparameters cannot be edited after a training job is created — they must be rotated out of band and new jobs launched without them:
+
+            1. Rotate the exposed AWS access key immediately in the **IAM Console** → **Users** → select user → **Security credentials** → **Make inactive** / **Delete**.
+            2. Attach the necessary permissions to the training job's execution role instead. Navigate to **SageMaker Console** → **Administration** → select the role → attach minimum-privilege policies.
+            3. Launch future training jobs without embedding credentials in hyperparameters.
+        - id: cli
+          desc: |
+            Rotate any credentials found in hyperparameters, then rely on the training job's IAM role for AWS access:
+
+            ```bash
+            aws iam delete-access-key --user-name <user> --access-key-id <AKIA...>
+            aws iam attach-role-policy \
+              --role-name <SageMakerRole> \
+              --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+            ```
+
+            When creating new training jobs, pass only non-sensitive tuning values via `--hyper-parameters`.
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/your-algorithms-training-algo.html#your-algorithms-training-algo-env-variables
+        title: Amazon SageMaker - Training Job Environment Variables
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+        title: AWS IAM Best Practices
+  - uid: mondoo-aws-security-sagemaker-training-hyperparameters-no-secrets-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.trainingJobs.all(
+        hyperParameters.values.all(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/).all("AKIAIOSFODNN7EXAMPLE")
+        )
+      )
+  - uid: mondoo-aws-security-sagemaker-hub-public-content-documented
+    title: Ensure public-sourced SageMaker hub content includes review documentation
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-21
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-id-sc-2
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc9-2-2
+    variants:
+      - uid: mondoo-aws-security-sagemaker-hub-public-content-documented-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that hub content imported from the public SageMaker JumpStart hub and made available in a private hub carries markdown documentation. Populating the markdown field forces a human to review and record their approval of the third-party model before teams deploy it.
+
+        **Why this matters**
+
+        Public JumpStart models are unvetted third-party supply-chain artifacts:
+
+        - Model weights can be backdoored or contain hidden trojan triggers that activate on specific inputs.
+        - The base container image pulled by the model can contain vulnerable or malicious packages.
+        - Pre-trained weights may have been trained on data that violates licensing or privacy requirements.
+        - Hub content imported into a private hub is discoverable by every SageMaker user in the account, so an unvetted model gets re-used widely.
+
+        Requiring markdown documentation on every publicly-sourced piece of hub content creates an audit trail: a reviewer must describe who approved the content, what scans were run, and what restrictions apply before it becomes available in the private hub.
+
+        **Risk mitigation**
+
+        - Forces a documented approval step for every third-party model entering the private hub.
+        - Provides a discoverable record for compliance audits covering supply-chain vetting.
+        - Surfaces un-reviewed content quickly so it can be deleted or reviewed before deployment.
+      remediation:
+        - id: console
+          desc: |
+            Add markdown documentation to every publicly-sourced hub content item:
+
+            1. Open the **SageMaker Console** → **Hub** → select your private hub.
+            2. Select the content sourced from the public JumpStart hub.
+            3. In the **Markdown** field, document: who reviewed the model, what scans/assessments were completed, known risks, and approved use cases.
+            4. Delete any hub content that cannot be reviewed or justified.
+        - id: cli
+          desc: |
+            Import or update hub content with a populated markdown field:
+
+            ```bash
+            aws sagemaker import-hub-content \
+              --hub-name my-private-hub \
+              --hub-content-name my-model \
+              --hub-content-type Model \
+              --document-schema-version 1.0.0 \
+              --hub-content-document file://model-document.json \
+              --hub-content-markdown file://internal-review.md
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/jumpstart-curated-hubs.html
+        title: Amazon SageMaker - Private JumpStart Hubs
+      - url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_ImportHubContent.html
+        title: Amazon SageMaker - ImportHubContent API
+  - uid: mondoo-aws-security-sagemaker-hub-public-content-documented-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.hubs.all(
+        contents
+          .where(sageMakerPublicHubContentArn != empty && status == "Available")
+          .all(markdown != empty)
+      )
+  - uid: mondoo-aws-security-sagemaker-model-package-approval-validated
+    title: Ensure approved SageMaker model packages ran validation and have reviewer notes
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-21
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-id-sc-2
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc9-2-2
+    variants:
+      - uid: mondoo-aws-security-sagemaker-model-package-approval-validated-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that every SageMaker model package marked `Approved` ran the registered validation specification and has a non-empty `approvalDescription` recording the reviewer's justification. Approved packages without validation or without a reviewer note indicate an auto-approval, a rubber-stamp approval, or a reviewer skipping the process.
+
+        **Why this matters**
+
+        A model package with `approvalStatus == "Approved"` is a green light for downstream pipelines to deploy it to production endpoints. Two dangerous patterns bypass meaningful review:
+
+        - `skipModelValidation == "All"` explicitly disables the validation specification, so the model is approved without any of the tests that were supposed to run against it.
+        - An empty `approvalDescription` means no reviewer recorded what they checked, when, or why they approved — there is no accountability.
+
+        Together these produce an undocumented, unvalidated model in a system that trusts the `Approved` flag to gate deployments. An attacker (or careless insider) who can toggle `approvalStatus` can silently ship a compromised model.
+
+        **Risk mitigation**
+
+        - Requires reviewer accountability via a mandatory `approvalDescription`.
+        - Ensures the registered validation specification actually ran before approval.
+        - Creates an auditable trail for compliance frameworks covering model risk management.
+      remediation:
+        - id: console
+          desc: |
+            Tighten approval hygiene for existing and future model packages:
+
+            1. Open **SageMaker Studio** → **Model Registry** → select each model package group.
+            2. For any approved package missing an approval description, edit the version and fill in who approved it, what validation was run, and the rationale — or mark it `Rejected` and remove it from production pipelines.
+            3. For any approved package with `SkipModelValidation: All`, re-submit it as `PendingManualApproval`, run the validation specification, and re-approve with documentation.
+        - id: cli
+          desc: |
+            Update an existing approved model package with a description and require validation:
+
+            ```bash
+            aws sagemaker update-model-package \
+              --model-package-arn <package-arn> \
+              --model-approval-status Approved \
+              --approval-description "Reviewed by <name> on <date>: validation pipeline passed, fairness metrics within threshold."
+            ```
+
+            Reject any package that was approved with `SkipModelValidation: All`:
+
+            ```bash
+            aws sagemaker update-model-package \
+              --model-package-arn <package-arn> \
+              --model-approval-status Rejected \
+              --approval-description "Reverted: approved without running registered validation."
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/model-registry-approve.html
+        title: Amazon SageMaker - Update the Approval Status of a Model
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/model-registry-model-validation.html
+        title: Amazon SageMaker - Validate a Model Package
+  - uid: mondoo-aws-security-sagemaker-model-package-approval-validated-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.modelPackages
+        .where(approvalStatus == "Approved")
+        .all(skipModelValidation != "All" && approvalDescription != empty)
+  - uid: mondoo-aws-security-sagemaker-code-repository-uses-secret
+    title: Ensure SageMaker code repositories reference a Secrets Manager secret
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    variants:
+      - uid: mondoo-aws-security-sagemaker-code-repository-uses-secret-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that every SageMaker code repository references a Secrets Manager secret for Git credentials. A code repository without a secret reference either clones anonymously from a public Git host, which is rare for internal repositories, or relies on credentials embedded elsewhere — neither pattern is acceptable for repositories used by notebooks, training jobs, or Studio apps.
+
+        **Why this matters**
+
+        SageMaker code repositories are cloned onto notebook instances, Studio apps, and training job containers. The Git credentials the repository uses become accessible to every workload that mounts it, so the way those credentials are stored matters:
+
+        - Embedding the credentials in a notebook startup script or lifecycle config leaks them into `sagemaker:DescribeNotebookInstanceLifecycleConfig` responses, CloudTrail, and EBS snapshots.
+        - Credentials stored outside Secrets Manager cannot be rotated centrally, so stale tokens linger after developers leave the organization.
+        - A code repository without a secret reference that clones a private Git host means the credentials are implicit in the environment — hard to audit and hard to rotate.
+
+        Requiring a Secrets Manager secret means credentials are versioned, rotatable, access-logged via CloudTrail, and scoped by KMS key policies.
+
+        **Risk mitigation**
+
+        - Centralizes Git credential storage in Secrets Manager.
+        - Provides an audit trail when credentials are read by SageMaker workloads.
+        - Enables rotation without modifying notebook/lifecycle/training-job code.
+      remediation:
+        - id: console
+          desc: |
+            Attach a Secrets Manager secret to each SageMaker code repository:
+
+            1. In **Secrets Manager**, create a secret of type **Other type of secret** with keys `username` and `password` (or `username` and `personal_access_token`).
+            2. Open **SageMaker Console** → **Notebook** → **Git repositories** → select the repository.
+            3. Edit the repository and set **Secret** to the secret ARN.
+            4. Save; existing notebook instances using the repository pick up the secret on next clone.
+        - id: cli
+          desc: |
+            Update an existing SageMaker Git repository to reference a Secrets Manager secret:
+
+            ```bash
+            aws sagemaker update-code-repository \
+              --code-repository-name <repo> \
+              --git-config SecretArn=arn:aws:secretsmanager:<region>:<account>:secret:<name>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/nbi-git-repo.html
+        title: Amazon SageMaker - Associate Git Repositories with Notebook Instances
+      - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html
+        title: AWS Secrets Manager
+  - uid: mondoo-aws-security-sagemaker-code-repository-uses-secret-aws
+    filters: asset.platform == "aws"
+    mql: aws.sagemaker.codeRepositories.all(secret != empty)
+  - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config
+    title: Ensure SageMaker monitoring jobs enforce network isolation and encryption
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that every SageMaker monitoring job definition — data quality, model quality, model bias, and model explainability — has network isolation enabled and inter-container traffic encryption enabled in its `networkConfig`. Monitoring jobs continuously read captured endpoint inference traffic, which typically contains the same sensitive inputs and outputs that the production endpoint handles.
+
+        **Why this matters**
+
+        Monitoring jobs pull captured data from S3 (often recorded via `dataCaptureConfig`) and process it against baselines. The captured data can include PII, PHI, prompts, authentication tokens sent to an endpoint, and model responses that reveal training data. Without hardened `networkConfig`:
+
+        - `enableNetworkIsolation == false` lets the monitoring container reach the internet — a compromised or malicious monitoring image can exfiltrate everything it reads.
+        - `enableInterContainerTrafficEncryption == false` means traffic between monitoring containers in a distributed run is sent in the clear on the VPC network, recoverable by anyone with VPC flow log or packet-capture access.
+        - Missing isolation also makes the monitoring container a pivot point for lateral movement into VPCs that host customer data.
+
+        Both controls are off by default; they must be explicitly enabled when the job definition is created.
+
+        **Risk mitigation**
+
+        - Prevents monitoring containers from reaching external endpoints.
+        - Protects sensitive inference data as it is processed by monitoring workloads.
+        - Aligns monitoring posture with the production endpoint it is validating.
+      remediation:
+        - id: console
+          desc: |
+            Recreate the monitoring job definitions with hardened network settings:
+
+            1. In **SageMaker Studio** → **Model Monitor**, delete the job definition missing isolation or encryption. Existing definitions cannot be edited in place.
+            2. Create a new definition, expanding the **Network configuration** section.
+            3. Enable **Enable network isolation** and **Enable inter-container traffic encryption**.
+            4. Re-attach the updated definition to the monitoring schedule.
+        - id: cli
+          desc: |
+            Create a new monitoring job definition with hardened network configuration (example shown for data quality; the same flags apply to `create-model-quality-job-definition`, `create-model-bias-job-definition`, and `create-model-explainability-job-definition`):
+
+            ```bash
+            aws sagemaker create-data-quality-job-definition \
+              --job-definition-name hardened-data-quality \
+              --data-quality-app-specification ImageUri=<image> \
+              --data-quality-job-input EndpointInput={EndpointName=<ep>,LocalPath=/opt/ml/processing/input} \
+              --data-quality-job-output-config MonitoringOutputs=[...] \
+              --job-resources ClusterConfig={InstanceCount=1,InstanceType=ml.m5.large,VolumeSizeInGB=30} \
+              --role-arn arn:aws:iam::<account>:role/<role> \
+              --network-config EnableNetworkIsolation=true,EnableInterContainerTrafficEncryption=true,VpcConfig={Subnets=[<subnet>],SecurityGroupIds=[<sg>]}
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor.html
+        title: Amazon SageMaker - Model Monitor
+      - url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_MonitoringNetworkConfig.html
+        title: Amazon SageMaker - MonitoringNetworkConfig
+  - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.dataQualityJobDefinitions.all(
+        networkConfig.enableNetworkIsolation == true &&
+        networkConfig.enableInterContainerTrafficEncryption == true
+      ) &&
+      aws.sagemaker.modelQualityJobDefinitions.all(
+        networkConfig.enableNetworkIsolation == true &&
+        networkConfig.enableInterContainerTrafficEncryption == true
+      ) &&
+      aws.sagemaker.modelBiasJobDefinitions.all(
+        networkConfig.enableNetworkIsolation == true &&
+        networkConfig.enableInterContainerTrafficEncryption == true
+      ) &&
+      aws.sagemaker.modelExplainabilityJobDefinitions.all(
+        networkConfig.enableNetworkIsolation == true &&
+        networkConfig.enableInterContainerTrafficEncryption == true
+      )
+  - uid: mondoo-aws-security-sagemaker-domain-default-role-not-admin
+    title: Ensure SageMaker domain default execution role is not AdministratorAccess
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    variants:
+      - uid: mondoo-aws-security-sagemaker-domain-default-role-not-admin-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that the default execution role attached to every SageMaker domain does not have the AWS-managed `AdministratorAccess` policy. The default execution role is inherited by every user profile, Studio app, and space in the domain that does not override it, so attaching `AdministratorAccess` grants every SageMaker user in the domain full administrative access to the AWS account.
+
+        **Why this matters**
+
+        `AdministratorAccess` grants `Action: "*"` on `Resource: "*"` — the broadest possible permission set. When the SageMaker domain's default execution role carries it:
+
+        - Every Studio notebook, JupyterLab app, and KernelGateway app runs with full AWS administrator privileges.
+        - Any user who compromises a Studio session (phishing, stolen session token, malicious dependency) has administrator access to the entire account.
+        - A malicious training job or Python package can pivot from the SageMaker VPC to any AWS service.
+        - Least-privilege boundaries normally enforced by IAM are effectively disabled.
+
+        SageMaker execution roles should grant only the specific S3 buckets, KMS keys, ECR repositories, and SageMaker actions the workload requires.
+
+        **Risk mitigation**
+
+        - Prevents inherited account-wide administrator access for every SageMaker user.
+        - Contains the blast radius of a compromised notebook or training job.
+        - Aligns the domain with the principle of least privilege.
+      remediation:
+        - id: console
+          desc: |
+            Replace `AdministratorAccess` with a scoped execution policy:
+
+            1. Open the **IAM Console** → **Roles** → select the SageMaker domain's default execution role.
+            2. Under **Permissions**, detach `AdministratorAccess`.
+            3. Attach `AmazonSageMakerFullAccess` (scoped to SageMaker) or a custom policy that grants only the S3 buckets, KMS keys, and ECR repositories the workload needs.
+            4. If some users legitimately need elevated access, create dedicated execution roles and assign them per user profile instead of in the domain defaults.
+        - id: cli
+          desc: |
+            Detach `AdministratorAccess` from the execution role and attach a scoped policy:
+
+            ```bash
+            aws iam detach-role-policy \
+              --role-name <sagemaker-exec-role> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+            aws iam attach-role-policy \
+              --role-name <sagemaker-exec-role> \
+              --policy-arn arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
+        title: Amazon SageMaker - Execution Roles
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege
+        title: AWS IAM - Apply Least-Privilege Permissions
+  - uid: mondoo-aws-security-sagemaker-domain-default-role-not-admin-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.domains
+        .where(defaultExecutionRole != empty)
+        .all(defaultExecutionRole.attachedPolicies.none(name == "AdministratorAccess"))
+  - uid: mondoo-aws-security-sagemaker-notebook-role-not-admin
+    title: Ensure SageMaker notebook instance IAM role is not AdministratorAccess
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    variants:
+      - uid: mondoo-aws-security-sagemaker-notebook-role-not-admin-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no SageMaker notebook instance has the AWS-managed `AdministratorAccess` policy attached to its IAM role. A notebook instance with `AdministratorAccess` lets anyone who runs code inside the Jupyter environment — including malicious code pulled in via a package installation or a Git clone — perform any AWS action in the account.
+
+        **Why this matters**
+
+        Notebook instances frequently run untrusted or semi-trusted code:
+
+        - Data scientists install packages from PyPI, conda, and Git repositories, any of which can be supply-chain compromised.
+        - Notebooks are shared via Git, and a malicious notebook can call `boto3` at open time.
+        - Compromised notebook sessions (phished credentials, stolen browser cookies) inherit whatever permissions the role has.
+
+        With `AdministratorAccess` attached, a single compromised notebook is equivalent to a full account takeover. Scoped roles limit the blast radius to only what the legitimate workflow needs.
+
+        **Risk mitigation**
+
+        - Prevents a compromised notebook from taking over the whole AWS account.
+        - Limits supply-chain risk from malicious Python/JupyterLab packages.
+        - Supports regulatory frameworks that require demonstrable least privilege for ML workloads.
+      remediation:
+        - id: console
+          desc: |
+            Replace `AdministratorAccess` on the notebook instance's role:
+
+            1. Open **SageMaker Console** → **Notebook** → **Notebook instances** → select the instance → note the IAM role.
+            2. Open the **IAM Console** → **Roles** → select that role → **Permissions**.
+            3. Detach `AdministratorAccess` and attach a scoped policy (e.g., `AmazonSageMakerFullAccess` plus only the specific S3 / KMS / Secrets Manager resources the notebook needs).
+            4. Stop and start the notebook instance so running kernels pick up the new role policies.
+        - id: cli
+          desc: |
+            Detach `AdministratorAccess` from the notebook's execution role:
+
+            ```bash
+            aws iam detach-role-policy \
+              --role-name <notebook-role> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
+        title: Amazon SageMaker - Execution Roles
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege
+        title: AWS IAM - Apply Least-Privilege Permissions
+  - uid: mondoo-aws-security-sagemaker-notebook-role-not-admin-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.notebookInstances
+        .where(details.iamRole != empty)
+        .all(details.iamRole.attachedPolicies.none(name == "AdministratorAccess"))
+  - uid: mondoo-aws-security-sagemaker-job-role-not-admin
+    title: Ensure SageMaker training and processing job IAM roles are not AdministratorAccess
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    variants:
+      - uid: mondoo-aws-security-sagemaker-job-role-not-admin-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no SageMaker training job or processing job has the AWS-managed `AdministratorAccess` policy attached to its IAM role. Training and processing containers execute algorithm code, scripts, and dependencies — any of which can be compromised — with the permissions of the attached role.
+
+        **Why this matters**
+
+        Training and processing jobs are ephemeral compute that consume third-party algorithm containers, Python packages from PyPI, Git-hosted scripts, and datasets from S3. Any of these inputs can carry malicious code:
+
+        - A poisoned pip dependency in the training environment can call `boto3` during import.
+        - An attacker who can upload a training script (via a shared bucket or CI pipeline) inherits the role's permissions when the job runs.
+        - Captured data from compromised training jobs with broad IAM can be exfiltrated to any AWS account via `sts:AssumeRole` or `s3:CopyObject` to an attacker-controlled bucket.
+
+        Scoping training and processing roles to the specific S3 buckets, KMS keys, and ECR repositories the job requires limits the blast radius of every one of these compromise vectors.
+
+        **Risk mitigation**
+
+        - Prevents poisoned algorithm containers or scripts from pivoting to full account access.
+        - Limits the impact of upstream supply-chain compromises.
+        - Forces explicit, auditable permissions for each training and processing workload.
+      remediation:
+        - id: console
+          desc: |
+            For each flagged training or processing job role:
+
+            1. Open the **IAM Console** → **Roles** → select the role named in the job's `RoleArn`.
+            2. Under **Permissions**, detach `AdministratorAccess`.
+            3. Attach a policy scoped to the specific S3 buckets (input data, model output), KMS keys, ECR repositories, and CloudWatch Logs groups the job uses.
+            4. Relaunch the job with the updated role.
+        - id: cli
+          desc: |
+            Detach `AdministratorAccess` from every role used by training or processing jobs:
+
+            ```bash
+            aws iam detach-role-policy \
+              --role-name <training-or-processing-role> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
+        title: Amazon SageMaker - Execution Roles
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege
+        title: AWS IAM - Apply Least-Privilege Permissions
+  - uid: mondoo-aws-security-sagemaker-job-role-not-admin-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.trainingJobs
+        .where(iamRole != empty)
+        .all(iamRole.attachedPolicies.none(name == "AdministratorAccess"))
+      &&
+      aws.sagemaker.processingJobs
+        .where(iamRole != empty)
+        .all(iamRole.attachedPolicies.none(name == "AdministratorAccess"))
   - uid: mondoo-aws-security-mq-audit-logging
     title: Ensure Amazon MQ brokers have audit logging enabled
     impact: 60
