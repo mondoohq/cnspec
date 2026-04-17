@@ -20620,7 +20620,7 @@ queries:
       - url: https://cloud.google.com/storage/docs/object-lock
         title: Cloud Storage - Object retention (Bucket Lock)
   - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict
-    title: Ensure KMS key access justifications do not allow customer-initiated support
+    title: Ensure KMS key access justifications exclude customer-initiated support
     impact: 65
     filters: asset.platform == 'gcp'
     tags:
@@ -20674,7 +20674,7 @@ queries:
             gcloud kms keys update <key> \
               --keyring=<keyring> \
               --location=<region> \
-              --key-access-justifications-policy-allowed-access-reasons=CUSTOMER_INITIATED_ACCESS,GOOGLE_INITIATED_SYSTEM_OPERATION
+              --allowed-access-reasons=CUSTOMER_INITIATED_ACCESS,GOOGLE_INITIATED_SYSTEM_OPERATION
             ```
     refs:
       - url: https://cloud.google.com/kms/docs/key-access-justifications
@@ -20788,7 +20788,7 @@ queries:
       - url: https://cloud.google.com/vpc/docs/private-service-connect
         title: Private Service Connect
   - uid: mondoo-gcp-security-cloud-sql-users-use-iam-auth
-    title: Ensure Cloud SQL users authenticate via Cloud IAM rather than built-in passwords
+    title: Ensure Cloud SQL users authenticate via Cloud IAM, not built-in passwords
     impact: 70
     filters: asset.platform == 'gcp'
     tags:
@@ -20801,7 +20801,6 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
     mql: |
       gcp.project.sqlService.instances.all(
-        users.none(type == "BUILT_IN") ||
         users.all(type != "BUILT_IN" || name == "root" || name == "postgres" || name == "sqlserver")
       )
     docs:
@@ -21246,7 +21245,8 @@ queries:
     mql: |
       gcp.project.dlpService.jobTriggers.none(
         status != "HEALTHY" ||
-        updated != null && time.now - updated > 30 * time.day
+        updated == null ||
+        time.now - updated > 30 * time.day
       )
     docs:
       desc: |
@@ -21278,10 +21278,14 @@ queries:
             5. Use **Run now** to verify the trigger executes end-to-end.
         - id: cli
           desc: |
-            Resume a paused DLP job trigger:
+            Resume a paused DLP job trigger via the REST API (DLP has no gcloud CLI surface):
 
             ```bash
-            gcloud dlp job-triggers update <trigger-id> --status=HEALTHY
+            curl -X PATCH \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              -d '{"jobTrigger":{"status":"HEALTHY"},"updateMask":"status"}' \
+              "https://dlp.googleapis.com/v2/projects/<project>/jobTriggers/<trigger-id>"
             ```
     refs:
       - url: https://cloud.google.com/sensitive-data-protection/docs/creating-job-triggers
@@ -21336,24 +21340,32 @@ queries:
             4. Save.
         - id: cli
           desc: |
-            Update a DLP inspect template to include credential detectors:
-
-            ```bash
-            gcloud dlp inspect-templates update <template-id> \
-              --inspect-config-from-file=inspect-config.json
-            ```
-
-            Where `inspect-config.json` includes:
+            Update a DLP inspect template to include credential detectors via the REST API (DLP has no gcloud CLI surface). Save the template body as `inspect-template.json`:
 
             ```json
             {
-              "infoTypes": [
-                {"name": "AWS_CREDENTIALS"},
-                {"name": "GCP_CREDENTIALS"},
-                {"name": "JSON_WEB_TOKEN"},
-                {"name": "BASIC_AUTH_HEADER"}
-              ]
+              "inspectTemplate": {
+                "inspectConfig": {
+                  "infoTypes": [
+                    {"name": "AWS_CREDENTIALS"},
+                    {"name": "GCP_CREDENTIALS"},
+                    {"name": "JSON_WEB_TOKEN"},
+                    {"name": "BASIC_AUTH_HEADER"}
+                  ]
+                }
+              },
+              "updateMask": "inspectConfig.infoTypes"
             }
+            ```
+
+            Then PATCH it:
+
+            ```bash
+            curl -X PATCH \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              -d @inspect-template.json \
+              "https://dlp.googleapis.com/v2/projects/<project>/inspectTemplates/<template-id>"
             ```
     refs:
       - url: https://cloud.google.com/sensitive-data-protection/docs/infotypes-reference
