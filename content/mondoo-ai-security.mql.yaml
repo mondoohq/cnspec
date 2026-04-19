@@ -1,0 +1,1100 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - uid: mondoo-ai-security
+    name: Mondoo AI Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: macos,linux,windows
+    require:
+      - provider: os
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Enforce approved AI coding agents, skills, MCP servers, and extensions on endpoints
+    docs:
+      desc: |-
+        The Mondoo AI Security policy enforces that only approved AI coding agents, IDE extensions, browser extensions, MCP servers, and local LLM runtimes are present on corporate endpoints.
+
+        Customize the allow-lists by overriding the `props` values for your environment. By default, only GitHub Copilot and Claude Code are approved.
+
+        ## Local scan
+
+        To scan the localhost against this policy:
+
+        ```bash
+        cnspec scan local -f mondoo-ai-security.mql.yaml
+        ```
+
+        ## Remote scan
+
+        ```bash
+        cnspec scan ssh <user>@<IP_ADDRESS> -i /path/to/ssh_key -f mondoo-ai-security.mql.yaml
+        ```
+    groups:
+      - title: Unapproved AI Coding Agents
+        filters: |
+          asset.family.contains("unix") || asset.family.contains("windows")
+        checks:
+          - uid: mondoo-ai-security-no-unapproved-ai-processes
+          - uid: mondoo-ai-security-no-unapproved-ai-packages
+          - uid: mondoo-ai-security-no-unapproved-homebrew-ai-packages
+          - uid: mondoo-ai-security-no-cursor
+          - uid: mondoo-ai-security-no-windsurf
+          - uid: mondoo-ai-security-no-goose
+          - uid: mondoo-ai-security-no-zed
+          - uid: mondoo-ai-security-no-cline
+          - uid: mondoo-ai-security-no-roo
+          - uid: mondoo-ai-security-no-continuedev
+          - uid: mondoo-ai-security-no-trae
+          - uid: mondoo-ai-security-no-opencode
+          - uid: mondoo-ai-security-no-kiro
+          - uid: mondoo-ai-security-no-pi
+          - uid: mondoo-ai-security-no-mistral-vibe
+          - uid: mondoo-ai-security-no-antigravity
+          - uid: mondoo-ai-security-no-ibm-bob
+          - uid: mondoo-ai-security-no-openclaw
+          - uid: mondoo-ai-security-no-snowflake-cortex
+          - uid: mondoo-ai-security-no-junie
+          - uid: mondoo-ai-security-no-augment
+          - uid: mondoo-ai-security-no-warp
+          - uid: mondoo-ai-security-no-kilocode
+          - uid: mondoo-ai-security-no-openhands
+          - uid: mondoo-ai-security-no-qwen-code
+      - title: Unapproved IDE Extensions
+        filters: |
+          asset.family.contains("unix") || asset.family.contains("windows")
+        checks:
+          - uid: mondoo-ai-security-no-vscode-codeium-extension
+          - uid: mondoo-ai-security-no-vscode-tabnine-extension
+          - uid: mondoo-ai-security-no-vscode-supermaven-extension
+          - uid: mondoo-ai-security-no-vscode-continue-extension
+          - uid: mondoo-ai-security-no-vscode-cline-extension
+          - uid: mondoo-ai-security-no-vscode-cody-extension
+          - uid: mondoo-ai-security-no-vscode-codex-extension
+          - uid: mondoo-ai-security-no-vscode-claude-extension
+          - uid: mondoo-ai-security-no-vscode-cursor-extension
+          - uid: mondoo-ai-security-no-vscode-roo-extension
+      - title: MCP Server Governance
+        filters: |
+          asset.family.contains("unix") || asset.family.contains("windows")
+        checks:
+          - uid: mondoo-ai-security-no-unapproved-mcp-servers
+      - title: Local LLM Runtimes
+        filters: |
+          asset.family.contains("unix") || asset.family.contains("windows")
+        checks:
+          - uid: mondoo-ai-security-no-local-llm-runtimes
+          - uid: mondoo-ai-security-no-local-llm-listening-ports
+    scoring_system: highest impact
+
+queries:
+  # ---------------------------------------------------------------------------
+  # Unapproved AI processes and packages
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-ai-security-no-unapproved-ai-processes
+    title: No unapproved AI agent processes are running
+    impact: 80
+    props:
+      - uid: mondooAiSecurityApprovedProcesses
+        title: Regex matching approved AI process names
+        mql: |
+          return /(?i)(copilot|claude)/
+    mql: |
+      processes.where(
+        executable == /(?i)(ollama|llama|lmstudio|lm-studio|localai|gpt4all|cursor|windsurf|codeium|tabby|codex|goose|zed|chatgpt)/ &&
+        executable != props.mondooAiSecurityApprovedProcesses
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no unapproved AI coding agents or local LLM runtimes are actively running on the endpoint.
+
+        Running unapproved AI tools can lead to data egress, where proprietary source code, customer data, or secrets are sent to untrusted AI providers. Only AI tools reviewed and approved by the security team should be permitted.
+
+        Customize the `mondooAiSecurityApprovedProcesses` property to match your organization's approved tool list.
+      remediation: |
+        Identify and terminate unapproved AI processes, then uninstall the tool.
+
+        **macOS:**
+
+        ```bash
+        ps aux | grep -iE 'ollama|lmstudio|cursor|windsurf|codeium'
+        kill <PID>
+        brew uninstall <tool_name>  # if installed via Homebrew
+        # Or drag the application from /Applications to Trash
+        ```
+
+        **Linux:**
+
+        ```bash
+        ps aux | grep -iE 'ollama|lmstudio|cursor|windsurf|codeium'
+        kill <PID>
+        sudo apt remove <package_name>   # Debian/Ubuntu
+        sudo dnf remove <package_name>   # RHEL/Fedora
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Get-Process | Where-Object { $_.Name -match 'ollama|lmstudio|cursor|windsurf|codeium' }
+        Stop-Process -Name <process_name>
+        winget uninstall <tool_name>
+        # Or uninstall via Settings > Apps > Installed Apps
+        ```
+
+  - uid: mondoo-ai-security-no-unapproved-ai-packages
+    title: No unapproved AI tools installed via package managers
+    impact: 70
+    props:
+      - uid: mondooAiSecurityApprovedPackages
+        title: Regex matching approved AI package names
+        mql: |
+          return /(?i)(copilot|claude)/
+    mql: |
+      packages.where(
+        name == /(?i)(ollama|llama-cpp|llama\.cpp|lm-studio|localai|gpt4all|cursor|windsurf|codeium|tabby|codex|goose|chatgpt)/ &&
+        name != props.mondooAiSecurityApprovedPackages
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no unapproved AI tools are installed via system package managers (apt, dnf, rpm, Windows Uninstall registry).
+
+        Installed but idle AI tools still represent risk since they can be launched at any time and may contain cached credentials or configuration from prior use.
+      remediation: |
+        Remove unapproved AI packages using the system package manager.
+
+        **macOS:**
+
+        ```bash
+        brew uninstall <package_name>
+        ```
+
+        **Linux (Debian/Ubuntu):**
+
+        ```bash
+        sudo apt remove <package_name>
+        ```
+
+        **Linux (RHEL/Fedora):**
+
+        ```bash
+        sudo dnf remove <package_name>
+        ```
+
+        **Windows:**
+
+        ```powershell
+        winget uninstall <package_name>
+        # Or uninstall via Settings > Apps > Installed Apps
+        ```
+
+  - uid: mondoo-ai-security-no-unapproved-homebrew-ai-packages
+    title: No unapproved AI tools installed via Homebrew
+    filters: asset.platform == "macos"
+    impact: 70
+    props:
+      - uid: mondooAiSecurityApprovedHomebrewPackages
+        title: Regex matching approved Homebrew AI package names
+        mql: |
+          return /(?i)(copilot|claude)/
+    mql: |
+      homebrew.packages.where(
+        name == /(?i)(ollama|llama|llama-cpp|lm-studio|localai|gpt4all|cursor|windsurf|codex|chatgpt|goose|codeium|tabby)/ &&
+        name != props.mondooAiSecurityApprovedHomebrewPackages
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no unapproved AI tools are installed via Homebrew on macOS. Homebrew casks are a common installation method for desktop AI applications.
+      remediation: |
+        Remove unapproved AI packages:
+
+        ```bash
+        brew uninstall <package_name>
+        ```
+
+  # ---------------------------------------------------------------------------
+  # Unapproved AI agent configurations
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-ai-security-no-cursor
+    title: Cursor editor is not configured on this endpoint
+    impact: 70
+    mql: |
+      cursor.skills.length == 0 && cursor.mcpServers.length == 0 && cursor.rules.length == 0
+    docs:
+      desc: |
+        This check ensures that Cursor, an AI-native code editor, is not configured on the endpoint. Cursor sends code to cloud AI models for completion and chat, which can result in proprietary source code being transmitted to third-party services.
+
+        If Cursor is approved in your organization, remove this check or add an exception.
+      remediation: |
+        Uninstall Cursor and remove its configuration.
+
+        **macOS:**
+
+        ```bash
+        rm -rf ~/Library/Application\ Support/Cursor
+        rm -rf ~/.cursor
+        ```
+
+        **Linux:**
+
+        ```bash
+        rm -rf ~/.config/Cursor
+        rm -rf ~/.cursor
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:APPDATA\Cursor"
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.cursor"
+        winget uninstall Cursor
+        ```
+
+  - uid: mondoo-ai-security-no-windsurf
+    title: Windsurf editor is not configured on this endpoint
+    impact: 70
+    mql: |
+      windsurf.skills.length == 0 && windsurf.mcpServers.length == 0 && windsurf.rules.length == 0
+    docs:
+      desc: |
+        This check ensures that Windsurf (Codeium), an AI-native code editor, is not configured on the endpoint.
+      remediation: |
+        Uninstall Windsurf and remove its configuration.
+
+        **macOS:**
+
+        ```bash
+        rm -rf ~/Library/Application\ Support/Windsurf
+        rm -rf ~/.codeium/windsurf
+        ```
+
+        **Linux:**
+
+        ```bash
+        rm -rf ~/.config/Windsurf
+        rm -rf ~/.codeium/windsurf
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:APPDATA\Windsurf"
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.codeium\windsurf"
+        winget uninstall Windsurf
+        ```
+
+  - uid: mondoo-ai-security-no-goose
+    title: Goose AI agent is not configured on this endpoint
+    impact: 60
+    mql: |
+      goose.skills.length == 0 && goose.extensions.length == 0
+    docs:
+      desc: |
+        This check ensures that Goose, an open-source AI agent by Block, is not configured on the endpoint. Goose can connect to multiple AI providers and execute code with full system access via extensions.
+      remediation: |
+        Remove Goose configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.config/goose
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:APPDATA\goose"
+        ```
+
+  - uid: mondoo-ai-security-no-zed
+    title: Zed editor is not configured on this endpoint
+    impact: 50
+    mql: |
+      zed.extensions.length == 0
+    docs:
+      desc: |
+        This check ensures that Zed, an editor with built-in AI features, is not configured on the endpoint.
+      remediation: |
+        Remove Zed configuration.
+
+        **macOS:**
+
+        ```bash
+        rm -rf ~/Library/Application\ Support/Zed
+        rm -rf ~/.config/zed
+        ```
+
+        **Linux:**
+
+        ```bash
+        rm -rf ~/.config/zed
+        rm -rf ~/.local/share/zed
+        ```
+
+  - uid: mondoo-ai-security-no-cline
+    title: Cline agent is not configured on this endpoint
+    impact: 70
+    mql: cline.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Cline, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Cline configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.cline
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.cline"
+        ```
+
+  - uid: mondoo-ai-security-no-roo
+    title: Roo Code agent is not configured on this endpoint
+    impact: 70
+    mql: roo.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Roo Code, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Roo Code configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.roo
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.roo"
+        ```
+
+  - uid: mondoo-ai-security-no-continuedev
+    title: Continue agent is not configured on this endpoint
+    impact: 60
+    mql: continuedev.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Continue, an open-source AI coding assistant, is not configured on the endpoint.
+      remediation: |
+        Remove Continue configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.continue
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.continue"
+        ```
+
+  - uid: mondoo-ai-security-no-trae
+    title: Trae agent is not configured on this endpoint
+    impact: 60
+    mql: trae.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Trae, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Trae configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.trae
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.trae"
+        ```
+
+  - uid: mondoo-ai-security-no-opencode
+    title: OpenCode agent is not configured on this endpoint
+    impact: 60
+    mql: opencode.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that OpenCode, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove OpenCode configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.config/opencode
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:APPDATA\opencode"
+        ```
+
+  - uid: mondoo-ai-security-no-kiro
+    title: Kiro agent is not configured on this endpoint
+    impact: 60
+    mql: kiro.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Kiro, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Kiro configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.kiro
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.kiro"
+        ```
+
+  - uid: mondoo-ai-security-no-pi
+    title: Pi agent is not configured on this endpoint
+    impact: 60
+    mql: pi.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Pi, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Pi configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.pi/agent
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.pi\agent"
+        ```
+
+  - uid: mondoo-ai-security-no-mistral-vibe
+    title: Mistral Vibe is not configured on this endpoint
+    impact: 60
+    mql: mistral.vibe.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Mistral Vibe, an AI coding agent by Mistral, is not configured on the endpoint.
+      remediation: |
+        Remove Mistral Vibe configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.vibe
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.vibe"
+        ```
+
+  - uid: mondoo-ai-security-no-antigravity
+    title: Antigravity agent is not configured on this endpoint
+    impact: 60
+    mql: antigravity.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Antigravity (Google), an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Antigravity configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.gemini/antigravity
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.gemini\antigravity"
+        ```
+
+  - uid: mondoo-ai-security-no-ibm-bob
+    title: IBM Bob is not configured on this endpoint
+    impact: 60
+    mql: ibm.bob.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that IBM Bob, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove IBM Bob configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.bob
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.bob"
+        ```
+
+  - uid: mondoo-ai-security-no-openclaw
+    title: OpenClaw is not configured on this endpoint
+    impact: 60
+    mql: openclaw.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that OpenClaw, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove OpenClaw configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.openclaw
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.openclaw"
+        ```
+
+  - uid: mondoo-ai-security-no-snowflake-cortex
+    title: Snowflake Cortex Code is not configured on this endpoint
+    impact: 60
+    mql: snowflake.cortex.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Snowflake Cortex Code, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Snowflake Cortex configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.snowflake/cortex
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.snowflake\cortex"
+        ```
+
+  - uid: mondoo-ai-security-no-junie
+    title: Junie is not configured on this endpoint
+    impact: 60
+    mql: junie.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Junie (JetBrains), an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Junie configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.junie
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.junie"
+        ```
+
+  - uid: mondoo-ai-security-no-augment
+    title: Augment is not configured on this endpoint
+    impact: 60
+    mql: augment.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Augment, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Augment configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.augment
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.augment"
+        ```
+
+  - uid: mondoo-ai-security-no-warp
+    title: Warp AI terminal is not configured on this endpoint
+    impact: 50
+    mql: warp.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Warp, an AI-powered terminal, is not configured on the endpoint.
+      remediation: |
+        Remove Warp configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.warp
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.warp"
+        ```
+
+  - uid: mondoo-ai-security-no-kilocode
+    title: Kilo Code is not configured on this endpoint
+    impact: 60
+    mql: kilocode.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Kilo Code, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Kilo Code configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.kilocode
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.kilocode"
+        ```
+
+  - uid: mondoo-ai-security-no-openhands
+    title: OpenHands is not configured on this endpoint
+    impact: 60
+    mql: openhands.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that OpenHands, an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove OpenHands configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.openhands
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.openhands"
+        ```
+
+  - uid: mondoo-ai-security-no-qwen-code
+    title: Qwen Code is not configured on this endpoint
+    impact: 60
+    mql: qwen.code.skills.length == 0
+    docs:
+      desc: |
+        This check ensures that Qwen Code (Alibaba), an AI coding agent, is not configured on the endpoint.
+      remediation: |
+        Remove Qwen Code configuration.
+
+        **macOS/Linux:**
+
+        ```bash
+        rm -rf ~/.qwen
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Remove-Item -Recurse -Force "$env:USERPROFILE\.qwen"
+        ```
+
+  # ---------------------------------------------------------------------------
+  # IDE extension governance
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-ai-security-no-vscode-codeium-extension
+    title: No Codeium extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)codeium\./
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Codeium AI coding extensions are installed in VS Code-compatible editors. Codeium transmits source code to cloud AI models for completion and chat.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed. Each VS Code-compatible editor has its own CLI command:
+
+        **VS Code:**
+
+        ```bash
+        code --uninstall-extension codeium.codeium
+        ```
+
+        **Cursor:**
+
+        ```bash
+        cursor --uninstall-extension codeium.codeium
+        ```
+
+        **Windsurf:**
+
+        ```bash
+        windsurf --uninstall-extension codeium.codeium
+        ```
+
+        You can also uninstall from within the editor: open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`), search for the extension, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-tabnine-extension
+    title: No Tabnine extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)tabnine\./
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Tabnine AI coding extensions are installed in VS Code-compatible editors. Tabnine can transmit source code to cloud models depending on configuration.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension tabnine.tabnine-vscode       # VS Code
+        cursor --uninstall-extension tabnine.tabnine-vscode     # Cursor
+        windsurf --uninstall-extension tabnine.tabnine-vscode   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Tabnine, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-supermaven-extension
+    title: No Supermaven extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)supermaven\./
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Supermaven AI coding extensions are installed in VS Code-compatible editors.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension supermaven.supermaven       # VS Code
+        cursor --uninstall-extension supermaven.supermaven     # Cursor
+        windsurf --uninstall-extension supermaven.supermaven   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Supermaven, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-continue-extension
+    title: No Continue extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)continue\.continue/
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Continue AI coding extensions are installed in VS Code-compatible editors. Continue is an open-source AI assistant that can connect to various LLM providers.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension continue.continue       # VS Code
+        cursor --uninstall-extension continue.continue     # Cursor
+        windsurf --uninstall-extension continue.continue   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Continue, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-cline-extension
+    title: No Cline extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)saoudrizwan\.claude-dev|cline\./
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Cline (formerly Claude Dev) AI coding extensions are installed in VS Code-compatible editors. Cline is an autonomous AI agent that can execute code and modify files.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension saoudrizwan.claude-dev       # VS Code
+        cursor --uninstall-extension saoudrizwan.claude-dev     # Cursor
+        windsurf --uninstall-extension saoudrizwan.claude-dev   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Cline, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-cody-extension
+    title: No Sourcegraph Cody extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)sourcegraph\.cody/
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Sourcegraph Cody AI coding extensions are installed in VS Code-compatible editors.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension sourcegraph.cody-ai       # VS Code
+        cursor --uninstall-extension sourcegraph.cody-ai     # Cursor
+        windsurf --uninstall-extension sourcegraph.cody-ai   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Cody, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-codex-extension
+    title: No OpenAI Codex extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)openai\.codex/
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no OpenAI Codex extensions are installed in VS Code-compatible editors.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension openai.codex       # VS Code
+        cursor --uninstall-extension openai.codex     # Cursor
+        windsurf --uninstall-extension openai.codex   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Codex, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-claude-extension
+    title: No Claude extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)anthropic\.claude/
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Anthropic Claude extensions are installed in VS Code-compatible editors.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension anthropic.claude       # VS Code
+        cursor --uninstall-extension anthropic.claude     # Cursor
+        windsurf --uninstall-extension anthropic.claude   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Claude, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-cursor-extension
+    title: No Cursor-specific extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)cursor\./
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Cursor-specific AI extensions are installed in VS Code-compatible editors.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension <cursor.extension-name>       # VS Code
+        cursor --uninstall-extension <cursor.extension-name>     # Cursor
+        windsurf --uninstall-extension <cursor.extension-name>   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for the extension, and click **Uninstall**.
+
+  - uid: mondoo-ai-security-no-vscode-roo-extension
+    title: No Roo Code extensions in VS Code-compatible editors
+    impact: 70
+    mql: |
+      vscode.extensions.where(
+        identifier == /(?i)rooveterinaryinc\.roo-cline|roocode\./
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no Roo Code AI coding extensions are installed in VS Code-compatible editors. Roo Code is an autonomous AI agent forked from Cline.
+      remediation: |
+        Uninstall the extension from whichever editor(s) have it installed:
+
+        ```bash
+        code --uninstall-extension rooveterinaryinc.roo-cline       # VS Code
+        cursor --uninstall-extension rooveterinaryinc.roo-cline     # Cursor
+        windsurf --uninstall-extension rooveterinaryinc.roo-cline   # Windsurf
+        ```
+
+        Or open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) in the editor, search for Roo Code, and click **Uninstall**.
+
+  # ---------------------------------------------------------------------------
+  # MCP server governance
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-ai-security-no-unapproved-mcp-servers
+    title: No unapproved MCP servers across all AI agents
+    impact: 80
+    props:
+      - uid: mondooAiSecurityApprovedMcpServers
+        title: Regex matching approved MCP server names (applies to all agents)
+        mql: |
+          return /(?i)^$/
+    mql: |
+      claude.code.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0 &&
+      openai.codex.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0 &&
+      cursor.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0 &&
+      github.copilot.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0 &&
+      windsurf.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0 &&
+      gemini.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0
+    docs:
+      desc: |
+        This check ensures that only approved MCP (Model Context Protocol) servers are configured across all AI coding agents on the endpoint. It checks Claude Code, OpenAI Codex, Cursor, GitHub Copilot, Windsurf, and Gemini CLI using a single centralized allow-list.
+
+        MCP servers grant AI agents tool access to internal systems such as email, source control, databases, and messaging platforms. An unreviewed MCP server can read, modify, or exfiltrate data on behalf of the user without explicit consent for each action. This is the highest-risk AI shadow IT vector.
+
+        By default, no MCP servers are approved. Customize the `mondooAiSecurityApprovedMcpServers` property to allow specific servers by name. For example:
+
+        ```yaml
+        props:
+          - uid: mondooAiSecurityApprovedMcpServers
+            mql: |
+              return /(?i)(mondoo|github|jira)/
+        ```
+      remediation: |
+        Review and remove unapproved MCP servers from each agent's configuration. The configuration file locations differ by operating system.
+
+        **Claude Code:**
+
+        - macOS/Linux: `~/.claude/settings.json`
+        - Windows: `%USERPROFILE%\.claude\settings.json`
+
+        **OpenAI Codex:**
+
+        - macOS/Linux: `~/.codex/`
+        - Windows: `%USERPROFILE%\.codex\`
+
+        **Cursor:**
+
+        - macOS/Linux: `~/.cursor/mcp.json`
+        - Windows: `%USERPROFILE%\.cursor\mcp.json`
+
+        **GitHub Copilot:**
+
+        - macOS/Linux: `~/.config/github-copilot/`
+        - Windows: `%APPDATA%\github-copilot\`
+
+        **Windsurf:**
+
+        - macOS/Linux: `~/.codeium/windsurf/`
+        - Windows: `%USERPROFILE%\.codeium\windsurf\`
+
+        **Gemini CLI:**
+
+        - macOS/Linux: `~/.gemini/`
+        - Windows: `%USERPROFILE%\.gemini\`
+
+        Open the relevant configuration file, locate the `mcpServers` section, and remove any server entries that are not in the approved list.
+
+  # ---------------------------------------------------------------------------
+  # Local LLM runtimes
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-ai-security-no-local-llm-runtimes
+    title: No local LLM runtimes are running
+    impact: 60
+    mql: |
+      processes.where(
+        executable == /(?i)(ollama|llama|lmstudio|lm-studio|localai|gpt4all)/
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no local LLM inference runtimes (Ollama, LM Studio, llama.cpp, LocalAI, GPT4All) are running on the endpoint.
+
+        Local LLMs can be used to process sensitive data outside of approved channels, and the model weights themselves may carry license restrictions that create legal exposure.
+
+        **Note:** Local LLM processes will also trigger the "No unapproved AI agent processes" check (impact 80) if they are not in the approved process list. This is intentional — local LLM runtimes appear in both the general agent group and the dedicated LLM group to ensure visibility regardless of which group an operator enables.
+      remediation: |
+        Stop and uninstall local LLM runtimes.
+
+        **macOS:**
+
+        ```bash
+        brew uninstall ollama
+        # For LM Studio and GPT4All, drag the app from /Applications to Trash
+        ```
+
+        **Linux:**
+
+        ```bash
+        sudo systemctl stop ollama
+        sudo apt remove ollama       # Debian/Ubuntu
+        sudo dnf remove ollama       # RHEL/Fedora
+        # For AppImage-based tools (LM Studio), delete the AppImage file
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Stop-Process -Name ollama
+        winget uninstall Ollama
+        # For LM Studio and GPT4All, uninstall via Settings > Apps > Installed Apps
+        ```
+
+  - uid: mondoo-ai-security-no-local-llm-listening-ports
+    title: No local LLM inference servers are listening
+    impact: 60
+    mql: |
+      ports.listening.where(
+        port == 11434 || port == 1234 || port == 1337
+      ).length == 0
+    docs:
+      desc: |
+        This check ensures that no services are listening on ports commonly used by local LLM inference servers:
+
+        - **11434**: Ollama
+        - **1234**: LM Studio
+        - **1337**: LocalAI
+
+        A listening port on these addresses indicates an active LLM inference server that could be used to process sensitive data outside approved channels.
+      remediation: |
+        Identify and stop the process listening on the flagged port:
+
+        **macOS/Linux:**
+
+        ```bash
+        lsof -i :<port>
+        kill <PID>
+        ```
+
+        **Windows:**
+
+        ```powershell
+        Get-NetTCPConnection -LocalPort <port> | Select-Object OwningProcess
+        Stop-Process -Id <PID>
+        ```
