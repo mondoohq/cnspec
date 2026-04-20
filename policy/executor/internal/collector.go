@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -57,8 +59,10 @@ type BufferedCollector struct {
 	resolvedPolicy *policy.ResolvedPolicy
 	riskMRNs       map[string][]string
 	keepQrIds      map[string]bool
-	// riskDataIndex maps datapoint checksum → riskDataRef for risk data queries.
-	riskDataIndex map[string]riskDataRef
+	// riskDataIndex maps datapoint checksum → riskDataRefs for risk data queries.
+	// A single checksum can map to multiple risk factors when they share the
+	// same underlying query (same MQL expression → same entrypoint checksum).
+	riskDataIndex map[string][]riskDataRef
 	// risks accumulates scored risk factors keyed by MRN, progressively built
 	// from both detection scores and data query results.
 	risks    map[string]*policy.ScoredRiskFactor
@@ -97,13 +101,13 @@ func WithResolvedPolicy(resolved *policy.ResolvedPolicy) (BufferedCollectorOpt, 
 		}
 	}
 
-	riskDataIndex := map[string]riskDataRef{}
+	riskDataIndex := map[string][]riskDataRef{}
 	for riskMRN, info := range resolved.CollectorJob.RiskDataQueries {
 		for queryMRN, checksum := range info.DatapointChecksums {
-			riskDataIndex[checksum] = riskDataRef{
+			riskDataIndex[checksum] = append(riskDataIndex[checksum], riskDataRef{
 				riskMRN:  riskMRN,
 				queryMRN: queryMRN,
-			}
+			})
 		}
 	}
 
@@ -171,7 +175,7 @@ func (c *BufferedCollector) run() {
 
 			for _, rr := range c.results {
 				results = append(results, rr)
-				if ref, ok := c.riskDataIndex[rr.CodeID]; ok {
+				for _, ref := range c.riskDataIndex[rr.CodeID] {
 					r := c.getOrCreateRisk(ref.riskMRN)
 					if r.Data == nil {
 						r.Data = map[string]*llx.Result{}
@@ -202,7 +206,7 @@ func (c *BufferedCollector) run() {
 			}
 
 			if done {
-				risks := collectScoredRisks(c.risks)
+				risks := slices.Collect(maps.Values(c.risks))
 				c.collector.updateRiskScores(c.resolvedPolicy, scores, risks)
 				c.collector.Sink(c.ctx, nil, scores, risks, done)
 				scores = scores[:0]
@@ -222,14 +226,6 @@ func (c *BufferedCollector) run() {
 			timer.Stop()
 		}
 	}()
-}
-
-func collectScoredRisks(risks map[string]*policy.ScoredRiskFactor) []*policy.ScoredRiskFactor {
-	out := make([]*policy.ScoredRiskFactor, 0, len(risks))
-	for _, r := range risks {
-		out = append(out, r)
-	}
-	return out
 }
 
 func (c *BufferedCollector) FlushAndStop() {
