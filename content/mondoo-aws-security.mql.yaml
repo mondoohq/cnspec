@@ -408,6 +408,7 @@ policies:
           - uid: mondoo-aws-security-neptune-instance-public-access
           - uid: mondoo-aws-security-neptune-cluster-log-export
           - uid: mondoo-aws-security-neptune-no-default-security-groups
+          - uid: mondoo-aws-security-neptune-cluster-auto-minor-version-upgrade
       - title: Amazon Inspector
         checks:
           - uid: mondoo-aws-security-inspector-ec2-scanning-enabled
@@ -482,6 +483,7 @@ policies:
           - uid: mondoo-aws-security-documentdb-snapshot-encrypted
           - uid: mondoo-aws-security-documentdb-cluster-log-export
           - uid: mondoo-aws-security-documentdb-no-default-security-groups
+          - uid: mondoo-aws-security-documentdb-cluster-auto-minor-version-upgrade
       - title: AWS Glue
         checks:
           - uid: mondoo-aws-security-glue-job-security-configuration
@@ -45810,3 +45812,139 @@ queries:
       aws.drs.sourceServers.all(
         replicationConfiguration.createPublicIP != true
       )
+  - uid: mondoo-aws-security-neptune-cluster-auto-minor-version-upgrade
+    title: Ensure Neptune cluster instances have automatic minor version upgrades enabled
+    impact: 60
+    filters: asset.platform == "aws-neptune-cluster"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+    mql: |
+      aws.neptune.instances.where(clusterIdentifier == aws.neptune.cluster.clusterIdentifier).all(
+        autoMinorVersionUpgrade == true
+      )
+    docs:
+      desc: |
+        This check verifies that every Neptune instance attached to the cluster has `autoMinorVersionUpgrade` enabled. When enabled, AWS applies minor-version engine patches during the cluster's maintenance window, closing known CVEs without requiring operator action. When disabled, each instance stays on whatever engine version it was launched with until an operator manually triggers an upgrade.
+
+        **Why this matters**
+
+        Neptune ships minor-version patches that carry real CVE fixes — an instance that has opted out of auto-upgrade accumulates every vulnerability disclosed after its launch:
+
+        - Graph databases hold integrated data from multiple sources, so a Neptune compromise often turns into a privilege-escalation path across systems.
+        - Deferred minor-version patches are invisible in most inventory tools; the instance reports as "healthy" while running known-vulnerable code.
+        - Manual upgrade processes rarely keep up with AWS's quarterly-plus patch cadence, so the gap grows over time.
+        - Enabling auto-upgrade moves the patch application to a known maintenance window rather than an emergency operation after a new CVE ships.
+
+        **Risk mitigation**
+
+        - Enable `autoMinorVersionUpgrade` on every Neptune instance.
+        - Configure a `preferredMaintenanceWindow` that matches your change-control calendar, and accept that minor patches land in that window.
+        - Pair auto-upgrade with a cluster-level deletion-protection and backup-retention policy so an unexpected patch problem is recoverable.
+      remediation:
+        - id: console
+          desc: |
+            Enable auto minor version upgrade on each Neptune instance:
+
+            1. Open **Neptune** → **Databases** → select the flagged instance.
+            2. Select **Modify**.
+            3. Under **Additional configuration**, check **Enable auto minor version upgrade**.
+            4. Apply changes immediately or during the next maintenance window.
+        - id: cli
+          desc: |
+            Enable auto minor version upgrade on a Neptune instance:
+
+            ```bash
+            aws neptune modify-db-instance \
+              --db-instance-identifier <instance-id> \
+              --auto-minor-version-upgrade \
+              --apply-immediately
+            ```
+        - id: terraform
+          desc: |
+            Ensure the Neptune cluster instance declares auto minor version upgrade in Terraform:
+
+            ```hcl
+            resource "aws_neptune_cluster_instance" "example" {
+              cluster_identifier         = aws_neptune_cluster.example.id
+              instance_class             = "db.t3.medium"
+              auto_minor_version_upgrade = true
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/neptune/latest/userguide/manage-console-maintaining.html
+        title: AWS Documentation - Maintaining an Amazon Neptune DB cluster
+  - uid: mondoo-aws-security-documentdb-cluster-auto-minor-version-upgrade
+    title: Ensure DocumentDB cluster instances have automatic minor version upgrades enabled
+    impact: 60
+    filters: asset.platform == "aws-documentdb-cluster"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+    mql: |
+      aws.documentdb.instances.where(clusterIdentifier == aws.documentdb.cluster.clusterIdentifier).all(
+        autoMinorVersionUpgrade == true
+      )
+    docs:
+      desc: |
+        This check verifies that every DocumentDB instance in the cluster has `autoMinorVersionUpgrade` enabled. When enabled, AWS applies minor-version engine patches during the cluster's maintenance window. When disabled, each instance stays on its launched engine version until an operator manually performs an upgrade — a pattern that tends to fall behind AWS's patch cadence.
+
+        Scope note: the existing `mondoo-aws-security-documentdb-instance-auto-minor-version-upgrade` check runs against every instance at the account level. This companion check runs per discovered DocumentDB cluster, attaching findings directly to the affected cluster so remediation owners can see which cluster is non-compliant without chasing instance IDs.
+
+        **Why this matters**
+
+        DocumentDB ships minor patches that include security fixes for the MongoDB-compatible engine surface:
+
+        - Engine patches regularly close RCE, authentication-bypass, and privilege-escalation CVEs.
+        - A cluster whose instances are on different engine versions is harder to operate and harder to reason about from a security posture standpoint.
+        - Auto-upgrade aligns with AWS's maintenance window, keeping patching predictable rather than reactive.
+        - Disabling auto-upgrade typically happens out of patch-risk aversion, but the alternative — staying on an EOL minor version — is almost always the worse risk.
+
+        **Risk mitigation**
+
+        - Enable `autoMinorVersionUpgrade` on every DocumentDB instance in the cluster.
+        - Validate that the cluster's `preferredMaintenanceWindow` falls inside your organization's change-control window.
+        - Pair with backup-retention and deletion-protection to recover from an unexpected patch regression.
+      remediation:
+        - id: console
+          desc: |
+            Enable auto minor version upgrade on each DocumentDB instance:
+
+            1. Open **DocumentDB** → **Clusters** → the flagged cluster → select the instance.
+            2. Select **Modify**.
+            3. Under **Maintenance**, enable **Auto minor version upgrade**.
+            4. Apply changes immediately or during the next maintenance window.
+        - id: cli
+          desc: |
+            Enable auto minor version upgrade on a DocumentDB instance:
+
+            ```bash
+            aws docdb modify-db-instance \
+              --db-instance-identifier <instance-id> \
+              --auto-minor-version-upgrade \
+              --apply-immediately
+            ```
+        - id: terraform
+          desc: |
+            Ensure the DocumentDB cluster instance declares auto minor version upgrade in Terraform:
+
+            ```hcl
+            resource "aws_docdb_cluster_instance" "example" {
+              cluster_identifier         = aws_docdb_cluster.example.id
+              instance_class             = "db.t3.medium"
+              auto_minor_version_upgrade = true
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/db-instance-maintain.html
+        title: AWS Documentation - Maintaining Amazon DocumentDB

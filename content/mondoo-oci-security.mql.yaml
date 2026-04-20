@@ -42,6 +42,8 @@ policies:
           - uid: mondoo-oci-security-iam-no-broad-compartment-policies
           - uid: mondoo-oci-security-iam-auth-tokens-short-lived
           - uid: mondoo-oci-security-iam-admin-group-membership-limited
+          - uid: mondoo-oci-security-iam-no-any-user-policies
+          - uid: mondoo-oci-security-iam-no-cross-tenant-policies
       - title: Object Storage
         checks:
           - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
@@ -62,6 +64,10 @@ policies:
           - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress
           - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet
           - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports
+          - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports
+          - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports
+          - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress
+          - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress
           - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
           - uid: mondoo-oci-security-public-vnic-has-nsg
       - title: Compute
@@ -3559,3 +3565,366 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
         title: OCI - Using Retention Rules
+  - uid: mondoo-oci-security-iam-no-any-user-policies
+    title: Ensure no IAM policies grant access to any-user
+    impact: 95
+    filters: asset.platform == "oci-identity-policy"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+    mql: |
+      oci.identity.policy.statements.none(_ == /\ballow\s+(dynamic-group\s+|service\s+)?any-user\b/i)
+    docs:
+      desc: |
+        This check flags OCI IAM policies whose statements grant permissions to `any-user` — OCI's wildcard principal that includes every identity in the tenancy plus unauthenticated callers when combined with certain service grants. An `Allow any-user …` statement bypasses group-based access control entirely: anyone who reaches the API endpoint (including unauthenticated instance principals that Oracle rotates through `any-user`) is covered by the grant.
+
+        **Why this matters**
+
+        `any-user` is almost never the right principal for a production grant:
+
+        - It breaks the audit story — there is no group membership to attribute actions to.
+        - It defeats the purpose of IAM groups — the policy applies regardless of who the caller is.
+        - Combined with a broad resource scope (e.g., `read all-resources in tenancy`), `any-user` turns the tenancy into an open-read target.
+        - Service-principal narrowings like `Allow service analytics to manage buckets` are legitimate uses; a bare `Allow any-user …` or `Allow any-user to read …` usually is not.
+
+        **Risk mitigation**
+
+        - Replace `any-user` grants with group- or dynamic-group-scoped statements that identify the actual consumers.
+        - Where service principals are required, use `Allow service <service-name> …` — a narrower form that restricts the grant to a specific OCI service.
+        - Audit any statement that combines `any-user` with `manage`, `use`, or `read all-resources` as an immediate high-severity finding.
+      remediation:
+        - id: console
+          desc: |
+            Remove or scope-down `any-user` grants:
+
+            1. Open **Identity & Security** → **Policies** → select the flagged policy.
+            2. Identify every statement beginning with `Allow any-user …`.
+            3. Replace with a group-scoped statement (`Allow group <group-name> …`) or a service-principal statement (`Allow service <service-name> …`) matching the legitimate consumer.
+            4. Remove the `any-user` statement entirely if no legitimate consumer can be identified.
+        - id: cli
+          desc: |
+            List every policy in the tenancy and inspect statements:
+
+            ```bash
+            oci iam policy list --compartment-id <tenancy-ocid> --all --query "data[].{Name:name, Statements:statements}" --output json
+            ```
+
+            Replace the statements on each offending policy:
+
+            ```bash
+            oci iam policy update --policy-id <policy-ocid> \
+              --statements '["Allow group <group-name> to read buckets in compartment <compartment-name>"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policysyntax.htm
+        title: OCI - Policy Syntax
+  - uid: mondoo-oci-security-iam-no-cross-tenant-policies
+    title: Ensure no IAM policies grant cross-tenancy access via Endorse or Admit
+    impact: 90
+    filters: asset.platform == "oci-identity-policy"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-19
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-id-sc-4
+      compliance/nist-csf-2: nist-csf-2-gv-sc-07
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/soc2-2017: soc2-control-cc9-2-1
+    mql: |
+      oci.identity.policy.statements.none(_ == /^\s*(endorse|admit)\s+/i)
+    docs:
+      desc: |
+        This check flags OCI IAM policies that use `Endorse` or `Admit` statements, which establish cross-tenancy trust relationships. `Endorse` statements grant a group in this tenancy permissions to act on resources in a *remote* tenancy; `Admit` statements accept a remote tenancy's groups into this tenancy. Both are legitimate but high-risk constructs — they extend the tenancy's trust boundary to an external party and are a common source of silent data-sharing with vendor or partner tenancies.
+
+        **Why this matters**
+
+        Cross-tenancy grants are outside the normal IAM audit path:
+
+        - An `Admit group <external-tenancy>::<group> …` statement lets principals from another tenancy operate inside yours, sometimes with broad rights like `manage buckets`.
+        - `Endorse` statements export permissions from your tenancy to a partner; a compromise of the partner is equivalent to a compromise of every resource listed in the endorsement.
+        - Cross-tenancy policy changes often land through vendor onboarding runbooks without security-team review.
+        - Attackers who take over a partner tenancy can immediately exercise every `Admit` grant pointing at it.
+
+        **Risk mitigation**
+
+        - Inventory every cross-tenancy grant and confirm the remote tenancy is still an active, vetted partner.
+        - Scope cross-tenancy grants to the narrowest possible resource and action set — prefer `read objects in bucket <name>` over `manage buckets`.
+        - Require security-team approval before adding `Endorse` or `Admit` statements.
+        - Periodically review cross-tenancy grants and remove any whose business justification has lapsed.
+      remediation:
+        - id: console
+          desc: |
+            Review and tighten cross-tenancy policy statements:
+
+            1. Open **Identity & Security** → **Policies** → select the flagged policy.
+            2. For each `Endorse` or `Admit` statement, confirm the remote tenancy OCID is still an active partner and the grant matches the current business need.
+            3. Narrow the resource scope (prefer specific resource types over `all-resources`) and action set (prefer `read` or `inspect` over `manage`).
+            4. Remove any statement whose business justification can no longer be demonstrated.
+        - id: cli
+          desc: |
+            List policies and find cross-tenancy statements:
+
+            ```bash
+            oci iam policy list --compartment-id <tenancy-ocid> --all \
+              --query "data[?contains(join(' ', statements), 'Endorse') || contains(join(' ', statements), 'Admit')].{Name:name, Statements:statements}" \
+              --output json
+            ```
+
+            Replace with narrower statements as needed:
+
+            ```bash
+            oci iam policy update --policy-id <policy-ocid> \
+              --statements '["Admit group PartnerReaders of tenancy <partner-tenancy-ocid> to read objects in compartment SharedData where target.bucket.name = '"'"'shared'"'"'"]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policiesaccessingtenancies.htm
+        title: OCI - Accessing Resources Across Tenancies
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports
+    title: Ensure VCN security lists block database port ingress from 0.0.0.0/0
+    impact: 90
+    filters: asset.platform == "oci-network-securitylist"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(
+        _['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty
+      ).none(
+        _['tcpOptions']['destinationPortRange']['min'] <= 1521 && _['tcpOptions']['destinationPortRange']['max'] >= 1521 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 1522 && _['tcpOptions']['destinationPortRange']['max'] >= 1522 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 1433 && _['tcpOptions']['destinationPortRange']['max'] >= 1433 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 3306 && _['tcpOptions']['destinationPortRange']['max'] >= 3306 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 5432 && _['tcpOptions']['destinationPortRange']['max'] >= 5432 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 6379 && _['tcpOptions']['destinationPortRange']['max'] >= 6379 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 9200 && _['tcpOptions']['destinationPortRange']['max'] >= 9200 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 27017 && _['tcpOptions']['destinationPortRange']['max'] >= 27017
+      )
+    docs:
+      desc: |
+        This check flags VCN security-list ingress rules that permit TCP traffic from the public internet (`0.0.0.0/0`) to common database listener ports: Oracle (1521, 1522), SQL Server (1433), MySQL (3306), PostgreSQL (5432), Redis (6379), Elasticsearch (9200), or MongoDB (27017). Databases exposed to the internet are routinely scanned, brute-forced, and in many cases ransom-encrypted within hours of exposure.
+
+        **Why this matters**
+
+        Internet-exposed database ports are one of the highest-signal indicators of compromise-in-progress:
+
+        - Public MongoDB, Elasticsearch, and Redis instances have been the target of repeated mass-ransom campaigns (2017-present).
+        - Open MySQL, PostgreSQL, MSSQL, and Oracle listeners allow credential brute-force against whichever accounts the DB happens to have.
+        - Most database engines log failed auth poorly or not at all, so attacks leave minimal forensic trail.
+        - Even read-only exposure leaks schema, column names, and data samples that drive follow-up social engineering.
+
+        **Risk mitigation**
+
+        - Route database traffic through a VPN, bastion, or private subnet — never expose a DB listener directly to the internet.
+        - For legitimate cross-VPC access, use VCN peering or OCI's Service Gateway rather than a public ingress rule.
+        - Alert immediately on any new security-list rule matching this pattern — treat it as an incident signal, not a policy violation.
+      remediation:
+        - id: console
+          desc: |
+            Remove public DB-port ingress rules from the security list:
+
+            1. Open **Networking** → **Virtual Cloud Networks** → the parent VCN → **Security Lists** → select the flagged list.
+            2. Under **Ingress Rules**, identify any rule whose source is `0.0.0.0/0`, protocol is TCP, and destination port covers one of the database ports above.
+            3. Delete the rule, or restrict the source CIDR to the bastion / VPN network that legitimately needs DB access.
+            4. If an application outside OCI needs DB access, provision an OCI Service Gateway, VPN, or FastConnect path rather than opening the port.
+        - id: cli
+          desc: |
+            Replace the ingress rules on the security list with a scoped set:
+
+            ```bash
+            oci network security-list update --security-list-id <security-list-ocid> \
+              --ingress-security-rules '[{"source":"10.10.0.0/16","protocol":"6","tcpOptions":{"destinationPortRange":{"min":5432,"max":5432}},"isStateless":false}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: OCI - Security Lists
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports
+    title: Ensure VCN security lists block legacy admin port ingress from 0.0.0.0/0
+    impact: 85
+    filters: asset.platform == "oci-network-securitylist"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(
+        _['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty
+      ).none(
+        _['tcpOptions']['destinationPortRange']['min'] <= 21 && _['tcpOptions']['destinationPortRange']['max'] >= 21 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 23 && _['tcpOptions']['destinationPortRange']['max'] >= 23 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 135 && _['tcpOptions']['destinationPortRange']['max'] >= 135 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 137 && _['tcpOptions']['destinationPortRange']['max'] >= 137 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 138 && _['tcpOptions']['destinationPortRange']['max'] >= 138 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 139 && _['tcpOptions']['destinationPortRange']['max'] >= 139 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 445 && _['tcpOptions']['destinationPortRange']['max'] >= 445
+      )
+    docs:
+      desc: |
+        This check flags VCN security-list ingress rules that permit TCP traffic from the public internet (`0.0.0.0/0`) to legacy admin / file-sharing ports: FTP (21), Telnet (23), NetBIOS (135, 137-139), and SMB (445). These protocols predate modern authentication and encryption expectations and are not safe to expose to untrusted networks under any circumstance.
+
+        **Why this matters**
+
+        Exposing these ports to the internet is a longstanding, well-documented breach primitive:
+
+        - SMB (445) exposure enabled WannaCry, NotPetya, and continues to be actively exploited today (EternalBlue family, SMB ghost, MS17-010).
+        - Telnet and FTP transmit credentials in plaintext and are trivially sniffed.
+        - NetBIOS exposure leaks Windows hostnames, SIDs, and share enumeration data that fuels follow-up attacks.
+        - Legitimate internet-facing use cases for any of these protocols are effectively zero in 2026.
+
+        **Risk mitigation**
+
+        - Close all public exposure of FTP, Telnet, NetBIOS, and SMB immediately.
+        - Replace FTP with SFTP (port 22) or HTTPS file-transfer endpoints.
+        - Replace Telnet with SSH.
+        - For SMB access across sites, use a VPN or zero-trust network access (ZTNA) solution — never direct internet exposure.
+      remediation:
+        - id: console
+          desc: |
+            Remove legacy-port ingress rules from the security list:
+
+            1. Open **Networking** → **Virtual Cloud Networks** → the parent VCN → **Security Lists** → select the flagged list.
+            2. Identify and delete any ingress rule whose source is `0.0.0.0/0` and destination port covers 21, 23, 135, 137-139, or 445.
+            3. If file-sharing is actually required, provision a VPN or FastConnect path and scope the security-list rule to the resulting private CIDR block.
+        - id: cli
+          desc: |
+            Replace the security list's ingress rules with a set that omits these ports:
+
+            ```bash
+            oci network security-list update --security-list-id <security-list-ocid> \
+              --ingress-security-rules '[{"source":"10.0.0.0/8","protocol":"6","tcpOptions":{"destinationPortRange":{"min":445,"max":445}},"isStateless":false}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: OCI - Security Lists
+      - url: https://msrc.microsoft.com/update-guide/vulnerability/CVE-2017-0144
+        title: Microsoft - MS17-010 (EternalBlue / WannaCry)
+  - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress
+    title: Ensure VCN security lists block unrestricted ICMP ingress from 0.0.0.0/0
+    impact: 60
+    filters: asset.platform == "oci-network-securitylist"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(
+        _['source'] == "0.0.0.0/0" && _['icmpOptions'] == empty
+      ).none(
+        _['protocol'] == "1" || _['protocol'] == "58" || _['protocol'] == "all"
+      )
+    docs:
+      desc: |
+        This check flags VCN security-list ingress rules that permit unrestricted ICMP (IPv4 protocol 1 or IPv6 protocol 58) from the public internet without an `icmpOptions` type/code filter. Permitting all ICMP types from anywhere enables host discovery and OS fingerprinting, which accelerates attacker reconnaissance even when no services are yet exposed.
+
+        **Why this matters**
+
+        Open ICMP is a reconnaissance multiplier, not a breach primitive by itself — but it reliably shortens the time between network exposure and attempted exploitation:
+
+        - ICMP echo-reply / timestamp / netmask probes reveal which IPs are live and what OS family runs on them.
+        - Fingerprinting data feeds automated tooling that moves from enumeration to exploit in minutes.
+        - Large-scale mappers (Shodan, Censys, Zmap) rely on ICMP to build their cloud-asset inventories.
+        - Allowing specific ICMP types (`Destination Unreachable: Fragmentation Needed`, type 3 code 4) is sometimes required for Path MTU discovery — that's why this check flags only rules with no `icmpOptions` filter.
+
+        **Risk mitigation**
+
+        - Restrict ICMP ingress to the types your workloads actually need (often only type 3 code 4 for PMTU discovery).
+        - Scope ICMP source CIDR blocks to trusted networks for troubleshooting tools.
+        - Combine with a security-monitoring tool that alerts on unusual ICMP volumes from new source IPs.
+      remediation:
+        - id: console
+          desc: |
+            Scope or remove unrestricted ICMP ingress:
+
+            1. Open **Networking** → **Virtual Cloud Networks** → the parent VCN → **Security Lists** → select the flagged list.
+            2. Edit the flagged ICMP rule: either delete it, or set an `icmpOptions` type/code filter (commonly type 3 for Destination Unreachable) and tighten the source CIDR.
+            3. For monitoring use cases, limit the source to your NOC / monitoring subnet rather than `0.0.0.0/0`.
+        - id: cli
+          desc: |
+            Update the security list with a scoped ICMP rule:
+
+            ```bash
+            oci network security-list update --security-list-id <security-list-ocid> \
+              --ingress-security-rules '[{"source":"10.0.0.0/8","protocol":"1","icmpOptions":{"type":3,"code":4},"isStateless":false}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: OCI - Security Lists
+      - url: https://datatracker.ietf.org/doc/html/rfc792
+        title: RFC 792 - Internet Control Message Protocol
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress
+    title: Ensure VCN security lists block unrestricted IPv6 ingress from ::/0
+    impact: 90
+    filters: asset.platform == "oci-network-securitylist"
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(_['source'] == "::/0").none(
+        _['protocol'] == "all" ||
+        _['protocol'] == "6" && _['tcpOptions'] == empty ||
+        _['protocol'] == "6" && _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22 ||
+        _['protocol'] == "6" && _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389 ||
+        _['protocol'] == "17" && _['udpOptions'] == empty
+      )
+    docs:
+      desc: |
+        This check mirrors the existing IPv4 `0.0.0.0/0` ingress checks for the IPv6 default route `::/0`. It flags unrestricted all-protocol ingress, unrestricted TCP ingress (including SSH port 22 and RDP port 3389), and unrestricted UDP ingress from IPv6 anywhere. Cloud workloads are frequently configured with IPv4 hardening but forget IPv6, leaving a parallel attack surface that bypasses the IPv4 controls entirely.
+
+        **Why this matters**
+
+        IPv6 exposure is a common blind spot that operates independently of IPv4 hardening:
+
+        - Many org network defenses, log pipelines, and IDS signatures are IPv4-first; IPv6 traffic can evade controls that look fine on paper.
+        - Attackers specifically probe IPv6 default routes (`::/0`) as a bypass around IPv4 ACLs that security teams monitor heavily.
+        - OCI VCNs that enable IPv6 inherit the same exposure patterns as IPv4 unless security lists are explicitly updated — a common oversight when retrofitting IPv6 onto an existing VCN.
+        - Cloud scanners (Shodan v6, Censys v6) now routinely enumerate the IPv6 space and find fewer controls than on IPv4.
+
+        **Risk mitigation**
+
+        - Every time an ingress rule permits `0.0.0.0/0`, audit whether an equivalent `::/0` rule exists — and if so, whether it's still appropriate.
+        - Consider disabling IPv6 on a VCN entirely if no workload requires it; this eliminates the parallel exposure surface.
+        - Apply the same port/protocol restrictions to `::/0` rules as to `0.0.0.0/0` rules.
+      remediation:
+        - id: console
+          desc: |
+            Remove or scope IPv6 ingress rules:
+
+            1. Open **Networking** → **Virtual Cloud Networks** → the parent VCN → **Security Lists** → select the flagged list.
+            2. Identify each ingress rule whose source is `::/0` and that allows SSH/RDP, all TCP ports, all UDP ports, or all protocols.
+            3. Delete the rule, or restrict the source to a specific IPv6 CIDR (e.g., your corporate IPv6 transit prefix) and/or tighten the port range.
+            4. Consider disabling IPv6 entirely on the VCN if no workload on it uses IPv6.
+        - id: cli
+          desc: |
+            Replace the ingress rules with a scoped IPv6 set:
+
+            ```bash
+            oci network security-list update --security-list-id <security-list-ocid> \
+              --ingress-security-rules '[{"source":"2001:db8:abcd::/48","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
+        title: OCI - Security Lists
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/ipv6.htm
+        title: OCI - IPv6 Addressing
