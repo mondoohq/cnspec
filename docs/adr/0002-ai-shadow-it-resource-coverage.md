@@ -206,7 +206,7 @@ On Windows, `packages` includes entries from the Uninstall registry
 - **Multi-editor IDE scanning:** A single `vscode` resource covers eight
   editor variants, including AI-native editors that would otherwise require
   individual detection logic.
-- **Browser extensions:** Pre-existing `chrome`, `firefox`, and `safari`
+- **Browser extensions:** preexisting `chrome`, `firefox`, and `safari`
   resources can be applied to AI shadow IT detection without new resource
   development.
 - **Process detection:** `processes` catches running AI tools even without
