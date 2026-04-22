@@ -2821,6 +2821,7 @@ func (m *PurgeAssetsRequest) CloneVT() *PurgeAssetsRequest {
 	r.DateFilter = m.DateFilter.CloneVT()
 	r.ManagedBy = m.ManagedBy
 	r.PlatformRuntime = m.PlatformRuntime
+	r.ScopeMrn = m.ScopeMrn
 	if rhs := m.AssetMrns; rhs != nil {
 		tmpContainer := make([]string, len(rhs))
 		copy(tmpContainer, rhs)
@@ -10811,6 +10812,13 @@ func (m *PurgeAssetsRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.ScopeMrn) > 0 {
+		i -= len(m.ScopeMrn)
+		copy(dAtA[i:], m.ScopeMrn)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.ScopeMrn)))
+		i--
+		dAtA[i] = 0x42
+	}
 	if len(m.Labels) > 0 {
 		for k := range m.Labels {
 			v := m.Labels[k]
@@ -14415,6 +14423,10 @@ func (m *PurgeAssetsRequest) SizeVT() (n int) {
 			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + 1 + len(v) + protohelpers.SizeOfVarint(uint64(len(v)))
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
+	}
+	l = len(m.ScopeMrn)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -37558,6 +37570,38 @@ func (m *PurgeAssetsRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.Labels[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ScopeMrn", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ScopeMrn = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

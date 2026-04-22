@@ -833,7 +833,8 @@ func (s *LocalScanner) GarbageCollectAssets(ctx context.Context, garbageCollectO
 	}
 
 	dar := &policy.PurgeAssetsRequest{
-		SpaceMrn:        s.upstream.SpaceMrn,
+		SpaceMrn:        s.upstream.SpaceMrn, //nolint:staticcheck // SA1019: SpaceMrn is deprecated but still used for backward compatibility
+		ScopeMrn:        s.upstream.SpaceMrn,
 		ManagedBy:       garbageCollectOpts.ManagedBy,
 		PlatformRuntime: garbageCollectOpts.PlatformRuntime,
 		Labels:          garbageCollectOpts.Labels,

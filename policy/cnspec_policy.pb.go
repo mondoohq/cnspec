@@ -8538,15 +8538,19 @@ func (x *ScanParameters) GetEnabledFeatures() []string {
 }
 
 type PurgeAssetsRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	SpaceMrn        string                 `protobuf:"bytes,1,opt,name=spaceMrn,proto3" json:"spaceMrn,omitempty"`
-	AssetMrns       []string               `protobuf:"bytes,2,rep,name=asset_mrns,json=assetMrns,proto3" json:"asset_mrns,omitempty"`
-	PurgeAll        bool                   `protobuf:"varint,3,opt,name=purge_all,json=purgeAll,proto3" json:"purge_all,omitempty"` // if you want to purge all assets in the space
-	DateFilter      *DateFilter            `protobuf:"bytes,4,opt,name=date_filter,json=dateFilter,proto3" json:"date_filter,omitempty"`
-	ManagedBy       string                 `protobuf:"bytes,5,opt,name=managed_by,json=managedBy,proto3" json:"managed_by,omitempty"`
-	PlatformRuntime string                 `protobuf:"bytes,6,opt,name=platform_runtime,json=platformRuntime,proto3" json:"platform_runtime,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Deprecated: use scope_mrn instead
+	SpaceMrn        string      `protobuf:"bytes,1,opt,name=spaceMrn,proto3" json:"spaceMrn,omitempty"`
+	AssetMrns       []string    `protobuf:"bytes,2,rep,name=asset_mrns,json=assetMrns,proto3" json:"asset_mrns,omitempty"`
+	PurgeAll        bool        `protobuf:"varint,3,opt,name=purge_all,json=purgeAll,proto3" json:"purge_all,omitempty"` // if you want to purge all assets in the scope
+	DateFilter      *DateFilter `protobuf:"bytes,4,opt,name=date_filter,json=dateFilter,proto3" json:"date_filter,omitempty"`
+	ManagedBy       string      `protobuf:"bytes,5,opt,name=managed_by,json=managedBy,proto3" json:"managed_by,omitempty"`
+	PlatformRuntime string      `protobuf:"bytes,6,opt,name=platform_runtime,json=platformRuntime,proto3" json:"platform_runtime,omitempty"`
 	// Labels to filter on. Only assets with all of these labels will be purged.
-	Labels        map[string]string `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Labels map[string]string `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// scope_mrn can be a space MRN or organization MRN. When an organization MRN
+	// is provided, assets are purged across all spaces in the organization.
+	ScopeMrn      string `protobuf:"bytes,8,opt,name=scope_mrn,json=scopeMrn,proto3" json:"scope_mrn,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8628,6 +8632,13 @@ func (x *PurgeAssetsRequest) GetLabels() map[string]string {
 		return x.Labels
 	}
 	return nil
+}
+
+func (x *PurgeAssetsRequest) GetScopeMrn() string {
+	if x != nil {
+		return x.ScopeMrn
+	}
+	return ""
 }
 
 type DateFilter struct {
@@ -9677,7 +9688,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x14GetScanParametersReq\x12\x1b\n" +
 	"\tscope_mrn\x18\x01 \x01(\tR\bscopeMrn\";\n" +
 	"\x0eScanParameters\x12)\n" +
-	"\x10enabled_features\x18\x01 \x03(\tR\x0fenabledFeatures\"\xfa\x02\n" +
+	"\x10enabled_features\x18\x01 \x03(\tR\x0fenabledFeatures\"\x97\x03\n" +
 	"\x12PurgeAssetsRequest\x12\x1a\n" +
 	"\bspaceMrn\x18\x01 \x01(\tR\bspaceMrn\x12\x1d\n" +
 	"\n" +
@@ -9688,7 +9699,8 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\n" +
 	"managed_by\x18\x05 \x01(\tR\tmanagedBy\x12)\n" +
 	"\x10platform_runtime\x18\x06 \x01(\tR\x0fplatformRuntime\x12H\n" +
-	"\x06labels\x18\a \x03(\v20.cnspec.policy.v1.PurgeAssetsRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\x06labels\x18\a \x03(\v20.cnspec.policy.v1.PurgeAssetsRequest.LabelsEntryR\x06labels\x12\x1b\n" +
+	"\tscope_mrn\x18\b \x01(\tR\bscopeMrn\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa1\x01\n" +
