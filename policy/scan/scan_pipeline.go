@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	maxConnections = 50 // max assets connected (with runtimes open) at a time
+	maxConnections = 40 // max assets connected (with runtimes open) at a time
 	syncBatchSize  = 5  // how many assets to batch for upstream sync calls
 )
 
