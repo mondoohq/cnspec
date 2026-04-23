@@ -23,6 +23,9 @@ type GraphExecutor interface {
 // ExecutionManager controls how queries are executed during policy evaluation.
 type ExecutionManager = internal.ExecutionManager
 
+// ScoreCollector receives scores produced by the graph executor.
+type ScoreCollector = internal.ScoreCollector
+
 // DefaultExecutionManager creates an ExecutionManager that runs queries
 // via the provided runtime.
 func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) ExecutionManager {
@@ -34,9 +37,6 @@ func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.D
 func NewNoopExecutionManager() ExecutionManager {
 	return internal.NewNoopExecutionManager()
 }
-
-// ScoreCollector receives scores produced by the graph executor.
-type ScoreCollector = internal.ScoreCollector
 
 // ExecuteResolvedPolicy builds a graph from the resolved policy, executes
 // queries via the provided ExecutionManager, and sends results to the
