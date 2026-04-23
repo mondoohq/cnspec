@@ -33,15 +33,19 @@ type addressedEnvelope struct {
 	env  envelope
 }
 
-// Producer asynchronously emits envelopes addressed at graph nodes.
-// The graph executor reads from Output(), calls consume() on the
-// addressed node, and pushes it onto the priority queue. A closed
-// Output() signals the producer is exhausted.
+// Producer asynchronously emits batches of envelopes addressed at graph
+// nodes. The graph executor consumes the entire batch (calling consume()
+// on each addressed node) before processing the priority queue, so a
+// batch is recalculated in a single round. A closed Output() signals
+// the producer is exhausted.
 type Producer interface {
 	Start()
 	Stop()
-	// Output emits envelopes destined for graph nodes.
-	Output() <-chan addressedEnvelope
+	// Output emits batches of envelopes destined for graph nodes. The
+	// executor processes a whole batch atomically with respect to
+	// recalculation -- every consume() in the batch runs before any
+	// recalculate.
+	Output() <-chan []addressedEnvelope
 	// Err returns unrecoverable production errors. Buffered size 1.
 	Err() <-chan error
 }
@@ -53,11 +57,12 @@ type runQueueItem struct {
 
 // DefaultProducer runs queries via the provided runtime and emits raw
 // datapoint results addressed at DatapointNodes (one envelope per
-// datapoint, keyed by codeID).
+// datapoint, keyed by codeID; each result becomes a single-element
+// batch).
 type DefaultProducer struct {
 	runtime  llx.Runtime
 	runQueue chan runQueueItem
-	output   chan addressedEnvelope
+	output   chan []addressedEnvelope
 	errChan  chan error
 	timeout  time.Duration
 	stopOnce sync.Once
@@ -73,7 +78,7 @@ func NewDefaultProducer(runtime llx.Runtime, numQueries int, timeout time.Durati
 	return &DefaultProducer{
 		runQueue:       make(chan runQueueItem, numQueries),
 		runtime:        runtime,
-		output:         make(chan addressedEnvelope, 128),
+		output:         make(chan []addressedEnvelope, 128),
 		errChan:        make(chan error, 1),
 		stopChan:       make(chan struct{}),
 		timeout:        timeout,
@@ -84,8 +89,8 @@ func NewDefaultProducer(runtime llx.Runtime, numQueries int, timeout time.Durati
 // RunQueue returns the channel ExecutionQueryNodes write work to.
 func (p *DefaultProducer) RunQueue() chan<- runQueueItem { return p.runQueue }
 
-func (p *DefaultProducer) Output() <-chan addressedEnvelope { return p.output }
-func (p *DefaultProducer) Err() <-chan error                { return p.errChan }
+func (p *DefaultProducer) Output() <-chan []addressedEnvelope { return p.output }
+func (p *DefaultProducer) Err() <-chan error                  { return p.errChan }
 
 func (p *DefaultProducer) Start() {
 	p.wg.Add(1)
@@ -160,7 +165,7 @@ func (p *DefaultProducer) executeCodeBundle(codeBundle *llx.CodeBundle, props ma
 		tr.Msg("received result from executor")
 		wg.Done(rr.CodeID)
 		select {
-		case p.output <- addressedEnvelope{to: rr.CodeID, env: envelope{res: rr}}:
+		case p.output <- []addressedEnvelope{{to: rr.CodeID, env: envelope{res: rr}}}:
 		case <-p.stopChan:
 		}
 	}

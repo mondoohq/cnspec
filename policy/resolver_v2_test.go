@@ -1872,8 +1872,7 @@ policies:
 
 	// Execute: MQL runs against the mock runtime, BufferedCollector stores
 	// data and risks via StoreResults automatically
-	producer := executor.DefaultProducer(runtime, len(rp.GetExecutionJob().GetQueries()), 5*time.Minute, false)
-	err = executor.ExecuteResolvedPolicy(ctx, producer, srv, "asset1", rp, mql.DefaultFeatures, nil)
+	err = executor.ExecuteResolvedPolicy(ctx, runtime, srv, "asset1", rp, mql.DefaultFeatures, nil)
 	require.NoError(t, err)
 
 	// Wait for all scores to be computed

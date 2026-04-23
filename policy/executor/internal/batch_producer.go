@@ -16,7 +16,7 @@ import (
 // rj.ChildJobs) and to the score collector — no node state mutation, no
 // slot reservation.
 type BatchScoreProducer struct {
-	output   chan addressedEnvelope
+	output   chan []addressedEnvelope
 	errChan  chan error
 	batch    []addressedEnvelope
 	stopOnce sync.Once
@@ -62,23 +62,25 @@ func NewBatchScoreProducer(scores map[string]*policy.Score, rjs map[string]*poli
 	}
 
 	return &BatchScoreProducer{
-		output:   make(chan addressedEnvelope, len(batch)),
+		// One slot is enough: we send the batch in a single send and
+		// then close.
+		output:   make(chan []addressedEnvelope, 1),
 		errChan:  make(chan error, 1),
 		batch:    batch,
 		stopChan: make(chan struct{}),
 	}
 }
 
-func (p *BatchScoreProducer) Output() <-chan addressedEnvelope { return p.output }
-func (p *BatchScoreProducer) Err() <-chan error                { return p.errChan }
+func (p *BatchScoreProducer) Output() <-chan []addressedEnvelope { return p.output }
+func (p *BatchScoreProducer) Err() <-chan error                  { return p.errChan }
 
 func (p *BatchScoreProducer) Start() {
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
-		for _, e := range p.batch {
+		if len(p.batch) > 0 {
 			select {
-			case p.output <- e:
+			case p.output <- p.batch:
 			case <-p.stopChan:
 				return
 			}

@@ -117,17 +117,20 @@ func (ge *GraphExecutor) Execute() error {
 	output := ge.producer.Output()
 	errCh := ge.producer.Err()
 
-	consumeEnv := func(e addressedEnvelope) {
-		n, ok := ge.nodes[e.to]
-		if !ok {
-			return
+	consumeBatch := func(batch []addressedEnvelope) {
+		for i := range batch {
+			e := &batch[i]
+			n, ok := ge.nodes[e.to]
+			if !ok {
+				continue
+			}
+			n.data.consume(e.from, &e.env)
+			heap.Push(&q, &Item{
+				priority: maxPriority,
+				receiver: e.to,
+				sender:   e.from,
+			})
 		}
-		n.data.consume(e.from, &e.env)
-		heap.Push(&q, &Item{
-			priority: maxPriority,
-			receiver: e.to,
-			sender:   e.from,
-		})
 	}
 
 	var err error
@@ -175,27 +178,29 @@ OUTER:
 		//   - output closed: producer is exhausted (batch rescore).
 		//     Process remaining queue work, then exit.
 		select {
-		case e, ok := <-output:
+		case batch, ok := <-output:
 			if !ok {
 				output = nil
 				continue
 			}
-			consumeEnv(e)
+			consumeBatch(batch)
 		case <-ge.doneChan:
 			break OUTER
 		case err = <-errCh:
 			break OUTER
 		}
-		// drain all available messages
+		// drain all immediately available batches before kicking off
+		// recalculation; preserves "consume everything, then
+		// recalculate" round semantics across multiple producer sends.
 	DRAIN:
 		for output != nil {
 			select {
-			case e, ok := <-output:
+			case batch, ok := <-output:
 				if !ok {
 					output = nil
 					break DRAIN
 				}
-				consumeEnv(e)
+				consumeBatch(batch)
 			default:
 				break DRAIN
 			}

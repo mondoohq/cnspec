@@ -1171,8 +1171,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := mql.GetFeatures(s.job.Ctx)
-	producer := executor.DefaultProducer(s.Runtime, len(resolvedPolicy.GetExecutionJob().GetQueries()), 5*time.Minute, false)
-	err = executor.ExecuteResolvedPolicy(s.job.Ctx, producer, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
+	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
 	if err != nil {
 		return nil, err
 	}

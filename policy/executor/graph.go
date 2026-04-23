@@ -20,26 +20,19 @@ type GraphExecutor interface {
 	Execute()
 }
 
-// Producer drives envelopes into the graph executor (raw query results
-// for normal scanning, pre-computed scores for rescoring).
-type Producer = internal.Producer
-
-// DefaultProducer constructs a Producer that runs queries via the
-// provided runtime. The caller wires its RunQueue() into the executor
-// builder via WithRunQueue.
-func DefaultProducer(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) *internal.DefaultProducer {
-	return internal.NewDefaultProducer(runtime, numQueries, timeout, dumpDatapoints)
-}
-
 // ScoreCollector receives scores produced by the graph executor.
 type ScoreCollector = internal.ScoreCollector
 
-// ExecuteResolvedPolicy builds a graph from the resolved policy, executes
-// queries via the provided Producer, and sends results to the
-// PolicyResolver via a BufferedCollector.
+// defaultQueryTimeout is the per-query execution timeout used by
+// ExecuteResolvedPolicy. Matches the previous local_scanner default.
+const defaultQueryTimeout = 5 * time.Minute
+
+// ExecuteResolvedPolicy builds a graph from the resolved policy,
+// executes queries against the provided runtime, and sends results to
+// the PolicyResolver via a BufferedCollector.
 func ExecuteResolvedPolicy(
 	ctx context.Context,
-	producer *internal.DefaultProducer,
+	runtime llx.Runtime,
 	collectorSvc policy.PolicyResolver,
 	assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy,
@@ -61,6 +54,9 @@ func ExecuteResolvedPolicy(
 		opts...,
 	)
 	defer collector.FlushAndStop()
+
+	numQueries := len(resolvedPolicy.GetExecutionJob().GetQueries())
+	producer := internal.NewDefaultProducer(runtime, numQueries, defaultQueryTimeout, false)
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
@@ -85,9 +81,9 @@ func ExecuteResolvedPolicy(
 }
 
 // RescoreResolvedPolicy builds a graph from the resolved policy, feeds
-// the provided pre-computed scores in via a BatchScoreProducer, and
-// sends the rolled-up results to the given ScoreCollector. No query
-// execution occurs.
+// the provided pre-computed scores in as a single batch via an internal
+// BatchScoreProducer, and sends the rolled-up results to the given
+// ScoreCollector. No runtime is needed -- no queries are executed.
 func RescoreResolvedPolicy(
 	assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy,
