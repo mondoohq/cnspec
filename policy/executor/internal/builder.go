@@ -56,8 +56,14 @@ type GraphBuilder struct {
 	// runtime to send all the expected datapoints.
 	queryTimeout time.Duration
 
-	// executionManager controls query execution. If nil, a noop is used.
-	executionManager ExecutionManager
+	// producer drives envelopes into the graph (query results for normal
+	// scanning, pre-computed scores for rescoring).
+	producer Producer
+
+	// runQueue is the channel ExecutionQueryNodes write work to. Set via
+	// WithRunQueue when the producer needs to execute queries; nil for
+	// rescoring (no ExecutionQueryNodes are constructed in that case).
+	runQueue chan<- runQueueItem
 
 	// featureFlagFailErrors is a feature flag to count errors as failures
 	// See https://www.notion.so/mondoo/Errors-and-Scoring-5dc554348aad4118a1dbf35123368329
@@ -66,10 +72,6 @@ type GraphBuilder struct {
 	// scoreRisk enables rolling up RiskScore alongside Value through
 	// the reporting job hierarchy.
 	scoreRisk bool
-
-	// scores holds pre-computed scores to inject into the graph for
-	// rescoring. Keyed by QrId.
-	initialData map[string]*envelope
 
 	dumpDatapoints bool
 }
@@ -158,19 +160,18 @@ func (b *GraphBuilder) WithQueryTimeout(timeout time.Duration) {
 	b.queryTimeout = timeout
 }
 
-// WithExecutionManager sets the execution manager for query execution.
-// If not set, a noop execution manager is used (for rescoring).
-func (b *GraphBuilder) WithExecutionManager(em ExecutionManager) {
-	b.executionManager = em
+// WithProducer sets the producer that drives envelopes into the graph.
+// Required.
+func (b *GraphBuilder) WithProducer(p Producer) {
+	b.producer = p
 }
 
-// WithScores sets pre-computed scores to inject into the graph for
-// rescoring. Keyed by QrId.
-func (b *GraphBuilder) WithScores(scores map[string]*policy.Score) {
-	b.initialData = make(map[string]*envelope, len(scores))
-	for qrId, score := range scores {
-		b.initialData[qrId] = &envelope{score: score}
-	}
+// WithRunQueue sets the channel ExecutionQueryNodes write work to.
+// Required when ExecutionQueryNodes will be constructed (i.e., the
+// resolved policy has queries to execute and the producer can run them).
+// Leave unset for rescoring (BatchScoreProducer).
+func (b *GraphBuilder) WithRunQueue(q chan<- runQueueItem) {
+	b.runQueue = q
 }
 
 // EnableScoreRisk enables rolling up RiskScore alongside Value through
@@ -190,9 +191,8 @@ func (b *GraphBuilder) Build(assetMrn string) (*GraphExecutor, error) {
 		queries[q.codeBundle.GetCodeV2().GetId()] = q
 	}
 
-	em := b.executionManager
-	if em == nil {
-		return nil, errors.New("execution manager is required, use WithExecutionManager to set one")
+	if b.producer == nil {
+		return nil, errors.New("producer is required, use WithProducer to set one")
 	}
 
 	ge := &GraphExecutor{
@@ -200,7 +200,7 @@ func (b *GraphBuilder) Build(assetMrn string) (*GraphExecutor, error) {
 		edges:                 map[NodeID][]NodeID{},
 		priorityMap:           map[NodeID]int{},
 		queryTimeout:          b.queryTimeout,
-		executionManager:      em,
+		producer:              b.producer,
 		doneChan:              make(chan struct{}),
 		featureFlagFailErrors: b.featureFlagFailErrors,
 		scoreRisk:             b.scoreRisk,
@@ -236,7 +236,7 @@ func (b *GraphBuilder) Build(assetMrn string) (*GraphExecutor, error) {
 		}
 	}
 
-	runQueue := em.RunQueueChan()
+	runQueue := b.runQueue
 	reportingQueryForReportingJob := map[string]string{}
 	reportingQueryNodeByCodeId := map[string]string{}
 	for queryID, q := range queries {
@@ -244,7 +244,7 @@ func (b *GraphBuilder) Build(assetMrn string) (*GraphExecutor, error) {
 		if canRun && runQueue != nil {
 			ge.addExecutionQueryNode(queryID, q, q.resolvedProperties, b.datapointType, runQueue)
 		} else if canRun {
-			// No execution manager with a runtime, skip execution query nodes
+			// No run queue available (e.g. rescoring), skip execution query nodes
 		} else {
 			unrunnableQueries = append(unrunnableQueries, q)
 		}
@@ -288,15 +288,10 @@ func (b *GraphBuilder) Build(assetMrn string) (*GraphExecutor, error) {
 	if runQueue != nil {
 		ge.handleUnrunnableQueries(unrunnableQueries)
 		ge.createFinisherNode(b.progressReporter)
-	} else {
-		// No query execution: close doneChan so Execute() exits after
-		// processing the priority queue.
-		close(ge.doneChan)
 	}
-
-	if len(b.initialData) > 0 {
-		ge.InjectData(b.initialData)
-	}
+	// For batch/rescore (no run queue), doneChan stays unclosed and the
+	// main loop relies on the producer closing Output() to signal
+	// completion.
 
 	for nodeID := range ge.nodes {
 		prioritizeNode(ge.nodes, ge.edges, ge.priorityMap, nodeID)

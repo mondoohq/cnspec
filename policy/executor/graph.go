@@ -20,30 +20,26 @@ type GraphExecutor interface {
 	Execute()
 }
 
-// ExecutionManager controls how queries are executed during policy evaluation.
-type ExecutionManager = internal.ExecutionManager
+// Producer drives envelopes into the graph executor (raw query results
+// for normal scanning, pre-computed scores for rescoring).
+type Producer = internal.Producer
 
-// DefaultExecutionManager creates an ExecutionManager that runs queries
-// via the provided runtime.
-func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) ExecutionManager {
-	return internal.DefaultExecutionManager(runtime, numQueries, timeout, dumpDatapoints)
-}
-
-// NewNoopExecutionManager creates an ExecutionManager that does nothing.
-// Used for rescoring where no query execution is needed.
-func NewNoopExecutionManager() ExecutionManager {
-	return internal.NewNoopExecutionManager()
+// DefaultProducer constructs a Producer that runs queries via the
+// provided runtime. The caller wires its RunQueue() into the executor
+// builder via WithRunQueue.
+func DefaultProducer(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) *internal.DefaultProducer {
+	return internal.NewDefaultProducer(runtime, numQueries, timeout, dumpDatapoints)
 }
 
 // ScoreCollector receives scores produced by the graph executor.
 type ScoreCollector = internal.ScoreCollector
 
 // ExecuteResolvedPolicy builds a graph from the resolved policy, executes
-// queries via the provided ExecutionManager, and sends results to the
+// queries via the provided Producer, and sends results to the
 // PolicyResolver via a BufferedCollector.
 func ExecuteResolvedPolicy(
 	ctx context.Context,
-	em ExecutionManager,
+	producer *internal.DefaultProducer,
 	collectorSvc policy.PolicyResolver,
 	assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy,
@@ -66,60 +62,45 @@ func ExecuteResolvedPolicy(
 	)
 	defer collector.FlushAndStop()
 
-	return buildAndExecuteResolvedPolicy(em, collector, collector, assetMrn, resolvedPolicy, features, progressReporter, nil, false)
-}
-
-// RescoreResolvedPolicy builds a graph from the resolved policy, injects
-// the provided scores, and sends the rolled-up results to the given
-// ScoreCollector. No query execution occurs.
-func RescoreResolvedPolicy(
-	assetMrn string,
-	resolvedPolicy *policy.ResolvedPolicy,
-	scores map[string]*policy.Score,
-	scoreCollector ScoreCollector,
-) error {
-	return buildAndExecuteResolvedPolicy(
-		internal.NewNoopExecutionManager(),
-		nil, // no datapoint collector for rescoring
-		scoreCollector,
-		assetMrn,
-		resolvedPolicy,
-		nil, // no features
-		nil, // no progress reporter
-		scores,
-		true, // enable risk scoring
-	)
-}
-
-func buildAndExecuteResolvedPolicy(
-	em ExecutionManager,
-	datapointCollector internal.DatapointCollector,
-	scoreCollector internal.ScoreCollector,
-	assetMrn string,
-	resolvedPolicy *policy.ResolvedPolicy,
-	features mql.Features,
-	progressReporter progress.Progress,
-	scores map[string]*policy.Score,
-	scoreRisk bool,
-) error {
 	builder := builderFromResolvedPolicy(resolvedPolicy)
-	if datapointCollector != nil {
-		builder.AddDatapointCollector(datapointCollector)
-	}
-	builder.AddScoreCollector(scoreCollector)
-	builder.WithExecutionManager(em)
+	builder.AddDatapointCollector(collector)
+	builder.AddScoreCollector(collector)
+	builder.WithProducer(producer)
+	builder.WithRunQueue(producer.RunQueue())
 	if progressReporter != nil {
 		builder.WithProgressReporter(progressReporter)
 	}
 	if features.IsActive(mql.ErrorsAsFailures) {
 		builder.WithFeatureFlagFailErrors()
 	}
-	if len(scores) > 0 {
-		builder.WithScores(scores)
+
+	ge, err := builder.Build(assetMrn)
+	if err != nil {
+		return err
 	}
-	if scoreRisk {
-		builder.EnableScoreRisk()
-	}
+
+	ge.Debug("resolved-policy")
+
+	return ge.Execute()
+}
+
+// RescoreResolvedPolicy builds a graph from the resolved policy, feeds
+// the provided pre-computed scores in via a BatchScoreProducer, and
+// sends the rolled-up results to the given ScoreCollector. No query
+// execution occurs.
+func RescoreResolvedPolicy(
+	assetMrn string,
+	resolvedPolicy *policy.ResolvedPolicy,
+	scores map[string]*policy.Score,
+	scoreCollector ScoreCollector,
+) error {
+	rjs := resolvedPolicy.GetCollectorJob().GetReportingJobs()
+	producer := internal.NewBatchScoreProducer(scores, rjs, assetMrn)
+
+	builder := builderFromResolvedPolicy(resolvedPolicy)
+	builder.AddScoreCollector(scoreCollector)
+	builder.WithProducer(producer)
+	builder.EnableScoreRisk()
 
 	ge, err := builder.Build(assetMrn)
 	if err != nil {
@@ -171,7 +152,9 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout
 	}
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
-	builder.WithExecutionManager(internal.DefaultExecutionManager(runtime, len(queryMap), timeout, false))
+	p := internal.NewDefaultProducer(runtime, len(queryMap), timeout, false)
+	builder.WithProducer(p)
+	builder.WithRunQueue(p.RunQueue())
 
 	var errors []error
 	ge, err := builder.Build("")
@@ -227,7 +210,9 @@ func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[str
 	}
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
-	builder.WithExecutionManager(internal.DefaultExecutionManager(runtime, 1, 5*time.Minute, false))
+	p := internal.NewDefaultProducer(runtime, 1, 5*time.Minute, false)
+	builder.WithProducer(p)
+	builder.WithRunQueue(p.RunQueue())
 
 	ge, err := builder.Build("")
 	if err != nil {

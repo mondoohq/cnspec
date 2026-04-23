@@ -120,8 +120,6 @@ func (nodeData *ExecutionQueryNodeData) initialize() {
 	}
 }
 
-func (nodeData *ExecutionQueryNodeData) preseed(_ *envelope) {}
-
 // consume saves any received data that matches any the required properties
 func (nodeData *ExecutionQueryNodeData) consume(from NodeID, data *envelope) {
 	if nodeData.runState == executedQueryRunState {
@@ -228,8 +226,6 @@ func (nodeData *DatapointNodeData) initialize() {
 	}
 }
 
-func (nodeData *DatapointNodeData) preseed(_ *envelope) {}
-
 // consume saves the result of the datapoint.
 func (nodeData *DatapointNodeData) consume(from NodeID, data *envelope) {
 	if data == nil || data.res == nil {
@@ -286,8 +282,6 @@ type ReportingQueryNodeData struct {
 	results     map[string]*DataResult
 	invalidated bool
 }
-
-func (nodeData *ReportingQueryNodeData) preseed(_ *envelope) {}
 
 func (nodeData *ReportingQueryNodeData) initialize() {
 	invalidated := len(nodeData.results) == 0
@@ -459,29 +453,6 @@ type ReportingJobNodeData struct {
 	scoreRisk             bool
 }
 
-func (nodeData *ReportingJobNodeData) preseed(data *envelope) {
-	if data == nil || data.score == nil {
-		return
-	}
-	if !policy.IsForwardScoreType(nodeData.rjType) {
-		return
-	}
-	s := data.score.CloneVT()
-	s.DataCompletion = 100
-	s.ScoreCompletion = 100
-	// Replace childScores with the preseeded score. This means if
-	// consume() is called on this node (e.g. from a ReportingQueryNode
-	// edge), it will panic because the original keys are gone. This is
-	// intentional: preseed is only valid with a noop ExecutionManager
-	// where no query results flow through the graph. If we ever need
-	// to support consuming llx results alongside preseeded scores,
-	// this will need to preserve original childScores keys.
-	nodeData.childScores = map[NodeID]*reportingJobResult{
-		"__preseed__": {score: s},
-	}
-	nodeData.invalidated = true
-}
-
 func (nodeData *ReportingJobNodeData) initialize() {
 	nodeData.invalidated = true
 }
@@ -642,8 +613,6 @@ type CollectionFinisherNodeData struct {
 	assetPlatformId     string
 }
 
-func (nodeData *CollectionFinisherNodeData) preseed(_ *envelope) {}
-
 func (nodeData *CollectionFinisherNodeData) initialize() {
 	if len(nodeData.remainingDatapoints) == 0 {
 		nodeData.invalidated = true
@@ -680,8 +649,6 @@ type DatapointCollectorNodeData struct {
 	unreported  map[string]*llx.RawResult
 	invalidated bool
 }
-
-func (nodeData *DatapointCollectorNodeData) preseed(_ *envelope) {}
 
 func (nodeData *DatapointCollectorNodeData) initialize() {
 	if len(nodeData.unreported) > 0 {
@@ -724,8 +691,6 @@ type ScoreCollectorNodeData struct {
 	unreported  map[string]*policy.Score
 	invalidated bool
 }
-
-func (nodeData *ScoreCollectorNodeData) preseed(_ *envelope) {}
 
 func (nodeData *ScoreCollectorNodeData) initialize() {
 	if len(nodeData.unreported) > 0 {

@@ -24,63 +24,26 @@ func init() {
 	memDebug = os.Getenv(MEM_DEBUG_ENV) == "1"
 }
 
-// ExecutionManager controls how queries are executed. For normal scanning,
-// use DefaultExecutionManager with a runtime. For rescoring (no query
-// execution), use NewNoopExecutionManager.
-type ExecutionManager interface {
+// addressedEnvelope is an envelope addressed to a specific node in the
+// graph. The graph executor delivers it via consume(from, env) on the
+// addressed node.
+type addressedEnvelope struct {
+	to   NodeID
+	from NodeID
+	env  envelope
+}
+
+// Producer asynchronously emits envelopes addressed at graph nodes.
+// The graph executor reads from Output(), calls consume() on the
+// addressed node, and pushes it onto the priority queue. A closed
+// Output() signals the producer is exhausted.
+type Producer interface {
 	Start()
 	Stop()
-	// Err returns unrecoverable execution errors (e.g. runtime failure,
-	// query timeout). Execute() aborts when it receives on this channel.
-	ErrChan() chan error
-	// RunQueue returns the channel that ExecutionQueryNodes send work to.
-	// The execution manager reads from it and runs queries. Nil if the manager cannot execute queries
-	RunQueueChan() chan runQueueItem
-	// ResultChan returns the channel that carries raw datapoint results
-	// from query execution back into the graph. Nil for if the manager does not support reading back results
-	ResultChan() chan *llx.RawResult
-}
-
-// NewNoopExecutionManager returns an ExecutionManager that does nothing.
-// Used for rescoring where no query execution is needed.
-func NewNoopExecutionManager() ExecutionManager {
-	return &noopExecutionManager{
-		errChan: make(chan error),
-	}
-}
-
-type noopExecutionManager struct {
-	// errChan is never written to or closed. In the Execute() select loop,
-	// it blocks forever, letting doneChan (already closed) win immediately.
-	// Callers must not range over ErrChan() after Stop().
-	errChan chan error
-}
-
-func (n *noopExecutionManager) Start()                          {}
-func (n *noopExecutionManager) Stop()                           {}
-func (n *noopExecutionManager) ErrChan() chan error             { return n.errChan }
-func (n *noopExecutionManager) RunQueueChan() chan runQueueItem { return nil }
-func (n *noopExecutionManager) ResultChan() chan *llx.RawResult { return nil }
-
-type executionManager struct {
-	runtime llx.Runtime
-	// runQueue is the channel the execution manager will read
-	// items that need to be run from
-	runQueue chan runQueueItem
-	// resultChan is the channel the execution manager will write
-	// results to
-	resultChan chan *llx.RawResult
-	// errChan is used to signal an unrecoverable error. The execution
-	// manager writes to this channel
-	errChan chan error
-	// timeout is the amount of time the executor will wait for a query
-	// to return all the results after
-	timeout time.Duration
-	// stopChan is a channel that is closed when a stop is requested
-	stopChan chan struct{}
-	wg       sync.WaitGroup
-
-	dumpDatapoints bool
+	// Output emits envelopes destined for graph nodes.
+	Output() <-chan addressedEnvelope
+	// Err returns unrecoverable production errors. Buffered size 1.
+	Err() <-chan error
 }
 
 type runQueueItem struct {
@@ -88,14 +51,29 @@ type runQueueItem struct {
 	props      map[string]*llx.Result
 }
 
-// DefaultExecutionManager creates an ExecutionManager that runs queries
-// via the provided runtime. It creates its own channels for communication
-// with the graph executor.
-func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) *executionManager {
-	return &executionManager{
+// DefaultProducer runs queries via the provided runtime and emits raw
+// datapoint results addressed at DatapointNodes (one envelope per
+// datapoint, keyed by codeID).
+type DefaultProducer struct {
+	runtime  llx.Runtime
+	runQueue chan runQueueItem
+	output   chan addressedEnvelope
+	errChan  chan error
+	timeout  time.Duration
+	stopOnce sync.Once
+	stopChan chan struct{}
+	wg       sync.WaitGroup
+
+	dumpDatapoints bool
+}
+
+// NewDefaultProducer creates a Producer that executes queries via the
+// provided runtime. Wire the run queue to the builder via WithRunQueue.
+func NewDefaultProducer(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) *DefaultProducer {
+	return &DefaultProducer{
 		runQueue:       make(chan runQueueItem, numQueries),
 		runtime:        runtime,
-		resultChan:     make(chan *llx.RawResult, 128),
+		output:         make(chan addressedEnvelope, 128),
 		errChan:        make(chan error, 1),
 		stopChan:       make(chan struct{}),
 		timeout:        timeout,
@@ -103,21 +81,27 @@ func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.D
 	}
 }
 
-func (em *executionManager) Start() {
-	em.wg.Add(1)
+// RunQueue returns the channel ExecutionQueryNodes write work to.
+func (p *DefaultProducer) RunQueue() chan<- runQueueItem { return p.runQueue }
+
+func (p *DefaultProducer) Output() <-chan addressedEnvelope { return p.output }
+func (p *DefaultProducer) Err() <-chan error                { return p.errChan }
+
+func (p *DefaultProducer) Start() {
+	p.wg.Add(1)
 	go func() {
-		defer em.wg.Done()
+		defer p.wg.Done()
 		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
 		for {
 			// Prioritize stopChan
 			select {
-			case <-em.stopChan:
+			case <-p.stopChan:
 				return
 			default:
 			}
 
 			select {
-			case item, ok := <-em.runQueue:
+			case item, ok := <-p.runQueue:
 				if !ok {
 					return
 				}
@@ -137,7 +121,7 @@ func (em *executionManager) Start() {
 					props[k] = r.Data
 				}
 
-				if err := em.executeCodeBundle(item.codeBundle, props, errMsg); err != nil {
+				if err := p.executeCodeBundle(item.codeBundle, props, errMsg); err != nil {
 					// an error is returned if we cannot execute a query. This happens
 					// if the lumi runtime doesn't report back expected data, there is
 					// a problem with the lumi runtime, or the query is somehow invalid.
@@ -145,40 +129,39 @@ func (em *executionManager) Start() {
 					// state and/or we will not be able to report certain datapoints and
 					// we cannot be confident about which ones
 					select {
-					case em.errChan <- err:
+					case p.errChan <- err:
 					default:
 					}
 					return
 				}
-			case <-em.stopChan:
+			case <-p.stopChan:
 				return
 			}
 		}
 	}()
 }
 
-func (em *executionManager) ErrChan() chan error             { return em.errChan }
-func (em *executionManager) RunQueueChan() chan runQueueItem { return em.runQueue }
-func (em *executionManager) ResultChan() chan *llx.RawResult { return em.resultChan }
-
-func (em *executionManager) Stop() {
-	close(em.stopChan)
-	em.wg.Wait()
+func (p *DefaultProducer) Stop() {
+	p.stopOnce.Do(func() {
+		close(p.stopChan)
+		p.wg.Wait()
+		close(p.output)
+	})
 }
 
-func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, errMsg string) error {
+func (p *DefaultProducer) executeCodeBundle(codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, errMsg string) error {
 	wg := NewWaitGroup()
 
 	sendResult := func(rr *llx.RawResult) {
 		tr := log.Trace().Str("codeID", rr.CodeID)
-		if em.dumpDatapoints {
+		if p.dumpDatapoints {
 			tr.Interface("data", rr.Data)
 		}
 		tr.Msg("received result from executor")
 		wg.Done(rr.CodeID)
 		select {
-		case em.resultChan <- rr:
-		case <-em.stopChan:
+		case p.output <- addressedEnvelope{to: rr.CodeID, env: envelope{res: rr}}:
+		case <-p.stopChan:
 		}
 	}
 
@@ -222,7 +205,7 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	}()
 	// TODO(jaym): sendResult may not be correct. We may need to fill in the
 	// checksum
-	x, err := llx.NewExecutorV2(codeBundle.CodeV2, em.runtime, props, sendResult)
+	x, err := llx.NewExecutorV2(codeBundle.CodeV2, p.runtime, props, sendResult)
 	if err == nil {
 		_ = x.Run()
 	}
@@ -246,11 +229,11 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 
 	var errOut error
 
-	timer := time.NewTimer(em.timeout)
+	timer := time.NewTimer(p.timeout)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
-		log.Error().Dur("timeout", em.timeout).Str("qrid", codeID).Msg("execution timed out")
+		log.Error().Dur("timeout", p.timeout).Str("qrid", codeID).Msg("execution timed out")
 		errOut = errQueryTimeout
 	case <-execDoneChan:
 	}

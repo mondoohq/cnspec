@@ -170,7 +170,9 @@ func TestBuilder(t *testing.T) {
 	})
 
 	b.WithMondooVersion("100.0.0")
-	b.WithExecutionManager(DefaultExecutionManager(nil, 5, 5*time.Minute, false))
+	p := NewDefaultProducer(nil, 5, 5*time.Minute, false)
+	b.WithProducer(p)
+	b.WithRunQueue(p.RunQueue())
 
 	asset := &inventory.Asset{
 		Mrn:         "assetMrn",

@@ -41,10 +41,6 @@ type envelope struct {
 // edges.
 type nodeData interface {
 	initialize()
-	// preseed sets initial data on the node before execution.
-	// Used by InjectData to feed pre-computed results or scores
-	// into the graph for rescoring.
-	preseed(data *envelope)
 	// consume sends data to this node from a dependent node.
 	// consume should defer as much work to recalculate as
 	// possible, as recalculate will only be called after all
@@ -62,11 +58,11 @@ type GraphExecutor struct {
 	priorityMap  map[NodeID]int
 	queryTimeout time.Duration
 
-	executionManager ExecutionManager
+	producer Producer
 	// doneChan signals that all expected data has been received. Closed by
 	// CollectionFinisherNode during normal execution, or by Build() immediately
-	// for rescoring. Not part of ExecutionManager -- datapoint completion is
-	// a graph concern, not a query execution concern.
+	// for rescoring. Not part of Producer -- datapoint completion is
+	// a graph concern, not a production concern.
 	doneChan chan struct{}
 
 	featureFlagFailErrors bool
@@ -102,7 +98,8 @@ type GraphExecutor struct {
 // and we assign a priority to each node, each node in the graph should only
 // recalculate at most once in each round
 func (ge *GraphExecutor) Execute() error {
-	ge.executionManager.Start()
+	ge.producer.Start()
+	defer ge.producer.Stop()
 
 	// Trigger the execution nodes
 	maxPriority := len(ge.nodes) + 1
@@ -117,7 +114,22 @@ func (ge *GraphExecutor) Execute() error {
 		})
 	}
 
-	done := false
+	output := ge.producer.Output()
+	errCh := ge.producer.Err()
+
+	consumeEnv := func(e addressedEnvelope) {
+		n, ok := ge.nodes[e.to]
+		if !ok {
+			return
+		}
+		n.data.consume(e.from, &e.env)
+		heap.Push(&q, &Item{
+			priority: maxPriority,
+			receiver: e.to,
+			sender:   e.from,
+		})
+	}
+
 	var err error
 OUTER:
 	for {
@@ -152,68 +164,45 @@ OUTER:
 			}
 		}
 
-		if done {
+		if output == nil {
 			break OUTER
 		}
 
-		// Wait for message
+		// Wait for a message. Two completion paths:
+		//   - doneChan: graph reports all expected datapoints arrived
+		//     (normal scan, closed by CollectionFinisherNode). Exit
+		//     immediately; defer producer.Stop drains the producer.
+		//   - output closed: producer is exhausted (batch rescore).
+		//     Process remaining queue work, then exit.
 		select {
-		case res := <-ge.executionManager.ResultChan():
-			nodeID := res.CodeID
-			n := ge.nodes[nodeID]
-			n.data.consume("", &envelope{res: res})
-			heap.Push(&q, &Item{
-				priority: maxPriority,
-				receiver: nodeID,
-				sender:   "",
-			})
+		case e, ok := <-output:
+			if !ok {
+				output = nil
+				continue
+			}
+			consumeEnv(e)
 		case <-ge.doneChan:
-			done = true
-		case err = <-ge.executionManager.ErrChan():
+			break OUTER
+		case err = <-errCh:
 			break OUTER
 		}
 		// drain all available messages
 	DRAIN:
-		for {
+		for output != nil {
 			select {
-			case res := <-ge.executionManager.ResultChan():
-				nodeID := res.CodeID
-				n := ge.nodes[nodeID]
-				n.data.consume("", &envelope{res: res})
-				heap.Push(&q, &Item{
-					priority: maxPriority,
-					receiver: nodeID,
-					sender:   "",
-				})
+			case e, ok := <-output:
+				if !ok {
+					output = nil
+					break DRAIN
+				}
+				consumeEnv(e)
 			default:
 				break DRAIN
 			}
 		}
 	}
 
-	ge.executionManager.Stop()
 	return err
-}
-
-// InjectData preseeds nodes in the graph with the given data, keyed
-// by queryID. Each node's preseed method determines how to handle the
-// envelope. Currently only ReportingJobNodes use this for rescoring.
-func (ge *GraphExecutor) InjectData(data map[string]*envelope) {
-	// Build index: queryID → ReportingJobNode.
-	nodesByQueryID := map[string]*Node{}
-	for _, n := range ge.nodes {
-		if nd, ok := n.data.(*ReportingJobNodeData); ok {
-			nodesByQueryID[nd.queryID] = n
-		}
-	}
-
-	for qrId, env := range data {
-		n, ok := nodesByQueryID[qrId]
-		if !ok {
-			continue
-		}
-		n.data.preseed(env)
-	}
 }
 
 func (ge *GraphExecutor) Debug(name string) {
