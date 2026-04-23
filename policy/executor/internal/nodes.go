@@ -120,6 +120,8 @@ func (nodeData *ExecutionQueryNodeData) initialize() {
 	}
 }
 
+func (nodeData *ExecutionQueryNodeData) preseed(_ *envelope) {}
+
 // consume saves any received data that matches any the required properties
 func (nodeData *ExecutionQueryNodeData) consume(from NodeID, data *envelope) {
 	if nodeData.runState == executedQueryRunState {
@@ -226,6 +228,8 @@ func (nodeData *DatapointNodeData) initialize() {
 	}
 }
 
+func (nodeData *DatapointNodeData) preseed(_ *envelope) {}
+
 // consume saves the result of the datapoint.
 func (nodeData *DatapointNodeData) consume(from NodeID, data *envelope) {
 	if data == nil || data.res == nil {
@@ -282,6 +286,8 @@ type ReportingQueryNodeData struct {
 	results     map[string]*DataResult
 	invalidated bool
 }
+
+func (nodeData *ReportingQueryNodeData) preseed(_ *envelope) {}
 
 func (nodeData *ReportingQueryNodeData) initialize() {
 	invalidated := len(nodeData.results) == 0
@@ -442,7 +448,6 @@ type reportingJobResult struct {
 type ReportingJobNodeData struct {
 	queryID       string
 	scoringSystem policy.ScoringSystem
-	forwardScore  bool
 	rjType        policy.ReportingJob_Type
 
 	childScores map[NodeID]*reportingJobResult
@@ -451,6 +456,30 @@ type ReportingJobNodeData struct {
 	invalidated bool
 
 	featureFlagFailErrors bool
+	scoreRisk             bool
+}
+
+func (nodeData *ReportingJobNodeData) preseed(data *envelope) {
+	if data == nil || data.score == nil {
+		return
+	}
+	if !policy.IsForwardScoreType(nodeData.rjType) {
+		return
+	}
+	s := data.score.CloneVT()
+	s.DataCompletion = 100
+	s.ScoreCompletion = 100
+	// Replace childScores with the preseeded score. This means if
+	// consume() is called on this node (e.g. from a ReportingQueryNode
+	// edge), it will panic because the original keys are gone. This is
+	// intentional: preseed is only valid with a noop ExecutionManager
+	// where no query results flow through the graph. If we ever need
+	// to support consuming llx results alongside preseeded scores,
+	// this will need to preserve original childScores keys.
+	nodeData.childScores = map[NodeID]*reportingJobResult{
+		"__preseed__": {score: s},
+	}
+	nodeData.invalidated = true
 }
 
 func (nodeData *ReportingJobNodeData) initialize() {
@@ -465,24 +494,9 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 		if !ok {
 			panic("invalid score report")
 		}
-		score := data.score
-		switch nodeData.rjType {
-		case policy.ReportingJob_CONTROL:
-			if score.Type != policy.ScoreType_Result {
-				// We map errors to failed results.
-				// Skip and unknown are mapped to passing results
-				score = score.CloneVT()
-				switch score.Type {
-				case policy.ScoreType_Error:
-					score.Type = policy.ScoreType_Result
-					score.Value = 0
-				case policy.ScoreType_Skip, policy.ScoreType_Unscored:
-					score.Type = policy.ScoreType_Result
-					score.Value = 100
-				}
-			}
-		}
-		rjRes.score = score
+		// Score is stored as-is. CONTROL-type remapping (errors->0, skip->100)
+		// happens at scoring time in CalculateReportingJobScore.
+		rjRes.score = data.score
 		nodeData.invalidated = true
 	}
 
@@ -553,82 +567,66 @@ func (nodeData *ReportingJobNodeData) score() (*policy.Score, error) {
 		}
 	}
 
-	if nodeData.forwardScore {
-		var s *policy.Score
+	children := make([]policy.ChildScore, 0, len(nodeData.childScores))
+	for _, rjRes := range nodeData.childScores {
+		children = append(children, policy.ChildScore{
+			Score:  rjRes.score,
+			Impact: rjRes.impact,
+		})
+	}
 
-		if len(nodeData.childScores) == 0 {
-			s = &policy.Score{
-				QrId:            nodeData.queryID,
-				Type:            policy.ScoreType_Unscored,
-				ScoreCompletion: 100,
-			}
-		} else {
-			if len(nodeData.childScores) != 1 {
-				panic("invalid reporting job")
-			}
-			var child string
-			for k := range nodeData.childScores {
-				child = k
-			}
-			if c := nodeData.childScores[child]; c.score == nil {
-				s = &policy.Score{
-					QrId: nodeData.queryID,
-					Type: policy.ScoreType_Result,
-				}
-			} else {
-				s = c.score.CloneVT()
-				s.QrId = nodeData.queryID
+	totalDP := len(nodeData.datapoints)
+	s, err := policy.CalculateReportingJobScore(
+		nodeData.queryID,
+		nodeData.rjType,
+		nodeData.scoringSystem,
+		children,
+		totalDP,
+		finishedDatapoints,
+		nodeData.featureFlagFailErrors,
+	)
+	if err != nil || s == nil {
+		return s, err
+	}
 
-				if c.impact.GetScoring() == policy.ScoringSystem_DISABLED {
-					s.Type = policy.ScoreType_Disabled
-				} else if s.Type == policy.ScoreType_Result {
-					// We can't just forward the score if impact is set and we have a result.
-					// We still need to apply impact to the score
-					if c.impact != nil {
-						if c.impact.Value != nil {
-							floor := 100 - uint32(c.impact.Value.Value)
-							if floor > s.Value {
-								s.Value = floor
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// TODO: It's unclear if we should do this if the score is skipped or errored
-		// If the executor doesn't return something for every datapoint, then this will
-		// be broken in other ways. For example, the completion relies on getting every
-		// datapoint reported
-		if totalDatapoints := len(nodeData.datapoints); totalDatapoints > 0 {
-			s.DataTotal = uint32(totalDatapoints)
-			s.DataCompletion = uint32((100 * finishedDatapoints) / totalDatapoints)
-		}
-
+	if !nodeData.scoreRisk {
 		return s, nil
 	}
 
-	scoreCalculatorOptions := []policy.ScoreCalculatorOption{}
-	if nodeData.featureFlagFailErrors {
-		scoreCalculatorOptions = append(scoreCalculatorOptions, policy.WithScoreCalculatorFeatureFlagFailErrors())
-	}
-	calculator, err := policy.NewScoreCalculator(nodeData.scoringSystem, scoreCalculatorOptions...)
-	if err != nil {
-		return nil, err
-	}
-
+	// Roll up RiskScore using the same scoring logic but with
+	// Value=RiskScore on each child.
+	riskChildren := make([]policy.ChildScore, 0, len(nodeData.childScores))
 	for _, rjRes := range nodeData.childScores {
-		s := rjRes.score
-		if s == nil {
-			return nil, nil
+		if rjRes.score == nil {
+			continue
 		}
-		policy.AddSpecdScore(calculator, s, rjRes.score != nil, rjRes.impact)
+
+		// make a copy, as the CalculateReportingJobScore works with Value only,
+		// we replace withRiskScore here.
+		rs := rjRes.score.CloneVT()
+		rs.Value = rs.RiskScore
+		riskChildren = append(riskChildren, policy.ChildScore{
+			Score:  rs,
+			Impact: rjRes.impact,
+		})
 	}
 
-	policy.AddDataScore(calculator, len(nodeData.datapoints), finishedDatapoints)
+	rs, err := policy.CalculateReportingJobScore(
+		nodeData.queryID,
+		nodeData.rjType,
+		nodeData.scoringSystem,
+		riskChildren,
+		totalDP,
+		finishedDatapoints,
+		nodeData.featureFlagFailErrors,
+	)
+	if err != nil {
+		return s, err
+	}
+	if rs != nil {
+		s.RiskScore = rs.Value
+	}
 
-	s := calculator.Calculate()
-	s.QrId = nodeData.queryID
 	return s, nil
 }
 
@@ -643,6 +641,8 @@ type CollectionFinisherNodeData struct {
 	invalidated         bool
 	assetPlatformId     string
 }
+
+func (nodeData *CollectionFinisherNodeData) preseed(_ *envelope) {}
 
 func (nodeData *CollectionFinisherNodeData) initialize() {
 	if len(nodeData.remainingDatapoints) == 0 {
@@ -680,6 +680,8 @@ type DatapointCollectorNodeData struct {
 	unreported  map[string]*llx.RawResult
 	invalidated bool
 }
+
+func (nodeData *DatapointCollectorNodeData) preseed(_ *envelope) {}
 
 func (nodeData *DatapointCollectorNodeData) initialize() {
 	if len(nodeData.unreported) > 0 {
@@ -722,6 +724,8 @@ type ScoreCollectorNodeData struct {
 	unreported  map[string]*policy.Score
 	invalidated bool
 }
+
+func (nodeData *ScoreCollectorNodeData) preseed(_ *envelope) {}
 
 func (nodeData *ScoreCollectorNodeData) initialize() {
 	if len(nodeData.unreported) > 0 {

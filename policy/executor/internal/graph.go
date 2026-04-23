@@ -25,8 +25,7 @@ type Node struct {
 	data     nodeData
 }
 
-// envelope represents data that can be passed
-// between nodes
+// envelope represents data that can be passed between nodes.
 type envelope struct {
 	res   *llx.RawResult
 	score *policy.Score
@@ -42,6 +41,10 @@ type envelope struct {
 // edges.
 type nodeData interface {
 	initialize()
+	// preseed sets initial data on the node before execution.
+	// Used by InjectData to feed pre-computed results or scores
+	// into the graph for rescoring.
+	preseed(data *envelope)
 	// consume sends data to this node from a dependent node.
 	// consume should defer as much work to recalculate as
 	// possible, as recalculate will only be called after all
@@ -59,12 +62,18 @@ type GraphExecutor struct {
 	priorityMap  map[NodeID]int
 	queryTimeout time.Duration
 
-	executionManager *executionManager
-	resultChan       chan *llx.RawResult
-	doneChan         chan struct{}
+	executionManager ExecutionManager
+	// doneChan signals that all expected data has been received. Closed by
+	// CollectionFinisherNode during normal execution, or by Build() immediately
+	// for rescoring. Not part of ExecutionManager -- datapoint completion is
+	// a graph concern, not a query execution concern.
+	doneChan chan struct{}
 
 	featureFlagFailErrors bool
-	dumpDatapoints        bool
+	// whether to also score the risk value for the nodes. same as base value if enabled,
+	// uses the provided scoring system.
+	scoreRisk      bool
+	dumpDatapoints bool
 }
 
 // Execute executes the graph
@@ -149,7 +158,7 @@ OUTER:
 
 		// Wait for message
 		select {
-		case res := <-ge.resultChan:
+		case res := <-ge.executionManager.ResultChan():
 			nodeID := res.CodeID
 			n := ge.nodes[nodeID]
 			n.data.consume("", &envelope{res: res})
@@ -160,14 +169,14 @@ OUTER:
 			})
 		case <-ge.doneChan:
 			done = true
-		case err = <-ge.executionManager.Err():
+		case err = <-ge.executionManager.ErrChan():
 			break OUTER
 		}
 		// drain all available messages
 	DRAIN:
 		for {
 			select {
-			case res := <-ge.resultChan:
+			case res := <-ge.executionManager.ResultChan():
 				nodeID := res.CodeID
 				n := ge.nodes[nodeID]
 				n.data.consume("", &envelope{res: res})
@@ -184,6 +193,27 @@ OUTER:
 
 	ge.executionManager.Stop()
 	return err
+}
+
+// InjectData preseeds nodes in the graph with the given data, keyed
+// by queryID. Each node's preseed method determines how to handle the
+// envelope. Currently only ReportingJobNodes use this for rescoring.
+func (ge *GraphExecutor) InjectData(data map[string]*envelope) {
+	// Build index: queryID → ReportingJobNode.
+	nodesByQueryID := map[string]*Node{}
+	for _, n := range ge.nodes {
+		if nd, ok := n.data.(*ReportingJobNodeData); ok {
+			nodesByQueryID[nd.queryID] = n
+		}
+	}
+
+	for qrId, env := range data {
+		n, ok := nodesByQueryID[qrId]
+		if !ok {
+			continue
+		}
+		n.data.preseed(env)
+	}
 }
 
 func (ge *GraphExecutor) Debug(name string) {

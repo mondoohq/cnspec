@@ -4,6 +4,7 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -55,9 +56,20 @@ type GraphBuilder struct {
 	// runtime to send all the expected datapoints.
 	queryTimeout time.Duration
 
+	// executionManager controls query execution. If nil, a noop is used.
+	executionManager ExecutionManager
+
 	// featureFlagFailErrors is a feature flag to count errors as failures
 	// See https://www.notion.so/mondoo/Errors-and-Scoring-5dc554348aad4118a1dbf35123368329
 	featureFlagFailErrors bool
+
+	// scoreRisk enables rolling up RiskScore alongside Value through
+	// the reporting job hierarchy.
+	scoreRisk bool
+
+	// scores holds pre-computed scores to inject into the graph for
+	// rescoring. Keyed by QrId.
+	initialData map[string]*envelope
 
 	dumpDatapoints bool
 }
@@ -146,30 +158,52 @@ func (b *GraphBuilder) WithQueryTimeout(timeout time.Duration) {
 	b.queryTimeout = timeout
 }
 
+// WithExecutionManager sets the execution manager for query execution.
+// If not set, a noop execution manager is used (for rescoring).
+func (b *GraphBuilder) WithExecutionManager(em ExecutionManager) {
+	b.executionManager = em
+}
+
+// WithScores sets pre-computed scores to inject into the graph for
+// rescoring. Keyed by QrId.
+func (b *GraphBuilder) WithScores(scores map[string]*policy.Score) {
+	b.initialData = make(map[string]*envelope, len(scores))
+	for qrId, score := range scores {
+		b.initialData[qrId] = &envelope{score: score}
+	}
+}
+
+// EnableScoreRisk enables rolling up RiskScore alongside Value through
+// the reporting job hierarchy.
+func (b *GraphBuilder) EnableScoreRisk() {
+	b.scoreRisk = true
+}
+
 // WithFeatureFlagFailErrors sets the feature flag to count errors as failures
 func (b *GraphBuilder) WithFeatureFlagFailErrors() {
 	b.featureFlagFailErrors = true
 }
 
-func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecutor, error) {
-	resultChan := make(chan *llx.RawResult, 128)
-
+func (b *GraphBuilder) Build(assetMrn string) (*GraphExecutor, error) {
 	queries := make(map[string]query, len(b.queries))
 	for _, q := range b.queries {
 		queries[q.codeBundle.GetCodeV2().GetId()] = q
 	}
 
-	ge := &GraphExecutor{
-		nodes:        map[NodeID]*Node{},
-		edges:        map[NodeID][]NodeID{},
-		priorityMap:  map[NodeID]int{},
-		queryTimeout: b.queryTimeout,
-		executionManager: newExecutionManager(runtime, make(chan runQueueItem, len(queries)),
-			resultChan, b.queryTimeout, b.dumpDatapoints),
-		resultChan: resultChan,
-		doneChan:   make(chan struct{}),
+	em := b.executionManager
+	if em == nil {
+		return nil, errors.New("execution manager is required, use WithExecutionManager to set one")
+	}
 
+	ge := &GraphExecutor{
+		nodes:                 map[NodeID]*Node{},
+		edges:                 map[NodeID][]NodeID{},
+		priorityMap:           map[NodeID]int{},
+		queryTimeout:          b.queryTimeout,
+		executionManager:      em,
+		doneChan:              make(chan struct{}),
 		featureFlagFailErrors: b.featureFlagFailErrors,
+		scoreRisk:             b.scoreRisk,
 		dumpDatapoints:        b.dumpDatapoints,
 	}
 
@@ -202,12 +236,15 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		}
 	}
 
+	runQueue := em.RunQueueChan()
 	reportingQueryForReportingJob := map[string]string{}
 	reportingQueryNodeByCodeId := map[string]string{}
 	for queryID, q := range queries {
 		canRun := checkVersion(q.codeBundle, mondooVersion)
-		if canRun {
-			ge.addExecutionQueryNode(queryID, q, q.resolvedProperties, b.datapointType)
+		if canRun && runQueue != nil {
+			ge.addExecutionQueryNode(queryID, q, q.resolvedProperties, b.datapointType, runQueue)
+		} else if canRun {
+			// No execution manager with a runtime, skip execution query nodes
 		} else {
 			unrunnableQueries = append(unrunnableQueries, q)
 		}
@@ -237,7 +274,6 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 			// For example, when we have risk factors, this will happen
 			rq = reportingQueryNodeByCodeId[rj.QrId]
 		}
-
 		ge.addReportingJobNode(assetMrn, rj.Uuid, rj, rq)
 	}
 
@@ -249,9 +285,18 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		ge.addEdge(NodeID(datapointChecksum), DatapointCollectorID)
 	}
 
-	ge.handleUnrunnableQueries(unrunnableQueries)
+	if runQueue != nil {
+		ge.handleUnrunnableQueries(unrunnableQueries)
+		ge.createFinisherNode(b.progressReporter)
+	} else {
+		// No query execution: close doneChan so Execute() exits after
+		// processing the priority queue.
+		close(ge.doneChan)
+	}
 
-	ge.createFinisherNode(b.progressReporter)
+	if len(b.initialData) > 0 {
+		ge.InjectData(b.initialData)
+	}
 
 	for nodeID := range ge.nodes {
 		prioritizeNode(ge.nodes, ge.edges, ge.priorityMap, nodeID)
@@ -319,7 +364,7 @@ func (ge *GraphExecutor) createFinisherNode(r progress.Progress) {
 	}
 }
 
-func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolvedProperties map[string]*llx.Primitive, datapointTypeMap map[string]string) {
+func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolvedProperties map[string]*llx.Primitive, datapointTypeMap map[string]string, runQueue chan<- runQueueItem) {
 	codeBundle := q.codeBundle
 
 	nodeData := &ExecutionQueryNodeData{
@@ -327,7 +372,7 @@ func (ge *GraphExecutor) addExecutionQueryNode(queryID string, q query, resolved
 		codeBundle:         codeBundle,
 		requiredProperties: map[string]*executionQueryProperty{},
 		runState:           notReadyQueryNotReady,
-		runQueue:           ge.executionManager.runQueue,
+		runQueue:           runQueue,
 	}
 
 	n := &Node{
@@ -417,10 +462,6 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 		return
 	}
 
-	forwardScore := rj.Type == policy.ReportingJob_CHECK ||
-		rj.Type == policy.ReportingJob_DATA_QUERY ||
-		rj.Type == policy.ReportingJob_CHECK_AND_DATA_QUERY ||
-		rj.Type == policy.ReportingJob_EXECUTION_QUERY
 	queryID := rj.QrId
 	// TODO: This needs to be handled by the server so as not to
 	// break existing clients. The function that was doing the
@@ -432,11 +473,11 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 
 	nodeData := &ReportingJobNodeData{
 		queryID:               queryID,
-		forwardScore:          forwardScore,
 		rjType:                rj.Type,
 		childScores:           map[string]*reportingJobResult{},
 		datapoints:            map[string]*reportingJobDatapoint{},
 		featureFlagFailErrors: ge.featureFlagFailErrors,
+		scoreRisk:             ge.scoreRisk,
 	}
 	n := &Node{
 		id:       NodeID(reportingJobID),

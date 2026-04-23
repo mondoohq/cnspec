@@ -5,6 +5,7 @@ package internal
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,12 +170,13 @@ func TestBuilder(t *testing.T) {
 	})
 
 	b.WithMondooVersion("100.0.0")
+	b.WithExecutionManager(DefaultExecutionManager(nil, 5, 5*time.Minute, false))
 
 	asset := &inventory.Asset{
 		Mrn:         "assetMrn",
 		PlatformIds: []string{"platformId"},
 	}
-	ge, err := b.Build(nil, asset.Mrn)
+	ge, err := b.Build(asset.Mrn)
 	require.NoError(t, err)
 
 	hasNode(t, ge, "execution_query/propertyquery", ExecutionQueryNodeType)

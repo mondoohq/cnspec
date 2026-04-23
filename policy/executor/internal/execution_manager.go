@@ -24,6 +24,44 @@ func init() {
 	memDebug = os.Getenv(MEM_DEBUG_ENV) == "1"
 }
 
+// ExecutionManager controls how queries are executed. For normal scanning,
+// use DefaultExecutionManager with a runtime. For rescoring (no query
+// execution), use NewNoopExecutionManager.
+type ExecutionManager interface {
+	Start()
+	Stop()
+	// Err returns unrecoverable execution errors (e.g. runtime failure,
+	// query timeout). Execute() aborts when it receives on this channel.
+	ErrChan() chan error
+	// RunQueue returns the channel that ExecutionQueryNodes send work to.
+	// The execution manager reads from it and runs queries. Nil if the manager cannot execute queries
+	RunQueueChan() chan runQueueItem
+	// ResultChan returns the channel that carries raw datapoint results
+	// from query execution back into the graph. Nil for if the manager does not support reading back results
+	ResultChan() chan *llx.RawResult
+}
+
+// NewNoopExecutionManager returns an ExecutionManager that does nothing.
+// Used for rescoring where no query execution is needed.
+func NewNoopExecutionManager() ExecutionManager {
+	return &noopExecutionManager{
+		errChan: make(chan error),
+	}
+}
+
+type noopExecutionManager struct {
+	// errChan is never written to or closed. In the Execute() select loop,
+	// it blocks forever, letting doneChan (already closed) win immediately.
+	// Callers must not range over ErrChan() after Stop().
+	errChan chan error
+}
+
+func (n *noopExecutionManager) Start()                          {}
+func (n *noopExecutionManager) Stop()                           {}
+func (n *noopExecutionManager) ErrChan() chan error             { return n.errChan }
+func (n *noopExecutionManager) RunQueueChan() chan runQueueItem { return nil }
+func (n *noopExecutionManager) ResultChan() chan *llx.RawResult { return nil }
+
 type executionManager struct {
 	runtime llx.Runtime
 	// runQueue is the channel the execution manager will read
@@ -50,13 +88,14 @@ type runQueueItem struct {
 	props      map[string]*llx.Result
 }
 
-func newExecutionManager(runtime llx.Runtime, runQueue chan runQueueItem,
-	resultChan chan *llx.RawResult, timeout time.Duration, dumpDatapoints bool,
-) *executionManager {
+// DefaultExecutionManager creates an ExecutionManager that runs queries
+// via the provided runtime. It creates its own channels for communication
+// with the graph executor.
+func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) *executionManager {
 	return &executionManager{
-		runQueue:       runQueue,
+		runQueue:       make(chan runQueueItem, numQueries),
 		runtime:        runtime,
-		resultChan:     resultChan,
+		resultChan:     make(chan *llx.RawResult, 128),
 		errChan:        make(chan error, 1),
 		stopChan:       make(chan struct{}),
 		timeout:        timeout,
@@ -118,9 +157,9 @@ func (em *executionManager) Start() {
 	}()
 }
 
-func (em *executionManager) Err() chan error {
-	return em.errChan
-}
+func (em *executionManager) ErrChan() chan error             { return em.errChan }
+func (em *executionManager) RunQueueChan() chan runQueueItem { return em.runQueue }
+func (em *executionManager) ResultChan() chan *llx.RawResult { return em.resultChan }
 
 func (em *executionManager) Stop() {
 	close(em.stopChan)

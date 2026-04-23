@@ -370,9 +370,8 @@ func TestReportingQueryNode_NilOverride(t *testing.T) {
 func TestReportingJobNode_NilDatapointOverride(t *testing.T) {
 	t.Run("resets completed when nil datapoint gets real data", func(t *testing.T) {
 		nodeData := &ReportingJobNodeData{
-			queryID:      "testquery",
-			forwardScore: true,
-			rjType:       policy.ReportingJob_CHECK,
+			queryID: "testquery",
+			rjType:  policy.ReportingJob_CHECK,
 			childScores: map[NodeID]*reportingJobResult{
 				"rq1": {},
 			},
@@ -1250,7 +1249,7 @@ func TestReportingJobNode(t *testing.T) {
 				t.Run("when isQuery", func(t *testing.T) {
 					t.Run("when score", func(t *testing.T) {
 						nodeData := newNodeData()
-						nodeData.forwardScore = true
+						nodeData.rjType = policy.ReportingJob_CHECK
 						nodeData.childScores = map[NodeID]*reportingJobResult{
 							nodeData.queryID: {},
 						}
@@ -1275,7 +1274,7 @@ func TestReportingJobNode(t *testing.T) {
 					})
 					t.Run("when result", func(t *testing.T) {
 						nodeData := newNodeData()
-						nodeData.forwardScore = true
+						nodeData.rjType = policy.ReportingJob_CHECK
 						nodeData.childScores = map[NodeID]*reportingJobResult{
 							nodeData.queryID: {
 								score: &policy.Score{

@@ -20,8 +20,35 @@ type GraphExecutor interface {
 	Execute()
 }
 
-func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
-	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
+// ExecutionManager controls how queries are executed during policy evaluation.
+type ExecutionManager = internal.ExecutionManager
+
+// DefaultExecutionManager creates an ExecutionManager that runs queries
+// via the provided runtime.
+func DefaultExecutionManager(runtime llx.Runtime, numQueries int, timeout time.Duration, dumpDatapoints bool) ExecutionManager {
+	return internal.DefaultExecutionManager(runtime, numQueries, timeout, dumpDatapoints)
+}
+
+// NewNoopExecutionManager creates an ExecutionManager that does nothing.
+// Used for rescoring where no query execution is needed.
+func NewNoopExecutionManager() ExecutionManager {
+	return internal.NewNoopExecutionManager()
+}
+
+// ScoreCollector receives scores produced by the graph executor.
+type ScoreCollector = internal.ScoreCollector
+
+// ExecuteResolvedPolicy builds a graph from the resolved policy, executes
+// queries via the provided ExecutionManager, and sends results to the
+// PolicyResolver via a BufferedCollector.
+func ExecuteResolvedPolicy(
+	ctx context.Context,
+	em ExecutionManager,
+	collectorSvc policy.PolicyResolver,
+	assetMrn string,
+	resolvedPolicy *policy.ResolvedPolicy,
+	features mql.Features,
+	progressReporter progress.Progress,
 ) error {
 	var opts []internal.BufferedCollectorOpt
 
@@ -39,18 +66,62 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	)
 	defer collector.FlushAndStop()
 
+	return buildAndExecuteResolvedPolicy(em, collector, collector, assetMrn, resolvedPolicy, features, progressReporter, nil, false)
+}
+
+// RescoreResolvedPolicy builds a graph from the resolved policy, injects
+// the provided scores, and sends the rolled-up results to the given
+// ScoreCollector. No query execution occurs.
+func RescoreResolvedPolicy(
+	assetMrn string,
+	resolvedPolicy *policy.ResolvedPolicy,
+	scores map[string]*policy.Score,
+	scoreCollector ScoreCollector,
+) error {
+	return buildAndExecuteResolvedPolicy(
+		internal.NewNoopExecutionManager(),
+		nil, // no datapoint collector for rescoring
+		scoreCollector,
+		assetMrn,
+		resolvedPolicy,
+		nil, // no features
+		nil, // no progress reporter
+		scores,
+		true, // enable risk scoring
+	)
+}
+
+func buildAndExecuteResolvedPolicy(
+	em ExecutionManager,
+	datapointCollector internal.DatapointCollector,
+	scoreCollector internal.ScoreCollector,
+	assetMrn string,
+	resolvedPolicy *policy.ResolvedPolicy,
+	features mql.Features,
+	progressReporter progress.Progress,
+	scores map[string]*policy.Score,
+	scoreRisk bool,
+) error {
 	builder := builderFromResolvedPolicy(resolvedPolicy)
-	builder.AddDatapointCollector(collector)
-	builder.AddScoreCollector(collector)
+	if datapointCollector != nil {
+		builder.AddDatapointCollector(datapointCollector)
+	}
+	builder.AddScoreCollector(scoreCollector)
+	builder.WithExecutionManager(em)
 	if progressReporter != nil {
 		builder.WithProgressReporter(progressReporter)
 	}
-
 	if features.IsActive(mql.ErrorsAsFailures) {
 		builder.WithFeatureFlagFailErrors()
 	}
+	if len(scores) > 0 {
+		builder.WithScores(scores)
+	}
+	if scoreRisk {
+		builder.EnableScoreRisk()
+	}
 
-	ge, err := builder.Build(runtime, assetMrn)
+	ge, err := builder.Build(assetMrn)
 	if err != nil {
 		return err
 	}
@@ -100,9 +171,10 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout
 	}
 	builder.AddScoreCollector(collector)
 	builder.WithQueryTimeout(timeout)
+	builder.WithExecutionManager(internal.DefaultExecutionManager(runtime, len(queryMap), timeout, false))
 
 	var errors []error
-	ge, err := builder.Build(runtime, "")
+	ge, err := builder.Build("")
 	if err != nil {
 		errors = append(errors, err)
 		return nil, errors
@@ -155,8 +227,9 @@ func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[str
 	}
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
+	builder.WithExecutionManager(internal.DefaultExecutionManager(runtime, 1, 5*time.Minute, false))
 
-	ge, err := builder.Build(runtime, "")
+	ge, err := builder.Build("")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -170,26 +243,25 @@ func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[str
 
 func builderFromResolvedPolicy(resolvedPolicy *policy.ResolvedPolicy) *internal.GraphBuilder {
 	b := internal.NewBuilder()
-
-	rqs := resolvedPolicy.CollectorJob.ReportingQueries
+	rqs := resolvedPolicy.GetCollectorJob().GetReportingQueries()
 	if rqs == nil {
 		rqs = map[string]*policy.StringArray{}
 	}
-	for _, eq := range resolvedPolicy.ExecutionJob.Queries {
+	for _, eq := range resolvedPolicy.GetExecutionJob().GetQueries() {
 		var notifies []string
-		if sa := rqs[eq.Code.GetCodeV2().GetId()]; sa != nil {
+		if sa := rqs[eq.GetCode().GetCodeV2().GetId()]; sa != nil {
 			if len(sa.Items) > 0 {
 				notifies = sa.Items
 			}
 		}
-		b.AddQuery(eq.Code, eq.Properties, nil, notifies)
+		b.AddQuery(eq.GetCode(), eq.GetProperties(), nil, notifies)
 	}
 
-	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
+	for _, rj := range resolvedPolicy.GetCollectorJob().GetReportingJobs() {
 		b.AddReportingJob(rj)
 	}
 
-	for datapointChecksum, dqi := range resolvedPolicy.CollectorJob.Datapoints {
+	for datapointChecksum, dqi := range resolvedPolicy.GetCollectorJob().GetDatapoints() {
 		b.AddDatapointType(datapointChecksum, dqi.Type)
 	}
 
