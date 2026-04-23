@@ -1,0 +1,721 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-digitalocean-security
+    name: Mondoo DigitalOcean Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: digitalocean,cloud
+    require:
+      - provider: digitalocean
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, and App Platform
+    docs:
+      desc: |
+        The Mondoo DigitalOcean Security policy identifies critical misconfigurations that could leave your DigitalOcean cloud infrastructure vulnerable to attackers. The policy focuses on security-relevant controls only — hardening against unauthorized access, data exposure, weak cryptography, credential misuse, and exposure to known CVEs through end-of-life software.
+
+        This policy provides security checks across the following DigitalOcean services:
+
+        - Account identity
+        - Droplets (virtual machines)
+        - Cloud Firewalls
+        - Managed Databases
+        - Load Balancers
+        - Kubernetes (DOKS)
+        - TLS Certificates
+        - Content Delivery Network (CDN)
+        - Spaces (object storage) access keys
+        - App Platform
+
+        ## Scan a DigitalOcean account
+
+        ```bash
+        cnspec scan digitalocean --token <your-api-token>
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Account
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-account-email-verified
+      - title: Droplets
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-droplet-in-vpc
+      - title: Cloud Firewalls
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh
+          - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp
+          - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports
+          - uid: mondoo-digitalocean-security-firewall-no-all-ports-open
+      - title: Managed Databases
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-db-firewall-configured
+          - uid: mondoo-digitalocean-security-db-in-private-network
+          - uid: mondoo-digitalocean-security-db-engine-supported-version
+      - title: Load Balancers
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
+      - title: Kubernetes (DOKS)
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled
+          - uid: mondoo-digitalocean-security-doks-supported-version
+      - title: TLS Certificates
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-cert-not-expired
+      - title: CDN
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-cdn-has-certificate
+      - title: Spaces
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants
+      - title: App Platform
+        filters: asset.platform == "digitalocean"
+        checks:
+          - uid: mondoo-digitalocean-security-app-platform-https
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-digitalocean-security-account-email-verified
+    title: Ensure the DigitalOcean account email is verified
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-pr-aa-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-12
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: false
+    mql: |
+      digitalocean.account.emailVerified == true
+    docs:
+      desc: |
+        This check ensures that the DigitalOcean account has a verified email address.
+
+        **Why this matters**
+
+        DigitalOcean uses the account email for password resets and other recovery workflows. If the email is unverified, an attacker who plants or coerces an unverified address into the account can take over the account through the self-service recovery flow. Verification binds the identity on the account to a mailbox the legitimate owner demonstrably controls.
+      remediation: |
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Settings** > **Profile**.
+        3. If the email address shows as unverified, click **Resend verification email**.
+        4. Open the verification email and follow the confirmation link.
+    refs:
+      - url: https://docs.digitalocean.com/products/accounts/security/
+        title: DigitalOcean account security
+
+  - uid: mondoo-digitalocean-security-droplet-in-vpc
+    title: Ensure Droplets are deployed inside a VPC
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.droplets.all(vpcUuid != "")
+    docs:
+      desc: |
+        This check ensures that every Droplet is attached to a Virtual Private Cloud (VPC).
+
+        **Why this matters**
+
+        A Droplet not attached to a VPC cannot use private networking to reach other resources. Without VPC-level segmentation, an attacker who compromises one Droplet has broader reach across the account and lateral movement is harder to contain. VPCs also reduce unnecessary internet exposure by allowing private-only traffic between resources in the same VPC.
+      remediation: |
+        DigitalOcean does not support moving an existing Droplet into a VPC directly. To remediate, create a snapshot of the Droplet, create a replacement Droplet from the snapshot inside the target VPC, and retire the original.
+
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Images** > **Snapshots** and take a snapshot of the affected Droplet.
+        2. Create a new Droplet from the snapshot and select a VPC (not the default) in the **VPC Network** section.
+        3. Update DNS, firewall rules, and monitoring to point at the new Droplet.
+        4. Destroy the original Droplet.
+
+        **From `doctl`**
+
+        ```bash
+        doctl compute droplet-action snapshot <droplet-id> --snapshot-name <name>
+        doctl compute droplet create <new-name> \
+          --image <snapshot-id> \
+          --size <size> \
+          --region <region> \
+          --vpc-uuid <vpc-uuid>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/vpc/
+        title: DigitalOcean VPC overview
+
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh
+    title: Ensure no firewall allows unrestricted inbound SSH (port 22)
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "22" && _["sourceAddresses"].contains("0.0.0.0/0")
+        )
+      )
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "22" && _["sourceAddresses"].contains("::/0")
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that no Cloud Firewall has an inbound rule that allows TCP traffic on port 22 from the public internet (`0.0.0.0/0` or `::/0`).
+
+        **Why this matters**
+
+        SSH exposed to the entire internet is a primary target for credential stuffing, brute-force login attempts, and exploitation of any future SSH server CVE. Even with key-based authentication, open SSH exposes the SSH daemon itself as an attack surface. SSH access should be restricted to a known trusted CIDR range, a bastion host, or a VPN.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Networking** > **Firewalls** and open the affected firewall.
+        2. Edit the offending inbound rule for SSH and change the source from `All IPv4`/`All IPv6` to a specific trusted CIDR, tag, or Droplet ID.
+        3. Save the firewall.
+
+        **From `doctl`**
+
+        ```bash
+        doctl compute firewall remove-rules <firewall-id> \
+          --inbound-rules "protocol:tcp,ports:22,address:0.0.0.0/0"
+        doctl compute firewall add-rules <firewall-id> \
+          --inbound-rules "protocol:tcp,ports:22,address:<your-trusted-cidr>"
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
+        title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp
+    title: Ensure no firewall allows unrestricted inbound RDP (port 3389)
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "3389" && _["sourceAddresses"].contains("0.0.0.0/0")
+        )
+      )
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "3389" && _["sourceAddresses"].contains("::/0")
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that no Cloud Firewall has an inbound rule that allows TCP traffic on port 3389 from the public internet (`0.0.0.0/0` or `::/0`).
+
+        **Why this matters**
+
+        RDP is a long-standing target of ransomware deployment and has been involved in repeated high-impact breaches. The RDP protocol itself has had multiple critical pre-authentication RCE CVEs (for example BlueKeep). Exposing RDP to the internet should be treated as an immediate security incident.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Networking** > **Firewalls** and open the affected firewall.
+        2. Remove the RDP rule entirely, or restrict the source to a specific trusted CIDR, tag, or Droplet ID.
+        3. Save the firewall.
+
+        **From `doctl`**
+
+        ```bash
+        doctl compute firewall remove-rules <firewall-id> \
+          --inbound-rules "protocol:tcp,ports:3389,address:0.0.0.0/0"
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
+        title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports
+    title: Ensure no firewall allows unrestricted inbound on common database ports
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "3306" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "3306" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "5432" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "5432" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "27017" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "27017" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "6379" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "6379" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9092" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9092" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("::/0")))
+    docs:
+      desc: |
+        This check ensures that no Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), and Elasticsearch/OpenSearch (9200).
+
+        **Why this matters**
+
+        Databases exposed directly to the internet are routinely scanned and compromised — credential brute force, unauthenticated misconfiguration exploitation, and ransom-style data extortion are all well-documented outcomes. Database traffic should only traverse private networks; applications needing external access should reach the database through a bastion or through the application tier, not directly.
+      remediation: |
+        Remove or restrict the offending inbound rule so the source is a trusted CIDR, tag, or Droplet ID.
+
+        ```bash
+        doctl compute firewall remove-rules <firewall-id> \
+          --inbound-rules "protocol:tcp,ports:5432,address:0.0.0.0/0"
+        ```
+
+        Repeat for each offending port. For managed databases, prefer the database's built-in **Trusted Sources** restriction (see the `db-firewall-configured` check).
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
+        title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-firewall-no-all-ports-open
+    title: Ensure no firewall allows unrestricted inbound on all ports
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "all" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "all" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "1-65535" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "1-65535" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("::/0")))
+    docs:
+      desc: |
+        This check ensures that no Cloud Firewall has an inbound rule that allows the full port range (`0`, `all`, `1-65535`, or `0-65535`) from the public internet.
+
+        **Why this matters**
+
+        An "allow all ports from anywhere" rule is functionally equivalent to having no firewall. It exposes every service running on the Droplet — intended or unintended, known or forgotten — to every host on the internet. This is the highest-severity network misconfiguration.
+      remediation: |
+        Remove the wide-open rule and replace it with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
+
+        ```bash
+        doctl compute firewall remove-rules <firewall-id> \
+          --inbound-rules "protocol:tcp,ports:0,address:0.0.0.0/0"
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
+        title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-db-firewall-configured
+    title: Ensure managed databases restrict access via Trusted Sources
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.databases.all(firewallRules != empty)
+    docs:
+      desc: |
+        This check ensures that every managed database cluster has at least one Trusted Sources entry (firewall rule), restricting inbound connections to specific Droplets, tags, Kubernetes clusters, apps, or IP addresses.
+
+        **Why this matters**
+
+        A managed database with no Trusted Sources accepts connections from any source that knows a valid credential. That makes the database reachable by anyone who obtains or guesses a password — credential leaks from application logs, developer laptops, or source control become full database compromise. Restricting to Trusted Sources cuts off that lateral path even if credentials leak.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Databases** and open the affected cluster.
+        2. Go to **Settings** > **Trusted Sources**.
+        3. Add the Droplets, tags, apps, Kubernetes clusters, or specific IP addresses that need database access.
+
+        **From `doctl`**
+
+        ```bash
+        doctl databases firewalls append <database-id> \
+          --rule droplet:<droplet-id>
+        doctl databases firewalls append <database-id> \
+          --rule ip_addr:<cidr>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
+        title: Secure a managed database cluster
+
+  - uid: mondoo-digitalocean-security-db-in-private-network
+    title: Ensure managed databases are attached to a private network
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.databases.all(privateNetworkUuid != "")
+    docs:
+      desc: |
+        This check ensures that every managed database cluster is attached to a VPC (private network).
+
+        **Why this matters**
+
+        A managed database outside any VPC must be reached over the public internet, even from applications in the same DigitalOcean account. That requires TLS termination on the client, a public DNS record for the database, and — crucially — a failure-open posture if an application misconfigures its connection. A VPC-attached database can be reached on a private endpoint, keeping all traffic on internal networks.
+      remediation: |
+        DigitalOcean does not support moving an existing managed database into a VPC. To remediate, create a fork or a new cluster in the desired VPC, migrate the data, and retire the original.
+
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Databases** and open the affected cluster.
+        2. Create a fork (point-in-time snapshot) and, in the creation flow, select a VPC under **Network**.
+        3. Cut applications over to the new cluster's private endpoint, then destroy the original.
+
+        **From `doctl`**
+
+        ```bash
+        doctl databases create <new-name> \
+          --engine <engine> \
+          --region <region> \
+          --private-network-uuid <vpc-uuid>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/connect/
+        title: Connect to a managed database cluster
+
+  - uid: mondoo-digitalocean-security-db-engine-supported-version
+    title: Ensure managed database engines are not running an EOL version
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+    mql: |
+      digitalocean.databases.where(engine == "pg").all(version != "9" && version != "9.5" && version != "9.6" && version != "10" && version != "11" && version != "12" && version != "13")
+      digitalocean.databases.where(engine == "mysql").all(version != "5.6" && version != "5.7")
+      digitalocean.databases.where(engine == "redis").all(version != "4" && version != "5" && version != "6")
+      digitalocean.databases.where(engine == "mongodb").all(version != "3.6" && version != "4.0" && version != "4.2" && version != "4.4" && version != "5.0")
+      digitalocean.databases.where(engine == "kafka").all(version != "2.8" && version != "3.0" && version != "3.1" && version != "3.2" && version != "3.3" && version != "3.4")
+      digitalocean.databases.where(engine == "opensearch").all(version != "1.0" && version != "1.1" && version != "1.2" && version != "1.3")
+    docs:
+      desc: |
+        This check ensures that managed database clusters are not running a database engine version that has reached end of life or is no longer receiving security patches.
+
+        **Why this matters**
+
+        Databases running EOL engine versions do not receive patches for newly disclosed vulnerabilities. Known-exploited database CVEs are routinely weaponized — including unauthenticated RCE chains in older PostgreSQL, Redis, and MongoDB releases. Upgrading the engine ensures security fixes continue to land on the cluster.
+
+        The check flags these versions as EOL or near-EOL:
+
+        - PostgreSQL: 9.x through 13
+        - MySQL: 5.6, 5.7
+        - Redis: 4, 5, 6
+        - MongoDB: 3.6, 4.0, 4.2, 4.4, 5.0
+        - Kafka: 2.8, 3.0 through 3.4
+        - OpenSearch: 1.x
+      remediation: |
+        Major-version upgrades for managed databases on DigitalOcean require a migration path. Review the DigitalOcean upgrade documentation for your engine, run the upgrade in a non-production clone first, then cut over.
+
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Databases** and open the affected cluster.
+        2. Go to **Settings** > **Upgrade Major Version** (availability depends on engine).
+        3. Follow the prompts; otherwise, create a new cluster on a supported version and migrate data using `pg_dump`/`mysqldump`/native replication.
+    refs:
+      - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/upgrade-major-version/
+        title: Upgrade a managed database major version
+
+  - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
+    title: Ensure load balancers redirect HTTP traffic to HTTPS
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      digitalocean.loadBalancers.all(
+        forwardingRules.none(_["entry_protocol"] == "http") || redirectHttpToHttps == true
+      )
+    docs:
+      desc: |
+        This check ensures that any load balancer accepting HTTP traffic also has `redirectHttpToHttps` enabled, so HTTP requests are 301-redirected to HTTPS.
+
+        **Why this matters**
+
+        A load balancer that accepts plaintext HTTP and serves the response in plaintext exposes every request to interception and modification — credentials, session cookies, API keys, and response content are all readable by any host on the network path. Redirecting HTTP to HTTPS forces subsequent requests over TLS, closing the window where a downgrade or sidejacking attack can succeed.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Networking** > **Load Balancers** and open the affected load balancer.
+        2. Go to **Settings** > **Forwarding Rules**.
+        3. Enable **Redirect HTTP to HTTPS**. Confirm that an HTTPS forwarding rule and TLS certificate are configured.
+
+        **From `doctl`**
+
+        ```bash
+        doctl compute load-balancer update <lb-id> \
+          --redirect-http-to-https
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/ssl-termination/
+        title: Load balancer SSL termination and redirect
+
+  - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled
+    title: Ensure DOKS clusters have auto-upgrade enabled
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+    mql: |
+      digitalocean.kubernetesClusters.all(autoUpgrade == true)
+    docs:
+      desc: |
+        This check ensures that every DigitalOcean Kubernetes (DOKS) cluster has auto-upgrade enabled.
+
+        **Why this matters**
+
+        Kubernetes control-plane and node components receive regular security patches. Clusters without auto-upgrade depend on an operator remembering to apply each patch release; that window is where known-exploited CVEs land on production. Enabling auto-upgrade ensures patches are applied within the configured maintenance window without manual intervention.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Kubernetes** and open the affected cluster.
+        2. Go to **Settings** > **Maintenance**.
+        3. Enable **Automatically upgrade my cluster to patch releases**.
+
+        **From `doctl`**
+
+        ```bash
+        doctl kubernetes cluster update <cluster-id> --auto-upgrade=true
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/kubernetes/how-to/upgrade-cluster/
+        title: Upgrade a DOKS cluster
+
+  - uid: mondoo-digitalocean-security-doks-supported-version
+    title: Ensure DOKS clusters run a supported Kubernetes minor version
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+    mql: |
+      digitalocean.kubernetesClusters.all(
+        version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      )
+    docs:
+      desc: |
+        This check ensures that DOKS clusters run Kubernetes 1.30 or newer, matching DigitalOcean's supported-version window.
+
+        **Why this matters**
+
+        DigitalOcean supports only the latest three Kubernetes minor versions. Clusters on older minors no longer receive security patches from the provider, and upstream Kubernetes itself drops support for minors older than roughly one year. Running an unsupported minor means known CVEs accumulate without remediation.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Kubernetes** and open the affected cluster.
+        2. Go to **Overview** and click **Upgrade Available** if present.
+        3. Select a supported version and confirm the upgrade.
+
+        **From `doctl`**
+
+        ```bash
+        doctl kubernetes options versions
+        doctl kubernetes cluster upgrade <cluster-id> --version <supported-version>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
+        title: DOKS supported Kubernetes releases
+
+  - uid: mondoo-digitalocean-security-cert-not-expired
+    title: Ensure TLS certificates are not expired
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      digitalocean.certificates.all(notAfter > time.now)
+    docs:
+      desc: |
+        This check ensures that no TLS certificate managed in DigitalOcean has passed its `notAfter` expiration date.
+
+        **Why this matters**
+
+        An expired TLS certificate breaks the trust chain clients rely on. Users see certificate warnings and are trained to click through — which normalizes certificate bypass and gives real man-in-the-middle attempts cover. API clients often fail closed and take down dependent services, so an expired certificate is both a security failure and an availability incident.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Networking** > **Certificates**.
+        2. Identify the expired certificate and either upload a renewed version or regenerate a Let's Encrypt certificate.
+        3. Update any load balancers, CDN endpoints, or App Platform apps referencing the old certificate.
+
+        **From `doctl`**
+
+        ```bash
+        doctl compute certificate create \
+          --name <new-name> \
+          --type lets_encrypt \
+          --dns-names <domain>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/certificates/
+        title: DigitalOcean TLS certificates
+
+  - uid: mondoo-digitalocean-security-cdn-has-certificate
+    title: Ensure CDN endpoints with a custom domain have a TLS certificate attached
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      digitalocean.cdnEndpoints.where(customDomain != "").all(certificateId != "")
+    docs:
+      desc: |
+        This check ensures that every CDN endpoint configured with a custom domain has a TLS certificate attached.
+
+        **Why this matters**
+
+        A CDN endpoint on a custom domain without a TLS certificate cannot terminate HTTPS for that domain — clients either fall back to HTTP or hit certificate warnings. Either outcome exposes user traffic to interception, content injection, and credential theft. The CDN is typically the first hop users reach, so protecting it with TLS is load-bearing for the whole request path.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **Networking** > **CDN** and open the affected endpoint.
+        2. Under **Custom subdomain**, select an existing certificate or create a new Let's Encrypt certificate for the domain.
+        3. Save the CDN configuration.
+
+        **From `doctl`**
+
+        ```bash
+        doctl compute cdn update <cdn-id> --certificate-id <cert-id>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/cdn/how-to/use-custom-subdomain/
+        title: CDN custom subdomain and TLS
+
+  - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants
+    title: Ensure Spaces access keys are scoped with bucket grants
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      digitalocean.spacesKeys.all(grants != empty)
+    docs:
+      desc: |
+        This check ensures that every Spaces access key has at least one bucket grant defined, restricting the key to specific buckets and permissions. A key with no grants has full account-level access to every bucket.
+
+        **Why this matters**
+
+        A Spaces access key with no grants is effectively a root credential for object storage. If that key leaks — committed to source control, logged by an application, embedded in a client binary — the blast radius is every bucket in the account. Grant-scoped keys limit an exposed credential to exactly the bucket and operations the application needs.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **API** > **Spaces Keys**.
+        2. Delete the unscoped key and create a replacement with specific bucket grants (for example, read-only on a single bucket).
+        3. Rotate the key in every application that consumed the old one.
+
+        **From `doctl`**
+
+        ```bash
+        doctl spaces keys create <new-name> \
+          --grants "bucket=<bucket-name>;permission=read"
+        doctl spaces keys delete <old-key>
+        ```
+    refs:
+      - url: https://docs.digitalocean.com/products/spaces/how-to/manage-access/
+        title: Manage Spaces access keys and grants
+
+  - uid: mondoo-digitalocean-security-app-platform-https
+    title: Ensure App Platform apps are served over HTTPS
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      digitalocean.apps.where(liveUrl != "").all(liveUrl == /^https:\/\//)
+    docs:
+      desc: |
+        This check ensures that every DigitalOcean App Platform application with a public live URL serves that URL over HTTPS.
+
+        **Why this matters**
+
+        An app served over plaintext HTTP exposes every request and response to interception and tampering. App Platform serves managed TLS certificates automatically, so there is no technical reason for an app to be HTTP-only — an HTTP `liveUrl` typically indicates a misconfigured custom domain or a development app promoted to production without a TLS setup.
+      remediation: |
+        **From the DigitalOcean Control Panel**
+
+        1. Navigate to **App Platform** and open the affected app.
+        2. Go to **Settings** > **Domains**.
+        3. Remove or correct any custom domain without a managed certificate, and verify that the generated app URL on `ondigitalocean.app` is reachable over HTTPS.
+        4. Trigger a new deployment if needed.
+    refs:
+      - url: https://docs.digitalocean.com/products/app-platform/how-to/manage-domains/
+        title: Manage App Platform domains and certificates
