@@ -630,6 +630,9 @@ func syncBatchWithUpstream(
 				if details, ok := platformAssetMapping[platformMrn]; ok {
 					asset.Mrn = details.AssetMrn
 					asset.Url = details.Url
+					if asset.Labels == nil {
+						asset.Labels = make(map[string]string)
+					}
 					asset.Labels["mondoo.com/project-id"] = details.ProjectId
 
 					if asset.Annotations == nil {
