@@ -429,6 +429,29 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	return nil
 }
 
+// StaticReportingJobNodeData holds a pre-computed score and emits it once on
+// its first recalculate. Used in rescore mode to replace leaf reporting-job
+// nodes whose score is supplied up front. It has no inbound edges; consume
+// is a no-op.
+type StaticReportingJobNodeData struct {
+	score *policy.Score
+	sent  bool
+}
+
+func (nodeData *StaticReportingJobNodeData) initialize() {}
+
+func (nodeData *StaticReportingJobNodeData) consume(from NodeID, data *envelope) {}
+
+func (nodeData *StaticReportingJobNodeData) recalculate() *envelope {
+	if nodeData.sent {
+		return nil
+	}
+	nodeData.sent = true
+	return &envelope{
+		score: nodeData.score,
+	}
+}
+
 type reportingJobDatapoint struct {
 	res *llx.RawResult
 }
