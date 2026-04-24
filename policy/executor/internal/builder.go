@@ -55,6 +55,13 @@ type GraphBuilder struct {
 	// runtime to send all the expected datapoints.
 	queryTimeout time.Duration
 
+	// rescoreScores, when non-nil, puts the builder in rescore mode: no
+	// queries run, and any reporting job whose (post-"root" rename) QrId
+	// is in the map is replaced with a StaticReportingJobNode holding the
+	// supplied score. Aggregate reporting jobs for non-supplied QrIds are
+	// still created and roll up scores from their children.
+	rescoreScores map[string]*policy.Score
+
 	// featureFlagFailErrors is a feature flag to count errors as failures
 	// See https://www.notion.so/mondoo/Errors-and-Scoring-5dc554348aad4118a1dbf35123368329
 	featureFlagFailErrors bool
@@ -151,8 +158,17 @@ func (b *GraphBuilder) WithFeatureFlagFailErrors() {
 	b.featureFlagFailErrors = true
 }
 
+// WithRescore puts the builder in rescore mode. In rescore mode, no queries
+// are executed: reporting jobs whose QrId (after the "root" -> assetMrn
+// rename) is a key in scores are built as StaticReportingJobNodes holding
+// the supplied pre-computed score; aggregate reporting jobs still roll up
+// their children via the normal ReportingJobNode.
+func (b *GraphBuilder) WithRescore(scores map[string]*policy.Score) {
+	b.rescoreScores = scores
+}
+
 func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecutor, error) {
-	resultChan := make(chan *llx.RawResult, 128)
+	rescore := b.rescoreScores != nil
 
 	queries := make(map[string]query, len(b.queries))
 	for _, q := range b.queries {
@@ -164,13 +180,17 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		edges:        map[NodeID][]NodeID{},
 		priorityMap:  map[NodeID]int{},
 		queryTimeout: b.queryTimeout,
-		executionManager: newExecutionManager(runtime, make(chan runQueueItem, len(queries)),
-			resultChan, b.queryTimeout, b.dumpDatapoints),
-		resultChan: resultChan,
-		doneChan:   make(chan struct{}),
+		doneChan:     make(chan struct{}),
 
 		featureFlagFailErrors: b.featureFlagFailErrors,
 		dumpDatapoints:        b.dumpDatapoints,
+	}
+
+	if !rescore {
+		resultChan := make(chan *llx.RawResult, 128)
+		ge.resultChan = resultChan
+		ge.executionManager = newExecutionManager(runtime, make(chan runQueueItem, len(queries)),
+			resultChan, b.queryTimeout, b.dumpDatapoints)
 	}
 
 	ge.nodes[DatapointCollectorID] = &Node{
@@ -204,18 +224,20 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 
 	reportingQueryForReportingJob := map[string]string{}
 	reportingQueryNodeByCodeId := map[string]string{}
-	for queryID, q := range queries {
-		canRun := checkVersion(q.codeBundle, mondooVersion)
-		if canRun {
-			ge.addExecutionQueryNode(queryID, q, q.resolvedProperties, b.datapointType)
-		} else {
-			unrunnableQueries = append(unrunnableQueries, q)
-		}
-		n := ge.addReportingQueryNode(queryID, q)
-		reportingQueryNodeByCodeId[q.codeBundle.GetCodeV2().GetId()] = n.id
-		if len(q.notifies) > 0 {
-			for _, notify := range q.notifies {
-				reportingQueryForReportingJob[notify] = n.id
+	if !rescore {
+		for queryID, q := range queries {
+			canRun := checkVersion(q.codeBundle, mondooVersion)
+			if canRun {
+				ge.addExecutionQueryNode(queryID, q, q.resolvedProperties, b.datapointType)
+			} else {
+				unrunnableQueries = append(unrunnableQueries, q)
+			}
+			n := ge.addReportingQueryNode(queryID, q)
+			reportingQueryNodeByCodeId[q.codeBundle.GetCodeV2().GetId()] = n.id
+			if len(q.notifies) > 0 {
+				for _, notify := range q.notifies {
+					reportingQueryForReportingJob[notify] = n.id
+				}
 			}
 		}
 	}
@@ -227,9 +249,29 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 
 	for _, rj := range b.reportingJobs {
 		scoresToCollect = append(scoresToCollect, rj.Uuid)
-		for datapointChecksum := range rj.Datapoints {
-			datapointsToCollect = append(datapointsToCollect, datapointChecksum)
+		if !rescore {
+			for datapointChecksum := range rj.Datapoints {
+				datapointsToCollect = append(datapointsToCollect, datapointChecksum)
+			}
 		}
+
+		if rescore {
+			queryID := rj.QrId
+			if queryID == "root" {
+				queryID = assetMrn
+			}
+			if score, ok := b.rescoreScores[queryID]; ok {
+				ge.addStaticReportingJobNode(rj.Uuid, rj, queryID, score)
+				continue
+			}
+			// No score supplied for this reporting job: add it as a normal
+			// aggregate node with no query or datapoint inputs. Its
+			// children (other reporting jobs) will deliver scores via
+			// Notify edges.
+			ge.addReportingJobNode(assetMrn, rj.Uuid, rj, "")
+			continue
+		}
+
 		rq := reportingQueryForReportingJob[rj.Uuid]
 		if rq == "" {
 			// If a reporting query didn't explicitly notify this reporting job, but
@@ -249,19 +291,22 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		ge.addEdge(NodeID(datapointChecksum), DatapointCollectorID)
 	}
 
-	ge.handleUnrunnableQueries(unrunnableQueries)
-
-	ge.createFinisherNode(b.progressReporter)
+	if !rescore {
+		ge.handleUnrunnableQueries(unrunnableQueries)
+		ge.createFinisherNode(b.progressReporter)
+	}
 
 	for nodeID := range ge.nodes {
 		prioritizeNode(ge.nodes, ge.edges, ge.priorityMap, nodeID)
 	}
 
-	// The finisher is the lowest priority node. This makes it so that
-	// when a recalculation is triggered through a datapoint being reported,
-	// the finisher only gets notified after all other intermediate nodes are
-	// notified
-	ge.priorityMap[CollectionFinisherID] = math.MinInt
+	if !rescore {
+		// The finisher is the lowest priority node. This makes it so that
+		// when a recalculation is triggered through a datapoint being reported,
+		// the finisher only gets notified after all other intermediate nodes are
+		// notified
+		ge.priorityMap[CollectionFinisherID] = math.MinInt
+	}
 
 	return ge, nil
 }
@@ -465,6 +510,34 @@ func (ge *GraphExecutor) addReportingJobNode(assetMrn string, reportingJobID str
 	}
 
 	nodeData.scoringSystem = rj.ScoringSystem
+
+	ge.nodes[n.id] = n
+}
+
+// addStaticReportingJobNode adds a reporting job node whose score is fixed
+// at build time. Used in rescore mode for reporting jobs whose score was
+// supplied by the caller. The node has only outbound edges -- one per
+// rj.Notify entry; the ScoreCollectorID edge is added by the caller's
+// scoresToCollect loop, same as for normal reporting-job nodes.
+func (ge *GraphExecutor) addStaticReportingJobNode(reportingJobID string, rj *policy.ReportingJob, queryID string, score *policy.Score) {
+	if _, ok := ge.nodes[NodeID(reportingJobID)]; ok {
+		return
+	}
+
+	s := score.CloneVT()
+	s.QrId = queryID
+	s.ScoreCompletion = 100
+	s.DataCompletion = 100
+
+	n := &Node{
+		id:       NodeID(reportingJobID),
+		nodeType: ReportingJobNodeType,
+		data:     &StaticReportingJobNodeData{score: s},
+	}
+
+	for _, e := range rj.Notify {
+		ge.addEdge(n.id, NodeID(e))
+	}
 
 	ge.nodes[n.id] = n
 }

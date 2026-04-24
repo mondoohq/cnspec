@@ -93,7 +93,9 @@ type GraphExecutor struct {
 // and we assign a priority to each node, each node in the graph should only
 // recalculate at most once in each round
 func (ge *GraphExecutor) Execute() error {
-	ge.executionManager.Start()
+	if ge.executionManager != nil {
+		ge.executionManager.Start()
+	}
 
 	// Trigger the execution nodes
 	maxPriority := len(ge.nodes) + 1
@@ -143,6 +145,13 @@ OUTER:
 			}
 		}
 
+		// Rescore mode: nothing else will feed the graph. Once the initial
+		// priority-queue pass propagates all static scores through their
+		// edges, we're done.
+		if ge.executionManager == nil {
+			break OUTER
+		}
+
 		if done {
 			break OUTER
 		}
@@ -182,7 +191,9 @@ OUTER:
 		}
 	}
 
-	ge.executionManager.Stop()
+	if ge.executionManager != nil {
+		ge.executionManager.Stop()
+	}
 	return err
 }
 
