@@ -56,7 +56,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Dockerfile Best Practices** - `mondoo-dockerfile-best-practices.mql.yaml` - Dockerfile authoring best practices
 - **Kubernetes Security** - `mondoo-kubernetes-security.mql.yaml` - Container orchestration security and RBAC validation
 - **Kubernetes Best Practices** - `mondoo-kubernetes-best-practices.mql.yaml` - Kubernetes operational best practices
-- **Proxmox VE Security** - `mondoo-proxmox-security.mql.yaml` - Proxmox Virtual Environment hypervisor, VM, and container security (CVE checks: `vulnerabilities/mondoo-proxmox-vulnerability.mql.yaml`)
+- **Proxmox VE Security** - `mondoo-proxmox-security.mql.yaml` - Proxmox Virtual Environment hypervisor, VM, and container security
 - **Terraform Deprecations** - `terraform-deprecations.mql.yaml` - Detect deprecated Terraform constructs
 
 ### Network Devices
