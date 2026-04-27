@@ -36,11 +36,13 @@ type ScanDataStoreReader interface {
 	StreamScores(ctx context.Context, callback func(*policy.Score) error) error
 	StreamData(ctx context.Context, callback func(string, *llx.Result) error) error
 	StreamRisks(ctx context.Context, callback func(*policy.ScoredRiskFactor) error) error
+	StreamResources(ctx context.Context, callback func(*llx.ResourceRecording) error) error
 
 	// Reader methods for specific items
 	GetScore(ctx context.Context, qrId string) (*policy.Score, error)
 	GetData(ctx context.Context, codeId string) (*llx.Result, error)
 	GetRisk(ctx context.Context, mrn string) (*policy.ScoredRiskFactor, error)
+	GetResource(ctx context.Context, resource string, id string) (*llx.ResourceRecording, error)
 	Close() error
 }
 
@@ -403,6 +405,48 @@ func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*po
 
 		if err := callback(risk); err != nil {
 			return fmt.Errorf("callback error for risk %s: %w", risk.Mrn, err)
+		}
+	}
+
+	return nil
+}
+
+// GetResource retrieves a specific resource by name and ID
+func (s *SqliteScanDataStore) GetResource(ctx context.Context, resource string, id string) (*llx.ResourceRecording, error) {
+	data, err := s.queries.GetResource(ctx, sqlc.GetResourceParams{
+		Name: resource,
+		ID:   id,
+	})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, policy.ErrResourceNotFound
+		}
+		return nil, fmt.Errorf("failed to get resource: %w", err)
+	}
+
+	result := &llx.ResourceRecording{}
+	if err := proto.Unmarshal(data, result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal resource %s/%s: %w", resource, id, err)
+	}
+
+	return result, nil
+}
+
+// StreamResources reads all resources with a callback function for memory-efficient processing
+func (s *SqliteScanDataStore) StreamResources(ctx context.Context, callback func(*llx.ResourceRecording) error) error {
+	resourceRows, err := s.queries.StreamResources(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query resources: %w", err)
+	}
+
+	for _, row := range resourceRows {
+		result := &llx.ResourceRecording{}
+		if err := proto.Unmarshal(row.Data, result); err != nil {
+			return fmt.Errorf("failed to unmarshal resource %s/%s: %w", row.Name, row.ID, err)
+		}
+
+		if err := callback(result); err != nil {
+			return fmt.Errorf("callback error for resource %s/%s: %w", row.Name, row.ID, err)
 		}
 	}
 

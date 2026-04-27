@@ -839,4 +839,84 @@ func TestSqliteScanDataStore_InsertResource(t *testing.T) {
 	// Write initial resource
 	err = store.WriteResource(ctx, initialResource)
 	require.NoError(t, err)
+
+	// Verify we can read it back
+	retrieved, err := store.GetResource(ctx, "upsert-resource-1", "res-1")
+	require.NoError(t, err)
+	assert.Equal(t, "upsert-resource-1", retrieved.Resource)
+	assert.Equal(t, "res-1", retrieved.Id)
+	require.NotNil(t, retrieved.Fields)
+	assert.Equal(t, llx.StringPrimitive("initial value"), retrieved.Fields["field1"].Data)
+
+	// Test not found
+	_, err = store.GetResource(ctx, "nonexistent", "nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resource not found")
+}
+
+func TestSqliteScanDataStore_StreamResources(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_stream_resources.db")
+
+	defer func() {
+		os.RemoveAll(tempDir)
+	}()
+
+	assetMrn := "//assets.api.mondoo.com/spaces/test-space/assets/stream-resource-test"
+	store, err := NewSqliteScanDataStore(dbPath, assetMrn)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	resources := []*llx.ResourceRecording{
+		{
+			Resource: "alpha-resource",
+			Id:       "id-1",
+			Fields: map[string]*llx.Result{
+				"name": {CodeId: "name", Data: llx.StringPrimitive("alpha")},
+			},
+		},
+		{
+			Resource: "alpha-resource",
+			Id:       "id-2",
+			Fields: map[string]*llx.Result{
+				"name": {CodeId: "name", Data: llx.StringPrimitive("alpha-2")},
+			},
+		},
+		{
+			Resource: "beta-resource",
+			Id:       "id-1",
+			Fields: map[string]*llx.Result{
+				"name": {CodeId: "name", Data: llx.StringPrimitive("beta")},
+			},
+		},
+	}
+
+	for _, r := range resources {
+		err := store.WriteResource(ctx, r)
+		require.NoError(t, err)
+	}
+
+	// Stream all resources
+	var streamed []*llx.ResourceRecording
+	err = store.StreamResources(ctx, func(r *llx.ResourceRecording) error {
+		streamed = append(streamed, r)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, streamed, 3)
+
+	// Results are ordered by name, id
+	assert.Equal(t, "alpha-resource", streamed[0].Resource)
+	assert.Equal(t, "id-1", streamed[0].Id)
+	assert.Equal(t, "alpha-resource", streamed[1].Resource)
+	assert.Equal(t, "id-2", streamed[1].Id)
+	assert.Equal(t, "beta-resource", streamed[2].Resource)
+	assert.Equal(t, "id-1", streamed[2].Id)
+
+	// Verify individual gets still work
+	got, err := store.GetResource(ctx, "beta-resource", "id-1")
+	require.NoError(t, err)
+	assert.Equal(t, llx.StringPrimitive("beta"), got.Fields["name"].Data)
 }

@@ -116,6 +116,68 @@ func TestScanDataStoreWrapper(t *testing.T) {
 		assert.Contains(t, err.Error(), "data not found")
 	})
 
+	// Test resource methods
+	testResource := &llx.ResourceRecording{
+		Resource: "wrapper-resource",
+		Id:       "res-1",
+		Fields: map[string]*llx.Result{
+			"field1": {CodeId: "field1", Data: llx.StringPrimitive("wrapper resource data")},
+		},
+	}
+
+	t.Run("WriteResource with correct asset MRN", func(t *testing.T) {
+		err := wrapper.WriteResource(ctx, assetMrn, testResource)
+		require.NoError(t, err)
+	})
+
+	t.Run("WriteResource with incorrect asset MRN", func(t *testing.T) {
+		wrongAssetMrn := "//assets.api.mondoo.com/spaces/wrong/assets/wrong"
+		err := wrapper.WriteResource(ctx, wrongAssetMrn, testResource)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "asset MRN mismatch")
+	})
+
+	t.Run("GetResource with correct asset MRN", func(t *testing.T) {
+		resource, err := wrapper.GetResource(ctx, assetMrn, "wrapper-resource", "res-1")
+		require.NoError(t, err)
+		assert.Equal(t, "wrapper-resource", resource.Resource)
+		assert.Equal(t, "res-1", resource.Id)
+		assert.Equal(t, llx.StringPrimitive("wrapper resource data"), resource.Fields["field1"].Data)
+	})
+
+	t.Run("GetResource with incorrect asset MRN", func(t *testing.T) {
+		wrongAssetMrn := "//assets.api.mondoo.com/spaces/wrong/assets/wrong"
+		_, err := wrapper.GetResource(ctx, wrongAssetMrn, "wrapper-resource", "res-1")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "asset MRN mismatch")
+	})
+
+	t.Run("GetResource for non-existent resource", func(t *testing.T) {
+		_, err := wrapper.GetResource(ctx, assetMrn, "nonexistent", "nope")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "resource not found")
+	})
+
+	t.Run("StreamResources with correct asset MRN", func(t *testing.T) {
+		var resources []*llx.ResourceRecording
+		err := wrapper.StreamResources(ctx, assetMrn, func(r *llx.ResourceRecording) error {
+			resources = append(resources, r)
+			return nil
+		})
+		require.NoError(t, err)
+		require.Len(t, resources, 1)
+		assert.Equal(t, "wrapper-resource", resources[0].Resource)
+	})
+
+	t.Run("StreamResources with incorrect asset MRN", func(t *testing.T) {
+		wrongAssetMrn := "//assets.api.mondoo.com/spaces/wrong/assets/wrong"
+		err := wrapper.StreamResources(ctx, wrongAssetMrn, func(r *llx.ResourceRecording) error {
+			return nil
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "asset MRN mismatch")
+	})
+
 	t.Run("Finalize database", func(t *testing.T) {
 		path, err := wrapper.Finalize()
 		require.NoError(t, err)
