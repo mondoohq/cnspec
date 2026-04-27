@@ -102,6 +102,22 @@ func (w *ScanDataStoreWrapper) GetRisk(ctx context.Context, assetMrn string, ris
 	return w.store.GetRisk(ctx, riskID)
 }
 
+func (w *ScanDataStoreWrapper) GetResource(ctx context.Context, assetMrn string, resource string, id string) (*llx.ResourceRecording, error) {
+	if err := w.validate(assetMrn); err != nil {
+		return nil, err
+	}
+
+	return w.store.GetResource(ctx, resource, id)
+}
+
+func (w *ScanDataStoreWrapper) StreamResources(ctx context.Context, assetMrn string, f func(resource *llx.ResourceRecording) error) error {
+	if err := w.validate(assetMrn); err != nil {
+		return err
+	}
+
+	return w.store.StreamResources(ctx, f)
+}
+
 func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string, f func(risk *policy.ScoredRiskFactor) error) error {
 	if err := w.validate(assetMrn); err != nil {
 		return err
