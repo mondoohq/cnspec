@@ -115,9 +115,7 @@ func (w *ScanDataStoreWrapper) StreamResources(ctx context.Context, assetMrn str
 		return err
 	}
 
-	return w.store.StreamResources(ctx, func(resource *llx.ResourceRecording) error {
-		return f(resource)
-	})
+	return w.store.StreamResources(ctx, f)
 }
 
 func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string, f func(risk *policy.ScoredRiskFactor) error) error {
