@@ -440,7 +440,12 @@ type StaticReportingJobNodeData struct {
 
 func (nodeData *StaticReportingJobNodeData) initialize() {}
 
-func (nodeData *StaticReportingJobNodeData) consume(from NodeID, data *envelope) {}
+func (nodeData *StaticReportingJobNodeData) consume(from NodeID, data *envelope) {
+	// Static nodes have no inbound edges by construction. A consume call
+	// here means the builder wired one in by mistake; surface it instead
+	// of silently dropping the data.
+	log.Debug().Str("from", string(from)).Msg("static reporting job received unexpected consume; ignoring")
+}
 
 func (nodeData *StaticReportingJobNodeData) recalculate() *envelope {
 	if nodeData.sent {

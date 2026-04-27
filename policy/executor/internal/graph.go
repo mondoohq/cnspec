@@ -101,8 +101,19 @@ func (ge *GraphExecutor) Execute() error {
 	maxPriority := len(ge.nodes) + 1
 	q := make(PriorityQueue, 0, len(ge.nodes))
 	heap.Init(&q)
+	rescore := ge.executionManager == nil
 	for nodeID, n := range ge.nodes {
 		n.data.initialize()
+		if rescore {
+			// In rescore mode, only static reporting-job nodes produce output
+			// unprompted; every other node will be queued via consume +
+			// cascade once a static node emits. Skipping the rest avoids
+			// redundant nil-recalculates on aggregate nodes during the
+			// initial sweep.
+			if _, ok := n.data.(*StaticReportingJobNodeData); !ok {
+				continue
+			}
+		}
 		heap.Push(&q, &Item{
 			priority: maxPriority,
 			receiver: nodeID,
