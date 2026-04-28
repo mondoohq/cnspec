@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 10.1.0
+    version: 11.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -129,6 +129,9 @@ policies:
           - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk
           - uid: mondoo-aws-security-s3-mfa-delete
           - uid: mondoo-aws-security-s3-ownership-controls-enforced
+          - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal
+          - uid: mondoo-aws-security-s3-bucket-policy-secure-transport
+          - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced
       - title: AWS Security Group
         checks:
           - uid: mondoo-aws-security-secgroup-restricted-ssh
@@ -136,6 +139,19 @@ policies:
           - uid: mondoo-aws-security-secgroup-restricted-rdp
           - uid: mondoo-aws-security-secgroup-restrict-traffic
           - uid: mondoo-aws-security-secgroup-no-unrestricted-egress
+          - uid: mondoo-aws-security-secgroup-restricted-postgresql
+          - uid: mondoo-aws-security-secgroup-restricted-mysql
+          - uid: mondoo-aws-security-secgroup-restricted-mssql
+          - uid: mondoo-aws-security-secgroup-restricted-oracle
+          - uid: mondoo-aws-security-secgroup-restricted-mongodb
+          - uid: mondoo-aws-security-secgroup-restricted-redis
+          - uid: mondoo-aws-security-secgroup-restricted-memcached
+          - uid: mondoo-aws-security-secgroup-restricted-elasticsearch
+          - uid: mondoo-aws-security-secgroup-restricted-winrm
+          - uid: mondoo-aws-security-secgroup-restricted-docker-daemon
+          - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api
+          - uid: mondoo-aws-security-secgroup-restricted-kubelet
+          - uid: mondoo-aws-security-secgroup-restricted-etcd
       - title: AWS VPC
         checks:
           - uid: mondoo-aws-security-vpc-default-security-group-closed
@@ -373,11 +389,13 @@ policies:
           - uid: mondoo-aws-security-sns-topic-signature-version
           - uid: mondoo-aws-security-sns-subscription-https
           - uid: mondoo-aws-security-sns-no-public-access
+          - uid: mondoo-aws-security-sns-topic-cmk-encryption
       - title: Amazon SQS
         checks:
           - uid: mondoo-aws-security-sqs-queue-encrypted
           - uid: mondoo-aws-security-sqs-queue-dead-letter-queue
           - uid: mondoo-aws-security-sqs-no-wildcard-policy
+          - uid: mondoo-aws-security-sqs-queue-cmk-encryption
       - title: Amazon ElastiCache
         checks:
           - uid: mondoo-aws-security-elasticache-encryption-at-rest
@@ -45976,3 +45994,747 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/db-instance-maintain.html
         title: AWS Documentation - Maintaining Amazon DocumentDB
+  - uid: mondoo-aws-security-secgroup-restricted-postgresql
+    title: Ensure security groups restrict incoming PostgreSQL traffic
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-postgresql-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the PostgreSQL port (5432) from the internet (`0.0.0.0/0` or `::/0`). Database engines should never be exposed to the public internet; access should be limited to specific application or bastion subnets.
+
+        **Why this matters**
+
+        - Internet-exposed PostgreSQL instances are continuously scanned for default credentials, weak passwords, and unpatched vulnerabilities such as CVE-2024-10977.
+        - A successful exploit of an exposed database results in immediate read/write access to every record, regardless of application-layer authorization.
+        - Public exposure violates baseline expectations under PCI DSS, HIPAA, NIST 800-53 SC-7, and ISO 27001 A.8.22.
+      remediation:
+        - id: console
+          desc: |
+            1. Open the EC2 console and select **Security Groups**.
+            2. Identify any rule allowing port 5432 from `0.0.0.0/0` or `::/0`.
+            3. Edit the rule and replace the source with the application-tier security group, VPN CIDR, or specific bastion address.
+        - id: cli
+          desc: |
+            Find offending rules:
+
+            ```bash
+            aws ec2 describe-security-groups \
+              --query "SecurityGroups[?IpPermissions[?FromPort==`5432` && (IpRanges[].CidrIp=='0.0.0.0/0' || Ipv6Ranges[].CidrIpv6=='::/0')]].GroupId"
+            ```
+
+            Revoke the unrestricted rule:
+
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=5432,ToPort=5432,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
+        title: AWS Documentation - Controlling access with security groups
+  - uid: mondoo-aws-security-secgroup-restricted-postgresql-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 5432 && toPort >= 5432 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-mysql
+    title: Ensure security groups restrict incoming MySQL/MariaDB/Aurora traffic
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-mysql-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the MySQL/MariaDB/Aurora port (3306) from `0.0.0.0/0` or `::/0`. Public exposure of relational database engines is one of the most frequently exploited cloud misconfigurations.
+
+        **Why this matters**
+
+        - Internet-reachable MySQL endpoints are constantly probed for default `root` credentials and weak passwords.
+        - Successful authentication grants the attacker every privilege the database user holds, including data exfiltration and destructive `DROP` operations.
+      remediation:
+        - id: console
+          desc: |
+            Edit the offending security group in the EC2 console and replace `0.0.0.0/0` on port 3306 with a specific application-tier security group or VPN CIDR.
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=3306,ToPort=3306,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
+        title: AWS Documentation - Controlling access with security groups
+  - uid: mondoo-aws-security-secgroup-restricted-mysql-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 3306 && toPort >= 3306 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-mssql
+    title: Ensure security groups restrict incoming Microsoft SQL Server traffic
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-mssql-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on Microsoft SQL Server's TDS port (1433) from `0.0.0.0/0` or `::/0`. Internet-exposed SQL Server is a recurring vector for ransomware that abuses `xp_cmdshell` and weak `sa` passwords.
+
+        **Why this matters**
+
+        - The `MSSQL` service is a primary target for credential-stuffing botnets.
+        - Successful logins lead to OS-level command execution via `xp_cmdshell` if it is enabled, escalating to full host compromise.
+      remediation:
+        - id: console
+          desc: |
+            Edit the offending security group in the EC2 console and replace `0.0.0.0/0` on port 1433 with a specific application-tier security group or VPN CIDR.
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=1433,ToPort=1433,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/sql/sql-server/install/security-considerations-for-a-sql-server-installation
+        title: Microsoft Documentation - Security considerations for a SQL Server installation
+  - uid: mondoo-aws-security-secgroup-restricted-mssql-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 1433 && toPort >= 1433 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-oracle
+    title: Ensure security groups restrict incoming Oracle Database traffic
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-oracle-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the Oracle Database listener port (1521) from `0.0.0.0/0` or `::/0`.
+
+        **Why this matters**
+
+        Public exposure of the Oracle TNS listener has historically been used to enumerate SIDs, brute-force database credentials, and exploit listener-level vulnerabilities. Restricting the listener to internal subnets eliminates the entire class of internet-borne attacks against the database.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=1521,ToPort=1521,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en/database/oracle/oracle-database/19/dbseg/index.html
+        title: Oracle Database Security Guide
+  - uid: mondoo-aws-security-secgroup-restricted-oracle-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 1521 && toPort >= 1521 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-mongodb
+    title: Ensure security groups restrict incoming MongoDB traffic
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-mongodb-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the MongoDB port (27017) from `0.0.0.0/0` or `::/0`. Internet-exposed MongoDB instances have been at the center of multiple mass ransom campaigns where attackers wipe collections and demand payment.
+
+        **Why this matters**
+
+        - Default MongoDB deployments historically lacked authentication, and exposed instances are still routinely discovered by search engines such as Shodan.
+        - Even with authentication enabled, a public endpoint accelerates credential-stuffing and exposes pre-auth CVEs to the internet.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=27017,ToPort=27017,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://www.mongodb.com/docs/manual/administration/security-checklist/
+        title: MongoDB Security Checklist
+  - uid: mondoo-aws-security-secgroup-restricted-mongodb-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 27017 && toPort >= 27017 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-redis
+    title: Ensure security groups restrict incoming Redis traffic
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-redis-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the Redis port (6379) from `0.0.0.0/0` or `::/0`. Open Redis servers have repeatedly been used to mine cryptocurrency, plant SSH keys via `CONFIG SET dir`, and pivot into application infrastructure.
+
+        **Why this matters**
+
+        Redis was historically deployed without authentication. Exposed instances are routinely abused via the `CONFIG`/`DEBUG`/`MODULE LOAD` commands to gain RCE on the host running the server.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=6379,ToPort=6379,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://redis.io/docs/management/security/
+        title: Redis Security Documentation
+  - uid: mondoo-aws-security-secgroup-restricted-redis-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 6379 && toPort >= 6379 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-memcached
+    title: Ensure security groups restrict incoming Memcached traffic
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-memcached-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the Memcached port (11211) from `0.0.0.0/0` or `::/0`. Public Memcached servers have been weaponized for record-breaking UDP reflection/amplification DDoS attacks (>1 Tbps).
+
+        **Why this matters**
+
+        Memcached's default UDP responder amplifies a 200-byte query into multi-kilobyte responses, making any exposed instance a potential DDoS amplifier. The cached data itself is also typically unauthenticated.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=11211,ToPort=11211,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://www.cisa.gov/news-events/alerts/2018/02/27/memcached-distributed-denial-service-attacks
+        title: CISA - Memcached-based DDoS attacks
+  - uid: mondoo-aws-security-secgroup-restricted-memcached-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 11211 && toPort >= 11211 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-elasticsearch
+    title: Ensure security groups restrict incoming Elasticsearch/OpenSearch traffic
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the Elasticsearch/OpenSearch ports (9200/9300) from `0.0.0.0/0` or `::/0`. Public clusters have been the source of repeated mass-data leaks where indices containing PII were freely accessible without authentication.
+
+        **Why this matters**
+
+        - Default Elasticsearch installs historically had no authentication; exposed clusters are continuously indexed by attackers.
+        - Compromised clusters routinely yield full-text customer records, application logs, and credentials.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=9200,ToPort=9300,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://www.elastic.co/guide/en/elasticsearch/reference/current/secure-cluster.html
+        title: Elasticsearch Security Documentation
+  - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 9300 && toPort >= 9200 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-winrm
+    title: Ensure security groups restrict incoming WinRM traffic
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-winrm-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the Windows Remote Management ports (5985 HTTP, 5986 HTTPS) from `0.0.0.0/0` or `::/0`.
+
+        **Why this matters**
+
+        WinRM provides remote command execution on Windows hosts and is a primary lateral-movement target. Exposing WinRM to the internet allows attackers to brute-force credentials, abuse NTLM relay, and execute commands directly on the host.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=5985,ToPort=5986,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/windows/win32/winrm/portal
+        title: Microsoft - Windows Remote Management
+  - uid: mondoo-aws-security-secgroup-restricted-winrm-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 5986 && toPort >= 5985 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-docker-daemon
+    title: Ensure security groups restrict incoming Docker daemon traffic
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on Docker daemon API ports (2375 plaintext, 2376 TLS) from `0.0.0.0/0` or `::/0`. The Docker daemon API is the equivalent of root on the host; any reachable client can spawn privileged containers and escape to the host filesystem.
+
+        **Why this matters**
+
+        - Port 2375 is unauthenticated by default. An exposed daemon allows any internet client to launch a container that mounts the host's `/` filesystem and writes to `/etc/cron.d`, instantly achieving root.
+        - Even the TLS port 2376 must not be reachable from the internet; mTLS materials should be the only access path and they should be distributed through a private network.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=2375,ToPort=2376,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+
+            Prefer disabling the daemon's TCP socket entirely and using SSH-based contexts instead.
+    refs:
+      - url: https://docs.docker.com/engine/security/protect-access/
+        title: Docker - Protect the Docker daemon socket
+  - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 2376 && toPort >= 2375 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api
+    title: Ensure security groups restrict incoming Kubernetes API server traffic
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the Kubernetes API server port (6443) from `0.0.0.0/0` or `::/0`. The API server is the control plane for the entire cluster and must not be reachable from the public internet.
+
+        **Why this matters**
+
+        - Public API endpoints are continuously scanned for unauthenticated discovery, weak token configurations, and known control-plane CVEs.
+        - Even when authentication is enforced, a public API server is the only piece of infrastructure that, if compromised, grants the attacker full cluster-wide privileges.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=6443,ToPort=6443,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+
+            For EKS, prefer setting cluster endpoint access to **Private** or restrict the public endpoint to an explicit allowlist via `aws eks update-cluster-config --resources-vpc-config endpointPublicAccess=true,publicAccessCidrs=...`.
+    refs:
+      - url: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+        title: AWS Documentation - Amazon EKS cluster endpoint access control
+  - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 6443 && toPort >= 6443 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-kubelet
+    title: Ensure security groups restrict incoming Kubernetes kubelet traffic
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-kubelet-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on the kubelet API ports (10250 secure, 10255 read-only) from `0.0.0.0/0` or `::/0`.
+
+        **Why this matters**
+
+        The kubelet API exposes pod listing, log streaming, and exec endpoints. Misconfigured kubelets that accept anonymous requests on port 10250 have been used for cryptojacking and post-exploitation reconnaissance. Port 10255 is fully unauthenticated and must never be reachable.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=10250,ToPort=10255,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
+        title: Kubernetes - Kubelet authentication and authorization
+  - uid: mondoo-aws-security-secgroup-restricted-kubelet-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 10255 && toPort >= 10250 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-secgroup-restricted-etcd
+    title: Ensure security groups restrict incoming etcd traffic
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-aws-security-secgroup-restricted-etcd-aws
+        tags:
+          mondoo.com/filter-title: AWS Security Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that AWS security groups do not allow inbound traffic on etcd ports (2379 client, 2380 peer) from `0.0.0.0/0` or `::/0`. etcd holds the entire Kubernetes cluster state, including all Secrets in the cluster — public exposure is a complete cluster compromise.
+
+        **Why this matters**
+
+        - Direct access to etcd bypasses every Kubernetes authorization layer.
+        - A read-only etcd connection yields every Secret in plaintext (unless encryption-at-rest is configured); a writable connection allows the attacker to insert pods, ServiceAccounts, and RBAC bindings.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=2379,ToPort=2380,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+    refs:
+      - url: https://etcd.io/docs/v3.5/op-guide/security/
+        title: etcd - Security Documentation
+  - uid: mondoo-aws-security-secgroup-restricted-etcd-aws
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup.ipPermissions.where(
+        fromPort <= 2380 && toPort >= 2379 && toPort != 0).none(
+          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          )
+  - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal
+    title: Ensure S3 bucket policies do not grant access to anonymous principals
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-aws
+        tags:
+          mondoo.com/filter-title: AWS S3 Bucket
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that S3 bucket policies do not contain `Allow` statements with a wildcard `Principal` (`"*"` or `{"AWS": "*"}`). A bucket policy that allows access from any principal makes objects readable or writable by anyone on the internet, regardless of whether Block Public Access is enabled at the account level.
+
+        **Why this matters**
+
+        - Bucket policies are evaluated independently of Block Public Access settings; a misconfigured policy can still grant anonymous access if BPA is not enforced.
+        - Public bucket policies have been the root cause of the largest known cloud data leaks (US Voter Records, Booz Allen, Accenture, Verizon).
+        - Even buckets without PII can become a foothold: attackers can use writable public buckets to host malware, phishing pages, or pivot to other AWS services.
+      remediation:
+        - id: console
+          desc: |
+            1. Open the S3 console and select the bucket.
+            2. Choose **Permissions** → **Bucket policy**.
+            3. Remove any statement with `"Principal": "*"` or `"Principal": {"AWS": "*"}` and `"Effect": "Allow"`.
+            4. If a wildcard principal is required (e.g., for a public website), pair it with a strict `Condition` such as `aws:SourceVpce` or `aws:SourceIp`.
+        - id: cli
+          desc: |
+            ```bash
+            aws s3api get-bucket-policy --bucket <bucket-name>
+            aws s3api put-bucket-policy --bucket <bucket-name> --policy file://restricted-policy.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-policy-language-overview.html
+        title: AWS Documentation - Bucket policy language overview
+  - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-aws
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.policy == null ||
+      aws.s3.bucket.policy.statements.where(_['Effect'] == "Allow").none(
+        _['Principal'] == "*" ||
+        _['Principal']['AWS'] == "*" ||
+        _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
+      )
+  - uid: mondoo-aws-security-s3-bucket-policy-secure-transport
+    title: Ensure S3 bucket policies enforce secure transport
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-aws
+        tags:
+          mondoo.com/filter-title: AWS S3 Bucket
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that an S3 bucket policy explicitly denies any request that does not use secure transport (`aws:SecureTransport: "false"`). Without an explicit deny, S3 happily accepts plain-HTTP requests, exposing object data and authorization headers in transit.
+
+        **Why this matters**
+
+        S3 endpoints accept HTTP and HTTPS by default. A `Deny` statement keyed on `aws:SecureTransport` is the only mechanism that prevents accidental plain-HTTP access by clients with bad TLS configuration.
+      remediation:
+        - id: console
+          desc: |
+            1. Open the S3 console and select the bucket.
+            2. Choose **Permissions** → **Bucket policy**.
+            3. Add the following statement (merging into any existing policy):
+
+               ```json
+               {
+                 "Sid": "DenyInsecureTransport",
+                 "Effect": "Deny",
+                 "Principal": "*",
+                 "Action": "s3:*",
+                 "Resource": [
+                   "arn:aws:s3:::<bucket>",
+                   "arn:aws:s3:::<bucket>/*"
+                 ],
+                 "Condition": {"Bool": {"aws:SecureTransport": "false"}}
+               }
+               ```
+        - id: cli
+          desc: |
+            Apply the secure-transport policy:
+
+            ```bash
+            aws s3api put-bucket-policy --bucket <bucket> --policy file://secure-transport.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-ssl-requests-only.html
+        title: AWS Config Rule - s3-bucket-ssl-requests-only
+  - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-aws
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.policy != null &&
+      aws.s3.bucket.policy.statements.any(
+        _['Effect'] == "Deny" &&
+        _['Condition'] != null &&
+        _['Condition']['Bool'] != null &&
+        _['Condition']['Bool']['aws:SecureTransport'] == "false" ||
+        _['Effect'] == "Deny" &&
+        _['Condition'] != null &&
+        _['Condition']['Bool'] != null &&
+        _['Condition']['Bool']['aws:SecureTransport'] == false
+      )
+  - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced
+    title: Ensure S3 buckets disable ACLs by enforcing bucket-owner ownership
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+    variants:
+      - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced-aws
+        tags:
+          mondoo.com/filter-title: AWS S3 Bucket
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that the S3 bucket has Object Ownership set to `BucketOwnerEnforced`. With this setting, ACLs are disabled and access is governed exclusively by IAM and bucket policies, removing an entire class of historical mistakes (objects uploaded with public-read ACLs).
+
+        **Why this matters**
+
+        Cross-account uploaders have historically retained ownership of objects, leading to scenarios where the bucket owner could neither delete nor secure objects in their own bucket. `BucketOwnerEnforced` deprecates ACLs in favor of a single, IAM-driven authorization model.
+      remediation:
+        - id: console
+          desc: |
+            1. Open the S3 console and select the bucket.
+            2. Choose **Permissions** → **Object Ownership** → **Edit**.
+            3. Select **ACLs disabled (recommended)** and save.
+        - id: cli
+          desc: |
+            ```bash
+            aws s3api put-bucket-ownership-controls --bucket <bucket> \
+              --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
+        title: AWS Documentation - Controlling ownership of uploaded objects
+  - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced-aws
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket.ownershipControls == "BucketOwnerEnforced"
+  - uid: mondoo-aws-security-sns-topic-cmk-encryption
+    title: Ensure SNS topics are encrypted with a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+    variants:
+      - uid: mondoo-aws-security-sns-topic-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that all SNS topics are encrypted with a customer-managed KMS key (CMK), not the default `aws/sns` AWS-managed key. CMKs allow rotation, fine-grained key policies, and the ability to revoke access by disabling or deleting the key.
+
+        **Why this matters**
+
+        AWS-managed keys cannot be rotated on demand and their key policies cannot be edited. Customer-managed keys give the workload owner full control of cryptographic material, supporting BYOK and regulatory residency requirements.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws sns set-topic-attributes --topic-arn <arn> \
+              --attribute-name KmsMasterKeyId --attribute-value <cmk-arn>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html
+        title: AWS Documentation - Encryption at rest for Amazon SNS
+  - uid: mondoo-aws-security-sns-topic-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sns.topics.all(
+        attributes["KmsMasterKeyId"] != empty &&
+        attributes["KmsMasterKeyId"] != "alias/aws/sns"
+      )
+  - uid: mondoo-aws-security-sqs-queue-cmk-encryption
+    title: Ensure SQS queues are encrypted with a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+    variants:
+      - uid: mondoo-aws-security-sqs-queue-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that all SQS queues are encrypted with a customer-managed KMS key (CMK) rather than SQS-managed encryption (SSE-SQS) or the AWS-managed `aws/sqs` key.
+
+        **Why this matters**
+
+        Sensitive queue payloads benefit from CMK protection because key policies can be tightly scoped, keys can be rotated on demand, and access can be revoked by disabling the CMK. SSE-SQS and `aws/sqs` keys offer no such control.
+      remediation:
+        - id: cli
+          desc: |
+            ```bash
+            aws sqs set-queue-attributes --queue-url <url> \
+              --attributes KmsMasterKeyId=<cmk-arn>,KmsDataKeyReusePeriodSeconds=300
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html
+        title: AWS Documentation - Encryption at rest for Amazon SQS
+  - uid: mondoo-aws-security-sqs-queue-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sqs.queues.all(
+        kmsKey != null && kmsKey.keyManager == "CUSTOMER"
+      )
