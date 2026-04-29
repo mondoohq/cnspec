@@ -95,6 +95,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Chef Infra Client** - `mondoo-chef-infra-client.mql.yaml` - Chef Infra Client security configuration
 - **Chef Infra Server** - `mondoo-chef-infra-server.mql.yaml` - Chef Infra Server security configuration
 - **MCP** - `mondoo-mcp-security.mql.yaml` - Model Context Protocol server security assessment
+- **vLLM** - `mondoo-vllm-security.mql.yaml` - vLLM inference server HTTP exposure and endpoint hardening
 - **Phoenix PLCnext** - `mondoo-phoenix-plcnext-security.mql.yaml` - Industrial automation security
 - **EDR** - `mondoo-edr-policy.mql.yaml` - Endpoint Detection and Response validation
 

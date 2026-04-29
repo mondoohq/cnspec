@@ -1,0 +1,311 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - summary: Secure vLLM inference server HTTP exposure and operational endpoints
+    uid: mondoo-vllm-security
+    name: Mondoo vLLM Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: vllm,ai
+    require:
+      - provider: vllm
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    docs:
+      desc: |
+        The Mondoo vLLM Security policy assesses the externally observable HTTP posture of vLLM inference servers. It focuses on the surfaces that a remote scanner can verify truthfully: API authentication behavior, exposed documentation and metadata endpoints, CORS behavior, operational control routes, development and profiler routes, and unauthenticated metrics or load data.
+
+        This policy intentionally avoids host-local checks such as command-line flags, environment variables, LoRA resolver configuration, model revision pinning, media allowlists, and internode transport controls. Those settings require local process or deployment inspection and are outside the remote vLLM provider scope.
+
+        ## Scan a vLLM server
+
+        ```bash
+        cnspec scan vllm https://vllm.example.com -f mondoo-vllm-security.mql.yaml
+        ```
+
+        To compare anonymous and authenticated route behavior, provide a bearer token:
+
+        ```bash
+        cnspec scan vllm https://vllm.example.com --api-key <token> -f mondoo-vllm-security.mql.yaml
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Transport and Browser Exposure
+        filters: asset.family.contains("vllm")
+        checks:
+          - uid: mondoo-vllm-security-use-tls
+          - uid: mondoo-vllm-security-cors-not-wide-open
+      - title: API Authentication
+        filters: asset.family.contains("vllm")
+        checks:
+          - uid: mondoo-vllm-security-openai-routes-require-authentication
+          - uid: mondoo-vllm-security-custom-inference-routes-not-anonymous
+          - uid: mondoo-vllm-security-operational-control-routes-not-anonymous
+          - uid: mondoo-vllm-security-tokenization-routes-not-anonymous
+      - title: Information and Operational Exposure
+        filters: asset.family.contains("vllm")
+        checks:
+          - uid: mondoo-vllm-security-docs-not-exposed
+          - uid: mondoo-vllm-security-openapi-not-exposed
+          - uid: mondoo-vllm-security-version-not-exposed
+          - uid: mondoo-vllm-security-tokenizer-info-not-exposed
+          - uid: mondoo-vllm-security-metrics-not-exposed
+          - uid: mondoo-vllm-security-load-not-exposed
+      - title: Development and Debug Surfaces
+        filters: asset.family.contains("vllm")
+        checks:
+          - uid: mondoo-vllm-security-development-routes-not-exposed
+          - uid: mondoo-vllm-security-profiler-routes-not-exposed
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-vllm-security-cors-not-wide-open
+    title: Ensure CORS does not allow arbitrary origins
+    impact: 70
+    mql: |
+      vllm.server.corsConfigured == false || vllm.server.corsAllowsAnyOrigin == false
+    docs:
+      desc: |
+        This check verifies that the vLLM endpoint does not accept arbitrary browser origins during CORS preflight probing.
+
+        **Why this matters**
+
+        Wide-open CORS allows browser-based applications from untrusted origins to interact with the vLLM API from a user's browser context. When combined with permissive network access or weak authentication controls, this expands the attack surface for prompt abuse, data exposure, and unintended model consumption.
+      remediation: |
+        Restrict CORS to the exact origins that are allowed to call the vLLM API. When vLLM is exposed through a reverse proxy or API gateway, enforce CORS policy there and avoid wildcard origins.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
+        title: vLLM OpenAI-Compatible Server
+      - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+        title: MDN Web Docs CORS
+  - uid: mondoo-vllm-security-custom-inference-routes-not-anonymous
+    title: Ensure non-v1 inference routes are not anonymously accessible
+    impact: 100
+    mql: |
+      vllm.endpoints.where(category == "custom-inference").none(anonymousAccessible == true)
+    docs:
+      desc: |
+        This check verifies that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are not anonymously accessible.
+
+        **Why this matters**
+
+        vLLM API-key authentication is scoped to OpenAI-compatible `/v1/*` routes. Non-`/v1` inference endpoints can remain reachable unless protected by an upstream control. Leaving these routes anonymous can bypass the intended API authentication boundary and allow unauthorized model use.
+      remediation: |
+        Restrict non-`/v1` inference routes at a reverse proxy, API gateway, ingress controller, or firewall. If these routes are not required, deny them entirely. If they are required, enforce authentication and authorization before forwarding requests to vLLM.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+      - url: https://owasp.org/www-project-top-10-for-large-language-model-applications/
+        title: OWASP Top 10 for LLM Applications
+  - uid: mondoo-vllm-security-development-routes-not-exposed
+    title: Ensure development routes are not exposed
+    impact: 90
+    mql: |
+      vllm.server.devEndpointsExposed == false
+    docs:
+      desc: |
+        This check verifies that development-oriented routes such as `/server_info`, cache reset routes, sleep and wake routes, and collective RPC routes are not anonymously exposed.
+
+        **Why this matters**
+
+        Development endpoints can expose sensitive runtime details or alter server behavior. These routes are not needed for normal inference clients and should not be reachable from untrusted networks.
+      remediation: |
+        Disable development routes when possible and block them at the reverse proxy, API gateway, ingress controller, or firewall. Expose administrative or debug routes only on trusted internal networks.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-docs-not-exposed
+    title: Ensure FastAPI documentation is not exposed
+    impact: 60
+    mql: |
+      vllm.server.docsExposed == false
+    docs:
+      desc: |
+        This check verifies that the FastAPI `/docs` interface is not anonymously exposed.
+
+        **Why this matters**
+
+        Interactive API documentation makes endpoint discovery easier for attackers. It can reveal available routes, request shapes, and operational surfaces that help an attacker plan unauthorized access or abuse.
+      remediation: |
+        Disable FastAPI documentation in vLLM when it is not explicitly required. If documentation must remain available, restrict it to trusted networks or authenticated administrative users through a proxy or gateway.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-load-not-exposed
+    title: Ensure load tracking is not anonymously exposed
+    impact: 60
+    mql: |
+      vllm.metrics.loadEndpointExposed == false
+    docs:
+      desc: |
+        This check verifies that `/load` is not anonymously exposed.
+
+        **Why this matters**
+
+        Load data can reveal operational state and utilization patterns. Attackers can use this information to time abuse, infer tenant activity, or identify periods when denial-of-service attempts are more likely to succeed.
+      remediation: |
+        Block `/load` for untrusted clients. If load data is required for autoscaling or monitoring, expose it only to trusted infrastructure components over an authenticated or private path.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-metrics-not-exposed
+    title: Ensure Prometheus metrics are not anonymously exposed
+    impact: 70
+    mql: |
+      vllm.metrics.prometheusExposed == false
+    docs:
+      desc: |
+        This check verifies that `/metrics` is not anonymously exposed.
+
+        **Why this matters**
+
+        Metrics can reveal model activity, request pressure, cache behavior, deployment capacity, and runtime characteristics. Anonymous access gives attackers operational intelligence that can support denial-of-service timing, capacity abuse, or targeted exploitation.
+      remediation: |
+        Restrict `/metrics` to the monitoring system only. Enforce network allow-lists, mTLS, authentication, or a private monitoring path before forwarding metrics requests to vLLM.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-openai-routes-require-authentication
+    title: Ensure OpenAI-compatible routes require authentication
+    impact: 100
+    mql: |
+      vllm.endpoints.where(category == "openai" && present == true).all(requiresAuth == true)
+    docs:
+      desc: |
+        This check verifies that observed OpenAI-compatible vLLM routes reject anonymous requests with an authentication-like response.
+
+        **Why this matters**
+
+        OpenAI-compatible routes expose the primary model inference surface. Anonymous access allows anyone who can reach the endpoint to submit prompts, generate completions, consume GPU capacity, and potentially extract sensitive model behavior or data returned by connected application workflows.
+      remediation: |
+        Configure vLLM API-key authentication and place the server behind an authenticated gateway or reverse proxy. Verify that all externally reachable `/v1/*` routes reject anonymous requests and that the token is only distributed to trusted clients.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+      - url: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
+        title: vLLM OpenAI-Compatible Server
+  - uid: mondoo-vllm-security-openapi-not-exposed
+    title: Ensure the OpenAPI specification is not exposed
+    impact: 60
+    mql: |
+      vllm.server.openapiExposed == false
+    docs:
+      desc: |
+        This check verifies that `/openapi.json` is not anonymously exposed.
+
+        **Why this matters**
+
+        OpenAPI documents provide machine-readable route details that speed up reconnaissance and automated attack tooling. Exposing the specification can reveal optional endpoints or operational capabilities that are otherwise harder to enumerate.
+      remediation: |
+        Disable or block `/openapi.json` for untrusted clients. Serve API specifications only from an authenticated internal documentation system if they are needed by developers or operators.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-operational-control-routes-not-anonymous
+    title: Ensure operational control routes are not anonymously accessible
+    impact: 90
+    mql: |
+      vllm.endpoints.where(category == "operational-control").none(anonymousAccessible == true)
+    docs:
+      desc: |
+        This check verifies that operational control routes such as `/pause`, `/resume`, and `/scale_elastic_ep` are not anonymously accessible.
+
+        **Why this matters**
+
+        Operational control endpoints can affect availability and runtime behavior. Anonymous access could let an attacker disrupt service, manipulate serving capacity, or trigger state changes outside the normal administration path.
+      remediation: |
+        Block operational control routes from untrusted networks. If operational routes are required, expose them only through an authenticated administrative plane and restrict access to trusted operators or automation.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-profiler-routes-not-exposed
+    title: Ensure profiler routes are not exposed
+    impact: 90
+    mql: |
+      vllm.server.profilerEndpointsExposed == false
+    docs:
+      desc: |
+        This check verifies that profiler routes such as `/start_profile` and `/stop_profile` are not anonymously exposed.
+
+        **Why this matters**
+
+        Profiling endpoints can expose runtime internals, degrade service performance, and create an administrative control surface for attackers. They should never be available to ordinary inference clients.
+      remediation: |
+        Disable profiler routes outside controlled diagnostics windows. Restrict any required profiling access to authenticated operators on trusted administrative networks.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-tokenization-routes-not-anonymous
+    title: Ensure tokenization routes are not anonymously accessible
+    impact: 70
+    mql: |
+      vllm.endpoints.where(path == "/tokenize" || path == "/detokenize").none(anonymousAccessible == true)
+    docs:
+      desc: |
+        This check verifies that `/tokenize` and `/detokenize` are not anonymously accessible.
+
+        **Why this matters**
+
+        Tokenization endpoints can reveal tokenizer behavior and consume service resources without invoking the primary completion API. In exposed deployments, anonymous tokenization access broadens the unauthenticated API surface and can support reconnaissance or abuse workflows.
+      remediation: |
+        Restrict `/tokenize` and `/detokenize` at the reverse proxy, gateway, ingress, or firewall. If client applications need these routes, require authentication before forwarding requests to vLLM.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-tokenizer-info-not-exposed
+    title: Ensure tokenizer information is not exposed
+    impact: 50
+    mql: |
+      vllm.server.tokenizerInfoExposed == false
+    docs:
+      desc: |
+        This check verifies that `/tokenizer_info` is not anonymously exposed.
+
+        **Why this matters**
+
+        Tokenizer metadata can reveal details about the deployed model family and serving configuration. This information supports reconnaissance and can help attackers tune prompts or payloads for the target model.
+      remediation: |
+        Disable tokenizer information exposure unless a trusted client explicitly requires it. If the endpoint is required, restrict it with authentication and network controls.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+  - uid: mondoo-vllm-security-use-tls
+    title: Ensure the vLLM API is served over TLS
+    impact: 80
+    mql: |
+      vllm.server.usesTls == true
+    docs:
+      desc: |
+        This check verifies that the scanned vLLM endpoint uses HTTPS.
+
+        **Why this matters**
+
+        vLLM APIs process prompts, completions, embeddings, and operational metadata. Plain HTTP allows network observers or intermediate systems to read or modify requests and responses, including prompts that may contain proprietary source code, customer data, credentials, or other sensitive context.
+      remediation: |
+        Terminate TLS in front of the vLLM server with a reverse proxy, load balancer, API gateway, or service mesh. Expose only the HTTPS endpoint to clients and restrict direct access to the backend vLLM HTTP listener.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
+      - url: https://owasp.org/www-project-top-10-for-large-language-model-applications/
+        title: OWASP Top 10 for LLM Applications
+  - uid: mondoo-vllm-security-version-not-exposed
+    title: Ensure the vLLM version endpoint is not exposed
+    impact: 50
+    mql: |
+      vllm.server.version == empty
+    docs:
+      desc: |
+        This check verifies that the `/version` endpoint does not disclose the vLLM software version to anonymous clients.
+
+        **Why this matters**
+
+        Version disclosure helps attackers fingerprint deployments and quickly match them to known vulnerabilities. vLLM has had high-impact vulnerabilities in its serving and model-loading surfaces, so exposing exact version data increases targeting precision.
+      remediation: |
+        Block `/version` from untrusted clients at the reverse proxy, gateway, ingress, or firewall. Keep version inventory in internal asset management rather than exposing it through the public serving API.
+    refs:
+      - url: https://docs.vllm.ai/en/latest/serving/security.html
+        title: vLLM Security
