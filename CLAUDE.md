@@ -363,7 +363,7 @@ cnspec policy lint content/mondoo-<cloud>-security.mql.yaml
 python3 content/validation/validate_remediation_commands.py <cloud>
 ```
 
-**MQL gotcha for Terraform variants:** the parser rejects `.all((expr) || ...)` — a parenthesized clause as the first token inside `.all(`. Rely on `&&` binding tighter than `||` instead of writing leading parentheses.
+**MQL parser quirk for Terraform variants:** the parser rejects `.all((expr) || ...)` — a parenthesized clause as the first token inside `.all(`. Rely on `&&` binding tighter than `||` instead of writing leading parentheses.
 
 ### MQL Development
 
