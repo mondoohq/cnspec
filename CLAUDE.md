@@ -325,6 +325,46 @@ cnspec policy lint ./content/your-policy.mql.yaml
 cnspec scan local -f ./content/your-policy.mql.yaml
 ```
 
+#### Terraform variants for cloud policies
+
+When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-kubernetes-security`, etc.), the check should run against both the live cloud runtime **and** any Terraform asset that configures the same resource. Convert single-platform checks to a `variants:` block with up to four children:
+
+- `<uid>-<cloud>` — runtime check (`asset.platform == 'gcp'`, `'aws'`, …)
+- `<uid>-terraform-hcl` — `terraform.resources(...)` against HCL source
+- `<uid>-terraform-plan` — `terraform.plan.resourceChanges` against `terraform plan` JSON
+- `<uid>-terraform-state` — `terraform.state.resources` against `terraform.tfstate`
+
+Reference patterns in this repo:
+
+- GCP: `mondoo-gcp-security-memorystore-iam-auth-enabled` in `content/mondoo-gcp-security.mql.yaml`
+- HCL nested-block fanout: `mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-*` (database_flags)
+- Plan/state list-of-objects shape: `mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-*`
+
+**When a Terraform variant is not possible, leave a YAML comment above the parent check explaining why** so future passes don't re-investigate. Common reasons:
+
+- The runtime check evaluates operational telemetry (job state, latest execution status, observed traffic) that has no configuration analog.
+- The cloud resource is managed only via SDK / CLI / console and has no Terraform resource (e.g., short-lived imperative API calls like Vertex AI custom jobs).
+- The runtime check depends on cross-resource correlation (e.g., "every cluster has a backup plan that points at it") that the runtime check itself does not yet implement correctly — in which case fix the runtime first.
+- The runtime check inspects a field whose Terraform analog is a different feature (don't paper over the mismatch with a vacuous variant).
+
+Comment format (inserted on the line before `- uid:`):
+
+```yaml
+# No Terraform variants: <one-sentence reason>. <Optional: when this could be revisited>.
+- uid: mondoo-<cloud>-security-...
+```
+
+The comment must explain the technical limitation, not just say "skip". Keep it to a few lines.
+
+After every batch of variant additions, both must pass:
+
+```bash
+cnspec policy lint content/mondoo-<cloud>-security.mql.yaml
+python3 content/validation/validate_remediation_commands.py <cloud>
+```
+
+**MQL parser quirk for Terraform variants:** the parser rejects `.all((expr) || ...)` — a parenthesized clause as the first token inside `.all(`. Rely on `&&` binding tighter than `||` instead of writing leading parentheses.
+
 ### MQL Development
 
 MQL (Mondoo Query Language) syntax examples:
