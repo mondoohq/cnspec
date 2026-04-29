@@ -21340,7 +21340,6 @@ queries:
   - uid: mondoo-gcp-security-gke-network-policy-provider-specified
     title: Ensure GKE network policy has a provider specified
     impact: 70
-    filters: asset.platform == "gcp-gke-cluster"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
       compliance/nis-2: false
@@ -21349,10 +21348,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/soc2-2017: soc2-control-cc6-1-5
-    mql: |
-      gcp.project.gkeService.cluster.networkPolicy == null ||
-      gcp.project.gkeService.cluster.networkPolicy.enabled == false ||
-      gcp.project.gkeService.cluster.networkPolicy.provider != "PROVIDER_UNSPECIFIED"
+    variants:
+      - uid: mondoo-gcp-security-gke-network-policy-provider-specified-gcp
+        tags:
+          mondoo.com/filter-title: GCP GKE Cluster
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gke-network-policy-provider-specified-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gke-network-policy-provider-specified-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gke-network-policy-provider-specified-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every GKE cluster with network policy enabled also has a concrete network-policy provider specified. The existing `gke-cluster-network-policy-enabled` check confirms that the add-on is not disabled, but a cluster can have `networkPolicy.enabled == true` with `networkPolicy.provider == "PROVIDER_UNSPECIFIED"` — in which case no policy enforcement actually happens. This leaves pod-to-pod traffic unrestricted despite the cluster appearing to have network policy on.
@@ -21411,6 +21423,54 @@ queries:
     refs:
       - url: https://cloud.google.com/kubernetes-engine/docs/how-to/network-policy
         title: GKE - Configuring network policy
+  - uid: mondoo-gcp-security-gke-network-policy-provider-specified-gcp
+    filters: asset.platform == "gcp-gke-cluster"
+    mql: |
+      gcp.project.gkeService.cluster.networkPolicy == null ||
+      gcp.project.gkeService.cluster.networkPolicy.enabled == false ||
+      gcp.project.gkeService.cluster.networkPolicy.provider != "PROVIDER_UNSPECIFIED"
+  - uid: mondoo-gcp-security-gke-network-policy-provider-specified-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'network_policy') == empty ||
+        blocks.where(type == 'network_policy').all(
+          arguments['enabled'] == false ||
+          arguments['provider'] != empty && arguments['provider'] != "PROVIDER_UNSPECIFIED"
+        )
+      )
+  - uid: mondoo-gcp-security-gke-network-policy-provider-specified-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['network_policy'] == empty ||
+        change.after['network_policy'].all(
+          _['enabled'] == false ||
+          _['provider'] != empty && _['provider'] != "PROVIDER_UNSPECIFIED"
+        )
+      )
+  - uid: mondoo-gcp-security-gke-network-policy-provider-specified-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['network_policy'] == empty ||
+        values['network_policy'].all(
+          _['enabled'] == false ||
+          _['provider'] != empty && _['provider'] != "PROVIDER_UNSPECIFIED"
+        )
+      )
+  # No Terraform variants: this check correlates the notification topic's
+  # projectId against the cluster's projectId. In Terraform HCL the topic is
+  # almost always a resource reference (google_pubsub_topic.x.id) that does not
+  # resolve to a project-qualified string at parse time, and even in plan/state
+  # the topic project is a substring of an opaque path that requires the cluster
+  # `project` attribute to also be concrete. The cross-resource correlation is
+  # not reliable enough across HCL/plan/state to express here without false
+  # positives or negatives. Revisit when the terraform provider exposes the
+  # topic project as a structured field.
   - uid: mondoo-gcp-security-gke-notification-topic-same-project
     title: Ensure GKE notification topic is in the same project as the cluster
     impact: 60
@@ -22810,7 +22870,6 @@ queries:
   - uid: mondoo-gcp-security-alloydb-audit-logging-flags
     title: Ensure AlloyDB instances have audit logging database flags enabled
     impact: 70
-    filters: asset.platform == 'gcp-alloydb-cluster'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-15
       compliance/nis-2: nis-2-21-2-b
@@ -22819,14 +22878,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
       compliance/soc2-2017: soc2-control-cc7-2-1
-    mql: |
-      gcp.project.alloydbService.cluster.instances.all(
-        databaseFlags['log_connections'] == 'on' &&
-        databaseFlags['log_disconnections'] == 'on' &&
-        databaseFlags['log_min_duration_statement'] != '' &&
-        databaseFlags['log_min_duration_statement'] != null &&
-        databaseFlags['log_min_duration_statement'] != '-1'
-      )
+    variants:
+      - uid: mondoo-gcp-security-alloydb-audit-logging-flags-gcp
+        tags:
+          mondoo.com/filter-title: GCP AlloyDB
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-alloydb-audit-logging-flags-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-alloydb-audit-logging-flags-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-alloydb-audit-logging-flags-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every AlloyDB instance in the cluster has PostgreSQL audit-logging database flags configured: `log_connections = on`, `log_disconnections = on`, and `log_min_duration_statement` set to a non-empty value. Without these flags, the PostgreSQL engine records only a minimal subset of events — enough for basic server health, but not enough to investigate authentication abuse, long-running queries, or suspicious access patterns.
@@ -22888,6 +22956,55 @@ queries:
         title: AlloyDB database flags
       - url: https://www.postgresql.org/docs/current/runtime-config-logging.html
         title: PostgreSQL - runtime logging configuration
+  - uid: mondoo-gcp-security-alloydb-audit-logging-flags-gcp
+    filters: asset.platform == 'gcp-alloydb-cluster'
+    mql: |
+      gcp.project.alloydbService.cluster.instances.all(
+        databaseFlags['log_connections'] == 'on' &&
+        databaseFlags['log_disconnections'] == 'on' &&
+        databaseFlags['log_min_duration_statement'] != '' &&
+        databaseFlags['log_min_duration_statement'] != null &&
+        databaseFlags['log_min_duration_statement'] != '-1'
+      )
+  - uid: mondoo-gcp-security-alloydb-audit-logging-flags-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_alloydb_instance')
+    mql: |
+      terraform.resources('google_alloydb_instance').all(
+        arguments['database_flags']['log_connections'] == 'on' &&
+        arguments['database_flags']['log_disconnections'] == 'on' &&
+        arguments['database_flags']['log_min_duration_statement'] != empty &&
+        arguments['database_flags']['log_min_duration_statement'] != '' &&
+        arguments['database_flags']['log_min_duration_statement'] != '-1'
+      )
+  - uid: mondoo-gcp-security-alloydb-audit-logging-flags-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_alloydb_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_alloydb_instance').all(
+        change.after['database_flags']['log_connections'] == 'on' &&
+        change.after['database_flags']['log_disconnections'] == 'on' &&
+        change.after['database_flags']['log_min_duration_statement'] != empty &&
+        change.after['database_flags']['log_min_duration_statement'] != '' &&
+        change.after['database_flags']['log_min_duration_statement'] != '-1'
+      )
+  - uid: mondoo-gcp-security-alloydb-audit-logging-flags-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_alloydb_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_alloydb_instance').all(
+        values['database_flags']['log_connections'] == 'on' &&
+        values['database_flags']['log_disconnections'] == 'on' &&
+        values['database_flags']['log_min_duration_statement'] != empty &&
+        values['database_flags']['log_min_duration_statement'] != '' &&
+        values['database_flags']['log_min_duration_statement'] != '-1'
+      )
+  # No Terraform variants: this check inspects historical Cloud SQL backupRuns for
+  # CMEK drift (a backup run that pre-dates the instance's CMEK configuration).
+  # Backup runs are operational telemetry produced by the API, not Terraform
+  # resources, so there is no analog to evaluate at plan/apply time. The
+  # instance-level CMEK configuration is already covered by
+  # mondoo-gcp-security-cloud-sql-cmek-encryption.
   - uid: mondoo-gcp-security-cloud-sql-backup-cmek-encryption
     title: Ensure Cloud SQL backup runs inherit the instance CMEK key
     impact: 70
@@ -22970,7 +23087,6 @@ queries:
   - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation
     title: Ensure BigQuery AWS and Azure connections use identity federation
     impact: 80
-    filters: asset.platform == 'gcp-bigquery-dataset'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-i
@@ -22979,13 +23095,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
       compliance/soc2-2017: soc2-control-cc6-1-9
-    mql: |
-      gcp.project.bigqueryService.connections.where(type == "AWS").all(
-        properties['accessRole']['iamRoleId'] != empty
-      )
-      gcp.project.bigqueryService.connections.where(type == "AZURE").all(
-        properties['federatedApplicationClientId'] != empty
-      )
+    variants:
+      - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-gcp
+        tags:
+          mondoo.com/filter-title: GCP BigQuery
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every BigQuery connection of type `AWS` or `AZURE` is configured with identity federation rather than a long-lived, statically provisioned credential. For AWS connections, identity federation is expressed as an `accessRole.iamRoleId` (a role ARN trusted by the BigQuery Google service account). For Azure connections, it is expressed as a `federatedApplicationClientId` bound to the project's Azure AD tenant.
@@ -23055,6 +23181,75 @@ queries:
         title: BigQuery Omni - Create AWS connection with identity federation
       - url: https://cloud.google.com/bigquery/docs/omni-azure-create-connection
         title: BigQuery Omni - Create Azure connection with identity federation
+  - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-gcp
+    filters: asset.platform == 'gcp-bigquery-dataset'
+    mql: |
+      gcp.project.bigqueryService.connections.where(type == "AWS").all(
+        properties['accessRole']['iamRoleId'] != empty
+      )
+      gcp.project.bigqueryService.connections.where(type == "AZURE").all(
+        properties['federatedApplicationClientId'] != empty
+      )
+  - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigquery_connection')
+    mql: |
+      terraform.resources('google_bigquery_connection').where(blocks.where(type == 'aws') != empty).all(
+        blocks.where(type == 'aws').all(
+          blocks.where(type == 'access_role') != empty &&
+          blocks.where(type == 'access_role').all(
+            arguments['iam_role_id'] != empty && arguments['iam_role_id'] != ""
+          )
+        )
+      )
+      terraform.resources('google_bigquery_connection').where(blocks.where(type == 'azure') != empty).all(
+        blocks.where(type == 'azure').all(
+          arguments['federated_application_client_id'] != empty &&
+          arguments['federated_application_client_id'] != ""
+        )
+      )
+  - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigquery_connection')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigquery_connection' && change.after['aws'] != empty).all(
+        change.after['aws'].all(
+          _['access_role'] != empty &&
+          _['access_role'].all(
+            _['iam_role_id'] != empty && _['iam_role_id'] != ""
+          )
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'google_bigquery_connection' && change.after['azure'] != empty).all(
+        change.after['azure'].all(
+          _['federated_application_client_id'] != empty &&
+          _['federated_application_client_id'] != ""
+        )
+      )
+  - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigquery_connection')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigquery_connection' && values['aws'] != empty).all(
+        values['aws'].all(
+          _['access_role'] != empty &&
+          _['access_role'].all(
+            _['iam_role_id'] != empty && _['iam_role_id'] != ""
+          )
+        )
+      )
+      terraform.state.resources.where(type == 'google_bigquery_connection' && values['azure'] != empty).all(
+        values['azure'].all(
+          _['federated_application_client_id'] != empty &&
+          _['federated_application_client_id'] != ""
+        )
+      )
+  # No Terraform variants: this check evaluates the connection's `modified`
+  # timestamp (last edit/rotation time) to enforce a 90-day rotation window.
+  # Modification timestamps are operational telemetry produced by the
+  # BigQuery API on every update — there is no equivalent field in the
+  # google_bigquery_connection Terraform resource that would let us evaluate
+  # when the credential was last rotated against an absolute clock.
   - uid: mondoo-gcp-security-bigquery-cloudsql-connection-credentials-rotated-90-days
     title: Ensure BigQuery Cloud SQL connection credentials rotated within 90 days
     impact: 60
@@ -23123,6 +23318,14 @@ queries:
         title: BigQuery - Cloud SQL federated queries
       - url: https://cloud.google.com/sql/docs/mysql/create-manage-users
         title: Cloud SQL - Managing users
+  # No Terraform variants: BigQuery's google_bigquery_connection cloud_resource
+  # block has no input field for service_account_id — the delegated SA is
+  # auto-provisioned by the BigQuery API (computed output) and surfaced in
+  # the Terraform state's `cloud_resource.service_account_id` attribute. Users
+  # cannot configure or pin the delegated SA via Terraform, so HCL/plan have no
+  # field to evaluate and a state-only variant would not catch the drift this
+  # check is designed to surface (an operator manually rebinding the connection
+  # in the API to a default SA after creation).
   - uid: mondoo-gcp-security-bigquery-cloud-resource-connection-sa-no-default
     title: Ensure BigQuery Cloud Resource connection SAs are not default SAs
     impact: 80
@@ -23221,7 +23424,6 @@ queries:
   - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption
     title: Ensure Spanner backup schedules use customer-managed encryption
     impact: 70
-    filters: asset.platform == 'gcp-spanner-instance'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
@@ -23230,11 +23432,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
       compliance/soc2-2017: soc2-control-cc6-1-10
-    mql: |
-      gcp.spanner.instance.backupSchedules.all(
-        encryptionConfig['encryptionType'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
-        encryptionConfig['encryptionType'] == "USE_DATABASE_ENCRYPTION"
-      )
+    variants:
+      - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Spanner
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every backup schedule attached to databases in this Spanner instance produces backups encrypted with a customer-managed encryption key (CMEK). A backup schedule can be configured to encrypt its output with the database's CMEK (`USE_DATABASE_ENCRYPTION`), an explicitly supplied CMEK (`CUSTOMER_MANAGED_ENCRYPTION`), or a Google-managed key (`GOOGLE_DEFAULT_ENCRYPTION`). Only the first two satisfy customer-controlled key management.
@@ -23305,10 +23519,49 @@ queries:
         title: Customer-managed encryption keys (CMEK) for Cloud Spanner
       - url: https://cloud.google.com/spanner/docs/backup-schedules
         title: Cloud Spanner - Backup schedules
+  - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-spanner-instance'
+    mql: |
+      gcp.spanner.instance.backupSchedules.all(
+        encryptionConfig['encryptionType'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
+        encryptionConfig['encryptionType'] == "USE_DATABASE_ENCRYPTION"
+      )
+  - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_backup_schedule')
+    mql: |
+      terraform.resources('google_spanner_backup_schedule').all(
+        blocks.where(type == 'encryption_config') != empty &&
+        blocks.where(type == 'encryption_config').all(
+          arguments['encryption_type'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
+          arguments['encryption_type'] == "USE_DATABASE_ENCRYPTION"
+        )
+      )
+  - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_backup_schedule')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_spanner_backup_schedule').all(
+        change.after['encryption_config'] != empty &&
+        change.after['encryption_config'].all(
+          _['encryption_type'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
+          _['encryption_type'] == "USE_DATABASE_ENCRYPTION"
+        )
+      )
+  - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_backup_schedule')
+    mql: |
+      terraform.state.resources.where(type == 'google_spanner_backup_schedule').all(
+        values['encryption_config'] != empty &&
+        values['encryption_config'].all(
+          _['encryption_type'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
+          _['encryption_type'] == "USE_DATABASE_ENCRYPTION"
+        )
+      )
   - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles
     title: Ensure Spanner instance and database IAM grant no primitive roles
     impact: 80
-    filters: asset.platform == 'gcp-spanner-instance'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
@@ -23317,15 +23570,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/soc2-2017: soc2-control-cc6-3-3
-    mql: |
-      gcp.spanner.instance.iamPolicy.all(
-        role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
-      )
-      gcp.spanner.instance.databases.all(
-        iamPolicy.all(
-          role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
-        )
-      )
+    variants:
+      - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP Spanner
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that the IAM policy on the Spanner instance — and on every database within the instance — contains no bindings to the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Spanner publishes fine-grained predefined roles (for example `roles/spanner.databaseAdmin`, `roles/spanner.databaseUser`, `roles/spanner.databaseReader`) that should be used in place of the primitives.
@@ -23393,10 +23654,101 @@ queries:
         title: Cloud Spanner - IAM roles and permissions
       - url: https://cloud.google.com/iam/docs/understanding-roles#basic
         title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp-spanner-instance'
+    mql: |
+      gcp.spanner.instance.iamPolicy.all(
+        role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+      )
+      gcp.spanner.instance.databases.all(
+        iamPolicy.all(
+          role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+        )
+      )
+  - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_instance_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_instance_iam_binding') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database_iam_binding')
+    mql: |
+      terraform.resources('google_spanner_instance_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_spanner_instance_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_spanner_database_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_spanner_database_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_instance_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_instance_iam_binding') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_spanner_instance_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_spanner_instance_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_spanner_database_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_spanner_database_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_instance_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_instance_iam_binding') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_spanner_instance_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_spanner_instance_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_spanner_database_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_spanner_database_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
   - uid: mondoo-gcp-security-spanner-iam-no-public-principals
     title: Ensure Spanner IAM has no public or anonymous principals
     impact: 100
-    filters: asset.platform == 'gcp-spanner-instance'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-15
       compliance/nis-2: nis-2-21-2-i
@@ -23405,15 +23757,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-    mql: |
-      gcp.spanner.instance.iamPolicy.all(
-        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-      gcp.spanner.instance.databases.all(
-        iamPolicy.all(
-          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-        )
-      )
+    variants:
+      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-gcp
+        tags:
+          mondoo.com/filter-title: GCP Spanner
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no IAM binding on a Spanner instance or any of its databases grants access to the public principals `allUsers` (any caller on the internet, authenticated or not) or `allAuthenticatedUsers` (any caller signed in with any Google account). Either principal effectively publishes the resource to the world.
@@ -23473,6 +23833,80 @@ queries:
         title: Cloud Spanner - IAM roles and permissions
       - url: https://cloud.google.com/iam/docs/overview#allusers
         title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-gcp
+    filters: asset.platform == 'gcp-spanner-instance'
+    mql: |
+      gcp.spanner.instance.iamPolicy.all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      gcp.spanner.instance.databases.all(
+        iamPolicy.all(
+          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+        )
+      )
+  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_instance_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_instance_iam_binding') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database_iam_binding')
+    mql: |
+      terraform.resources('google_spanner_instance_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_spanner_instance_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      terraform.resources('google_spanner_database_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_spanner_database_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_instance_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_instance_iam_binding') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_spanner_instance_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_spanner_instance_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      terraform.plan.resourceChanges.where(type == 'google_spanner_database_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_spanner_database_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_instance_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_instance_iam_binding') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_spanner_instance_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_spanner_instance_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      terraform.state.resources.where(type == 'google_spanner_database_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_spanner_database_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
   - uid: mondoo-gcp-security-memorystore-iam-auth-enabled
     title: Ensure Memorystore (Valkey/Redis) instances require IAM authentication
     impact: 90
@@ -23767,6 +24201,12 @@ queries:
         values['kms_key'] != empty &&
         values['kms_key'] != ""
       )
+  # No Terraform variants: backup-collection CMEK is not a top-level field on
+  # google_memorystore_instance — backup collections inherit the instance's
+  # `kms_key`, which is already covered by
+  # mondoo-gcp-security-memorystore-cmek-encryption. Adding a separate Terraform
+  # variant here would either duplicate that check or evaluate a field that is
+  # not user-configurable in Terraform.
   - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption
     title: Ensure Memorystore backup collections are encrypted with CMEK
     impact: 60
@@ -23810,6 +24250,12 @@ queries:
     filters: asset.platform == 'gcp'
     mql: |
       gcp.memorystore.backupCollections.all(kmsKey != null)
+  # No Terraform variants: google_memorystore_instance only exposes
+  # `psc_auto_connections` (private PSC) as a configurable input. The runtime
+  # check evaluates `pscAttachmentDetails[].connectionType == "PUBLIC_ENDPOINT"`,
+  # which is API-side telemetry not driven by a user-settable Terraform field.
+  # A Terraform variant would be vacuously true and silently miss public-PSC
+  # attachments configured outside Terraform.
   - uid: mondoo-gcp-security-memorystore-no-public-psc
     title: Ensure Memorystore Private Service Connect endpoints are not public
     impact: 95
@@ -23970,6 +24416,14 @@ queries:
       terraform.state.resources.where(type == 'google_memorystore_instance').all(
         values['engine_configs']['protected-mode'] != "no"
       )
+  # No Terraform variants: this check evaluates engineVersion strings such as
+  # `redis-7.0` reported by the Memorystore API, while the
+  # google_memorystore_instance Terraform resource accepts engine versions in a
+  # different enum format (`REDIS_7_0`, `VALKEY_8_0`). The two value spaces are
+  # not directly comparable, so a Terraform variant would either silently miss
+  # vulnerable versions or false-positive on supported ones until the deny-list
+  # is maintained in two parallel formats. Revisit when the Terraform provider
+  # exposes a normalized engine-version field.
   - uid: mondoo-gcp-security-memorystore-engine-version-supported
     title: Ensure Memorystore engine version is not a known-vulnerable release
     impact: 70
@@ -24354,6 +24808,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
       compliance/soc2-2017: soc2-control-cc6-1-9
+    variants:
+      - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Datastream source connection profiles (MySQL, PostgreSQL, SQL Server, Oracle) reference credentials in Secret Manager via `secretManagerStoredPassword`, rather than relying on a plaintext `password` field on the profile itself.
@@ -24421,6 +24892,7 @@ queries:
     refs:
       - url: https://cloud.google.com/datastream/docs/configure-your-source-database
         title: Configure your Datastream source database (Secret Manager)
+  - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.datastream.connectionProfiles.where(
@@ -24428,6 +24900,90 @@ queries:
       ).all(
         profile["secretManagerStoredPassword"] != null &&
         profile["secretManagerStoredPassword"] != ""
+      )
+  - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_connection_profile')
+    mql: |
+      terraform.resources('google_datastream_connection_profile').where(blocks.where(type == 'mysql_profile') != empty).all(
+        blocks.where(type == 'mysql_profile').all(
+          arguments['secret_manager_stored_password'] != empty &&
+          arguments['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.resources('google_datastream_connection_profile').where(blocks.where(type == 'postgresql_profile') != empty).all(
+        blocks.where(type == 'postgresql_profile').all(
+          arguments['secret_manager_stored_password'] != empty &&
+          arguments['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.resources('google_datastream_connection_profile').where(blocks.where(type == 'oracle_profile') != empty).all(
+        blocks.where(type == 'oracle_profile').all(
+          arguments['secret_manager_stored_password'] != empty &&
+          arguments['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.resources('google_datastream_connection_profile').where(blocks.where(type == 'sql_server_profile') != empty).all(
+        blocks.where(type == 'sql_server_profile').all(
+          arguments['secret_manager_stored_password'] != empty &&
+          arguments['secret_manager_stored_password'] != ""
+        )
+      )
+  - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_connection_profile')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile' && change.after['mysql_profile'] != empty).all(
+        change.after['mysql_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile' && change.after['postgresql_profile'] != empty).all(
+        change.after['postgresql_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile' && change.after['oracle_profile'] != empty).all(
+        change.after['oracle_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile' && change.after['sql_server_profile'] != empty).all(
+        change.after['sql_server_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+  - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_connection_profile')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_connection_profile' && values['mysql_profile'] != empty).all(
+        values['mysql_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.state.resources.where(type == 'google_datastream_connection_profile' && values['postgresql_profile'] != empty).all(
+        values['postgresql_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.state.resources.where(type == 'google_datastream_connection_profile' && values['oracle_profile'] != empty).all(
+        values['oracle_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
+      )
+      terraform.state.resources.where(type == 'google_datastream_connection_profile' && values['sql_server_profile'] != empty).all(
+        values['sql_server_profile'].all(
+          _['secret_manager_stored_password'] != empty &&
+          _['secret_manager_stored_password'] != ""
+        )
       )
   - uid: mondoo-gcp-security-datastream-routes-no-public-cidr
     title: Ensure Datastream private-connection routes do not advertise public CIDRs
@@ -24531,6 +25087,15 @@ queries:
       terraform.state.resources.where(type == 'google_datastream_route').all(
         values['destination_address'].find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
       )
+  # No Terraform variants: this check resolves the GCS bucket referenced by a
+  # google_datastream_connection_profile (gcs profile) and then evaluates the
+  # bucket's UBLA, public-access-prevention, and CMEK fields on the
+  # google_storage_bucket side. Terraform HCL/plan/state expose the bucket
+  # reference as an unstructured string (gs://name or projects/_/buckets/name)
+  # without resolving the cross-resource link. The bucket-side hardening is
+  # already enforced by the general Cloud Storage policy checks; the
+  # Datastream-specific correlation is operational and would require resolved
+  # references that the Terraform asset model does not yet provide.
   - uid: mondoo-gcp-security-datastream-gcs-destination-bucket-hardened
     title: Ensure Datastream GCS destination buckets are hardened
     impact: 75
@@ -24795,6 +25360,13 @@ queries:
         values['authorized_network'] != "" &&
         values['authorized_network'].find(/networks\/default$/) == []
       )
+  # No Terraform variants: the Memcached discovery endpoint IP is allocated by
+  # the API at instance creation time and surfaced as a read-only computed
+  # attribute on google_memcache_instance. There is no input field to constrain
+  # at plan/apply time. The related defense — attaching the instance to a
+  # non-default VPC with private IP allocation — is covered by
+  # mondoo-gcp-security-memcache-instance-not-default-vpc, which has Terraform
+  # variants.
   - uid: mondoo-gcp-security-memcache-discovery-endpoint-rfc1918
     title: Ensure Memorystore for Memcached discovery endpoints are RFC1918 addresses
     impact: 90
