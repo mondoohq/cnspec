@@ -23220,24 +23220,21 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
     mql: |
       terraform.resources('google_memorystore_instance').all(
-        arguments.transit_encryption_mode != empty &&
-        arguments.transit_encryption_mode != "TRANSIT_ENCRYPTION_DISABLED"
+        arguments.transit_encryption_mode == "SERVER_AUTHENTICATION"
       )
   - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
-        change.after['transit_encryption_mode'] != empty &&
-        change.after['transit_encryption_mode'] != "TRANSIT_ENCRYPTION_DISABLED"
+        change.after['transit_encryption_mode'] == "SERVER_AUTHENTICATION"
       )
   - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
     mql: |
       terraform.state.resources.where(type == 'google_memorystore_instance').all(
-        values['transit_encryption_mode'] != empty &&
-        values['transit_encryption_mode'] != "TRANSIT_ENCRYPTION_DISABLED"
+        values['transit_encryption_mode'] == "SERVER_AUTHENTICATION"
       )
   - uid: mondoo-gcp-security-memorystore-cmek-encryption
     title: Ensure Memorystore (Valkey/Redis) instances are encrypted with CMEK
@@ -23453,6 +23450,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
       compliance/soc2-2017: soc2-control-cc7-1-1
+    variants:
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Memorystore `engineConfigs` does not set `protected-mode` to `"no"`. Protected-mode is the Redis/Valkey safety net that refuses connections without a password when the engine is bound to non-loopback interfaces.
@@ -23496,10 +23510,32 @@ queries:
     refs:
       - url: https://cloud.google.com/memorystore/docs/valkey/supported-instance-configurations
         title: Supported Memorystore instance configurations
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.memorystore.instances.all(
         engineConfigs["protected-mode"] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      terraform.resources('google_memorystore_instance').all(
+        arguments['engine_configs']['protected-mode'] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['engine_configs']['protected-mode'] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['engine_configs']['protected-mode'] != "no"
       )
   - uid: mondoo-gcp-security-memorystore-engine-version-supported
     title: Ensure Memorystore engine version is not a known-vulnerable release
@@ -23887,7 +23923,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
     docs:
       desc: |
-        This check ensures that Datastream source connection profiles (MySQL, PostgreSQL, SQL Server) reference credentials in Secret Manager via `secretManagerStoredPassword`, rather than relying on a plaintext `password` field on the profile itself.
+        This check ensures that Datastream source connection profiles (MySQL, PostgreSQL, SQL Server, Oracle) reference credentials in Secret Manager via `secretManagerStoredPassword`, rather than relying on a plaintext `password` field on the profile itself.
 
         **Why this matters**
 
@@ -23896,7 +23932,7 @@ queries:
           - Lets the security team revoke access to the secret without recreating the connection profile.
           - Produces auditable Cloud Audit Logs for each credential access.
 
-        This check passes when the profile dict carries a non-empty `secretManagerStoredPassword`. It applies to the database source profile types where Datastream supports the field (MySQL, PostgreSQL, SQL Server).
+        This check passes when the profile dict carries a non-empty `secretManagerStoredPassword`. It applies to the database source profile types where Datastream supports the field (MySQL, PostgreSQL, SQL Server, Oracle).
       remediation:
         - id: terraform
           desc: |
@@ -23943,6 +23979,11 @@ queries:
             gcloud datastream connection-profiles update PROFILE_ID \
               --location=LOCATION \
               --sqlserver-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
+
+            # Oracle profile
+            gcloud datastream connection-profiles update PROFILE_ID \
+              --location=LOCATION \
+              --oracle-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
             ```
     refs:
       - url: https://cloud.google.com/datastream/docs/configure-your-source-database
@@ -23950,7 +23991,7 @@ queries:
     filters: asset.platform == 'gcp'
     mql: |
       gcp.datastream.connectionProfiles.where(
-        profileType == "mysql" || profileType == "postgresql" || profileType == "sqlserver"
+        profileType == "mysql" || profileType == "postgresql" || profileType == "sqlserver" || profileType == "oracle"
       ).all(
         profile["secretManagerStoredPassword"] != null &&
         profile["secretManagerStoredPassword"] != ""
@@ -23966,6 +24007,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Datastream private-connection routes only advertise destinations inside RFC1918 (private) IP space — not public addresses or `0.0.0.0`. Routes inside a private connection determine which destinations Datastream can reach via the peered VPC; a public destination defeats the purpose of using a private connection at all.
@@ -24011,12 +24069,34 @@ queries:
     refs:
       - url: https://cloud.google.com/datastream/docs/private-connectivity
         title: Datastream private connectivity
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.datastream.privateConnections.all(
         routes.all(
           destinationAddress.find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
         )
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_route')
+    mql: |
+      terraform.resources('google_datastream_route').all(
+        arguments.destination_address.find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_route')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_route').all(
+        change.after['destination_address'].find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_route')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_route').all(
+        values['destination_address'].find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
       )
   - uid: mondoo-gcp-security-datastream-gcs-destination-bucket-hardened
     title: Ensure Datastream GCS destination buckets are hardened
@@ -24331,6 +24411,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/soc2-2017: soc2-control-cc7-1-4
+    variants:
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore for Memcached
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Memorystore for Memcached instances do not run an engine version with publicly disclosed CVEs. The MQL exposes `memcacheVersion` (for example `MEMCACHE_1_5`, `MEMCACHE_1_6`); this check fails when the version matches a known-vulnerable Memcached release for which Memorystore has not yet patched.
@@ -24375,6 +24472,28 @@ queries:
         title: Memorystore for Memcached release notes
       - url: https://github.com/memcached/memcached/wiki/ReleaseNotes
         title: Memcached upstream release notes (CVE history)
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.memcache.instances.all(memcacheVersion != "MEMCACHE_1_5")
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memcache_instance')
+    mql: |
+      terraform.resources('google_memcache_instance').all(
+        arguments.memcache_version != "MEMCACHE_1_5"
+      )
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memcache_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memcache_instance').all(
+        change.after['memcache_version'] != "MEMCACHE_1_5"
+      )
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memcache_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memcache_instance').all(
+        values['memcache_version'] != "MEMCACHE_1_5"
+      )
