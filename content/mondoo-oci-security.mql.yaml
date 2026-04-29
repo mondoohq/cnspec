@@ -2512,6 +2512,41 @@ queries:
               --nsg-id <nsg-ocid> \
               --security-rule-ids '["<rule-id>"]'
             ```
+        - id: terraform
+          desc: |
+            Define NSG ingress rules with `tcp_options.destination_port_range` blocks that exclude SSH (22) and RDP (3389), or restrict the source to a trusted CIDR rather than `0.0.0.0/0` / `::/0`:
+
+            ```hcl
+            resource "oci_core_network_security_group_security_rule" "https_in" {
+              network_security_group_id = oci_core_network_security_group.app.id
+              direction                 = "INGRESS"
+              protocol                  = "6"
+              source                    = "0.0.0.0/0"
+              source_type               = "CIDR_BLOCK"
+
+              tcp_options {
+                destination_port_range {
+                  min = 443
+                  max = 443
+                }
+              }
+            }
+
+            resource "oci_core_network_security_group_security_rule" "ssh_from_bastion" {
+              network_security_group_id = oci_core_network_security_group.app.id
+              direction                 = "INGRESS"
+              protocol                  = "6"
+              source                    = "10.0.0.0/16"
+              source_type               = "CIDR_BLOCK"
+
+              tcp_options {
+                destination_port_range {
+                  min = 22
+                  max = 22
+                }
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/networksecuritygroups.htm
         title: OCI - Network Security Groups
@@ -2659,6 +2694,28 @@ queries:
             ```bash
             oci network vnic update --vnic-id <vnic-ocid> --nsg-ids '["<nsg-ocid>"]'
             ```
+        - id: terraform
+          desc: |
+            Whenever the instance assigns a public IP, populate `nsg_ids` on the `create_vnic_details` block:
+
+            ```hcl
+            resource "oci_core_instance" "web" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.ad
+              shape               = "VM.Standard.E4.Flex"
+
+              create_vnic_details {
+                subnet_id        = oci_core_subnet.public.id
+                assign_public_ip = true
+                nsg_ids          = [oci_core_network_security_group.web.id]
+              }
+
+              source_details {
+                source_type = "image"
+                source_id   = var.image_ocid
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/networksecuritygroups.htm
         title: OCI - Network Security Groups
@@ -2768,6 +2825,26 @@ queries:
             oci compute instance update \
               --instance-id <instance-ocid> \
               --instance-options '{"areLegacyImdsEndpointsDisabled": true}'
+            ```
+        - id: terraform
+          desc: |
+            Declare an `instance_options` block on every `oci_core_instance` and set `are_legacy_imds_endpoints_disabled = true`:
+
+            ```hcl
+            resource "oci_core_instance" "app" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.ad
+              shape               = "VM.Standard.E4.Flex"
+
+              instance_options {
+                are_legacy_imds_endpoints_disabled = true
+              }
+
+              source_details {
+                source_type = "image"
+                source_id   = var.image_ocid
+              }
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/gettingmetadata.htm
@@ -2880,6 +2957,32 @@ queries:
             ```
 
             (Passing an empty metadata map clears user-supplied keys; existing OCI-managed keys like `ssh_authorized_keys` are preserved.)
+        - id: terraform
+          desc: |
+            Keep the `metadata` map free of credential-named keys and credential-shaped values; fetch secrets at runtime via the resource principal and OCI Vault instead of pinning them into the instance definition:
+
+            ```hcl
+            data "oci_secrets_secretbundle" "db_password" {
+              secret_id = oci_vault_secret.db_password.id
+            }
+
+            resource "oci_core_instance" "app" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.ad
+              shape               = "VM.Standard.E4.Flex"
+
+              metadata = {
+                ssh_authorized_keys = file("~/.ssh/id_rsa.pub")
+                # Do NOT place credentials here. Read secrets from OCI Vault at boot:
+                vault_secret_ocid = oci_vault_secret.db_password.id
+              }
+
+              source_details {
+                source_type = "image"
+                source_id   = var.image_ocid
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/gettingmetadata.htm
         title: OCI - Instance Metadata
@@ -3017,6 +3120,26 @@ queries:
               --cipher-suite-name oci-default-ssl-cipher-suite-v1 \
               --protocols '["TLSv1.2","TLSv1.3"]'
             ```
+        - id: terraform
+          desc: |
+            Declare every HTTPS / HTTP2 listener with an `ssl_configuration` block whose `protocols` list is restricted to TLS 1.2 and 1.3:
+
+            ```hcl
+            resource "oci_load_balancer_listener" "https" {
+              load_balancer_id         = oci_load_balancer_load_balancer.app.id
+              name                     = "https"
+              default_backend_set_name = oci_load_balancer_backend_set.app.name
+              protocol                 = "HTTPS"
+              port                     = 443
+
+              ssl_configuration {
+                certificate_name        = oci_load_balancer_certificate.app.certificate_name
+                cipher_suite_name       = "oci-default-ssl-cipher-suite-v1"
+                protocols               = ["TLSv1.2", "TLSv1.3"]
+                server_order_preference = "ENABLED"
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Balance/Tasks/managingsslconfigs.htm
         title: OCI - Managing SSL Configurations
@@ -3138,6 +3261,25 @@ queries:
               --ssl-certificate-name <cert-name> \
               --cipher-suite-name oci-modern-ssl-cipher-suite-v1 \
               --protocols '["TLSv1.2","TLSv1.3"]'
+            ```
+        - id: terraform
+          desc: |
+            Set `cipher_suite_name` on every HTTPS / HTTP2 listener's `ssl_configuration` block to a modern Oracle-managed suite:
+
+            ```hcl
+            resource "oci_load_balancer_listener" "https" {
+              load_balancer_id         = oci_load_balancer_load_balancer.app.id
+              name                     = "https"
+              default_backend_set_name = oci_load_balancer_backend_set.app.name
+              protocol                 = "HTTPS"
+              port                     = 443
+
+              ssl_configuration {
+                certificate_name  = oci_load_balancer_certificate.app.certificate_name
+                cipher_suite_name = "oci-modern-ssl-cipher-suite-v1"
+                protocols         = ["TLSv1.2", "TLSv1.3"]
+              }
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Balance/References/predefinedsslciphersuites.htm
@@ -3326,6 +3468,24 @@ queries:
               --endpoint-subnet-id <private-subnet-ocid> \
               --endpoint-public-ip-enabled false
             ```
+        - id: terraform
+          desc: |
+            Declare an `endpoint_config` block on every `oci_containerengine_cluster` and set `is_public_ip_enabled = false`, with the endpoint anchored in a private subnet:
+
+            ```hcl
+            resource "oci_containerengine_cluster" "main" {
+              compartment_id     = var.compartment_ocid
+              name               = "prod"
+              vcn_id             = oci_core_vcn.main.id
+              kubernetes_version = "v1.30.1"
+
+              endpoint_config {
+                subnet_id            = oci_core_subnet.api_endpoint_private.id
+                is_public_ip_enabled = false
+                nsg_ids              = [oci_core_network_security_group.api_endpoint.id]
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
         title: OCI - OKE Network Configuration
@@ -3482,6 +3642,26 @@ queries:
               --cluster-id <cluster-ocid> \
               --image-policy-config '{"isPolicyEnabled":true,"keyDetails":[{"kmsKeyId":"<kms-key-ocid>"}]}'
             ```
+        - id: terraform
+          desc: |
+            Declare an `image_policy_config` block with `is_policy_enabled = true` and at least one signing key:
+
+            ```hcl
+            resource "oci_containerengine_cluster" "main" {
+              compartment_id     = var.compartment_ocid
+              name               = "prod"
+              vcn_id             = oci_core_vcn.main.id
+              kubernetes_version = "v1.30.1"
+
+              image_policy_config {
+                is_policy_enabled = true
+
+                key_details {
+                  kms_key_id = oci_kms_key.image_signing.id
+                }
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengsigningimages_topic-Signing_Container_Images_Using_OCI_Registry.htm
         title: OCI - Signing Container Images
@@ -3585,6 +3765,29 @@ queries:
             oci db autonomous-database update \
               --autonomous-database-id <adb-ocid> \
               --is-mtls-connection-required true
+            ```
+        - id: terraform
+          desc: |
+            Configure each Autonomous Database with at least one of `is_mtls_connection_required = true`, a private endpoint, an IP allowlist, or attached NSGs:
+
+            ```hcl
+            resource "oci_database_autonomous_database" "app" {
+              compartment_id           = var.compartment_ocid
+              db_name                  = "appdb"
+              admin_password           = var.adb_admin_password
+              cpu_core_count           = 1
+              data_storage_size_in_tbs = 1
+
+              # Option A: require mTLS for public-network access
+              is_mtls_connection_required = true
+
+              # Option B: confine to a private endpoint (alternative to public + mTLS)
+              # subnet_id  = oci_core_subnet.adb_private.id
+              # nsg_ids    = [oci_core_network_security_group.adb.id]
+
+              # Option C: ACL the public listener to known networks
+              # whitelisted_ips = ["10.0.0.0/16"]
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/network-access-types.html
@@ -3809,6 +4012,33 @@ queries:
               --secret-id <secret-ocid> \
               --secret-rules '[{"ruleType":"SECRET_EXPIRY_RULE","secretVersionExpiryInterval":"P90D","isSecretContentRetrievalBlockedOnExpiry":true}]'
             ```
+        - id: terraform
+          desc: |
+            Declare a `rotation_config` block on each Vault secret with `is_scheduled_rotation_enabled = true` and a rotation function target:
+
+            ```hcl
+            resource "oci_vault_secret" "db_password" {
+              compartment_id = var.compartment_ocid
+              vault_id       = oci_kms_vault.app.id
+              key_id         = oci_kms_key.app.id
+              secret_name    = "db-password"
+
+              secret_content {
+                content_type = "BASE64"
+                content      = base64encode(var.initial_db_password)
+              }
+
+              rotation_config {
+                is_scheduled_rotation_enabled = true
+                rotation_interval             = "P90D"
+
+                target_system_details {
+                  target_system_type = "FUNCTION"
+                  function_id        = oci_functions_function.rotate_db_password.id
+                }
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/managingsecrets.htm
         title: OCI - Managing Secrets
@@ -3981,6 +4211,23 @@ queries:
             ```
 
             Repopulate with only non-sensitive keys via subsequent updates.
+        - id: terraform
+          desc: |
+            Keep the Functions application `config` map free of credential-named keys and credential-shaped values; reference Vault secret OCIDs and let function code resolve them at runtime via the resource principal:
+
+            ```hcl
+            resource "oci_functions_application" "app" {
+              compartment_id = var.compartment_ocid
+              display_name   = "app"
+              subnet_ids     = [oci_core_subnet.private.id]
+
+              config = {
+                # Do NOT place credentials here. Reference the Vault secret OCID instead:
+                DB_PASSWORD_SECRET_OCID = oci_vault_secret.db_password.id
+                LOG_LEVEL               = "info"
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsusingconfigparams.htm
         title: OCI - Passing Custom Configuration Parameters to Functions
@@ -4116,6 +4363,32 @@ queries:
               --shape-config '{"ocpus":1,"memoryInGBs":2}' \
               --containers '[{"displayName":"app","imageUrl":"<region>.ocir.io/<namespace>/<repo>:<tag>"}]'
             ```
+        - id: terraform
+          desc: |
+            Set every `containers` block's `image_url` to a path under `<region>.ocir.io/<namespace>/<repo>:<tag>` rather than a public registry such as Docker Hub or GHCR:
+
+            ```hcl
+            resource "oci_container_instances_container_instance" "app" {
+              compartment_id      = var.compartment_ocid
+              display_name        = "app"
+              availability_domain = var.ad
+              shape               = "CI.Standard.E4.Flex"
+
+              shape_config {
+                ocpus         = 1
+                memory_in_gbs = 2
+              }
+
+              vnics {
+                subnet_id = oci_core_subnet.app.id
+              }
+
+              containers {
+                display_name = "app"
+                image_url    = "${var.region_key}.ocir.io/${var.tenancy_namespace}/app:${var.app_version}"
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/container-instances/overview.htm
         title: OCI Container Instances Overview
@@ -4226,6 +4499,28 @@ queries:
               --retention-rule-id <rule-ocid> \
               --time-rule-locked 2026-05-01T00:00:00Z
             ```
+        - id: terraform
+          desc: |
+            Set `time_rule_locked` on every `retention_rules` block at least 14 days in the future so the rule transitions to a non-deletable lock:
+
+            ```hcl
+            resource "oci_objectstorage_bucket" "backups" {
+              compartment_id = var.compartment_ocid
+              namespace      = var.namespace
+              name           = "backups"
+              access_type    = "NoPublicAccess"
+
+              retention_rules {
+                display_name     = "regulatory-90d"
+                time_rule_locked = "2026-06-01T00:00:00Z"
+
+                duration {
+                  time_amount = 90
+                  time_unit   = "DAYS"
+                }
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
         title: OCI - Using Retention Rules
@@ -4332,6 +4627,28 @@ queries:
               --retention-rule-id <rule-ocid> \
               --time-amount 30 \
               --time-unit DAYS
+            ```
+        - id: terraform
+          desc: |
+            Declare every `retention_rules.duration` block with at least 30 days (or 1 year):
+
+            ```hcl
+            resource "oci_objectstorage_bucket" "backups" {
+              compartment_id = var.compartment_ocid
+              namespace      = var.namespace
+              name           = "backups"
+              access_type    = "NoPublicAccess"
+
+              retention_rules {
+                display_name     = "regulatory-90d"
+                time_rule_locked = "2026-06-01T00:00:00Z"
+
+                duration {
+                  time_amount = 90
+                  time_unit   = "DAYS"
+                }
+              }
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
@@ -4454,6 +4771,22 @@ queries:
             oci iam policy update --policy-id <policy-ocid> \
               --statements '["Allow group <group-name> to read buckets in compartment <compartment-name>"]'
             ```
+        - id: terraform
+          desc: |
+            Scope every `oci_identity_policy` statement to a specific group, dynamic group, or service principal — never the bare `any-user` principal:
+
+            ```hcl
+            resource "oci_identity_policy" "ops_readers" {
+              compartment_id = var.tenancy_ocid
+              name           = "OpsReaders"
+              description    = "Read access for the operations team"
+
+              statements = [
+                "Allow group OpsReaders to read all-resources in compartment Workloads",
+                "Allow service objectstorage-${var.region} to manage object-family in compartment Backups",
+              ]
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policysyntax.htm
         title: OCI - Policy Syntax
@@ -4551,6 +4884,33 @@ queries:
             oci iam policy update --policy-id <policy-ocid> \
               --statements '["Admit group PartnerReaders of tenancy <partner-tenancy-ocid> to read objects in compartment SharedData where target.bucket.name = '"'"'shared'"'"'"]'
             ```
+        - id: terraform
+          desc: |
+            Avoid `Endorse` and `Admit` statements unless a specific cross-tenancy partnership requires them; when they are required, scope to a narrow resource and action set:
+
+            ```hcl
+            # Prefer in-tenancy grants:
+            resource "oci_identity_policy" "in_tenancy" {
+              compartment_id = var.tenancy_ocid
+              name           = "AppReaders"
+              description    = "Read access for the application team"
+
+              statements = [
+                "Allow group AppReaders to read objects in compartment AppData",
+              ]
+            }
+
+            # If a cross-tenancy grant is required, narrow the resource and action:
+            resource "oci_identity_policy" "partner_admit" {
+              compartment_id = var.tenancy_ocid
+              name           = "PartnerAdmit"
+              description    = "Read-only access for vetted partner tenancy"
+
+              statements = [
+                "Admit group PartnerReaders of tenancy ${var.partner_tenancy_ocid} to read objects in compartment SharedData where target.bucket.name='shared'",
+              ]
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policiesaccessingtenancies.htm
         title: OCI - Accessing Resources Across Tenancies
@@ -4638,6 +4998,30 @@ queries:
             ```bash
             oci network security-list update --security-list-id <security-list-ocid> \
               --ingress-security-rules '[{"source":"10.10.0.0/16","protocol":"6","tcpOptions":{"destinationPortRange":{"min":5432,"max":5432}},"isStateless":false}]'
+            ```
+        - id: terraform
+          desc: |
+            Scope `ingress_security_rules` blocks so that no rule from `0.0.0.0/0` permits TCP ranges covering 1433, 1521, 1522, 3306, 5432, 6379, 9200, or 27017 — limit DB-port access to internal networks instead:
+
+            ```hcl
+            resource "oci_core_security_list" "db" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.main.id
+              display_name   = "db-tier"
+
+              ingress_security_rules {
+                source      = "10.0.0.0/16"
+                source_type = "CIDR_BLOCK"
+                protocol    = "6"
+
+                tcp_options {
+                  destination_port_range {
+                    min = 5432
+                    max = 5432
+                  }
+                }
+              }
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
@@ -4775,6 +5159,30 @@ queries:
             oci network security-list update --security-list-id <security-list-ocid> \
               --ingress-security-rules '[{"source":"10.0.0.0/8","protocol":"6","tcpOptions":{"destinationPortRange":{"min":445,"max":445}},"isStateless":false}]'
             ```
+        - id: terraform
+          desc: |
+            Drop any `ingress_security_rules` blocks that combine `source = "0.0.0.0/0"` with TCP port ranges covering 21, 23, 135, 137, 138, 139, or 445; require an internal CIDR for any legitimate file-sharing use case:
+
+            ```hcl
+            resource "oci_core_security_list" "internal" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.main.id
+              display_name   = "internal-fileshare"
+
+              ingress_security_rules {
+                source      = "10.0.0.0/8"
+                source_type = "CIDR_BLOCK"
+                protocol    = "6"
+
+                tcp_options {
+                  destination_port_range {
+                    min = 445
+                    max = 445
+                  }
+                }
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
         title: OCI - Security Lists
@@ -4908,6 +5316,29 @@ queries:
             oci network security-list update --security-list-id <security-list-ocid> \
               --ingress-security-rules '[{"source":"10.0.0.0/8","protocol":"1","icmpOptions":{"type":3,"code":4},"isStateless":false}]'
             ```
+        - id: terraform
+          desc: |
+            Add an `icmp_options` block that scopes the ICMP type/code on every `0.0.0.0/0` ingress rule that uses ICMP (protocol `1`), ICMPv6 (`58`), or `all` protocols:
+
+            ```hcl
+            resource "oci_core_security_list" "main" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.main.id
+              display_name   = "main"
+
+              # PMTU discovery - allow only ICMP type 3 code 4 from anywhere
+              ingress_security_rules {
+                source      = "0.0.0.0/0"
+                source_type = "CIDR_BLOCK"
+                protocol    = "1"
+
+                icmp_options {
+                  type = 3
+                  code = 4
+                }
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
         title: OCI - Security Lists
@@ -5009,6 +5440,45 @@ queries:
             ```bash
             oci network security-list update --security-list-id <security-list-ocid> \
               --ingress-security-rules '[{"source":"2001:db8:abcd::/48","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
+            ```
+        - id: terraform
+          desc: |
+            Apply the same scoping rules to `::/0` ingress that the IPv4 ingress checks require: never `protocol = "all"`, always declare `tcp_options` / `udp_options`, and exclude SSH (22) and RDP (3389) from public TCP rules:
+
+            ```hcl
+            resource "oci_core_security_list" "main" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.main.id
+              display_name   = "main"
+
+              # IPv6: HTTPS from anywhere - explicit tcp_options scoped to 443
+              ingress_security_rules {
+                source      = "::/0"
+                source_type = "CIDR_BLOCK"
+                protocol    = "6"
+
+                tcp_options {
+                  destination_port_range {
+                    min = 443
+                    max = 443
+                  }
+                }
+              }
+
+              # IPv6: SSH only from a trusted IPv6 prefix
+              ingress_security_rules {
+                source      = "2001:db8:abcd::/48"
+                source_type = "CIDR_BLOCK"
+                protocol    = "6"
+
+                tcp_options {
+                  destination_port_range {
+                    min = 22
+                    max = 22
+                  }
+                }
+              }
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
