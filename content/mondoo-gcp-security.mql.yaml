@@ -73,6 +73,9 @@ policies:
           - uid: mondoo-gcp-security-bigquery-models-cmek-encryption
           - uid: mondoo-gcp-security-bigquery-views-no-legacy-sql
           - uid: mondoo-gcp-security-bigquery-dataset-no-domain-wide-access
+          - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation
+          - uid: mondoo-gcp-security-bigquery-cloudsql-connection-credentials-rotated-90-days
+          - uid: mondoo-gcp-security-bigquery-cloud-resource-connection-sa-no-default
       - title: Cloud KMS
         checks:
           - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible
@@ -180,6 +183,7 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-sqlserver-contained-db-auth-disabled
           - uid: mondoo-gcp-security-cloud-sql-postgres-log-lock-waits-enabled
           - uid: mondoo-gcp-security-cloud-sql-users-use-iam-auth
+          - uid: mondoo-gcp-security-cloud-sql-backup-cmek-encryption
       - title: Memorystore for Redis / Redis Cluster
         checks:
           - uid: mondoo-gcp-security-cloud-redis-auth-enabled
@@ -188,6 +192,29 @@ policies:
           - uid: mondoo-gcp-security-cloud-redis-standard-ha-tier
           - uid: mondoo-gcp-security-cloud-redis-cluster-iam-auth-enabled
           - uid: mondoo-gcp-security-cloud-redis-cluster-deletion-protection-enabled
+      - title: Memorystore (Valkey/Redis)
+        checks:
+          - uid: mondoo-gcp-security-memorystore-iam-auth-enabled
+          - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled
+          - uid: mondoo-gcp-security-memorystore-cmek-encryption
+          - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption
+          - uid: mondoo-gcp-security-memorystore-no-public-psc
+          - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode
+          - uid: mondoo-gcp-security-memorystore-engine-version-supported
+      - title: Datastream
+        checks:
+          - uid: mondoo-gcp-security-datastream-stream-cmek-encryption
+          - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity
+          - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity
+          - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password
+          - uid: mondoo-gcp-security-datastream-routes-no-public-cidr
+          - uid: mondoo-gcp-security-datastream-gcs-destination-bucket-hardened
+          - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc
+      - title: Memorystore for Memcached
+        checks:
+          - uid: mondoo-gcp-security-memcache-instance-not-default-vpc
+          - uid: mondoo-gcp-security-memcache-discovery-endpoint-rfc1918
+          - uid: mondoo-gcp-security-memcache-engine-version-supported
       - title: Cloud IAM
         checks:
           - uid: mondoo-gcp-security-iam-no-user-managed-service-account-keys
@@ -272,6 +299,9 @@ policies:
       - title: Spanner
         checks:
           - uid: mondoo-gcp-security-spanner-cmek-encryption
+          - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption
+          - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles
+          - uid: mondoo-gcp-security-spanner-iam-no-public-principals
       - title: Bigtable
         checks:
           - uid: mondoo-gcp-security-bigtable-cmek-encryption
@@ -1839,6 +1869,9 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' &&
         terraform.resources.contains(nameLabel == 'google_bigquery_dataset')
+    # Terraform has no per-model encryption resource; models inherit CMEK from
+    # the dataset's `default_encryption_configuration`, so this MQL is the same
+    # as the dataset-level CMEK check by design.
     mql: |
       terraform.resources('google_bigquery_dataset').all(
         blocks.where(type == 'default_encryption_configuration') != empty &&
@@ -1848,6 +1881,7 @@ queries:
     filters: |
       asset.platform == 'terraform-plan'
       terraform.plan.resourceChanges.contains(type == 'google_bigquery_dataset')
+    # Terraform has no per-model encryption resource; see the HCL variant above.
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_bigquery_dataset').all(
         change.after['default_encryption_configuration'] != empty &&
@@ -1857,6 +1891,7 @@ queries:
     filters: |
       asset.platform == 'terraform-state'
       terraform.state.resources.contains(type == 'google_bigquery_dataset')
+    # Terraform has no per-model encryption resource; see the HCL variant above.
     mql: |
       terraform.state.resources.where(type == 'google_bigquery_dataset').all(
         values['default_encryption_configuration'] != empty &&
@@ -2497,7 +2532,7 @@ queries:
             }
             ```
     refs:
-      - url: https://docs.cloud.google.com/sql/docs/mysql/flags
+      - url: https://cloud.google.com/sql/docs/mysql/flags
         title: Configure database flags
   - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-gcp
     filters: asset.platform == 'gcp-sql-mysql'
@@ -2507,11 +2542,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('MYSQL'))
     mql: |
-      # Check if a 'skip_show_database' flag exists and 'skip_show_database' flag is set to 'on' on all setting blocks of all MySQL instances
+      # Require a 'skip_show_database' flag to exist and be set to 'on' on every settings block of all MySQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('MYSQL')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'skip_show_database') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'skip_show_database').all(
             arguments['value'] == 'on'
           )
@@ -2655,11 +2691,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('MYSQL'))
     mql: |
-      # Check if a 'local_infile' flag exists and is set to 'on' on all setting blocks of all MySQL instances
+      # Require a 'local_infile' flag to exist and be set to 'off' on every settings block of all MySQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('MYSQL')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'local_infile') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'local_infile').all(
             arguments['value'] == 'off'
           )
@@ -2755,7 +2792,7 @@ queries:
            ```
         2. Run the query:
            ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings { databaseFlags['log_error_verbosity'] == 'verbose' })"
+           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings { databaseFlags['log_error_verbosity'] == 'verbose' || databaseFlags['log_error_verbosity'] == 'default' })"
            ```
            Verify the flag value is `default` or `verbose` for all relevant instances.
       remediation:
@@ -2801,8 +2838,8 @@ queries:
             }
             ```
     refs:
-      - url: https://cloud.google.com/sql/docs/mysql/best-practices
-        title: Cloud SQL Best Practices
+      - url: https://cloud.google.com/sql/docs/postgres/flags
+        title: Configure database flags for Cloud SQL for PostgreSQL
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-gcp
     filters: |
       asset.platform == 'gcp-sql-postgresql'
@@ -2812,14 +2849,15 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
-      # Check if a 'log_error_verbosity' flag exists and is set to 'verbose' or 'default' on all setting blocks of all PostgreSQL instances
+      # Require a 'log_error_verbosity' flag to exist and be set to 'verbose' or 'default' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_error_verbosity') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_error_verbosity').all(
-              arguments['value'] == 'verbose' || arguments['value'] == 'default'
-            )
+            arguments['value'] == 'verbose' || arguments['value'] == 'default'
+          )
         )
       )
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-plan
@@ -2956,8 +2994,8 @@ queries:
             }
             ```
     refs:
-      - url: https://cloud.google.com/sql/docs/mysql/best-practices
-        title: Cloud SQL Best Practices
+      - url: https://cloud.google.com/sql/docs/postgres/flags
+        title: Configure database flags for Cloud SQL for PostgreSQL
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-gcp
     filters: |
       asset.platform == 'gcp-sql-postgresql'
@@ -2967,11 +3005,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
-      # Check if a 'log_connections' flag exists and is set to 'on' on all setting blocks of all PostgreSQL instances
+      # Require a 'log_connections' flag to exist and be set to 'on' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_connections') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_connections').all(
             arguments['value'] == 'on'
           )
@@ -3111,8 +3150,8 @@ queries:
             }
             ```
     refs:
-      - url: https://cloud.google.com/sql/docs/mysql/best-practices
-        title: Cloud SQL Best Practices
+      - url: https://cloud.google.com/sql/docs/postgres/flags
+        title: Configure database flags for Cloud SQL for PostgreSQL
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-gcp
     filters: |
       asset.platform == 'gcp-sql-postgresql'
@@ -3123,11 +3162,12 @@ queries:
       asset.platform == 'terraform-hcl' &&
         terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')) != empty
     mql: |
-      # Check if a 'log_disconnections' flag exists and is set to 'on' on all setting blocks of all PostgreSQL instances
+      # Require a 'log_disconnections' flag to exist and be set to 'on' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_disconnections') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_disconnections').all(
             arguments['value'] == 'on'
           )
@@ -3478,7 +3518,7 @@ queries:
       asset.platform == 'gcp-compute-instance'
       gcp.compute.instance.name != /^gke-/
     mql: |
-      compute_engine_default_service_account_email = gcp.project.id + '-compute@developer.gserviceaccount.com'
+      compute_engine_default_service_account_email = gcp.project.number + '-compute@developer.gserviceaccount.com'
       gcp.compute.instance {
         serviceAccounts.none(
           email == compute_engine_default_service_account_email
@@ -15974,7 +16014,7 @@ queries:
     variants:
       - uid: mondoo-gcp-security-firestore-cmek-encryption-gcp
         tags:
-          mondoo.com/filter-title: GCP Firestore
+          mondoo.com/filter-title: GCP Firestore Database
           mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-hcl
         tags:
@@ -16041,11 +16081,9 @@ queries:
       - url: https://cloud.google.com/firestore/docs/cmek
         title: Customer-managed encryption keys (CMEK) for Firestore
   - uid: mondoo-gcp-security-firestore-cmek-encryption-gcp
-    filters: asset.platform == 'gcp'
+    filters: asset.platform == 'gcp-firestore-database'
     mql: |
-      gcp.project.firestore.databases.all(
-        cmekConfig != empty
-      )
+      gcp.firestore.database.cmekConfig != empty
   - uid: mondoo-gcp-security-firestore-cmek-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_firestore_database')
@@ -16084,7 +16122,7 @@ queries:
     variants:
       - uid: mondoo-gcp-security-spanner-cmek-encryption-gcp
         tags:
-          mondoo.com/filter-title: GCP Spanner
+          mondoo.com/filter-title: GCP Spanner Instance
           mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-hcl
         tags:
@@ -16147,11 +16185,9 @@ queries:
       - url: https://cloud.google.com/spanner/docs/cmek
         title: Customer-managed encryption keys (CMEK) for Cloud Spanner
   - uid: mondoo-gcp-security-spanner-cmek-encryption-gcp
-    filters: asset.platform == 'gcp'
+    filters: asset.platform == 'gcp-spanner-instance'
     mql: |
-      gcp.project.spanner.instances.all(
-        databases().all(encryptionConfig != empty)
-      )
+      gcp.spanner.instance.databases.all(encryptionConfig != empty)
   - uid: mondoo-gcp-security-spanner-cmek-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database')
@@ -16190,7 +16226,7 @@ queries:
     variants:
       - uid: mondoo-gcp-security-bigtable-cmek-encryption-gcp
         tags:
-          mondoo.com/filter-title: GCP Bigtable
+          mondoo.com/filter-title: GCP Bigtable Instance
           mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-hcl
         tags:
@@ -16256,11 +16292,9 @@ queries:
       - url: https://cloud.google.com/bigtable/docs/cmek
         title: Customer-managed encryption keys (CMEK) for Bigtable
   - uid: mondoo-gcp-security-bigtable-cmek-encryption-gcp
-    filters: asset.platform == 'gcp'
+    filters: asset.platform == 'gcp-bigtable-instance'
     mql: |
-      gcp.project.bigtable.instances.all(
-        clusters().all(encryptionConfig != empty)
-      )
+      gcp.bigtable.instance.clusters.all(encryptionConfig != empty)
   - uid: mondoo-gcp-security-bigtable-cmek-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance')
@@ -19235,10 +19269,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
     mql: |
+      # Require a 'cross db ownership chaining' flag to exist and be set to 'off' on every settings block of all SQL Server instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('SQLSERVER')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'cross db ownership chaining') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'cross db ownership chaining').all(
             arguments['value'] == 'off'
           )
@@ -19358,10 +19394,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
     mql: |
+      # Require a 'contained database authentication' flag to exist and be set to 'off' on every settings block of all SQL Server instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('SQLSERVER')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'contained database authentication') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'contained database authentication').all(
             arguments['value'] == 'off'
           )
@@ -19479,10 +19517,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
+      # Require a 'log_lock_waits' flag to exist and be set to 'on' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_lock_waits') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_lock_waits').all(
             arguments['value'] == 'on'
           )
@@ -20559,6 +20599,19 @@ queries:
         - Covers both accidental and malicious deletions with the same control.
         - Requires minimal operational overhead — no replica infrastructure needed.
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_storage_bucket" "data" {
+              name     = "my-bucket"
+              location = "US"
+
+              soft_delete_policy {
+                # 14 days, expressed in seconds
+                retention_duration_seconds = 1209600
+              }
+            }
+            ```
         - id: console
           desc: |
             Enable soft delete on the bucket:
@@ -20613,6 +20666,19 @@ queries:
         - Satisfies regulatory WORM requirements (SEC 17a-4, HIPAA backup integrity).
         - Creates a concrete ransomware-recovery guarantee.
       remediation:
+        - id: terraform
+          desc: |
+            Enable per-object retention at bucket creation (cannot be added to an existing bucket):
+
+            ```hcl
+            resource "google_storage_bucket" "archive" {
+              name                     = "my-archive"
+              location                 = "US"
+              enable_object_retention  = true
+            }
+            ```
+
+            Lock retention is configured per-object via the API/CLI after upload — set `retention.mode = "Locked"` on the relevant objects to prevent shortening or removal.
         - id: console
           desc: |
             Enable and lock object retention at bucket creation time (object retention cannot be added to an existing bucket):
@@ -20670,6 +20736,23 @@ queries:
         - Forces support escalations that need key access to go through explicit customer approval.
         - Aligns KMS posture with data sovereignty and regulatory commitments.
       remediation:
+        - id: terraform
+          desc: |
+            Set the key's `key_access_justifications_policy` allowed reasons explicitly, omitting `CUSTOMER_INITIATED_SUPPORT`:
+
+            ```hcl
+            resource "google_kms_crypto_key" "key" {
+              name     = "my-key"
+              key_ring = google_kms_key_ring.keyring.id
+
+              key_access_justifications_policy {
+                allowed_access_reasons = [
+                  "CUSTOMER_INITIATED_ACCESS",
+                  "GOOGLE_INITIATED_SYSTEM_OPERATION",
+                ]
+              }
+            }
+            ```
         - id: console
           desc: |
             Remove `CUSTOMER_INITIATED_SUPPORT` from the key's allowed access reasons:
@@ -20727,6 +20810,32 @@ queries:
         - Forces egress traffic through approved paths (Cloud NAT with logging, managed proxy).
         - Removes a common persistence primitive used by egress-based attackers.
       remediation:
+        - id: terraform
+          desc: |
+            Remove any custom `google_compute_route` whose `next_hop_gateway` is the default internet gateway, and replace internet egress with Cloud NAT:
+
+            ```hcl
+            # Replace the offending custom route with one that funnels egress
+            # through Cloud NAT (logged + auditable), or remove it entirely if
+            # internet egress is not required.
+            resource "google_compute_router" "egress" {
+              name    = "egress-router"
+              region  = "us-central1"
+              network = google_compute_network.app.id
+            }
+
+            resource "google_compute_router_nat" "egress" {
+              name                               = "egress-nat"
+              router                             = google_compute_router.egress.name
+              region                             = "us-central1"
+              nat_ip_allocate_option             = "AUTO_ONLY"
+              source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+              log_config {
+                enable = true
+                filter = "ALL"
+              }
+            }
+            ```
         - id: console
           desc: |
             Remove redundant or attacker-planted internet-gateway routes:
@@ -20780,6 +20889,24 @@ queries:
         - Maintains consumer identity as a security boundary.
         - Prevents accidental cross-project / cross-tenant data access via PSC.
       remediation:
+        - id: terraform
+          desc: |
+            Set `connection_preference` to `ACCEPT_MANUAL`, or use `ACCEPT_AUTOMATIC` only with an explicit `consumer_accept_lists`:
+
+            ```hcl
+            resource "google_compute_service_attachment" "svc" {
+              name                  = "my-svc"
+              region                = "us-central1"
+              target_service        = google_compute_forwarding_rule.psc.id
+              nat_subnets           = [google_compute_subnetwork.psc_nat.id]
+              connection_preference = "ACCEPT_MANUAL"
+              # Or: connection_preference = "ACCEPT_AUTOMATIC" with an explicit list:
+              # consumer_accept_lists {
+              #   project_id_or_num = "consumer-project-id"
+              #   connection_limit  = 10
+              # }
+            }
+            ```
         - id: console
           desc: |
             Tighten the service attachment's consumer policy:
@@ -20834,6 +20961,23 @@ queries:
         - Eliminates long-lived static DB passwords.
         - Integrates with organization-wide access reviews and IAM Recommender.
       remediation:
+        - id: terraform
+          desc: |
+            Define DB users via `google_sql_user` with `type = "CLOUD_IAM_USER"` (or `CLOUD_IAM_SERVICE_ACCOUNT`):
+
+            ```hcl
+            resource "google_sql_user" "app_iam_user" {
+              instance = google_sql_database_instance.app.name
+              name     = "app-user@my-project.iam"
+              type     = "CLOUD_IAM_USER"
+            }
+
+            resource "google_sql_user" "ci_sa" {
+              instance = google_sql_database_instance.app.name
+              name     = google_service_account.ci.email
+              type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+            }
+            ```
         - id: console
           desc: |
             Replace built-in users with IAM users:
@@ -20888,6 +21032,24 @@ queries:
         - Combines with the existing SSL-policy checks to guarantee end-to-end strong TLS.
         - Eliminates the "default is weak" configuration gap.
       remediation:
+        - id: terraform
+          desc: |
+            Bind the proxy to a strong SSL policy via `ssl_policy`:
+
+            ```hcl
+            resource "google_compute_ssl_policy" "modern" {
+              name            = "modern-tls"
+              profile         = "MODERN"
+              min_tls_version = "TLS_1_2"
+            }
+
+            resource "google_compute_target_ssl_proxy" "tls" {
+              name             = "my-tls-proxy"
+              backend_service  = google_compute_backend_service.svc.id
+              ssl_certificates = [google_compute_ssl_certificate.cert.id]
+              ssl_policy       = google_compute_ssl_policy.modern.id
+            }
+            ```
         - id: console
           desc: |
             Attach a strong SSL policy to the proxy:
@@ -20939,6 +21101,28 @@ queries:
         - Guarantees pod-to-pod network segmentation is actually enforced, not just administratively enabled.
         - Closes a silent-failure gap in the existing network-policy check.
       remediation:
+        - id: terraform
+          desc: |
+            Set `network_policy.provider = "CALICO"` (or another concrete provider) on the cluster, with `enabled = true`:
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              network_policy {
+                enabled  = true
+                provider = "CALICO"
+              }
+
+              # Calico requires the network-policy addon to be enabled too.
+              addons_config {
+                network_policy_config {
+                  disabled = false
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             Enable network policy with Calico as the provider:
@@ -20994,6 +21178,29 @@ queries:
         - Prevents accidental information leak to less-trusted projects.
         - Simplifies IAM review — the topic's viewers are the cluster's viewers.
       remediation:
+        - id: terraform
+          desc: |
+            Bind the cluster's `notification_config.pubsub.topic` to a topic created in the same project:
+
+            ```hcl
+            resource "google_pubsub_topic" "gke_notifications" {
+              project = "my-project"
+              name    = "gke-notifications"
+            }
+
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              project  = "my-project"
+              location = "us-central1"
+
+              notification_config {
+                pubsub {
+                  enabled = true
+                  topic   = google_pubsub_topic.gke_notifications.id
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             Point notifications at a topic in the cluster's own project:
@@ -21050,6 +21257,30 @@ queries:
         - Covers both control-plane and data-plane state in a single plan.
         - Protects against both ransomware and large-scale operator error.
       remediation:
+        - id: terraform
+          desc: |
+            Create a `google_gke_backup_backup_plan` for each cluster, scheduled and retained:
+
+            ```hcl
+            resource "google_gke_backup_backup_plan" "daily" {
+              name     = "daily-backup"
+              cluster  = google_container_cluster.primary.id
+              location = "us-central1"
+
+              backup_schedule {
+                cron_schedule = "0 3 * * *"
+              }
+              retention_policy {
+                backup_delete_lock_days = 7
+                backup_retain_days      = 30
+              }
+              backup_config {
+                all_namespaces       = true
+                include_volume_data  = true
+                include_secrets      = true
+              }
+            }
+            ```
         - id: console
           desc: |
             Create a backup plan for each unprotected cluster:
@@ -21110,6 +21341,18 @@ queries:
         - Prevents embedding-inversion and membership-inference attacks.
         - Aligns ML infrastructure with the same network-boundary posture as production databases.
       remediation:
+        - id: terraform
+          desc: |
+            Recreate the endpoint with VPC peering or PSC instead of the public endpoint:
+
+            ```hcl
+            resource "google_vertex_ai_index_endpoint" "private" {
+              display_name = "private-vector-search"
+              region       = "us-central1"
+              network      = "projects/${var.project_number}/global/networks/${var.private_vpc}"
+              # Do not set public_endpoint_enabled = true.
+            }
+            ```
         - id: console
           desc: |
             Redeploy the index endpoint as private:
@@ -21167,6 +21410,32 @@ queries:
         - Decouples Vertex AI workloads from the overly-permissive default Compute SA.
         - Enables per-workload IAM audit and separation of duties between ML workloads.
       remediation:
+        - id: terraform
+          desc: |
+            Custom jobs are typically submitted via SDK / pipeline, not as long-lived Terraform resources. Provision the dedicated service account in Terraform and require all submissions to reference it; reject SDK submissions that omit `service_account`:
+
+            ```hcl
+            resource "google_service_account" "vertex_training" {
+              account_id   = "vertex-training"
+              display_name = "Vertex AI training jobs"
+            }
+
+            # Grant only the narrow roles the training code needs:
+            resource "google_storage_bucket_iam_member" "training_data" {
+              bucket = google_storage_bucket.training_data.name
+              role   = "roles/storage.objectViewer"
+              member = "serviceAccount:${google_service_account.vertex_training.email}"
+            }
+            ```
+
+            Reference the SA email at job submission time (Python SDK example):
+
+            ```python
+            aiplatform.CustomJob(
+                display_name="train-X",
+                worker_pool_specs=[...],
+            ).run(service_account="vertex-training@PROJECT.iam.gserviceaccount.com")
+            ```
         - id: console
           desc: |
             Configure a dedicated service account for Vertex AI custom jobs:
@@ -21222,6 +21491,21 @@ queries:
         - Prevents IAP from silently becoming a broad VPN replacement with no ingress review.
         - Forces deliberate scope expansion, rather than "let's just use /8 for convenience".
       remediation:
+        - id: terraform
+          desc: |
+            Constrain the destination group's CIDRs to specific subnets, not enterprise-wide ranges:
+
+            ```hcl
+            resource "google_iap_tunnel_dest_group" "bastion" {
+              region   = "us-central1"
+              group_name = "bastion-targets"
+              cidrs    = [
+                "10.20.5.0/24",
+                "10.20.6.0/24",
+              ]
+              # Avoid /15 or broader.
+            }
+            ```
         - id: console
           desc: |
             Narrow the destination group's CIDR list:
@@ -21279,6 +21563,44 @@ queries:
         - Detects silent failures in the scanning pipeline.
         - Keeps DLP findings current for downstream security workflows.
       remediation:
+        - id: terraform
+          desc: |
+            Manage the trigger declaratively so its status is enforced; ensure `status = "HEALTHY"` and a recurring schedule are present:
+
+            ```hcl
+            resource "google_data_loss_prevention_job_trigger" "weekly" {
+              parent       = "projects/my-project"
+              display_name = "weekly-bucket-scan"
+              status       = "HEALTHY"
+
+              triggers {
+                schedule {
+                  recurrence_period_duration = "604800s" # weekly
+                }
+              }
+
+              inspect_job {
+                inspect_template_name = google_data_loss_prevention_inspect_template.creds.id
+                storage_config {
+                  cloud_storage_options {
+                    file_set {
+                      url = "gs://my-bucket/**"
+                    }
+                  }
+                }
+                actions {
+                  save_findings {
+                    output_config {
+                      table {
+                        project_id = "my-project"
+                        dataset_id = google_bigquery_dataset.dlp_findings.dataset_id
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             Investigate and resume the flagged trigger:
@@ -21342,6 +21664,25 @@ queries:
         - Covers the most common accidental-leak formats.
         - Adds no performance cost — DLP built-in detectors run in the same pass.
       remediation:
+        - id: terraform
+          desc: |
+            Include the credential detectors as `info_types` on the inspect template:
+
+            ```hcl
+            resource "google_data_loss_prevention_inspect_template" "creds" {
+              parent       = "projects/my-project"
+              display_name = "credentials-and-pii"
+
+              inspect_config {
+                info_types { name = "AWS_CREDENTIALS" }
+                info_types { name = "GCP_CREDENTIALS" }
+                info_types { name = "JSON_WEB_TOKEN" }
+                info_types { name = "BASIC_AUTH_HEADER" }
+                # Combine with PII detectors as needed:
+                info_types { name = "EMAIL_ADDRESS" }
+              }
+            }
+            ```
         - id: console
           desc: |
             Add credential detectors to existing inspect templates:
@@ -21409,6 +21750,21 @@ queries:
         - Without this filter, LLM applications are exposed to adversarial inputs with no automated detection or blocking.
         - OWASP ranks prompt injection as the #1 risk for LLM applications.
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              filter_config {
+                pi_and_jailbreak_filter_settings {
+                  filter_enforcement = "ENABLED"
+                  confidence_level   = "LOW_AND_ABOVE"
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             To enable prompt injection and jailbreak filtering using the Google Cloud Console:
@@ -21464,6 +21820,20 @@ queries:
         - Without this filter, malicious links in LLM responses go undetected and may be presented to end users.
         - URI filtering checks against Google Safe Browsing and other threat intelligence sources.
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              filter_config {
+                malicious_uri_filter_settings {
+                  filter_enforcement = "ENABLED"
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             To enable malicious URI filtering using the Google Cloud Console:
@@ -21517,6 +21887,37 @@ queries:
         - Harmful content in LLM outputs can cause reputational damage and legal liability.
         - Configuring all four RAI filter categories (sexually explicit, hate speech, harassment, dangerous) provides comprehensive content moderation.
       remediation:
+        - id: terraform
+          desc: |
+            Configure all four RAI filter categories on the template:
+
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              filter_config {
+                rai_settings {
+                  rai_filters {
+                    filter_type      = "SEXUALLY_EXPLICIT"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                  rai_filters {
+                    filter_type      = "HATE_SPEECH"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                  rai_filters {
+                    filter_type      = "HARASSMENT"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                  rai_filters {
+                    filter_type      = "DANGEROUS"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             To configure RAI filters using the Google Cloud Console:
@@ -21572,6 +21973,29 @@ queries:
         - Without SDP, there is no automated detection or redaction of sensitive information flowing through the LLM pipeline.
         - Data leakage through LLM applications can result in regulatory violations (GDPR, HIPAA, PCI-DSS).
       remediation:
+        - id: terraform
+          desc: |
+            Enable SDP basic mode (or advanced if you want to bind your own DLP templates):
+
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              filter_config {
+                sdp_settings {
+                  basic_config {
+                    filter_enforcement = "ENABLED"
+                  }
+                  # For advanced mode, replace basic_config with:
+                  # advanced_config {
+                  #   inspect_template    = google_data_loss_prevention_inspect_template.creds.id
+                  #   deidentify_template = google_data_loss_prevention_deidentify_template.t.id
+                  # }
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             To enable Sensitive Data Protection using the Google Cloud Console:
@@ -21626,6 +22050,18 @@ queries:
         - Blocking mode ensures that detected prompt injections, malicious URIs, harmful content, and sensitive data are actively stopped.
         - Inspect-only mode should only be used during initial evaluation, not in production deployments.
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              template_metadata {
+                enforcement_type = "INSPECT_AND_BLOCK"
+              }
+            }
+            ```
         - id: console
           desc: |
             To set the enforcement type to blocking mode using the Google Cloud Console:
@@ -21634,6 +22070,17 @@ queries:
             2. Select the template to edit.
             3. Under **Template Metadata**, set **Enforcement Type** to **Inspect and Block**.
             4. Save the template.
+        - id: cli
+          desc: |
+            `gcloud model-armor templates update` does not expose an `enforcementType` flag — use the REST API or Terraform (above):
+
+            ```bash
+            curl -X PATCH \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              -d '{"templateMetadata":{"enforcementType":"INSPECT_AND_BLOCK"}}' \
+              "https://modelarmor.googleapis.com/v1/projects/PROJECT/locations/LOCATION/templates/TEMPLATE_ID?updateMask=templateMetadata.enforcementType"
+            ```
     refs:
       - url: https://cloud.google.com/security/products/model-armor
         title: Google Cloud Model Armor overview
@@ -21670,6 +22117,18 @@ queries:
         - Audit logs help measure the effectiveness of filter configurations and identify false positives.
         - Compliance frameworks require logging of security-relevant events, including content filtering actions.
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              template_metadata {
+                log_sanitize_operations = true
+              }
+            }
+            ```
         - id: console
           desc: |
             To enable sanitize operation logging using the Google Cloud Console:
@@ -21723,6 +22182,37 @@ queries:
         - Using HIGH confidence alone may leave applications exposed to nuanced forms of hate speech, harassment, or dangerous content.
         - A layered approach with MEDIUM_AND_ABOVE balances protection and false positive rates for most production use cases.
       remediation:
+        - id: terraform
+          desc: |
+            Set every RAI filter's `confidence_level` to `LOW_AND_ABOVE` or `MEDIUM_AND_ABOVE`, not `HIGH`:
+
+            ```hcl
+            resource "google_model_armor_template" "secure" {
+              template_id = "secure-template"
+              location    = "us-central1"
+
+              filter_config {
+                rai_settings {
+                  rai_filters {
+                    filter_type      = "SEXUALLY_EXPLICIT"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                  rai_filters {
+                    filter_type      = "HATE_SPEECH"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                  rai_filters {
+                    filter_type      = "HARASSMENT"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                  rai_filters {
+                    filter_type      = "DANGEROUS"
+                    confidence_level = "MEDIUM_AND_ABOVE"
+                  }
+                }
+              }
+            }
+            ```
         - id: console
           desc: |
             To adjust RAI filter confidence levels using the Google Cloud Console:
@@ -21781,6 +22271,25 @@ queries:
         - Pub/Sub integration enables automated workflows such as triggering Cloud Functions, sending Slack alerts, or creating tickets.
         - Compliance frameworks require timely notification of security events to responsible personnel.
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_pubsub_topic" "scc_findings" {
+              project = "my-project"
+              name    = "scc-findings"
+            }
+
+            resource "google_scc_notification_config" "active_critical" {
+              config_id    = "active-critical"
+              organization = var.organization_id
+              description  = "Active critical findings"
+              pubsub_topic = google_pubsub_topic.scc_findings.id
+
+              streaming_config {
+                filter = "state = \"ACTIVE\" AND severity = \"CRITICAL\""
+              }
+            }
+            ```
         - id: console
           desc: |
             To configure SCC notifications using the Google Cloud Console:
@@ -21835,6 +22344,25 @@ queries:
         - BigQuery enables advanced analytics, trend analysis, and cross-correlation of security findings.
         - Regulatory frameworks require retention of security event data for defined periods (often 1+ years).
       remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_bigquery_dataset" "scc_findings" {
+              dataset_id  = "scc_findings"
+              location    = "US"
+              project     = "my-project"
+              description = "Long-term retention of SCC findings"
+            }
+
+            resource "google_scc_v2_organization_scc_big_query_export" "active" {
+              big_query_export_id = "active-findings"
+              organization        = var.organization_id
+              location            = "global"
+              description         = "Active findings export"
+              dataset             = google_bigquery_dataset.scc_findings.id
+              filter              = "state = \"ACTIVE\""
+            }
+            ```
         - id: console
           desc: |
             To configure SCC BigQuery exports using the Google Cloud Console:
@@ -21879,7 +22407,8 @@ queries:
         databaseFlags['log_connections'] == 'on' &&
         databaseFlags['log_disconnections'] == 'on' &&
         databaseFlags['log_min_duration_statement'] != '' &&
-        databaseFlags['log_min_duration_statement'] != null
+        databaseFlags['log_min_duration_statement'] != null &&
+        databaseFlags['log_min_duration_statement'] != '-1'
       )
     docs:
       desc: |
@@ -21942,3 +22471,2045 @@ queries:
         title: AlloyDB database flags
       - url: https://www.postgresql.org/docs/current/runtime-config-logging.html
         title: PostgreSQL - runtime logging configuration
+  - uid: mondoo-gcp-security-cloud-sql-backup-cmek-encryption
+    title: Ensure Cloud SQL backup runs inherit the instance CMEK key
+    impact: 70
+    filters: |
+      asset.platform == 'gcp-sql-mysql' || asset.platform == 'gcp-sql-postgresql' || asset.platform == 'gcp-sql-sqlserver'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    mql: |
+      if (gcp.sql.instance.diskEncryptionConfiguration['kmsKeyName'] != empty) {
+        gcp.sql.instance.backupRuns.all(
+          diskEncryptionConfiguration['kmsKeyName'] != empty
+        )
+      }
+    docs:
+      desc: |
+        This check verifies that, when a Cloud SQL instance is configured with a customer-managed encryption key (CMEK), every one of its backup runs is also encrypted with a CMEK. Cloud SQL backups are expected to inherit the instance's disk encryption key, but drift can occur after key rotation, instance migration, or manual key-management changes, leaving historical backups encrypted only with Google-managed keys.
+
+        **Why this matters**
+
+        CMEK is chosen to meet specific control requirements: the organization needs the ability to revoke key material, to audit key usage, and to demonstrate customer-controlled encryption to auditors. A backup that slips back to Google-managed encryption undermines every one of those guarantees:
+
+        - Revoking the CMEK no longer renders the restored data unrecoverable, because the backup was never encrypted with it.
+        - Key-usage audit logs in Cloud KMS do not reflect the backup operation.
+        - Compliance attestations that claim "all Cloud SQL data is encrypted with customer-managed keys" become inaccurate.
+      remediation:
+        - id: terraform
+          desc: |
+            Cloud SQL backups inherit the instance's disk encryption key. Set `encryption_key_name` on the instance at creation time — CMEK cannot be added to an existing instance:
+
+            ```hcl
+            resource "google_sql_database_instance" "app" {
+              name                = "app-db"
+              region              = "us-central1"
+              database_version    = "POSTGRES_15"
+              encryption_key_name = google_kms_crypto_key.sql_key.id
+
+              settings {
+                tier = "db-custom-2-7680"
+                backup_configuration {
+                  enabled                        = true
+                  point_in_time_recovery_enabled = true
+                }
+              }
+            }
+            ```
+
+            After applying, delete pre-CMEK backup runs and let the next scheduled backup inherit the new key.
+        - id: console
+          desc: |
+            Cloud SQL backups inherit the instance's disk encryption key. If backups on a CMEK-encrypted instance are missing `kmsKeyName`, the instance's CMEK configuration itself is the source of the drift:
+
+            1. In the Google Cloud console, open **SQL** and select the affected instance.
+            2. Confirm that **Customer-managed encryption key** is configured on the instance.
+            3. If the instance is not CMEK-encrypted but must be, you must re-create the instance with CMEK — CMEK cannot be applied to an existing instance — and migrate data.
+            4. Delete backup runs that pre-date the CMEK configuration and create a fresh CMEK-encrypted backup from **Backups** → **Create backup**.
+        - id: cli
+          desc: |
+            Create a fresh on-demand backup after confirming the instance has a CMEK configured. Any new backup run will inherit the instance's CMEK:
+
+            ```bash
+            gcloud sql backups create --instance=INSTANCE_NAME
+            ```
+
+            List existing backup runs to identify ones that pre-date CMEK:
+
+            ```bash
+            gcloud sql backups list --instance=INSTANCE_NAME
+            ```
+    refs:
+      - url: https://cloud.google.com/sql/docs/mysql/cmek
+        title: Cloud SQL - Using customer-managed encryption keys
+      - url: https://cloud.google.com/sql/docs/mysql/backup-recovery/backups
+        title: Cloud SQL - About backups
+  - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation
+    title: Ensure BigQuery AWS and Azure connections use identity federation
+    impact: 80
+    filters: asset.platform == 'gcp-bigquery-dataset'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      gcp.project.bigqueryService.connections.where(type == "AWS").all(
+        properties['accessRole']['iamRoleId'] != empty
+      )
+      gcp.project.bigqueryService.connections.where(type == "AZURE").all(
+        properties['federatedApplicationClientId'] != empty
+      )
+    docs:
+      desc: |
+        This check verifies that every BigQuery connection of type `AWS` or `AZURE` is configured with identity federation rather than a long-lived, statically provisioned credential. For AWS connections, identity federation is expressed as an `accessRole.iamRoleId` (a role ARN trusted by the BigQuery Google service account). For Azure connections, it is expressed as a `federatedApplicationClientId` bound to the project's Azure AD tenant.
+
+        **Why this matters**
+
+        External-cloud connections issued against static keys live in BigQuery metadata indefinitely, with no automatic expiration and no cryptographic binding to the caller. Any principal able to list connections in the project effectively has those keys. Federated connections replace that static credential with a short-lived token minted per query, verified against the target cloud's IAM system:
+
+        - Revoking access in AWS or Azure IAM immediately invalidates the connection — there is no residual static key to rotate or forget.
+        - Each query logs an identity in both GCP and the target cloud, enabling cross-cloud audit correlation.
+        - Static keys copied out of BigQuery (via an over-privileged principal or an audit export) cannot be replayed.
+      remediation:
+        - id: terraform
+          desc: |
+            Configure the connection with the federation block (AWS) or Azure tenant binding:
+
+            ```hcl
+            resource "google_bigquery_connection" "aws" {
+              connection_id = "aws-omni"
+              location      = "aws-us-east-1"
+              aws {
+                access_role {
+                  iam_role_id = "arn:aws:iam::AWS_ACCOUNT_ID:role/ROLE_NAME"
+                }
+              }
+            }
+
+            resource "google_bigquery_connection" "azure" {
+              connection_id = "azure-omni"
+              location      = "azure-eastus2"
+              azure {
+                customer_tenant_id = "AZURE_TENANT_ID"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            Recreate the connection using identity federation:
+
+            1. Open **BigQuery** → **External connections** → select the connection.
+            2. If the connection type is **Amazon S3 (AWS)** or **Azure Blob Storage**, confirm the **Authentication** section shows an AWS IAM role or Azure federated application.
+            3. If the connection still shows stored access keys or a client secret, select **Create connection**, choose the same external source, and follow the federation setup wizard. Delete the legacy connection after the federated replacement is in use.
+            4. Update queries that referenced the old connection to use the new connection id.
+        - id: cli
+          desc: |
+            Create an AWS connection that uses a role ARN (identity federation):
+
+            ```bash
+            bq mk --connection \
+              --connection_type=AWS \
+              --iam_role_id=arn:aws:iam::AWS_ACCOUNT_ID:role/ROLE_NAME \
+              --location=LOCATION \
+              CONNECTION_ID
+            ```
+
+            Create an Azure connection bound to your tenant (identity federation):
+
+            ```bash
+            bq mk --connection \
+              --connection_type=AZURE \
+              --tenant_id=AZURE_TENANT_ID \
+              --location=LOCATION \
+              CONNECTION_ID
+            ```
+    refs:
+      - url: https://cloud.google.com/bigquery/docs/omni-aws-create-connection
+        title: BigQuery Omni - Create AWS connection with identity federation
+      - url: https://cloud.google.com/bigquery/docs/omni-azure-create-connection
+        title: BigQuery Omni - Create Azure connection with identity federation
+  - uid: mondoo-gcp-security-bigquery-cloudsql-connection-credentials-rotated-90-days
+    title: Ensure BigQuery Cloud SQL connection credentials rotated within 90 days
+    impact: 60
+    filters: asset.platform == 'gcp-bigquery-dataset'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      gcp.project.bigqueryService.connections.where(type == "CLOUD_SQL").all(
+        modified != null && modified > time.now - 90 * time.day
+      )
+    docs:
+      desc: |
+        This check verifies that every BigQuery connection of type `CLOUD_SQL` has been modified within the last 90 days. BigQuery Cloud SQL connections hold a stored database username and password — there is no native Secret Manager binding for this connection type — so the connection's `modified` timestamp is used as a proxy for credential rotation.
+
+        **Why this matters**
+
+        A Cloud SQL connection's credentials travel with any query that invokes `EXTERNAL_QUERY()`. Rotation of the underlying database password is mandatory to contain credential exposure, but the BigQuery connection does not rotate automatically — an operator must update it. When the connection has not been modified in months, one of two things is true: either the connection password has not been rotated (which the check is designed to catch), or the password was rotated in Cloud SQL but not updated in the connection (which leaves queries failing or, worse, using a stale long-lived credential).
+
+        A 90-day ceiling aligns with common credential-management baselines (NIST SP 800-171 3.5.10, SOC 2 CC6.1.9) without being so short that it produces constant noise for active connections.
+      remediation:
+        - id: terraform
+          desc: |
+            Update the connection's `cloud_sql.credential` block with the rotated password and apply. Each `terraform apply` updates the connection's `modified` timestamp:
+
+            ```hcl
+            resource "google_bigquery_connection" "cloudsql" {
+              connection_id = "cloudsql-fed"
+              location      = "us-central1"
+              cloud_sql {
+                instance_id = google_sql_database_instance.app.connection_name
+                database    = "appdb"
+                type        = "POSTGRES"
+                credential {
+                  username = "bq_reader"
+                  password = var.bq_reader_password # rotated >= every 90 days
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            Rotate the underlying database user and update the BigQuery connection:
+
+            1. In Cloud SQL, rotate the password for the database user used by the BigQuery connection.
+            2. Open **BigQuery** → **External connections** → select the flagged connection.
+            3. Select **Edit**, paste the new password, and save. Saving updates the connection's `modified` timestamp.
+            4. Re-run a dependent query to confirm the connection is healthy.
+        - id: cli
+          desc: |
+            Update the connection with the new password:
+
+            ```bash
+            bq update --connection \
+              --connection_credential='{"username":"DB_USER","password":"NEW_PASSWORD"}' \
+              --location=LOCATION \
+              CONNECTION_ID
+            ```
+    refs:
+      - url: https://cloud.google.com/bigquery/docs/cloud-sql-federated-queries
+        title: BigQuery - Cloud SQL federated queries
+      - url: https://cloud.google.com/sql/docs/mysql/create-manage-users
+        title: Cloud SQL - Managing users
+  - uid: mondoo-gcp-security-bigquery-cloud-resource-connection-sa-no-default
+    title: Ensure BigQuery Cloud Resource connection SAs are not default SAs
+    impact: 80
+    filters: asset.platform == 'gcp-bigquery-dataset'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      gcp.project.bigqueryService.connections.where(type == "CLOUD_RESOURCE").all(
+        properties['serviceAccountId'] == null ||
+        properties['serviceAccountId'].contains("-compute@developer.gserviceaccount.com") == false
+      )
+      gcp.project.bigqueryService.connections.where(type == "CLOUD_RESOURCE").all(
+        properties['serviceAccountId'] == null ||
+        properties['serviceAccountId'].contains("@appspot.gserviceaccount.com") == false
+      )
+    docs:
+      desc: |
+        This check verifies that BigQuery `CLOUD_RESOURCE` connections do not delegate to a default Compute Engine or App Engine service account. Default service accounts are created with the broad `roles/editor` primitive role at the project level, so any Cloud Resource connection that points at one effectively grants project-editor access to every principal that can invoke the connection (via `EXTERNAL_QUERY`, Vertex AI integrations, remote functions, etc.).
+
+        **Why this matters**
+
+        Cloud Resource connections are routinely used to let BigQuery read from Cloud Storage, invoke Vertex AI models, or call Cloud Functions. The identity that does the work is the delegated service account. If that identity is the default Compute Engine SA (`<project-number>-compute@developer.gserviceaccount.com`) or the App Engine default SA (`<project-id>@appspot.gserviceaccount.com`), the blast radius of a prompt-injection, a malicious remote function, or a misused `EXTERNAL_QUERY` grows from "access to one dataset" to "edit any resource in the project." The fix is a dedicated service account with only the roles the connection needs.
+      remediation:
+        - id: terraform
+          desc: |
+            Bind the connection to a dedicated service account, not the default Compute or App Engine SAs:
+
+            ```hcl
+            resource "google_service_account" "bq_cloud_resource" {
+              account_id   = "bq-cloud-resource-sa"
+              display_name = "BigQuery Cloud Resource SA"
+            }
+
+            resource "google_bigquery_connection" "cloud_resource" {
+              connection_id = "cloud-resource"
+              location      = "us-central1"
+              cloud_resource {
+                service_account_id = google_service_account.bq_cloud_resource.email
+              }
+            }
+
+            # Grant only the narrow roles the connection needs:
+            resource "google_storage_bucket_iam_member" "cloud_resource_reader" {
+              bucket = google_storage_bucket.data.name
+              role   = "roles/storage.objectViewer"
+              member = "serviceAccount:${google_service_account.bq_cloud_resource.email}"
+            }
+            ```
+        - id: console
+          desc: |
+            Repoint the connection at a purpose-built service account:
+
+            1. Create a new service account in **IAM & Admin** → **Service Accounts** (e.g. `bq-cloud-resource-<feature>`).
+            2. Grant the new SA only the roles required for this connection's work — for example, `roles/storage.objectViewer` on a specific bucket or `roles/aiplatform.user` on a specific model.
+            3. Open **BigQuery** → **External connections** → select the flagged connection → **Edit**.
+            4. Replace the delegated service account with the new one. Save.
+            5. Remove the `roles/editor` grant from the default SA, or disable the default SA entirely if no other workload depends on it.
+        - id: cli
+          desc: |
+            `bq mk --connection --connection_type=CLOUD_RESOURCE` auto-provisions a Google-managed delegated service account; you grant narrow roles to that SA rather than supplying your own.
+
+            Create (or recreate) the connection and read back the auto-provisioned SA:
+
+            ```bash
+            bq mk --connection \
+              --connection_type=CLOUD_RESOURCE \
+              --location=LOCATION \
+              CONNECTION_ID
+
+            bq show --connection --location=LOCATION --format=prettyjson \
+              PROJECT_ID.LOCATION.CONNECTION_ID
+            ```
+
+            The `cloudResource.serviceAccountId` field in the output is the delegated SA. Grant it only the narrow roles the connection needs (example for Cloud Storage):
+
+            ```bash
+            DELEGATE_SA=$(bq show --connection --location=LOCATION --format=json \
+              PROJECT_ID.LOCATION.CONNECTION_ID \
+              | jq -r '.cloudResource.serviceAccountId')
+
+            gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
+              --member="serviceAccount:${DELEGATE_SA}" \
+              --role=roles/storage.objectViewer
+            ```
+    refs:
+      - url: https://cloud.google.com/bigquery/docs/connect-to-resource
+        title: BigQuery - Cloud Resource connections
+      - url: https://cloud.google.com/iam/docs/service-account-overview#default
+        title: Default service accounts - security considerations
+  - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption
+    title: Ensure Spanner backup schedules use customer-managed encryption
+    impact: 70
+    filters: asset.platform == 'gcp-spanner-instance'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    mql: |
+      gcp.spanner.instance.backupSchedules.all(
+        encryptionConfig['encryptionType'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
+        encryptionConfig['encryptionType'] == "USE_DATABASE_ENCRYPTION"
+      )
+    docs:
+      desc: |
+        This check verifies that every backup schedule attached to databases in this Spanner instance produces backups encrypted with a customer-managed encryption key (CMEK). A backup schedule can be configured to encrypt its output with the database's CMEK (`USE_DATABASE_ENCRYPTION`), an explicitly supplied CMEK (`CUSTOMER_MANAGED_ENCRYPTION`), or a Google-managed key (`GOOGLE_DEFAULT_ENCRYPTION`). Only the first two satisfy customer-controlled key management.
+
+        **Why this matters**
+
+        The CMEK decision on a Spanner database governs live data, but its *backups* are a separate surface. A backup schedule that defaults to Google-managed encryption creates a copy of the database that sidesteps every CMEK guarantee the organization relied on for the source:
+
+        - Revoking the database's CMEK does not revoke access to scheduled backups.
+        - Key-usage audit trails in Cloud KMS do not cover the scheduled backup operation.
+        - Restore from backup re-materializes data that auditors were told was CMEK-protected under a different key regime.
+
+        `USE_DATABASE_ENCRYPTION` is usually the safest default: the schedule always tracks whatever the database is encrypted with, so the schedule cannot drift.
+      remediation:
+        - id: terraform
+          desc: |
+            Set `encryption_config` on each `google_spanner_backup_schedule` — `USE_DATABASE_ENCRYPTION` is usually the safest default:
+
+            ```hcl
+            resource "google_spanner_backup_schedule" "daily" {
+              instance      = google_spanner_instance.app.name
+              database      = google_spanner_database.app.name
+              name          = "daily-backup"
+              retention_duration = "604800s"
+
+              encryption_config {
+                encryption_type = "USE_DATABASE_ENCRYPTION"
+              }
+
+              full_backup_spec {}
+              spec {
+                cron_spec {
+                  text = "0 2 * * *"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            Update each flagged backup schedule to use customer-managed encryption:
+
+            1. Open **Spanner** → select the instance → select the affected database.
+            2. Open **Backup schedules** and select the schedule.
+            3. Under **Encryption**, select **Use database encryption** (recommended) or **Customer-managed encryption** and point at a Cloud KMS key.
+            4. Save. New backups produced by the schedule will use the selected encryption.
+        - id: cli
+          desc: |
+            Update the schedule to inherit the database's encryption:
+
+            ```bash
+            gcloud spanner backup-schedules update SCHEDULE_ID \
+              --instance=INSTANCE_ID \
+              --database=DATABASE_ID \
+              --encryption-type=USE_DATABASE_ENCRYPTION
+            ```
+
+            Or pin it to an explicit CMEK key:
+
+            ```bash
+            gcloud spanner backup-schedules update SCHEDULE_ID \
+              --instance=INSTANCE_ID \
+              --database=DATABASE_ID \
+              --encryption-type=CUSTOMER_MANAGED_ENCRYPTION \
+              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/spanner/docs/cmek
+        title: Customer-managed encryption keys (CMEK) for Cloud Spanner
+      - url: https://cloud.google.com/spanner/docs/backup-schedules
+        title: Cloud Spanner - Backup schedules
+  - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles
+    title: Ensure Spanner instance and database IAM grant no primitive roles
+    impact: 80
+    filters: asset.platform == 'gcp-spanner-instance'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    mql: |
+      gcp.spanner.instance.iamPolicy.all(
+        role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+      )
+      gcp.spanner.instance.databases.all(
+        iamPolicy.all(
+          role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that the IAM policy on the Spanner instance — and on every database within the instance — contains no bindings to the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Spanner publishes fine-grained predefined roles (for example `roles/spanner.databaseAdmin`, `roles/spanner.databaseUser`, `roles/spanner.databaseReader`) that should be used in place of the primitives.
+
+        **Why this matters**
+
+        Primitive roles predate most of GCP's fine-grained roles and grant sweeping, poorly-scoped permissions:
+
+        - `roles/owner` carries IAM-modification rights, so anyone with Owner can grant themselves anything else on the resource.
+        - `roles/editor` carries write access to essentially every resource type the holder can see — far beyond the Spanner surface the grant was probably meant to cover.
+        - `roles/viewer` grants read access across resource types and can expose schemas, row-level data, and backup metadata to principals that should only see summaries.
+
+        Every primitive grant on a Spanner resource means the principal's access will silently expand whenever Google adds new Spanner features to the role — least-privilege drift by design. Replace them with the specific Spanner predefined role that matches the workload.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Spanner IAM via the dedicated `google_spanner_instance_iam_*` and `google_spanner_database_iam_*` resources, granting only the narrow Spanner roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_spanner_instance_iam_member" "db_admin" {
+              instance = google_spanner_instance.app.name
+              role     = "roles/spanner.databaseAdmin"
+              member   = "group:db-admins@example.com"
+            }
+
+            resource "google_spanner_database_iam_member" "app_reader" {
+              instance = google_spanner_instance.app.name
+              database = google_spanner_database.app.name
+              role     = "roles/spanner.databaseReader"
+              member   = "serviceAccount:reporting@my-project.iam.gserviceaccount.com"
+            }
+            ```
+        - id: console
+          desc: |
+            Replace each primitive-role binding with a fine-grained Spanner role:
+
+            1. Open **Spanner** → select the instance (and, if needed, the database).
+            2. Select **Permissions**.
+            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (for example `Cloud Spanner Database Admin`, `Cloud Spanner Database User`, or `Cloud Spanner Database Reader`).
+            4. Save. Confirm with the principal that their workflow still works.
+        - id: cli
+          desc: |
+            Remove a primitive role binding from an instance and grant the fine-grained equivalent:
+
+            ```bash
+            gcloud spanner instances remove-iam-policy-binding INSTANCE_ID \
+              --member=user:alice@example.com \
+              --role=roles/editor
+
+            gcloud spanner instances add-iam-policy-binding INSTANCE_ID \
+              --member=user:alice@example.com \
+              --role=roles/spanner.databaseUser
+            ```
+
+            Repeat for each database as needed:
+
+            ```bash
+            gcloud spanner databases remove-iam-policy-binding DATABASE_ID \
+              --instance=INSTANCE_ID \
+              --member=user:alice@example.com \
+              --role=roles/viewer
+            ```
+    refs:
+      - url: https://cloud.google.com/spanner/docs/iam
+        title: Cloud Spanner - IAM roles and permissions
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-spanner-iam-no-public-principals
+    title: Ensure Spanner IAM has no public or anonymous principals
+    impact: 100
+    filters: asset.platform == 'gcp-spanner-instance'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      gcp.spanner.instance.iamPolicy.all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      gcp.spanner.instance.databases.all(
+        iamPolicy.all(
+          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that no IAM binding on a Spanner instance or any of its databases grants access to the public principals `allUsers` (any caller on the internet, authenticated or not) or `allAuthenticatedUsers` (any caller signed in with any Google account). Either principal effectively publishes the resource to the world.
+
+        **Why this matters**
+
+        Spanner databases typically hold transactional data — customer records, financial ledgers, session state. A single IAM binding to `allUsers` or `allAuthenticatedUsers` opens that data to anyone who can call the Spanner API with a Google account, or, for `allUsers`, anyone at all. These bindings are almost always the product of an over-broad script or a misclick, not an intentional design choice, and they bypass every other control the organization relies on (VPC-SC, perimeter policies, database roles).
+
+        The only safe configuration is "no public principal anywhere in the Spanner IAM chain." Restrict grants to specific users, groups, or service accounts.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Spanner IAM only via `google_spanner_*_iam_member` resources with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_spanner_instance_iam_member" "reader" {
+              instance = google_spanner_instance.app.name
+              role     = "roles/spanner.databaseReader"
+              member   = "group:analytics@example.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Audit existing bindings: import `google_spanner_instance_iam_policy` into state if the policy is managed elsewhere, then remove any public-principal members in the source HCL and re-apply.
+        - id: console
+          desc: |
+            Remove any public principal from the Spanner IAM policy:
+
+            1. Open **Spanner** → select the instance (and, if flagged, the database).
+            2. Select **Permissions**.
+            3. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            4. Add specific principals (users, groups, service accounts) that need the access, using the narrowest appropriate role (for example `Cloud Spanner Database Reader` for read-only workloads).
+            5. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Remove the public bindings from the instance:
+
+            ```bash
+            gcloud spanner instances remove-iam-policy-binding INSTANCE_ID \
+              --member=allUsers \
+              --role=ROLE_NAME
+
+            gcloud spanner instances remove-iam-policy-binding INSTANCE_ID \
+              --member=allAuthenticatedUsers \
+              --role=ROLE_NAME
+            ```
+
+            Repeat at the database scope for every flagged database:
+
+            ```bash
+            gcloud spanner databases remove-iam-policy-binding DATABASE_ID \
+              --instance=INSTANCE_ID \
+              --member=allUsers \
+              --role=ROLE_NAME
+            ```
+    refs:
+      - url: https://cloud.google.com/spanner/docs/iam
+        title: Cloud Spanner - IAM roles and permissions
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-memorystore-iam-auth-enabled
+    title: Ensure Memorystore (Valkey/Redis) instances require IAM authentication
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Google Cloud Memorystore instances on the unified Memorystore service (Valkey and the Memorystore Redis successor) require IAM authentication. When `authorization_mode` is `AUTH_DISABLED`, any client that can reach the instance over the network can read and write all keys without proving identity.
+
+        **Why this matters**
+
+        Memorystore commonly stores session tokens, cached personal data, rate-limit counters, and other state that authenticates or about users. Even on a private VPC, "no auth" means:
+          - Any compromised workload, contractor laptop on the VPN, or lateral-movement-privileged process can dump the entire keyspace.
+          - There is no per-caller identity in Cloud Audit Logs — every access looks the same, which prevents detection and forensic attribution.
+          - A misconfigured firewall rule or peered network instantly becomes total compromise of the cache, with no second factor.
+          - IAM authentication binds access to a Google Cloud principal, so revoking access is a matter of removing an IAM binding rather than rotating a shared secret.
+
+        Set `authorization_mode` to `IAM_AUTH` so callers must present a Google Cloud identity that has been granted the `roles/memorystore.dbConnectionUser` (or equivalent) role.
+      remediation:
+        - id: terraform
+          desc: |
+            Configure IAM auth on a `google_memorystore_instance`:
+
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id        = "my-instance"
+              location           = "us-central1"
+              shard_count        = 3
+              authorization_mode = "IAM_AUTH"
+            }
+            ```
+        - id: console
+          desc: |
+            IAM authentication can only be set at instance creation time on Memorystore. To remediate an existing `AUTH_DISABLED` instance, create a new instance with IAM auth enabled and migrate data:
+
+            1. Go to **Memorystore > Instances** in the Google Cloud Console.
+            2. Select **Create Instance**.
+            3. In the **Security** section, set **Authorization mode** to **IAM authentication**.
+            4. Complete instance creation, migrate data from the legacy instance, and delete the legacy instance.
+        - id: cli
+          desc: |
+            IAM auth must be configured at creation time:
+
+            ```bash
+            gcloud memorystore instances create INSTANCE_ID \
+              --location=LOCATION \
+              --shard-count=3 \
+              --authorization-mode=IAM_AUTH
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/about-iam-auth
+        title: Memorystore IAM authentication overview
+  - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memorystore.instances.all(authorizationMode == "IAM_AUTH")
+  - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      terraform.resources('google_memorystore_instance').all(
+        arguments.authorization_mode == "IAM_AUTH"
+      )
+  - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['authorization_mode'] == "IAM_AUTH"
+      )
+  - uid: mondoo-gcp-security-memorystore-iam-auth-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['authorization_mode'] == "IAM_AUTH"
+      )
+  - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled
+    title: Ensure Memorystore (Valkey/Redis) instances enable in-transit encryption
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Memorystore (Valkey/Redis) instances enable in-transit encryption. When `transit_encryption_mode` is `TRANSIT_ENCRYPTION_DISABLED`, traffic between clients and the cache travels in cleartext on the VPC.
+
+        **Why this matters**
+
+        Even within a private VPC, cleartext cache traffic is a real exposure:
+          - Any process with permission to capture packets on the same VPC subnet (a sidecar, a debug agent, a compromised neighbor) can read keys, tokens, and cached personal data.
+          - Mirror sessions, packet captures for troubleshooting, and VPC Flow Logs with payload sampling all become inadvertent disclosures.
+          - Cross-region peerings and Private Service Connect endpoints can carry the traffic across boundaries that the application owner does not control.
+          - Compliance frameworks (PCI-DSS, HIPAA) require encryption of cardholder data and PHI in transit, including on internal networks.
+
+        Set `transit_encryption_mode` to `SERVER_AUTHENTICATION` so the server presents a TLS certificate and clients establish encrypted connections.
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id             = "my-instance"
+              location                = "us-central1"
+              shard_count             = 3
+              transit_encryption_mode = "SERVER_AUTHENTICATION"
+            }
+            ```
+        - id: console
+          desc: |
+            In-transit encryption mode can only be set at instance creation. Recreate the instance with TLS enabled:
+
+            1. Go to **Memorystore > Instances**.
+            2. Select **Create Instance**.
+            3. Under **Security**, set **In-transit encryption** to **Server authentication (TLS)**.
+            4. Migrate data and delete the unencrypted instance.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memorystore instances create INSTANCE_ID \
+              --location=LOCATION \
+              --shard-count=3 \
+              --transit-encryption-mode=SERVER_AUTHENTICATION
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/about-in-transit-encryption
+        title: Memorystore in-transit encryption overview
+  - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memorystore.instances.all(transitEncryptionMode == "SERVER_AUTHENTICATION")
+  - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      terraform.resources('google_memorystore_instance').all(
+        arguments.transit_encryption_mode == "SERVER_AUTHENTICATION"
+      )
+  - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['transit_encryption_mode'] == "SERVER_AUTHENTICATION"
+      )
+  - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['transit_encryption_mode'] == "SERVER_AUTHENTICATION"
+      )
+  - uid: mondoo-gcp-security-memorystore-cmek-encryption
+    title: Ensure Memorystore (Valkey/Redis) instances are encrypted with CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-memorystore-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Memorystore (Valkey/Redis) instances are encrypted with a customer-managed encryption key (CMEK) rather than the default Google-managed key. CMEK gives the organization control over the key lifecycle and the ability to revoke access to cached data by disabling or destroying the key.
+
+        **Why this matters**
+
+        Memorystore stores in-memory data that is regularly persisted (RDB/AOF) and replicated to backups. Without CMEK:
+          - The organization cannot independently rotate the encryption key on a custom schedule.
+          - Access to data cannot be revoked by destroying the key — Google retains the ability to decrypt.
+          - Cloud Audit Logs do not record key usage, so cache decryption is not auditable.
+          - Frameworks such as PCI-DSS, HIPAA, and SOC 2 commonly require customer-managed encryption for stores that hold authenticators or PII.
+
+        Configure CMEK at instance creation; it cannot be added later.
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id = "my-instance"
+              location    = "us-central1"
+              shard_count = 3
+              kms_key     = google_kms_crypto_key.memorystore_key.id
+            }
+            ```
+        - id: console
+          desc: |
+            CMEK must be configured at instance creation time.
+
+            1. Go to **Memorystore > Instances**.
+            2. Select **Create Instance**.
+            3. Under **Encryption**, select **Customer-managed key** and choose a Cloud KMS key in the same region.
+            4. Complete instance creation.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memorystore instances create INSTANCE_ID \
+              --location=LOCATION \
+              --shard-count=3 \
+              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/about-cmek
+        title: Memorystore CMEK overview
+  - uid: mondoo-gcp-security-memorystore-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memorystore.instances.all(kmsKey != null)
+  - uid: mondoo-gcp-security-memorystore-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      terraform.resources('google_memorystore_instance').all(
+        arguments.kms_key != empty && arguments.kms_key != ""
+      )
+  - uid: mondoo-gcp-security-memorystore-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['kms_key'] != empty &&
+        change.after['kms_key'] != ""
+      )
+  - uid: mondoo-gcp-security-memorystore-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['kms_key'] != empty &&
+        values['kms_key'] != ""
+      )
+  - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption
+    title: Ensure Memorystore backup collections are encrypted with CMEK
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    docs:
+      desc: |
+        This check ensures that Memorystore backup collections are encrypted with a customer-managed encryption key (CMEK). Backups inherit the CMEK of the source instance — an instance without CMEK produces backups without CMEK, and a CMEK key whose Cloud Storage permissions are misconfigured can leave backups effectively under Google-managed protection.
+
+        **Why this matters**
+
+        Backup data is the most efficient way to exfiltrate a complete cache snapshot. A backup that is not under customer-managed encryption:
+          - Cannot be cryptographically destroyed when retention requirements lapse — disabling or destroying the customer-managed key is the only revocation primitive that works on data the customer no longer controls operationally.
+          - Cannot be audited via Cloud KMS access logs.
+          - Falls outside the scope of compliance evidence that requires customer-managed cryptography.
+
+        Configure CMEK on the source instance; the backup collection inherits it.
+      remediation:
+        - id: console
+          desc: |
+            Backup-collection CMEK is determined by the source instance. To remediate, recreate the source instance with CMEK enabled (see the instance CMEK check above) and let the backup collection inherit the key.
+        - id: cli
+          desc: |
+            Confirm the source instance is created with `--kms-key=...`. Cnspec verifies the resolved `backupCollection.kmsKey` is set:
+
+            ```bash
+            gcloud memorystore instances create INSTANCE_ID \
+              --location=LOCATION \
+              --shard-count=3 \
+              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/backup-and-restore
+        title: Memorystore backup and restore
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memorystore.backupCollections.all(kmsKey != null)
+  - uid: mondoo-gcp-security-memorystore-no-public-psc
+    title: Ensure Memorystore Private Service Connect endpoints are not public
+    impact: 95
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    docs:
+      desc: |
+        This check ensures that no Memorystore instance exposes a `PUBLIC_ENDPOINT` Private Service Connect (PSC) attachment. Memorystore PSC connections should always have `connection_type` of `PRIVATE_SERVICE_CONNECT`, which terminates inside a consumer VPC.
+
+        **Why this matters**
+
+        A `PUBLIC_ENDPOINT` PSC connection makes the cache reachable from the public internet. Combined with `AUTH_DISABLED` or weak network ACLs, this is a direct path to unauthenticated cache reads. Even with IAM auth enabled, public exposure expands the attack surface to the entire internet for credential-stuffing, denial-of-service, and protocol-level attacks.
+
+        Always front Memorystore with private PSC endpoints inside customer VPCs.
+      remediation:
+        - id: terraform
+          desc: |
+            Configure the instance with `psc_auto_connections` (private) only — never use public-endpoint variants:
+
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id = "my-instance"
+              location    = "us-central1"
+              shard_count = 3
+
+              psc_auto_connections {
+                network    = google_compute_network.consumer_vpc.id
+                project_id = var.consumer_project_id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            Public-endpoint PSC connections must be replaced — they cannot be edited in place.
+
+            1. Go to **Memorystore > Instances** and select the affected instance.
+            2. Under **Connectivity**, identify any endpoint with **Connection type: Public endpoint**.
+            3. Create a new private PSC connection in the consumer VPC (`Private Service Connect`).
+            4. Migrate clients to the new endpoint and remove the public endpoint.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memorystore instances describe INSTANCE_ID \
+              --location=LOCATION \
+              --format="value(pscAutoConnections)"
+            ```
+
+            Recreate the instance without the public endpoint variant if any auto-connection has `connectionType: PUBLIC_ENDPOINT`.
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/about-private-service-connect
+        title: Memorystore and Private Service Connect
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memorystore.instances.all(
+        pscAttachmentDetails.all(connectionType != "PUBLIC_ENDPOINT")
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode
+    title: Ensure Memorystore engineConfigs keep protected-mode enabled
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/soc2-2017: soc2-control-cc7-1-1
+    variants:
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Memorystore `engineConfigs` does not set `protected-mode` to `"no"`. Protected-mode is the Redis/Valkey safety net that refuses connections without a password when the engine is bound to non-loopback interfaces.
+
+        **Why this matters**
+
+        Disabling protected-mode is common attacker tradecraft when an engineer can exec into a Memorystore instance: it allows unauthenticated traffic on the network endpoint. Disabling protected-mode is also a known footgun left over from on-prem Redis configurations.
+
+        Audit `engineConfigs` and remove any entry that disables protected-mode. Rely on IAM auth and TLS for access control.
+      remediation:
+        - id: terraform
+          desc: |
+            Remove `protected-mode = "no"` from `engine_configs`:
+
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id = "my-instance"
+              location    = "us-central1"
+              shard_count = 3
+
+              # Do not include "protected-mode" = "no".
+              engine_configs = {
+                "maxmemory-policy" = "allkeys-lru"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            1. Go to **Memorystore > Instances** and select the instance.
+            2. Under **Configuration > Engine config**, remove any `protected-mode` entry whose value is `no`.
+            3. Save changes.
+        - id: cli
+          desc: |
+            Update `engine-configs` to remove the unsafe entry. The `--engine-configs` flag replaces the entire config map, so include all values you want to keep:
+
+            ```bash
+            gcloud memorystore instances update INSTANCE_ID \
+              --location=LOCATION \
+              --engine-configs=maxmemory-policy=allkeys-lru
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/supported-instance-configurations
+        title: Supported Memorystore instance configurations
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memorystore.instances.all(
+        engineConfigs["protected-mode"] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      terraform.resources('google_memorystore_instance').all(
+        arguments['engine_configs']['protected-mode'] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['engine_configs']['protected-mode'] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['engine_configs']['protected-mode'] != "no"
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-version-supported
+    title: Ensure Memorystore engine version is not a known-vulnerable release
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-id-ra-1
+      compliance/nist-csf-2: nist-csf-2-id-ra-08
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-4
+    docs:
+      desc: |
+        This check ensures that Memorystore instances do not run an engine version with publicly disclosed CVEs. The MQL exposes `engineVersion` (for example `valkey-7.5`, `redis-7.2`); this check fails when the version matches a known-vulnerable release for which Memorystore has not yet patched.
+
+        **Why this matters**
+
+        Memorystore is a managed service, but engine upgrades are not automatic across major versions. Operators who pin to an older major (commonly because a client library has not been re-tested) can be running a build with disclosed CVEs for months. Even managed services depend on the customer to plan a maintenance window for major upgrades.
+
+        Track upstream Valkey and Redis security advisories and upgrade promptly when a CVE applies. The current version baseline below is conservative and may need to be widened over time as new advisories are issued.
+      remediation:
+        - id: terraform
+          desc: |
+            Pin a current engine version on the instance resource and apply during a maintenance window:
+
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id    = "my-instance"
+              location       = "us-central1"
+              shard_count    = 3
+              engine_version = "VALKEY_8_0"
+            }
+            ```
+        - id: console
+          desc: |
+            Plan a maintenance window and upgrade the engine version:
+
+            1. Go to **Memorystore > Instances** and select the instance.
+            2. Select **Upgrade** and choose the latest supported engine version.
+            3. Confirm and trigger the upgrade during a low-traffic window.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memorystore instances update INSTANCE_ID \
+              --location=LOCATION \
+              --engine-version=VALKEY_8_0
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/valkey/release-notes
+        title: Memorystore release notes
+      - url: https://valkey.io/security/
+        title: Valkey security advisories
+      - url: https://redis.io/security/
+        title: Redis security advisories
+    filters: asset.platform == 'gcp'
+    mql: |
+      # Memorystore for Valkey starts at valkey-7.2 (forked from Redis 7.2.4),
+      # so no Valkey-specific releases are denied here. Update this list when
+      # Valkey ships a release with disclosed CVEs that Memorystore has not patched.
+      gcp.memorystore.instances.all(
+        engineVersion != "redis-6.0" &&
+        engineVersion != "redis-6.2" &&
+        engineVersion != "redis-7.0"
+      )
+  - uid: mondoo-gcp-security-datastream-stream-cmek-encryption
+    title: Ensure Datastream streams are encrypted with CMEK
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Datastream streams are encrypted at rest with a customer-managed encryption key (CMEK). Datastream replicates data from a source system to a destination (BigQuery or Cloud Storage), staging it inside Google-managed infrastructure during replication. Without CMEK, that staging data is encrypted only with Google-managed keys.
+
+        **Why this matters**
+
+        Streams typically replicate the highest-value data the organization owns: production OLTP rows, customer records, payment ledgers. Even if the source database and the BigQuery destination are both individually CMEK-encrypted, the in-flight Datastream snapshot — and any error-state buffers — sit under Google-managed encryption unless `customer_managed_encryption_key` is set on the stream itself. CMEK on the stream gives the same lifecycle and revocation control as on the source and destination.
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_datastream_stream" "stream" {
+              stream_id                       = "my-stream"
+              location                        = "us-central1"
+              display_name                    = "my-stream"
+              customer_managed_encryption_key = google_kms_crypto_key.datastream_key.id
+              # ... source_config / destination_config ...
+            }
+            ```
+        - id: console
+          desc: |
+            CMEK can only be set at stream creation time.
+
+            1. Go to **Datastream > Streams** and select **Create Stream**.
+            2. Under **Encryption**, select **Customer-managed key** and choose a Cloud KMS key in the same region.
+            3. Complete the wizard and migrate any consumers from the legacy stream.
+        - id: cli
+          desc: |
+            The `gcloud datastream` CLI does not currently expose a `--customer-managed-encryption-key` flag for `streams create`. Use the Datastream REST API or Terraform (above) to set it at creation time:
+
+            ```bash
+            curl -X POST \
+              "https://datastream.googleapis.com/v1/projects/PROJECT/locations/LOCATION/streams?streamId=STREAM_ID" \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              -d @- <<'EOF'
+            {
+              "displayName": "STREAM_ID",
+              "customerManagedEncryptionKey": "projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY",
+              "sourceConfig": {"sourceConnectionProfile": "projects/PROJECT/locations/LOCATION/connectionProfiles/SOURCE"},
+              "destinationConfig": {"destinationConnectionProfile": "projects/PROJECT/locations/LOCATION/connectionProfiles/DEST"}
+            }
+            EOF
+            ```
+    refs:
+      - url: https://cloud.google.com/datastream/docs/use-cmek
+        title: Use CMEK with Datastream
+  - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.streams.all(kmsKey != null)
+  - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_stream')
+    mql: |
+      terraform.resources('google_datastream_stream').all(
+        arguments.customer_managed_encryption_key != empty &&
+        arguments.customer_managed_encryption_key != ""
+      )
+  - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_stream')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_stream').all(
+        change.after['customer_managed_encryption_key'] != empty &&
+        change.after['customer_managed_encryption_key'] != ""
+      )
+  - uid: mondoo-gcp-security-datastream-stream-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_stream')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_stream').all(
+        values['customer_managed_encryption_key'] != empty &&
+        values['customer_managed_encryption_key'] != ""
+      )
+  - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity
+    title: Ensure Datastream profiles avoid static service IP connectivity
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that source-database Datastream connection profiles do not use `staticServiceIp` connectivity. Static service IP connectivity requires the source database to allowlist Datastream's published, project-wide public IP ranges — effectively exposing the source database directly to the public internet, fronted only by an IP allowlist.
+
+        **Why this matters**
+
+        Static service IP connectivity is the most exposed of the three Datastream options:
+          - The source database must accept inbound connections from Datastream's public IPs.
+          - Those IP ranges are shared across many Google customers and republished by Google over time.
+          - Anyone who guesses or enumerates valid credentials can connect from any of those public IPs to the source database.
+          - There is no VPC-level boundary control between Datastream and the source.
+
+        Use `privateConnectivity` (PSC into the source's VPC) instead. `forwardSsh` is acceptable for staged migrations but should not be a steady-state choice.
+      remediation:
+        - id: terraform
+          desc: |
+            Replace `static_service_ip_connectivity` with `private_connectivity`:
+
+            ```hcl
+            resource "google_datastream_private_connection" "pc" {
+              private_connection_id = "my-private-connection"
+              location              = "us-central1"
+              display_name          = "my-private-connection"
+
+              vpc_peering_config {
+                vpc    = google_compute_network.source_vpc.id
+                subnet = "10.0.0.0/29"
+              }
+            }
+
+            resource "google_datastream_connection_profile" "src" {
+              connection_profile_id = "src"
+              location              = "us-central1"
+              display_name          = "src"
+
+              mysql_profile {
+                hostname = "10.0.0.10"
+                username = "datastream"
+                password = "<set via secret_manager_stored_password>"
+              }
+
+              private_connectivity {
+                private_connection = google_datastream_private_connection.pc.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            Connectivity type is fixed at connection-profile creation. Recreate the source profile with **Private connectivity** selected, after creating a private connection that peers Datastream into the source's VPC.
+        - id: cli
+          desc: |
+            Recreate the source connection profile with `--private-connection`:
+
+            ```bash
+            gcloud datastream connection-profiles create PROFILE_ID \
+              --location=LOCATION \
+              --display-name=DISPLAY_NAME \
+              --type=mysql \
+              --mysql-hostname=HOST --mysql-username=USER --mysql-password=PWD \
+              --private-connection=PRIVATE_CONNECTION_ID
+            ```
+    refs:
+      - url: https://cloud.google.com/datastream/docs/network-connectivity-options
+        title: Datastream network connectivity options
+  - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.connectionProfiles.all(connectivityType != "staticServiceIp")
+  - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_connection_profile')
+    mql: |
+      terraform.resources('google_datastream_connection_profile').all(
+        blocks.where(type == 'static_service_ip_connectivity').length == 0
+      )
+  - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_connection_profile')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile').all(
+        change.after['static_service_ip_connectivity'] == empty ||
+        change.after['static_service_ip_connectivity'].length == 0
+      )
+  - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_connection_profile')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_connection_profile').all(
+        values['static_service_ip_connectivity'] == empty ||
+        values['static_service_ip_connectivity'].length == 0
+      )
+  - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity
+    title: Ensure Datastream connection profiles do not use forward SSH connectivity
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    variants:
+      - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check flags Datastream connection profiles using `forwardSsh` connectivity. Forward-SSH connectivity tunnels Datastream traffic through an intermediate SSH bastion, with the bastion's hostname, port, username, and either a password or private key stored on the connection profile resource.
+
+        **Why this matters**
+
+        Forward-SSH is a credential-handling concern as much as a networking concern:
+          - Bastion credentials are stored on the connection profile and accessible to anyone with `datastream.connectionProfiles.get` permission. SSH private keys in particular are difficult to rotate without recreating the profile.
+          - Bastions add a single point of compromise: if the bastion is breached, the attacker can pivot into the source database with the credentials stored alongside.
+          - Bastions are commonly long-lived hand-managed VMs that drift away from baseline configuration.
+
+        Forward-SSH may be acceptable as a transitional connectivity option (for example, while a private connection is being established), but it should not be the steady-state choice. Prefer `privateConnectivity` with a Datastream private connection peered into the source VPC.
+      remediation:
+        - id: terraform
+          desc: |
+            Replace `forward_ssh_connectivity` with `private_connectivity` (see the staticServiceIp remediation for an example).
+        - id: console
+          desc: |
+            Recreate the connection profile with **Private connectivity** selected and decommission the SSH bastion.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud datastream connection-profiles create PROFILE_ID \
+              --location=LOCATION \
+              --display-name=DISPLAY_NAME \
+              --type=mysql \
+              --mysql-hostname=HOST --mysql-username=USER --mysql-password=PWD \
+              --private-connection=PRIVATE_CONNECTION_ID
+            ```
+    refs:
+      - url: https://cloud.google.com/datastream/docs/network-connectivity-options
+        title: Datastream network connectivity options
+  - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.connectionProfiles.all(connectivityType != "forwardSsh")
+  - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_connection_profile')
+    mql: |
+      terraform.resources('google_datastream_connection_profile').all(
+        blocks.where(type == 'forward_ssh_connectivity').length == 0
+      )
+  - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_connection_profile')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile').all(
+        change.after['forward_ssh_connectivity'] == empty ||
+        change.after['forward_ssh_connectivity'].length == 0
+      )
+  - uid: mondoo-gcp-security-datastream-no-forward-ssh-connectivity-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_connection_profile')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_connection_profile').all(
+        values['forward_ssh_connectivity'] == empty ||
+        values['forward_ssh_connectivity'].length == 0
+      )
+  - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password
+    title: Ensure Datastream source profiles store credentials in Secret Manager
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    docs:
+      desc: |
+        This check ensures that Datastream source connection profiles (MySQL, PostgreSQL, SQL Server, Oracle) reference credentials in Secret Manager via `secretManagerStoredPassword`, rather than relying on a plaintext `password` field on the profile itself.
+
+        **Why this matters**
+
+        The Datastream API redacts the `password` field on read, so plaintext passwords are not visible to most callers — but they still live inside Datastream's storage and cannot be rotated, scoped, or audited the way a Secret Manager secret can. Using `secretManagerStoredPassword`:
+          - Centralizes credential rotation in Secret Manager (with versioning and IAM controls).
+          - Lets the security team revoke access to the secret without recreating the connection profile.
+          - Produces auditable Cloud Audit Logs for each credential access.
+
+        This check passes when the profile dict carries a non-empty `secretManagerStoredPassword`. It applies to the database source profile types where Datastream supports the field (MySQL, PostgreSQL, SQL Server, Oracle).
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_datastream_connection_profile" "src" {
+              connection_profile_id = "src"
+              location              = "us-central1"
+              display_name          = "src"
+
+              postgresql_profile {
+                hostname                       = "10.0.0.10"
+                username                       = "datastream"
+                secret_manager_stored_password = google_secret_manager_secret_version.src_pwd.name
+                database                       = "appdb"
+              }
+
+              private_connectivity {
+                private_connection = google_datastream_private_connection.pc.id
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            1. In Secret Manager, create or identify a secret containing the source database password and grant the Datastream service agent the `roles/secretmanager.secretAccessor` role on it.
+            2. Go to **Datastream > Connection profiles** and select the source profile.
+            3. Select **Edit**, scroll to the **Connection details** section, and replace the **Password** field with the **Secret Manager** option.
+            4. Choose the secret and version, save, and verify the connection still passes the **Run test** check.
+        - id: cli
+          desc: |
+            The `--<engine>-secret-manager-stored-password` flag prefix varies by source engine. Use the variant that matches your profile type:
+
+            ```bash
+            # MySQL profile
+            gcloud datastream connection-profiles update PROFILE_ID \
+              --location=LOCATION \
+              --mysql-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
+
+            # PostgreSQL profile
+            gcloud datastream connection-profiles update PROFILE_ID \
+              --location=LOCATION \
+              --postgresql-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
+
+            # SQL Server profile
+            gcloud datastream connection-profiles update PROFILE_ID \
+              --location=LOCATION \
+              --sqlserver-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
+
+            # Oracle profile
+            gcloud datastream connection-profiles update PROFILE_ID \
+              --location=LOCATION \
+              --oracle-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
+            ```
+    refs:
+      - url: https://cloud.google.com/datastream/docs/configure-your-source-database
+        title: Configure your Datastream source database (Secret Manager)
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.connectionProfiles.where(
+        profileType == "mysql" || profileType == "postgresql" || profileType == "sqlserver" || profileType == "oracle"
+      ).all(
+        profile["secretManagerStoredPassword"] != null &&
+        profile["secretManagerStoredPassword"] != ""
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr
+    title: Ensure Datastream private-connection routes do not advertise public CIDRs
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Datastream private-connection routes only advertise destinations inside RFC1918 (private) IP space — not public addresses or `0.0.0.0`. Routes inside a private connection determine which destinations Datastream can reach via the peered VPC; a public destination defeats the purpose of using a private connection at all.
+
+        **Why this matters**
+
+        A route that points at a public destination address inside a private-connection peer turns the private connection into a covert egress path to the internet. It also signals a misconfiguration that should be reviewed:
+          - Either the source is actually on a public IP and the operator should be using `staticServiceIp` (which has its own controls).
+          - Or someone is using the route to reach a public service from inside Datastream, which bypasses the boundary controls expected on the consumer VPC.
+
+        Restrict `destination_address` to RFC1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_datastream_route" "src" {
+              route_id              = "src-route"
+              location              = "us-central1"
+              private_connection    = google_datastream_private_connection.pc.private_connection_id
+              display_name          = "src-route"
+              destination_address   = "10.0.0.10"
+              destination_port      = 3306
+            }
+            ```
+        - id: console
+          desc: |
+            1. Go to **Datastream > Private connections** and select the affected private connection.
+            2. Inspect each **Route** entry; for any route whose **Destination address** is `0.0.0.0` or a public IP, delete the route and replace it with one targeting the private IP of the source.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud datastream routes delete ROUTE_ID \
+              --location=LOCATION \
+              --private-connection=PRIVATE_CONNECTION_ID
+
+            gcloud datastream routes create ROUTE_ID \
+              --location=LOCATION \
+              --private-connection=PRIVATE_CONNECTION_ID \
+              --display-name=DISPLAY_NAME \
+              --destination-address=10.0.0.10 \
+              --destination-port=3306
+            ```
+    refs:
+      - url: https://cloud.google.com/datastream/docs/private-connectivity
+        title: Datastream private connectivity
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.privateConnections.all(
+        routes.all(
+          destinationAddress.find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+        )
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_route')
+    mql: |
+      terraform.resources('google_datastream_route').all(
+        arguments.destination_address.find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_route')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_route').all(
+        change.after['destination_address'].find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+      )
+  - uid: mondoo-gcp-security-datastream-routes-no-public-cidr-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_route')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_route').all(
+        values['destination_address'].find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+      )
+  - uid: mondoo-gcp-security-datastream-gcs-destination-bucket-hardened
+    title: Ensure Datastream GCS destination buckets are hardened
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    docs:
+      desc: |
+        This check ensures that any Cloud Storage bucket used as a Datastream GCS destination has the standard data-tier hardening: uniform bucket-level access enabled, public access prevention enforced, and CMEK configured. It uses the typed `connectionProfile.bucket` cross-reference exposed by the Datastream resource model — the bucket is resolved into the `gcp.project.storageService.bucket` resource, and the same field-level checks already used for general bucket policies are applied.
+
+        **Why this matters**
+
+        A Datastream GCS destination is a continuously-updated mirror of the source database. If the destination bucket has fine-grained ACLs (uniform-bucket-level-access disabled), or allows public access, the entire replication is exposed. CMEK extends customer-controlled key management to the replicated copy.
+
+        Although this property is verified by the general Cloud Storage bucket checks too, this check makes the Datastream-specific dependency explicit so that operators know a misconfigured replication target is a Datastream concern, not just a storage concern.
+      remediation:
+        - id: console
+          desc: |
+            For each Cloud Storage bucket used as a Datastream destination:
+
+            1. Go to **Cloud Storage > Buckets** and select the bucket.
+            2. Under **Permissions**, set **Access control** to **Uniform** if it is currently fine-grained.
+            3. Under **Protection**, set **Public access prevention** to **Enforced**.
+            4. Under **Encryption**, set a **Customer-managed key** in Cloud KMS.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud storage buckets update gs://BUCKET_NAME \
+              --uniform-bucket-level-access \
+              --public-access-prevention \
+              --default-encryption-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/storage/docs/uniform-bucket-level-access
+        title: Cloud Storage - Uniform bucket-level access
+      - url: https://cloud.google.com/storage/docs/public-access-prevention
+        title: Cloud Storage - Public access prevention
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.connectionProfiles.where(profileType == "gcs").all(
+        bucket.iamConfiguration["uniformBucketLevelAccess"]["enabled"] == true &&
+        bucket.iamConfiguration["publicAccessPrevention"] == "enforced" &&
+        bucket.defaultKmsKey != null
+      )
+  - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc
+    title: Ensure Datastream private connections do not peer the default VPC
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-gcp
+        tags:
+          mondoo.com/filter-title: GCP Datastream
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Datastream private connections peer into a purpose-built VPC, not the auto-created `default` network. The default VPC ships with broad allow-internal firewall rules unsuitable for a peering target that exposes Datastream to the source-database network.
+
+        **Why this matters**
+
+        Peering Datastream into the default VPC means any workload on that VPC — including dev, sandbox, and short-lived debug VMs — sits next to the source database from a network perspective. A misconfigured firewall rule on the default VPC then becomes a path between Datastream's traffic and unrelated workloads.
+
+        Use a dedicated VPC for data-tier peering with explicit, narrowly-scoped firewall rules.
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_compute_network" "datastream_vpc" {
+              name                    = "datastream-peering"
+              auto_create_subnetworks = false
+            }
+
+            resource "google_datastream_private_connection" "pc" {
+              private_connection_id = "my-pc"
+              location              = "us-central1"
+              display_name          = "my-pc"
+
+              vpc_peering_config {
+                vpc    = google_compute_network.datastream_vpc.id
+                subnet = "10.10.0.0/29"
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            VPC selection is fixed at private-connection creation. Recreate the private connection peered into a non-default VPC.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud datastream private-connections create PC_ID \
+              --location=LOCATION \
+              --display-name=DISPLAY_NAME \
+              --vpc=projects/PROJECT/global/networks/MY_VPC \
+              --subnet=10.10.0.0/29
+            ```
+    refs:
+      - url: https://cloud.google.com/datastream/docs/private-connectivity
+        title: Datastream private connectivity
+  - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.privateConnections.all(network.name != "default")
+  - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_private_connection')
+    mql: |
+      terraform.resources('google_datastream_private_connection').all(
+        blocks.where(type == 'vpc_peering_config').all(
+          arguments.vpc != empty &&
+          arguments.vpc != "" &&
+          arguments.vpc.find(/networks\/default$/) == []
+        )
+      )
+  - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_private_connection')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_datastream_private_connection').all(
+        change.after['vpc_peering_config'] != empty &&
+        change.after['vpc_peering_config'].all(
+          _['vpc'] != empty &&
+          _['vpc'] != "" &&
+          _['vpc'].find(/networks\/default$/) == []
+        )
+      )
+  - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_private_connection')
+    mql: |
+      terraform.state.resources.where(type == 'google_datastream_private_connection').all(
+        values['vpc_peering_config'] != empty &&
+        values['vpc_peering_config'].all(
+          _['vpc'] != empty &&
+          _['vpc'] != "" &&
+          _['vpc'].find(/networks\/default$/) == []
+        )
+      )
+  - uid: mondoo-gcp-security-memcache-instance-not-default-vpc
+    title: Ensure Memorystore for Memcached instances are not on the default VPC
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    variants:
+      - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore for Memcached
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Memorystore for Memcached instances are attached to a purpose-built VPC, not the auto-created `default` network.
+
+        **Why this matters**
+
+        Memcached has no native authentication and no native in-transit encryption. Network isolation is the only access control. The default VPC ships with permissive auto-created firewall rules (allow-internal across the entire VPC, plus allow-icmp/ssh/rdp from `0.0.0.0/0`); any workload reachable on the default VPC, including ad-hoc test VMs and contractor sandboxes, can connect to Memcached and read or modify the entire keyspace without proving identity.
+
+        Always attach Memcached to a dedicated VPC with explicit, narrowly-scoped firewall rules that allow only the application tier to reach the cache.
+      remediation:
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "google_compute_network" "memcache_vpc" {
+              name                    = "memcache-private"
+              auto_create_subnetworks = false
+            }
+
+            resource "google_memcache_instance" "cache" {
+              name           = "my-memcache"
+              region         = "us-central1"
+              authorized_network = google_compute_network.memcache_vpc.id
+              node_count     = 1
+              node_config {
+                cpu_count      = 1
+                memory_size_mb = 1024
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            VPC attachment is fixed at instance creation. Recreate the Memcached instance attached to a dedicated VPC.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memcache instances create INSTANCE_ID \
+              --region=REGION \
+              --authorized-network=projects/PROJECT/global/networks/MY_VPC \
+              --node-count=1 \
+              --node-cpu=1 \
+              --node-memory=1GB
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/memcached/networking
+        title: Memorystore for Memcached - Networking
+  - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memcache.instances.all(network.name != "default")
+  - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memcache_instance')
+    mql: |
+      terraform.resources('google_memcache_instance').all(
+        arguments.authorized_network != empty &&
+        arguments.authorized_network != "" &&
+        arguments.authorized_network.find(/networks\/default$/) == []
+      )
+  - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memcache_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memcache_instance').all(
+        change.after['authorized_network'] != empty &&
+        change.after['authorized_network'] != "" &&
+        change.after['authorized_network'].find(/networks\/default$/) == []
+      )
+  - uid: mondoo-gcp-security-memcache-instance-not-default-vpc-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memcache_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memcache_instance').all(
+        values['authorized_network'] != empty &&
+        values['authorized_network'] != "" &&
+        values['authorized_network'].find(/networks\/default$/) == []
+      )
+  - uid: mondoo-gcp-security-memcache-discovery-endpoint-rfc1918
+    title: Ensure Memorystore for Memcached discovery endpoints are RFC1918 addresses
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+    docs:
+      desc: |
+        This check ensures that the Memorystore for Memcached auto-discovery endpoint resolves to an address inside RFC1918 (private) space. Memcached has no native auth or TLS, so any address that is reachable from outside the authorized VPC is a direct path to unauthenticated cache reads and writes.
+
+        **Why this matters**
+
+        A non-RFC1918 discovery endpoint indicates either a misconfiguration (the instance is attached to a network with public IP allocation) or a defective firewall arrangement. Either way, this check is a hard guard against unauthenticated public exposure of cache contents.
+      remediation:
+        - id: console
+          desc: |
+            1. Check that the Memcached instance is attached to a VPC that uses RFC1918 IP allocation only — public IPs on the data tier are not supported by Memcached and indicate a misconfiguration.
+            2. Verify firewall rules on the authorized network do not forward port 11211 from public addresses.
+            3. If the discovery endpoint resolves to a public IP, recreate the instance attached to a private VPC.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memcache instances describe INSTANCE_ID \
+              --region=REGION --format="value(discoveryEndpoint)"
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/memcached/auto-discovery-overview
+        title: Memorystore for Memcached - Auto Discovery
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memcache.instances.all(
+        discoveryEndpoint.find(/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/) != []
+      )
+  - uid: mondoo-gcp-security-memcache-engine-version-supported
+    title: Ensure Memcached engine version is not a known-vulnerable release
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-id-ra-1
+      compliance/nist-csf-2: nist-csf-2-id-ra-08
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/soc2-2017: soc2-control-cc7-1-4
+    variants:
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore for Memcached
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Memorystore for Memcached instances do not run an engine version with publicly disclosed CVEs. The MQL exposes `memcacheVersion` (for example `MEMCACHE_1_5`, `MEMCACHE_1_6`); this check fails when the version matches a known-vulnerable Memcached release for which Memorystore has not yet patched.
+
+        **Why this matters**
+
+        Memcached is a mature C codebase with a long CVE history covering integer overflows, SASL handling, and binary protocol issues. Even with network isolation in place, defense-in-depth requires running a patched version. Memorystore upgrades are not always automatic across major versions; operators who pinned to an older major can be running a build with disclosed CVEs for months.
+
+        Track Memcached upstream advisories and upgrade promptly when a CVE applies. The current baseline below is conservative.
+      remediation:
+        - id: terraform
+          desc: |
+            Pin a current Memcached major version on the instance resource:
+
+            ```hcl
+            resource "google_memcache_instance" "cache" {
+              name              = "my-memcache"
+              region            = "us-central1"
+              authorized_network = google_compute_network.memcache_vpc.id
+              memcache_version  = "MEMCACHE_1_6_15"
+              node_count        = 1
+              node_config {
+                cpu_count      = 1
+                memory_size_mb = 1024
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            1. Go to **Memorystore for Memcached > Instances** and select the instance.
+            2. Select **Edit** and choose the latest supported `memcacheVersion`.
+            3. Apply during a maintenance window — node-by-node restart will affect cache hit rates.
+        - id: cli
+          desc: |
+            ```bash
+            gcloud memcache instances upgrade INSTANCE_ID \
+              --region=REGION \
+              --memcached-version=1.6.15
+            ```
+    refs:
+      - url: https://cloud.google.com/memorystore/docs/memcached/release-notes
+        title: Memorystore for Memcached release notes
+      - url: https://github.com/memcached/memcached/wiki/ReleaseNotes
+        title: Memcached upstream release notes (CVE history)
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.memcache.instances.all(memcacheVersion != "MEMCACHE_1_5")
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memcache_instance')
+    mql: |
+      terraform.resources('google_memcache_instance').all(
+        arguments.memcache_version != "MEMCACHE_1_5"
+      )
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memcache_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memcache_instance').all(
+        change.after['memcache_version'] != "MEMCACHE_1_5"
+      )
+  - uid: mondoo-gcp-security-memcache-engine-version-supported-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memcache_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memcache_instance').all(
+        values['memcache_version'] != "MEMCACHE_1_5"
+      )

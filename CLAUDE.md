@@ -292,6 +292,7 @@ policies:
 - **impact**: Risk score 0-100 for prioritization
 - **checks**: Scoring queries (pass/fail)
 - **queries**: Data collection queries (no scoring)
+- **Multi-statement check MQL**: A check's `mql:` block can contain multiple top-level statements. Each statement is scored as a separate datapoint and the check passes only if every datapoint passes — it is *not* "last expression wins". Use this pattern when you want each assertion to surface independently in scan output; collapse to a single `&&`-joined expression only if you want one combined datapoint.
 
 **Formatting requirements**:
 - All `desc` (description) and `remediation` fields in policy files must be valid Markdown. These fields are rendered as Markdown in the UI, so use proper Markdown syntax for headings, lists, code blocks, links, etc.
