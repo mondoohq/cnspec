@@ -325,9 +325,18 @@ cnspec policy lint ./content/your-policy.mql.yaml
 cnspec scan local -f ./content/your-policy.mql.yaml
 ```
 
-#### Terraform variants for cloud policies
+#### Terraform variants and remediation for cloud policies
 
-When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-kubernetes-security`, etc.), the check should run against both the live cloud runtime **and** any Terraform asset that configures the same resource. Convert single-platform checks to a `variants:` block with up to four children:
+When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-kubernetes-security`, etc.), **two things** must ship together:
+
+1. A **variants:** block so the check runs against the live cloud runtime *and* Terraform HCL/plan/state assets.
+2. A **`- id: terraform`** entry in the `remediation:` list with HCL example code that fixes the underlying issue.
+
+Both ride along with every new or modified check — don't ship one without the other.
+
+##### Variants
+
+Convert single-platform checks to a `variants:` block with up to four children:
 
 - `<uid>-<cloud>` — runtime check (`asset.platform == 'gcp'`, `'aws'`, …)
 - `<uid>-terraform-hcl` — `terraform.resources(...)` against HCL source
@@ -340,23 +349,38 @@ Reference patterns in this repo:
 - HCL nested-block fanout: `mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-*` (database_flags)
 - Plan/state list-of-objects shape: `mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-*`
 
-**When a Terraform variant is not possible, leave a YAML comment above the parent check explaining why** so future passes don't re-investigate. Common reasons:
+##### Terraform remediation
+
+Every parent check that has Terraform variants must also document how to fix the issue in Terraform. Add an `- id: terraform` entry to the `remediation:` list alongside the existing `id: console`, `id: cli`, `id: cloudformation`, `id: bicep` entries. The block holds a short Markdown intro and a fenced ```hcl``` example that resolves the violation.
+
+Reference: `mondoo-aws-security-eks-cluster-cmks-in-kms` in `content/mondoo-aws-security.mql.yaml` shows the canonical structure (variants block + remediation list with `id: terraform` HCL alongside CLI/console/CloudFormation).
+
+##### When you can't write a variant or remediation, leave a YAML comment
+
+If the runtime check has no Terraform analog, **leave a YAML comment above the parent check explaining why** so future passes don't re-investigate. Common reasons:
 
 - The runtime check evaluates operational telemetry (job state, latest execution status, observed traffic) that has no configuration analog.
 - The cloud resource is managed only via SDK / CLI / console and has no Terraform resource (e.g., short-lived imperative API calls like Vertex AI custom jobs).
 - The runtime check depends on cross-resource correlation (e.g., "every cluster has a backup plan that points at it") that the runtime check itself does not yet implement correctly — in which case fix the runtime first.
 - The runtime check inspects a field whose Terraform analog is a different feature (don't paper over the mismatch with a vacuous variant).
 
-Comment format (inserted on the line before `- uid:`):
+Comment formats (inserted on the line before `- uid:`):
 
 ```yaml
 # No Terraform variants: <one-sentence reason>. <Optional: when this could be revisited>.
 - uid: mondoo-<cloud>-security-...
 ```
 
-The comment must explain the technical limitation, not just say "skip". Keep it to a few lines.
+```yaml
+# No Terraform remediation: <one-sentence reason>. <Optional: when this could be revisited>.
+- uid: mondoo-<cloud>-security-...
+```
 
-After every batch of variant additions, both must pass:
+When neither variants nor remediation are possible (the usual case — if you can't write a variant, you usually can't write Terraform remediation either), include both comments. The comment must explain the technical limitation, not just say "skip". Keep it to a few lines.
+
+##### Validation
+
+After every batch of variant or remediation additions, both must pass:
 
 ```bash
 cnspec policy lint content/mondoo-<cloud>-security.mql.yaml
