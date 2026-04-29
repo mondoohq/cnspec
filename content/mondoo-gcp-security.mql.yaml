@@ -20629,6 +20629,12 @@ queries:
     refs:
       - url: https://cloud.google.com/storage/docs/soft-delete
         title: Cloud Storage - Soft delete
+  # No Terraform variants: the runtime check inspects bucket-level objectRetentionMode
+  # (per-object retention feature). Terraform only exposes enable_object_retention (bool)
+  # at bucket creation; per-object lock state is set via the API/CLI after upload and is
+  # not expressible in HCL/plan/state. The bucket-level retention_policy.is_locked
+  # behavior is a separate feature and already covered by
+  # mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked.
   - uid: mondoo-gcp-security-cloud-storage-bucket-object-retention-locked
     title: Ensure Cloud Storage buckets with object retention have it locked
     impact: 75
@@ -20700,7 +20706,6 @@ queries:
   - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict
     title: Ensure KMS key access justifications exclude customer-initiated support
     impact: 65
-    filters: asset.platform == 'gcp'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: false
@@ -20709,14 +20714,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: false
       compliance/soc2-2017: soc2-control-cc6-1-9
-    mql: |
-      gcp.project.kmsService.keyrings.all(
-        cryptokeys.all(
-          keyAccessJustificationsPolicy == null ||
-          keyAccessJustificationsPolicy['allowedAccessReasons'] == null ||
-          keyAccessJustificationsPolicy['allowedAccessReasons'].none(_ == "CUSTOMER_INITIATED_SUPPORT")
-        )
-      )
+    variants:
+      - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud KMS
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no KMS crypto key allows `CUSTOMER_INITIATED_SUPPORT` in its Key Access Justifications (KAJ) policy. KAJ requires every access to a key to be tagged with a business reason; including `CUSTOMER_INITIATED_SUPPORT` means Google support staff can access keyed data when the customer has opened a support case, without a more specific per-request justification.
@@ -20774,6 +20788,45 @@ queries:
     refs:
       - url: https://cloud.google.com/kms/docs/key-access-justifications
         title: Cloud KMS - Key Access Justifications
+  - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.kmsService.keyrings.all(
+        cryptokeys.all(
+          keyAccessJustificationsPolicy == null ||
+          keyAccessJustificationsPolicy['allowedAccessReasons'] == null ||
+          keyAccessJustificationsPolicy['allowedAccessReasons'].none(_ == "CUSTOMER_INITIATED_SUPPORT")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_kms_crypto_key')
+    mql: |
+      terraform.resources('google_kms_crypto_key').all(
+        blocks.where(type == 'key_access_justifications_policy').all(
+          arguments['allowed_access_reasons'].none(_ == "CUSTOMER_INITIATED_SUPPORT")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key').all(
+        change.after['key_access_justifications_policy'] == null ||
+        change.after['key_access_justifications_policy'].all(
+          _['allowed_access_reasons'].none(_ == "CUSTOMER_INITIATED_SUPPORT")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_kms_crypto_key')
+    mql: |
+      terraform.state.resources.where(type == 'google_kms_crypto_key').all(
+        values['key_access_justifications_policy'] == null ||
+        values['key_access_justifications_policy'].all(
+          _['allowed_access_reasons'].none(_ == "CUSTOMER_INITIATED_SUPPORT")
+        )
+      )
   - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets
     title: Ensure no custom routes send 0.0.0.0/0 to the default internet gateway
     impact: 70
@@ -21627,7 +21680,6 @@ queries:
   - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types
     title: Ensure DLP inspect templates include common credential info types
     impact: 70
-    filters: asset.platform == 'gcp'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-12
       compliance/nis-2: false
@@ -21636,15 +21688,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
       compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
       compliance/soc2-2017: false
-    mql: |
-      gcp.project.dlpService.inspectTemplates.all(
-        inspectConfig != null &&
-        inspectConfig['infoTypes'] != null &&
-        inspectConfig['infoTypes'].any(_['name'] == "AWS_CREDENTIALS") &&
-        inspectConfig['infoTypes'].any(_['name'] == "GCP_CREDENTIALS") &&
-        inspectConfig['infoTypes'].any(_['name'] == "JSON_WEB_TOKEN") &&
-        inspectConfig['infoTypes'].any(_['name'] == "BASIC_AUTH_HEADER")
-      )
+    variants:
+      - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-gcp
+        tags:
+          mondoo.com/filter-title: GCP DLP (Sensitive Data Protection)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every Cloud DLP inspect template includes the common credential detectors: `AWS_CREDENTIALS`, `GCP_CREDENTIALS`, `JSON_WEB_TOKEN`, and `BASIC_AUTH_HEADER`. DLP templates that scan for PII but omit these credential detectors miss the single highest-impact class of sensitive data — live secrets that grant attackers immediate access.
@@ -21723,6 +21783,56 @@ queries:
     refs:
       - url: https://cloud.google.com/sensitive-data-protection/docs/infotypes-reference
         title: DLP - InfoTypes reference
+  - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.dlpService.inspectTemplates.all(
+        inspectConfig != null &&
+        inspectConfig['infoTypes'] != null &&
+        inspectConfig['infoTypes'].any(_['name'] == "AWS_CREDENTIALS") &&
+        inspectConfig['infoTypes'].any(_['name'] == "GCP_CREDENTIALS") &&
+        inspectConfig['infoTypes'].any(_['name'] == "JSON_WEB_TOKEN") &&
+        inspectConfig['infoTypes'].any(_['name'] == "BASIC_AUTH_HEADER")
+      )
+  - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_data_loss_prevention_inspect_template')
+    mql: |
+      terraform.resources('google_data_loss_prevention_inspect_template').all(
+        blocks.where(type == 'inspect_config') != empty &&
+        blocks.where(type == 'inspect_config').all(
+          blocks.where(type == 'info_types').any(arguments['name'] == "AWS_CREDENTIALS") &&
+          blocks.where(type == 'info_types').any(arguments['name'] == "GCP_CREDENTIALS") &&
+          blocks.where(type == 'info_types').any(arguments['name'] == "JSON_WEB_TOKEN") &&
+          blocks.where(type == 'info_types').any(arguments['name'] == "BASIC_AUTH_HEADER")
+        )
+      )
+  - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_data_loss_prevention_inspect_template')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_data_loss_prevention_inspect_template').all(
+        change.after['inspect_config'] != empty &&
+        change.after['inspect_config'].all(
+          _['info_types'].any(name == "AWS_CREDENTIALS") &&
+          _['info_types'].any(name == "GCP_CREDENTIALS") &&
+          _['info_types'].any(name == "JSON_WEB_TOKEN") &&
+          _['info_types'].any(name == "BASIC_AUTH_HEADER")
+        )
+      )
+  - uid: mondoo-gcp-security-dlp-inspect-template-covers-credential-info-types-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_data_loss_prevention_inspect_template')
+    mql: |
+      terraform.state.resources.where(type == 'google_data_loss_prevention_inspect_template').all(
+        values['inspect_config'] != empty &&
+        values['inspect_config'].all(
+          _['info_types'].any(name == "AWS_CREDENTIALS") &&
+          _['info_types'].any(name == "GCP_CREDENTIALS") &&
+          _['info_types'].any(name == "JSON_WEB_TOKEN") &&
+          _['info_types'].any(name == "BASIC_AUTH_HEADER")
+        )
+      )
   - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter
     title: Ensure Model Armor templates enable prompt injection filtering
     impact: 90
