@@ -64,6 +64,12 @@ policies:
           - uid: mondoo-docker-security-no-secrets-in-env
           - uid: mondoo-docker-best-practice-no-latest-tag
           - uid: mondoo-docker-best-practice-from-tag-specified
+      - title: Provenance & Ownership
+        filters: |
+          asset.platform == "dockerfile"
+        checks:
+          - uid: mondoo-docker-security-image-source-label
+          - uid: mondoo-docker-security-image-authors-label
 queries:
   - uid: mondoo-docker-security-no-management-ports
     title: Don't expose management ports
@@ -677,6 +683,107 @@ queries:
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#apt-get
         title: Dockerfile Best Practices - apt-get
+  - uid: mondoo-docker-security-image-source-label
+    title: Set org.opencontainers.image.source to the build repo URL
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-9
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-id-am-2
+      compliance/nist-csf-2: nist-csf-2-id-am-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-1
+    mql: |
+      docker.file.stages.last.labels["org.opencontainers.image.source"] != null
+      docker.file.stages.last.labels["org.opencontainers.image.source"] != ""
+    docs:
+      desc: |
+        This check ensures that the final stage of the Dockerfile sets the `org.opencontainers.image.source` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the URL of the source code repository that produced the image, so any running container can be traced back to the repository it was built from.
+
+        **Why this matters**
+
+        Without a source label, a running container is an opaque artifact: there is no reliable way to map a deployed image back to the repository that built it, and therefore no fast path to update or patch it.
+
+        - **Vulnerability response:** When a CVE is published, you need to find every repository that builds an affected image and rebuild it. The source label is the canonical machine-readable link from a deployed digest back to a git repo.
+        - **Incident response:** Responders inspecting a running pod can read the source URL directly from the image metadata (`docker inspect`, `crane config`) instead of correlating image names with an internal service catalog.
+        - **Asset inventory:** Compliance frameworks require maintaining an inventory of software components in production. The source label makes that inventory self-describing rather than dependent on out-of-band tracking.
+        - **Supply chain integrity:** Combined with a SLSA provenance attestation that points to the same repo, the source label provides defense in depth: the metadata claim and the signed claim corroborate each other.
+
+        GitHub's container registry uses this label to [automatically link images to their source repository](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry); other registries surface it in their UIs.
+      remediation: |
+        Add a `LABEL` instruction in the final stage of your Dockerfile:
+
+        ```dockerfile
+        LABEL org.opencontainers.image.source="https://github.com/your-org/your-repo"
+        ```
+
+        For automation, source the value from a build argument so the label always matches the building repository:
+
+        ```dockerfile
+        ARG SOURCE_URL
+        LABEL org.opencontainers.image.source="${SOURCE_URL}"
+        ```
+
+        Then set it from CI. For GitHub Actions:
+
+        ```yaml
+        - uses: docker/build-push-action@v6
+          with:
+            build-args: |
+              SOURCE_URL=https://github.com/${{ github.repository }}
+        ```
+    refs:
+      - url: https://github.com/opencontainers/image-spec/blob/main/annotations.md
+        title: OCI Image Annotations
+      - url: https://docs.docker.com/reference/dockerfile/#label
+        title: Dockerfile Reference - LABEL
+  - uid: mondoo-docker-security-image-authors-label
+    title: Set org.opencontainers.image.authors to the responsible team
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-9
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-id-am-2
+      compliance/nist-csf-2: nist-csf-2-id-am-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-1
+    mql: |
+      docker.file.stages.last.labels["org.opencontainers.image.authors"] != null
+      docker.file.stages.last.labels["org.opencontainers.image.authors"] != ""
+    docs:
+      desc: |
+        This check ensures that the final stage of the Dockerfile sets the `org.opencontainers.image.authors` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the contact information for the people or team responsible for the image, so any running container can be traced back to a clear owner.
+
+        **Why this matters**
+
+        When a running container needs attention -- a CVE in a dependency, a misconfiguration, an outage triggered by its behavior -- the responder's first question is "who owns this?". Without an authors label, the answer requires correlating image names with internal service catalogs, scanning git histories, or asking around in chat. None of that scales as the number of images grows.
+
+        - **Faster patching:** An owner contact embedded in image metadata lets vulnerability tooling auto-route findings to the right team without a separate catalog lookup.
+        - **Incident routing:** Pages, alerts, and dashboards can surface the owner directly from image metadata, cutting time-to-acknowledge.
+        - **Asset accountability:** NIST 800-171 3.4.1 explicitly calls out "component owners" as required inventory metadata; this label is exactly that, attached to the artifact itself.
+        - **Lifecycle management:** Orphaned images -- ones whose owners have left the organization or moved teams -- are a long-tail security risk. Mandating an authors label forces ownership decisions at build time rather than after an incident.
+
+        Use a team mailbox, distribution list, or shared inbox rather than an individual so the contact remains valid as people change roles.
+      remediation: |
+        Add a `LABEL` instruction in the final stage of your Dockerfile:
+
+        ```dockerfile
+        LABEL org.opencontainers.image.authors="platform-team@example.com"
+        ```
+
+        Prefer team-owned contacts (mailing lists, group emails, or Slack channel addresses) over individual addresses. Pair the label with `org.opencontainers.image.source` so that responders can reach both the code and the team in a single `docker inspect`:
+
+        ```dockerfile
+        LABEL org.opencontainers.image.source="https://github.com/example/myapp" \
+              org.opencontainers.image.authors="platform-team@example.com"
+        ```
+    refs:
+      - url: https://github.com/opencontainers/image-spec/blob/main/annotations.md
+        title: OCI Image Annotations
+      - url: https://docs.docker.com/reference/dockerfile/#label
+        title: Dockerfile Reference - LABEL
   - uid: mondoo-docker-security-no-workdir-system-dirs
     title: Don't set WORKDIR to system directories
     impact: 70
