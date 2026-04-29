@@ -66,9 +66,11 @@ resource "google_sql_database" "sqlserver_database" {
   instance = google_sql_database_instance.sqlserver_public_instance.name
 }
 
-# Create a user for the database
+# SQL Server does not support CLOUD_IAM_* user types; the runtime and
+# Terraform variants of cloud-sql-users-use-iam-auth exempt the engine-managed
+# "sqlserver" system account. Use that name here so the BUILT_IN user passes.
 resource "google_sql_user" "sqlserver_user" {
-  name     = var.user_name
+  name     = "sqlserver"
   instance = google_sql_database_instance.sqlserver_public_instance.name
   password = var.user_password
 }
