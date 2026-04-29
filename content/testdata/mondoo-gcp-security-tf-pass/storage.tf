@@ -19,6 +19,10 @@ resource "google_storage_bucket" "data" {
     retention_period = 2592000 # 30 days
   }
 
+  soft_delete_policy {
+    retention_duration_seconds = 1209600 # 14 days
+  }
+
   encryption {
     default_kms_key_name = google_kms_crypto_key.key.id
   }

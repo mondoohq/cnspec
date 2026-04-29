@@ -76,9 +76,10 @@ resource "google_sql_database" "postgres_database" {
   instance = google_sql_database_instance.postgres_public_instance.name
 }
 
-# Create a user for the database
+# Create an IAM user for the database (CLOUD_IAM_USER satisfies the
+# cloud-sql-users-use-iam-auth check; password is omitted for IAM users).
 resource "google_sql_user" "postgres_user" {
   name     = var.user_name
   instance = google_sql_database_instance.postgres_public_instance.name
-  password = var.user_password
+  type     = "CLOUD_IAM_USER"
 }
